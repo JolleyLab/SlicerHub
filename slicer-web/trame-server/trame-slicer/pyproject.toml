@@ -1,0 +1,141 @@
+[project]
+name = "trame-slicer"
+version = "1.4.0"
+description = "trame-slicer library"
+authors = [
+    { name = "Alexy Pellegrini", email = "alexy.pellegrini@kitware.com" },
+    { name = "Jonathan Bouyer", email = "jonathan.bouyer@kitware.com" },
+    { name = "Thibault Pelletier", email = "thibault.pelletier@kitware.com" },
+]
+dependencies = [
+    "trame",
+    "trame-client >= 3.11.2",
+    "trame-server >= 3.6.3",
+    "trame-vuetify",
+    "trame-vtk",
+    "trame-rca >= 2.2.1",
+    "itk",
+    "lxml",
+    "pydicom",
+    "webcolors",
+    "pillow",
+    "pillow-avif-plugin",
+    "py-undo-stack",
+]
+
+requires-python = ">=3.9"
+readme = "README.md"
+license = { text = "Apache 2.0 License" }
+keywords = [
+    "Python",
+    "Interactive",
+    "Web",
+    "Application",
+    "Framework",
+    "Medical",
+    "3DSlicer",
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "License :: OSI Approved :: Apache Software License",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: JavaScript",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.optional-dependencies]
+dev = [
+    "async-timeout",
+    "nox",
+    "pixelmatch",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-playwright",
+    "pytest-xprocess",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "/trame_slicer",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.ruff]
+
+[tool.ruff.lint]
+extend-select = [
+    "ARG", # flake8-unused-arguments
+    "B", # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "EM", # flake8-errmsg
+    "EXE", # flake8-executable
+    "G", # flake8-logging-format
+    "I", # isort
+    "ICN", # flake8-import-conventions
+    "NPY", # NumPy specific rules
+    "PD", # pandas-vet
+    "PGH", # pygrep-hooks
+    "PIE", # flake8-pie
+    "PL", # pylint
+    "PT", # flake8-pytest-style
+    "PTH", # flake8-use-pathlib
+    "RET", # flake8-return
+    "RUF", # Ruff-specific
+    "SIM", # flake8-simplify
+    "T20", # flake8-print
+    "UP", # pyupgrade
+    "YTT", # flake8-2020
+]
+ignore = [
+    "PLR09", # Too many <...>
+    "PLR2004", # Magic value used in comparison
+    "ISC001", # Conflicts with formatter
+]
+isort.required-imports = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["T20"]
+"noxfile.py" = ["T20"]
+
+[tool.semantic_release]
+version_toml = [
+    "pyproject.toml:project.version",
+]
+version_variables = [
+    "trame_slicer/__init__.py:__version__",
+]
+
+build_command = """
+  python -m venv .venv
+  source .venv/bin/activate
+  pip install -U pip build
+  python -m build .
+"""
+
+[tool.semantic_release.publish]
+dist_glob_patterns = ["dist/*"]
+upload_to_vcs_release = true
+
+[tool.semantic_release.branches.main]
+match = "(main|master)"
+
+[tool.coverage.report]
+omit = ["*/tests/*"]
+exclude_lines = [
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
