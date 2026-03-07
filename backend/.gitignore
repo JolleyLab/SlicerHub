@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Database (contains user data - should not be in git)
+data/*.db
+data/*.db-journal
+
+# Environment variables (contains secrets)
+.env
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
