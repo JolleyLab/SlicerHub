@@ -1,0 +1,73 @@
+version: "3.9"
+
+services:
+  # Trame GPU service
+  trame-job:
+    image: trame-slicer
+    container_name: trame-job
+    environment:
+      VTK_DEFAULT_OPENGL_WINDOW: vtkEGLRenderWindow
+      VTK_USE_X: "0"
+      DISPLAY: ""
+    networks:
+      - trame-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
+    runtime: nvidia
+
+  # Backend API
+  backend:
+    build: ./backend
+    container_name: backend
+    ports:
+      - "8081:8080" # Exposed to host
+    volumes:
+      - ./backend:/app
+      - /app/node_modules  # Prevent host node_modules from overriding container's Linux-compiled modules
+      - ./nginx:/nginx
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - NODE_ENV=development
+      - JWT_SECRET=${JWT_SECRET:-please-change-this-to-a-secure-random-string-in-production}
+      - WORKSPACE_ROOT=${PWD:-/workspace}
+    depends_on:
+      - trame-job
+    networks:
+      - trame-net
+
+  # Frontend
+  frontend:
+    build: ./dev
+    container_name: frontend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./dev:/app
+      - /app/node_modules
+    networks:
+      - trame-net
+
+  # Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    ports:
+      - "8082:80" # Host access
+    volumes:
+      - ./nginx:/etc/nginx/conf.d:ro
+    depends_on:
+      - backend
+      - frontend
+      - trame-job
+    networks:
+      - trame-net
+
+networks:
+  trame-net:
+    name: trame-net
+    driver: bridge
