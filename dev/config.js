@@ -3,12 +3,12 @@
  * This file centralizes environment-specific settings for easier deployment
  */
 
-// API Base URL - defaults to localhost for development
-// Port 8080: start.ps1 script (native Node.js)
+// API Base URL - defaults to empty string (relative URL) so requests go through nginx
+// For local native Node.js dev (start.ps1), set API_URL=http://localhost:8080
 // For production, set API_URL environment variable before bundling
 export const API_URL = typeof process !== 'undefined' && process.env && process.env.API_URL
     ? process.env.API_URL
-    : 'http://localhost:8080';
+    : '';
 
 // Trame Server URL - used for iframe previews
 export const TRAME_URL = typeof process !== 'undefined' && process.env && process.env.TRAME_URL

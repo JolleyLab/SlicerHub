@@ -17,4 +17,4 @@ COPY . .
 EXPOSE 8080
 
 # Start the backend
-CMD ["node", "src/docker/launch.js"]
+CMD ["node", "src/server.js"]
