@@ -23,6 +23,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Local dev overrides (not for VM/production)
+docker-compose.local.yml
+
 # OS files
 .DS_Store
 Thumbs.db

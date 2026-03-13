@@ -76,8 +76,9 @@ export default async function containerRoutes(app) {
                 }
             });
 
-            // Return HTTP URL for iframe, not WebSocket URL
-            const httpUrl = `http://localhost:${sessionData.port}`;
+            // Return URL using the request's host so it works on any machine
+            const host = req.headers['x-forwarded-host'] || req.headers.host?.split(':')[0] || 'localhost';
+            const httpUrl = `http://${host}:${sessionData.port}`;
 
             res.json({
                 sessionId: sessionData.sessionId,
