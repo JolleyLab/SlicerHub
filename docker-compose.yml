@@ -18,6 +18,20 @@ services:
               capabilities: [ gpu ]
     runtime: nvidia
 
+  # Trame session manager service
+  trame-service:
+    build: ./trame-service
+    container_name: trame-service
+    ports:
+      - "8090:8090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - USE_GPU=true
+      - IDLE_SHUTDOWN_MINUTES=15
+    networks:
+      - trame-net
+
   # Backend API
   backend:
     build: ./backend
@@ -35,6 +49,7 @@ services:
       - WORKSPACE_ROOT=${PWD:-/workspace}
     depends_on:
       - trame-job
+      - trame-service
     networks:
       - trame-net
 
