@@ -47,6 +47,7 @@ services:
       - NODE_ENV=development
       - JWT_SECRET=${JWT_SECRET:-please-change-this-to-a-secure-random-string-in-production}
       - WORKSPACE_ROOT=${PWD:-/workspace}
+      - TRAME_SERVICE_URL=http://trame-service:8090
     depends_on:
       - trame-job
       - trame-service
