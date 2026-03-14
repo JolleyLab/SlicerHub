@@ -73,6 +73,8 @@ services:
       - "8000:80" # Port 8000 is open on Paperspace by default
     volumes:
       - ./nginx:/etc/nginx/conf.d:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - backend
       - frontend
