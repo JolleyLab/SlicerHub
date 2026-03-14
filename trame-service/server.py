@@ -227,6 +227,7 @@ async def start_session(request: StartSessionRequest):
             '--name', container_name,
             '--label', 'trame-service=true',
             '--label', f'user={user_id}',
+            '--network', 'trame-net',
             '-p', f'{port}:9000',
             '-v', f'{user_files_path}:/data',
             '-e', f'USER_ID={user_id}',
