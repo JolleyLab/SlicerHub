@@ -156,6 +156,8 @@ class SessionResponse(BaseModel):
     sessionId: str
     port: int
     wsUrl: str
+    userId: str
+    containerName: str
 
 
 @app.get("/health")
@@ -267,7 +269,9 @@ async def start_session(request: StartSessionRequest):
         return SessionResponse(
             sessionId=session_id,
             port=port,
-            wsUrl=f"ws://localhost:{port}/ws"
+            wsUrl=f"ws://localhost:{port}/ws",
+            userId=user_id,
+            containerName=container_name
         )
         
     except Exception as e:

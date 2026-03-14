@@ -76,9 +76,9 @@ export default async function containerRoutes(app) {
                 }
             });
 
-            // Return URL routed through nginx so the browser doesn't need direct port access
+            // Return URL routed through nginx using userId so nginx can resolve the container by name
             const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
-            const httpUrl = `http://${host}/trame-session/${sessionData.port}/`;
+            const httpUrl = `http://${host}/trame-session/user-${sessionData.userId}/`;
 
             res.json({
                 sessionId: sessionData.sessionId,
