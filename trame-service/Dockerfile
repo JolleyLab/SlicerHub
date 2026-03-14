@@ -21,6 +21,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Create docker group with GID 999 and add user to it for socket access
+RUN groupadd -g 999 docker 2>/dev/null || true \
+    && usermod -aG docker root 2>/dev/null || true
+
 EXPOSE 8090
 
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8090"]

@@ -201,8 +201,8 @@ async def start_session(request: StartSessionRequest):
     if port is None:
         raise HTTPException(status_code=503, detail="No available ports")
     
-    # Build paths
-    workspace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # Build paths - use environment variable if set, otherwise calculate
+    workspace_root = os.getenv('WORKSPACE_ROOT', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     user_files_path = os.path.join(workspace_root, "backend", "userFiles", user_id)
     os.makedirs(user_files_path, exist_ok=True)
     

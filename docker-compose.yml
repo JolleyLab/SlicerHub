@@ -29,6 +29,7 @@ services:
     environment:
       - USE_GPU=true
       - IDLE_SHUTDOWN_MINUTES=15
+      - WORKSPACE_ROOT=/home/paperspace/SlicerWeb
     networks:
       - trame-net
 
