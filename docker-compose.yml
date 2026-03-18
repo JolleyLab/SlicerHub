@@ -86,4 +86,4 @@ services:
 networks:
   trame-net:
     name: trame-net
-    driver: bridge
+    external: true

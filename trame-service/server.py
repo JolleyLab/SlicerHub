@@ -90,6 +90,26 @@ def stop_container(container_id: str):
         logger.error(f"Error stopping container {container_id}: {e}")
 
 
+async def wait_for_container_ready(container_name: str, port: int, timeout: int = 120) -> bool:
+    """Poll the container's HTTP server until it responds, up to timeout seconds"""
+    import aiohttp
+    url = f"http://{container_name}:{port}/"
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                    if resp.status < 500:
+                        logger.info(f"Container {container_name} is ready (HTTP {resp.status})")
+                        return True
+        except Exception:
+            pass
+        await asyncio.sleep(2)
+        logger.info(f"Waiting for {container_name}:{port}... ({int(time.time()-start)}s)")
+    logger.error(f"Container {container_name} did not become ready within {timeout}s")
+    return False
+
+
 async def check_idle_containers():
     """Check for idle containers and shut them down"""
     while True:
@@ -265,7 +285,14 @@ async def start_session(request: StartSessionRequest):
         }
         
         logger.info(f"Started session {session_id} for user {user_id} on port {port}")
-        
+
+        # Wait for the trame HTTP server to be ready before returning
+        ready = await wait_for_container_ready(container_name, 9000)
+        if not ready:
+            stop_container(container_id)
+            del active_sessions[session_id]
+            raise HTTPException(status_code=503, detail="Trame container did not become ready in time")
+
         return SessionResponse(
             sessionId=session_id,
             port=port,
