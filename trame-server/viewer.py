@@ -40,12 +40,34 @@ class CustomMedicalViewer:
         self._ui = MedicalViewerUI(self._server, self._logic.layout_manager)
         self._logic.set_ui(self._ui)
 
-        # Add server-side file loading method
+        # Add server-side file loading and saving methods
         self._register_file_loading()
+        self._register_file_saving()
 
     @property
     def server(self):
         return self._server
+
+    def _register_file_saving(self):
+        """Register a server-side scene save method"""
+        @self._server.controller.add("save_scene")
+        def save_scene(output_path):
+            """Save the current Slicer scene (including all markups) to an MRB file"""
+            import slicer
+            print(f"Saving scene to: {output_path}")
+            try:
+                # Ensure output directory exists
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                # slicer.util.saveScene saves the full scene as MRB
+                success = slicer.util.saveScene(output_path)
+                if success:
+                    print(f"Scene saved successfully: {output_path}")
+                else:
+                    print(f"Scene save failed: {output_path}")
+                return success
+            except Exception as e:
+                print(f"Error saving scene: {e}")
+                return False
 
     def _register_file_loading(self):
         """Register a server-side file loading method"""

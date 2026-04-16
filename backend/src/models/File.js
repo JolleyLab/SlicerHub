@@ -7,13 +7,13 @@ class File {
     /**
      * Create a new file record
      */
-    static create({ userId, originalName, storedName, filePath, fileSize, mimeType }) {
+    static create({ userId, originalName, storedName, filePath, fileSize, mimeType, parentFileId = null }) {
         const stmt = db.prepare(`
-            INSERT INTO files (user_id, original_name, stored_name, file_path, file_size, mime_type)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO files (user_id, original_name, stored_name, file_path, file_size, mime_type, parent_file_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         `);
 
-        const result = stmt.run(userId, originalName, storedName, filePath, fileSize, mimeType);
+        const result = stmt.run(userId, originalName, storedName, filePath, fileSize, mimeType, parentFileId);
 
         return {
             id: result.lastInsertRowid,
@@ -23,6 +23,7 @@ class File {
             filePath,
             fileSize,
             mimeType,
+            parentFileId,
             uploadDate: new Date().toISOString()
         };
     }
@@ -49,6 +50,17 @@ class File {
     static findByStoredName(storedName) {
         const stmt = db.prepare('SELECT * FROM files WHERE stored_name = ?');
         return stmt.get(storedName);
+    }
+
+    /**
+     * Update file size and path (used when overwriting a saved scene)
+     */
+    static update(fileId, { fileSize, filePath }) {
+        const stmt = db.prepare(`
+            UPDATE files SET file_size = ?, file_path = ?, upload_date = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `);
+        stmt.run(fileSize, filePath, fileId);
     }
 
     /**

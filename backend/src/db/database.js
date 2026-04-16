@@ -139,9 +139,18 @@ function initializeDatabase() {
             file_size INTEGER NOT NULL,
             mime_type TEXT,
             upload_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            parent_file_id INTEGER DEFAULT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (parent_file_id) REFERENCES files(id) ON DELETE SET NULL
         )
     `);
+
+    // Migration: add parent_file_id to existing databases that don't have it
+    try {
+        dbWrapper.exec(`ALTER TABLE files ADD COLUMN parent_file_id INTEGER DEFAULT NULL`);
+    } catch (e) {
+        // Column already exists - that's fine
+    }
 
     // File shares table (for sharing files between users)
     dbWrapper.exec(`

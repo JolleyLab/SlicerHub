@@ -1,0 +1,100 @@
+# docker-compose.vastai.yml
+#
+# Override file for vast.ai GPU provider mode.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.vastai.yml up -d
+#
+# What this changes vs the base docker-compose.yml:
+#   - Removes trame-job and the Docker socket mount (no local GPU needed)
+#   - Replaces nginx with Traefik for dynamic route registration
+#   - Configures trame-service to use GPU_PROVIDER=vastai
+#   - Adds required vast.ai env vars (fill in .env or export before running)
+#
+# Required environment variables (set in .env file or shell):
+#   VASTAI_API_KEY        your vast.ai API key
+#   VASTAI_IMAGE          Docker image URL for trame-slicer (must be publicly pullable)
+#   VASTAI_GPU_NAME       GPU filter e.g. RTX_4000, A4000
+#   VASTAI_SSH_KEY_PATH   path to SSH private key on the CPU VM
+#   VASTAI_SSH_KEY_ID     SSH key ID registered in your vast.ai account
+#
+# For private registry images (e.g. GHCR), also set:
+#   VASTAI_REGISTRY_URL   e.g. ghcr.io  (default: ghcr.io)
+#   VASTAI_REGISTRY_USER  your GitHub username
+#   VASTAI_REGISTRY_TOKEN a fine-grained PAT with Packages: Read-only scope only
+#                         Generate at: https://github.com/settings/personal-access-tokens
+
+services:
+  # Remove local GPU job — sessions run on vast.ai
+  trame-job:
+    profiles: ["disabled"]   # never started in this mode
+
+  # trame-service: switch to vast.ai provider, remove Docker socket
+  trame-service:
+    volumes: []              # no Docker socket needed
+    environment:
+      - GPU_PROVIDER=vastai
+      - USE_GPU=false
+      - IDLE_SHUTDOWN_MINUTES=15
+      - TRAEFIK_API=http://traefik:8080
+      - VASTAI_API_KEY=${VASTAI_API_KEY}
+      - VASTAI_IMAGE=${VASTAI_IMAGE:-trame-slicer:latest}
+      - VASTAI_GPU_NAME=${VASTAI_GPU_NAME:-RTX_4000}
+      - VASTAI_DISK_GB=${VASTAI_DISK_GB:-30}
+      - VASTAI_MAX_PRICE=${VASTAI_MAX_PRICE:-0.30}
+      - VASTAI_REGION=${VASTAI_REGION:-}
+      - VASTAI_REDUNDANCY=${VASTAI_REDUNDANCY:-1}
+      - VASTAI_SSH_KEY_PATH=${VASTAI_SSH_KEY_PATH}
+      - VASTAI_SSH_KEY_ID=${VASTAI_SSH_KEY_ID:-}
+      # Private registry auth (optional — omit for public images)
+      - VASTAI_REGISTRY_URL=${VASTAI_REGISTRY_URL:-ghcr.io}
+      - VASTAI_REGISTRY_USER=${VASTAI_REGISTRY_USER:-}
+      - VASTAI_REGISTRY_TOKEN=${VASTAI_REGISTRY_TOKEN:-}
+    depends_on:
+      - traefik
+
+  # Replace nginx with Traefik for dynamic per-session routing
+  nginx:
+    profiles: ["disabled"]   # nginx is not used in vastai mode
+
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    command:
+      # Enable Traefik dashboard (accessible at :8080/dashboard/)
+      - "--api.dashboard=true"
+      - "--api.insecure=true"         # dashboard on port 8080, no auth (internal only)
+      # Listen on port 80 for user traffic
+      - "--entrypoints.web.address=:80"
+      # Enable the REST provider so trame-service can register routes at runtime
+      - "--providers.rest=true"
+      - "--providers.rest.insecure=true"
+      # Docker provider for static services (backend, frontend)
+      - "--providers.docker=true"
+      - "--providers.docker.network=trame-net"
+      - "--providers.docker.exposedbydefault=false"
+      - "--log.level=INFO"
+    ports:
+      - "8000:80"    # user-facing traffic (same port as nginx was)
+      - "8080:8080"  # Traefik dashboard / REST API (internal use by trame-service)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - trame-net
+
+  # backend and frontend get Traefik labels instead of nginx config
+  backend:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.backend.rule=PathPrefix(`/api/`)"
+      - "traefik.http.routers.backend.entrypoints=web"
+      - "traefik.http.services.backend.loadbalancer.server.port=8080"
+    depends_on:
+      - trame-service
+
+  frontend:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.frontend.entrypoints=web"
+      - "traefik.http.routers.frontend.priority=1"    # lowest priority — catch-all
+      - "traefik.http.services.frontend.loadbalancer.server.port=8000"

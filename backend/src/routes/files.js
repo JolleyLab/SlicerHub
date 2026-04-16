@@ -107,7 +107,8 @@ export default function fileRoutes(app) {
             originalName: file.original_name,
             size: file.file_size,
             mimeType: file.mime_type,
-            uploadDate: file.upload_date
+            uploadDate: file.upload_date,
+            parentFileId: file.parent_file_id || null
         }));
 
         res.json({ files: formattedFiles });

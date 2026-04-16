@@ -93,6 +93,37 @@ export class FileManager extends LitElement {
                 background: #f9f9f9;
             }
 
+            .file-item.child {
+                margin-left: 24px;
+                border-left: 3px solid #4CAF50;
+                background: #fafffe;
+            }
+
+            .file-group-toggle {
+                background: none;
+                border: none;
+                cursor: pointer;
+                font-size: 13px;
+                padding: 2px 6px;
+                color: #1976d2;
+                text-decoration: underline;
+            }
+
+            .file-item.child {
+                margin-left: 24px;
+                border-left: 3px solid #4CAF50;
+                background: #fafff a;
+            }
+
+            .file-group-toggle {
+                background: none;
+                border: none;
+                cursor: pointer;
+                font-size: 14px;
+                padding: 0 6px 0 0;
+                color: #555;
+            }
+
             .file-details {
                 flex: 1;
             }
@@ -236,7 +267,25 @@ export class FileManager extends LitElement {
             .close-iframe-btn:hover {
                 background: #d32f2f;
             }
+            .save-annotations-btn {
+                padding: 8px 16px;
+                background: #1976d2;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                margin-right: 8px;
+            }
 
+            .save-annotations-btn:hover {
+                background: #1565c0;
+            }
+
+            .save-annotations-btn:disabled {
+                background: #90caf9;
+                cursor: not-allowed;
+            }
             .open-window-btn:hover {
                 background: #1976D2;
             }
@@ -273,9 +322,13 @@ export class FileManager extends LitElement {
             stats: { type: Object },
             dragOver: { type: Boolean },
             launching: { type: Boolean },
+            bootingGpu: { type: Boolean },
+            saving: { type: Boolean },
             showIframe: { type: Boolean },
             iframeUrl: { type: String },
-            currentFileName: { type: String }
+            currentFileName: { type: String },
+            expandedGroups: { type: Object },
+            gpuProvider: { type: String },
         };
     }
 
@@ -290,16 +343,21 @@ export class FileManager extends LitElement {
         this.stats = { bytesUsed: 0, megabytesUsed: '0.00', fileCount: 0 };
         this.dragOver = false;
         this.launching = false;
+        this.bootingGpu = false;
+        this.saving = false;
         this.showIframe = false;
         this.iframeUrl = '';
         this.currentFileName = '';
         this.heartbeatInterval = null;
+        this.expandedGroups = {};
+        this.gpuProvider = 'docker';
     }
 
     connectedCallback() {
         super.connectedCallback();
         this.loadFiles();
         this.loadStats();
+        this.loadProvider();
         // Cleanup any running containers when page loads
         this.cleanupContainer();
 
@@ -358,6 +416,22 @@ export class FileManager extends LitElement {
             }
         } catch (err) {
             console.error('Error loading stats:', err);
+        }
+    }
+
+    async loadProvider() {
+        try {
+            const response = await fetch(`${API_URL}/api/provider`, {
+                credentials: 'include'
+            });
+            if (response.ok) {
+                const data = await response.json();
+                this.gpuProvider = data.provider || 'docker';
+                console.log('GPU provider:', this.gpuProvider);
+            }
+        } catch (err) {
+            // trame-service may not be up yet — default to docker
+            this.gpuProvider = 'docker';
         }
     }
 
@@ -494,16 +568,21 @@ export class FileManager extends LitElement {
 
     async cleanupContainer() {
         try {
-            await fetch(`${API_URL}/api/containers/stop`, {
+            const response = await fetch(`${API_URL}/api/containers/stop`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
                 },
                 credentials: 'include'
             });
-            console.log("Cleaned up existing container");
+            if (!response.ok) {
+                const text = await response.text();
+                console.warn("Container stop returned error:", response.status, text);
+            } else {
+                console.log("Cleaned up existing container");
+            }
         } catch (err) {
-            // Ignore errors - container might not exist
+            console.warn("Container cleanup error (may not exist):", err.message);
         }
     }
 
@@ -511,6 +590,16 @@ export class FileManager extends LitElement {
         this.error = '';
         this.success = '';
         this.launching = true;
+
+        // For remote GPU providers (Paperspace, vast.ai) show the full-screen overlay
+        // right away so the user sees progress during the VM boot phase (1-2 min).
+        const isRemoteGpu = this.gpuProvider === 'paperspace' || this.gpuProvider === 'vastai';
+        if (isRemoteGpu) {
+            this.currentFileName = file.originalName;
+            this.iframeUrl = 'about:blank';
+            this.bootingGpu = true;
+            this.showIframe = true;
+        }
 
         try {
             // Clean up any existing container first
@@ -534,6 +623,9 @@ export class FileManager extends LitElement {
                 const data = await response.json();
                 const url = data.frontendUrl;
                 console.log('Trame container started, URL:', url);
+
+                // VM/container is now ready — switch from GPU-boot message to trame-loading message
+                this.bootingGpu = false;
 
                 // Show iframe immediately with loading message
                 this.currentFileName = file.originalName;
@@ -582,10 +674,14 @@ export class FileManager extends LitElement {
                     errorMsg = data.message;
                 }
                 this.error = errorMsg;
+                this.bootingGpu = false;
+                this.showIframe = false;
             }
         } catch (err) {
             console.error('Launch error:', err);
             this.error = err.message || 'Network error during launch';
+            this.bootingGpu = false;
+            this.showIframe = false;
         } finally {
             this.launching = false;
         }
@@ -598,6 +694,41 @@ export class FileManager extends LitElement {
     handleIframeError(e) {
         console.error('Iframe error:', e);
         this.error = 'Failed to load Trame in iframe';
+    }
+
+    async _doSave(endpoint) {
+        this.saving = true;
+        this.error = '';
+        this.success = '';
+        try {
+            const response = await fetch(`${API_URL}${endpoint}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include'
+            });
+            const data = await response.json();
+            if (response.ok) {
+                this.success = `Saved as ${data.file.originalName}`;
+                await this.loadFiles();
+            } else {
+                this.error = data.error || 'Save failed';
+            }
+        } catch (err) {
+            console.error('Save error:', err);
+            this.error = 'Network error during save';
+        } finally {
+            this.saving = false;
+        }
+    }
+
+    // Save: overwrites the original file (as .mrb)
+    async saveAnnotations() {
+        await this._doSave('/api/containers/save');
+    }
+
+    // Save as new file: creates a new timestamped annotations MRB
+    async saveAnnotationsAs() {
+        await this._doSave('/api/containers/save-as');
     }
 
     async closeIframe() {
@@ -646,6 +777,80 @@ export class FileManager extends LitElement {
             clearInterval(this.heartbeatInterval);
             this.heartbeatInterval = null;
         }
+    }
+
+    toggleGroup(parentId) {
+        this.expandedGroups = { ...this.expandedGroups, [parentId]: !this.expandedGroups[parentId] };
+    }
+
+    // Returns { roots: [...], childrenOf: { [id]: [...] } }
+    groupFiles(files) {
+        const childrenOf = {};
+        const roots = [];
+        for (const f of files) {
+            if (f.parentFileId) {
+                if (!childrenOf[f.parentFileId]) childrenOf[f.parentFileId] = [];
+                childrenOf[f.parentFileId].push(f);
+            } else {
+                roots.push(f);
+            }
+        }
+        return { roots, childrenOf };
+    }
+
+    renderFile(file, isChild = false) {
+        return html`
+            <div class="file-item ${isChild ? 'child' : ''}">
+                <div class="file-details">
+                    <div class="file-name">${file.originalName}</div>
+                    <div class="file-meta">
+                        ${this.formatBytes(file.size)} • ${file.mimeType} • ${this.formatDate(file.uploadDate)}
+                    </div>
+                </div>
+                <div class="file-actions">
+                    <button class="action-btn launch-btn" @click=${() => this.launchFile(file)}>🚀 Launch</button>
+                    <button class="action-btn download-btn" @click=${() => this.downloadFile(file)}>⬇️ Download</button>
+                    <button class="action-btn delete-btn" @click=${() => this.deleteFile(file)}>🗑️ Delete</button>
+                </div>
+            </div>
+        `;
+    }
+
+    toggleGroup(parentId) {
+        this.expandedGroups = { ...this.expandedGroups, [parentId]: !this.expandedGroups[parentId] };
+    }
+
+    // Returns { roots, childrenOf: { [id]: [...] } }
+    groupFiles(files) {
+        const childrenOf = {};
+        const roots = [];
+        for (const f of files) {
+            if (f.parentFileId) {
+                if (!childrenOf[f.parentFileId]) childrenOf[f.parentFileId] = [];
+                childrenOf[f.parentFileId].push(f);
+            } else {
+                roots.push(f);
+            }
+        }
+        return { roots, childrenOf };
+    }
+
+    renderFile(file, isChild = false) {
+        return html`
+            <div class="file-item ${isChild ? 'child' : ''}">
+                <div class="file-details">
+                    <div class="file-name">${file.originalName}</div>
+                    <div class="file-meta">
+                        ${this.formatBytes(file.size)} • ${file.mimeType} • ${this.formatDate(file.uploadDate)}
+                    </div>
+                </div>
+                <div class="file-actions">
+                    <button class="action-btn launch-btn" @click=${() => this.launchFile(file)}>🚀 Launch</button>
+                    <button class="action-btn download-btn" @click=${() => this.downloadFile(file)}>⬇️ Download</button>
+                    <button class="action-btn delete-btn" @click=${() => this.deleteFile(file)}>🗑️ Delete</button>
+                </div>
+            </div>
+        `;
     }
 
     formatBytes(bytes) {
@@ -722,27 +927,25 @@ export class FileManager extends LitElement {
                         </div>
                     ` : ''}
 
-                    ${this.files.map(file => html`
-                        <div class="file-item">
-                            <div class="file-details">
-                                <div class="file-name">${file.originalName}</div>
-                                <div class="file-meta">
-                                    ${this.formatBytes(file.size)} • ${file.mimeType} • ${this.formatDate(file.uploadDate)}
-                                </div>
-                            </div>
-                            <div class="file-actions">
-                                <button class="action-btn launch-btn" @click=${() => this.launchFile(file)}>
-                                    🚀 Launch
-                                </button>
-                                <button class="action-btn download-btn" @click=${() => this.downloadFile(file)}>
-                                    ⬇️ Download
-                                </button>
-                                <button class="action-btn delete-btn" @click=${() => this.deleteFile(file)}>
-                                    🗑️ Delete
-                                </button>
-                            </div>
-                        </div>
-                    `)}
+                    ${(() => {
+                        const { roots, childrenOf } = this.groupFiles(this.files);
+                        return roots.map(file => {
+                            const children = childrenOf[file.id] || [];
+                            const hasChildren = children.length > 0;
+                            const expanded = this.expandedGroups[file.id];
+                            return html`
+                                ${this.renderFile(file, false)}
+                                ${hasChildren ? html`
+                                    <div style="margin-left:24px; margin-bottom:4px;">
+                                        <button class="file-group-toggle" @click=${() => this.toggleGroup(file.id)}>
+                                            ${expanded ? '▼' : '▶'} ${children.length} saved version${children.length > 1 ? 's' : ''}
+                                        </button>
+                                    </div>
+                                    ${expanded ? children.map(child => this.renderFile(child, true)) : ''}
+                                ` : ''}
+                            `;
+                        });
+                    })()}
                 </div>
             </div>
 
@@ -754,6 +957,12 @@ export class FileManager extends LitElement {
                             <button class="open-window-btn" @click=${this.openInNewWindow} ?disabled=${this.iframeUrl === 'about:blank'}>
                                 🗗 Open in New Window
                             </button>
+                            <button class="save-annotations-btn" @click=${this.saveAnnotations} ?disabled=${this.saving || this.iframeUrl === 'about:blank'}>
+                                ${this.saving ? '💾 Saving...' : '💾 Save'}
+                            </button>
+                            <button class="save-annotations-btn" @click=${this.saveAnnotationsAs} ?disabled=${this.saving || this.iframeUrl === 'about:blank'}>
+                                ${this.saving ? '💾 Saving...' : '📄 Save as New File'}
+                            </button>
                             <button class="close-iframe-btn" @click=${this.closeIframe}>
                                 ✕ Close Trame
                             </button>
@@ -764,8 +973,13 @@ export class FileManager extends LitElement {
                             <div style="flex: 1; display: flex; align-items: center; justify-content: center; background: white;">
                                 <div style="text-align: center;">
                                     <div class="spinner" style="width: 40px; height: 40px; border-width: 4px; margin: 0 auto 20px;"></div>
-                                    <h3>Starting Trame...</h3>
-                                    <p>This may take a few seconds</p>
+                                    ${this.bootingGpu ? html`
+                                        <h3>🖥️ Starting GPU server...</h3>
+                                        <p>The GPU VM is booting up. This takes about 1–2 minutes.</p>
+                                    ` : html`
+                                        <h3>⚡ Starting Trame viewer...</h3>
+                                        <p>Loading your file into the 3D viewer (~30 seconds)</p>
+                                    `}
                                 </div>
                             </div>
                         ` : html`

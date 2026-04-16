@@ -1,0 +1,83 @@
+# OVH VPS override — use this with:
+#   docker compose -f docker-compose.yml -f docker-compose.ovh.yml up -d
+#
+# This configures the stack for the OVH CPU + Paperspace GPU split architecture:
+#   - All CPU services (backend, frontend, nginx, trame-service) run on the OVH VPS
+#   - GPU sessions are started on a remote Paperspace VM via the Paperspace API + SSH
+#
+# Prerequisites on the OVH VPS:
+#   1. docker, docker compose, git installed
+#   2. SSH key pair generated; public key added to the Paperspace VM's authorized_keys
+#   3. A .env file (or shell exports) with the required variables below
+#
+# Required variables (add to a .env file in this directory):
+#   PAPERSPACE_API_KEY           = ps_...
+#   PAPERSPACE_MACHINE_ID        = ps123abc4d  (last segment of the VM URL)
+#   PAPERSPACE_VM_IP             = 1.2.3.4     (static IP assigned in Paperspace console)
+#   PAPERSPACE_SSH_KEY_PATH      = /run/secrets/paperspace_key
+#   PAPERSPACE_WORKSPACE_ROOT    = /home/paperspace/SlicerWeb
+#   JWT_SECRET                   = <long random string>
+#
+# Optional variables:
+#   PAPERSPACE_SSH_USER          = paperspace  (default)
+#   PAPERSPACE_TRAME_IMAGE       = trame-slicer (default)
+#   PAPERSPACE_AUTO_STOP         = true         (default — stops VM when idle)
+
+services:
+
+  # ── GPU job ── removed on OVH (sessions run on the remote Paperspace VM)
+  trame-job:
+    profiles:
+      - disabled   # prevents this service from starting
+
+  # ── Trame session manager ── runs on OVH, controls the remote GPU VM
+  trame-service:
+    environment:
+      - GPU_PROVIDER=paperspace
+      - WORKSPACE_ROOT=/workspace
+      - PAPERSPACE_API_KEY=${PAPERSPACE_API_KEY}
+      - PAPERSPACE_MACHINE_ID=${PAPERSPACE_MACHINE_ID}
+      - PAPERSPACE_VM_IP=${PAPERSPACE_VM_IP}
+      - PAPERSPACE_SSH_KEY_PATH=${PAPERSPACE_SSH_KEY_PATH:-/run/secrets/paperspace_key}
+      - PAPERSPACE_SSH_USER=${PAPERSPACE_SSH_USER:-paperspace}
+      - PAPERSPACE_TRAME_IMAGE=${PAPERSPACE_TRAME_IMAGE:-trame-slicer}
+      - PAPERSPACE_WORKSPACE_ROOT=${PAPERSPACE_WORKSPACE_ROOT:-/home/paperspace/SlicerWeb}
+      - PAPERSPACE_AUTO_STOP=${PAPERSPACE_AUTO_STOP:-true}
+      - NGINX_USERS_DIR=/app/nginx-users
+      - NGINX_CONTAINER=nginx
+    volumes:
+      # Docker socket is needed only for `docker exec nginx nginx -s reload`
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Shared volume: trame-service writes per-user nginx confs here;
+      # nginx reads them via the include directive in ovh.conf
+      - ./nginx/users:/app/nginx-users
+      # User files are stored on the OVH VPS disk
+      - ./backend/userFiles:/workspace/backend/userFiles
+      # SSH private key (mount from a secure location on the host)
+      # Update the left side to your actual key path on the OVH VPS:
+      - ${PAPERSPACE_SSH_KEY_FILE:-./paperspace_key}:/run/secrets/paperspace_key:ro
+
+  # ── Backend ── points workspace at /workspace
+  backend:
+    environment:
+      - WORKSPACE_ROOT=/workspace
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+      - ./nginx:/nginx
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./backend/userFiles:/workspace/backend/userFiles
+
+  # ── Nginx ── uses OVH-specific config (no Docker-DNS trame routing)
+  nginx:
+    volumes:
+      - ./nginx/ovh.conf:/etc/nginx/conf.d/default.conf:ro
+      # Per-user trame session location blocks (written dynamically by trame-service)
+      - ./nginx/users:/etc/nginx/conf.d/users:ro
+
+# On OVH the network is created fresh by Compose (not pre-existing like on Paperspace)
+networks:
+  trame-net:
+    name: trame-net
+    external: false
+    driver: bridge
