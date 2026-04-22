@@ -12,7 +12,7 @@ function httpRequest(url, options = {}) {
     return new Promise((resolve, reject) => {
         const urlObj = new URL(url);
         const client = urlObj.protocol === 'https:' ? https : http;
-        
+
         const reqOptions = {
             hostname: urlObj.hostname,
             port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
@@ -54,7 +54,7 @@ export default async function containerRoutes(app) {
 
         try {
             let filePath = null;
-            
+
             // If fileId provided, get the file path
             if (fileId) {
                 const file = File.findById(fileId);
@@ -78,11 +78,12 @@ export default async function containerRoutes(app) {
 
             // Return URL routed through nginx using userId so nginx can resolve the container by name
             const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
-            const httpUrl = `http://${host}/trame-session/user-${sessionData.userId}/`;
+            const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+            const frontendUrl = `${protocol}://${host}/trame-session/user-${sessionData.userId}/`;
 
             res.json({
                 sessionId: sessionData.sessionId,
-                frontendUrl: httpUrl
+                frontendUrl
             });
         } catch (err) {
             console.error("Error starting trame session:", err);
@@ -96,9 +97,9 @@ export default async function containerRoutes(app) {
         try {
             // Get session ID
             const sessions = await httpRequest(`${TRAME_SERVICE_URL}/api/sessions`);
-            
+
             const userSession = sessions.sessions?.find(s => s.userId === userId);
-            
+
             if (userSession) {
                 await httpRequest(
                     `${TRAME_SERVICE_URL}/api/sessions/${userSession.sessionId}/stop`,
@@ -119,9 +120,9 @@ export default async function containerRoutes(app) {
 
         try {
             const sessions = await httpRequest(`${TRAME_SERVICE_URL}/api/sessions`);
-            
+
             const userSession = sessions.sessions?.find(s => s.userId === userId);
-            
+
             if (userSession) {
                 res.json({ success: true, status: "running" });
             } else {

@@ -49,7 +49,7 @@ export async function startContainer({ userId, image, command, volumeBinds = [] 
             ? path.dirname(cwd)  // Go up one level if we're in backend
             : cwd;
     }
-    
+
     const hostUserDir = path.join(workspaceRoot, 'backend', 'data', 'users', userId, 'input');
 
     // Combine default binds with any additional volume binds (like file mounts)
