@@ -192,7 +192,7 @@ async def start_session(request: StartSessionRequest):
             except Exception as e:
                 logger.error(f"Error stopping existing session: {e}")
     
-    # Find available port (9000-9009)
+    # Find available host ports (9000-9009) for optional direct access/debugging.
     used_ports = {s['port'] for s in active_sessions.values()}
     port = None
     for p in range(9000, 9010):
@@ -230,7 +230,7 @@ async def start_session(request: StartSessionRequest):
             '--label', 'trame-service=true',
             '--label', f'user={user_id}',
             '--network', 'trame-net',
-            '-p', f'{port}:9000',
+            '-p', f'{port}:8080',
             '-v', f'{user_files_path}:/data',
             '-e', f'USER_ID={user_id}',
             '-e', 'VTK_DEFAULT_OPENGL_WINDOW=vtkEGLRenderWindow',

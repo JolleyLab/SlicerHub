@@ -82,6 +82,18 @@ services:
       - trame-job
     networks:
       - trame-net
+  
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    command: tunnel run cloud-slicer
+    restart: unless-stopped
+    volumes:
+      - ./cloudflared:/etc/cloudflared
+    networks:
+      - trame-net
+    depends_on:
+      - nginx
 
 networks:
   trame-net:
