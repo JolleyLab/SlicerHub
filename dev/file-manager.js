@@ -547,17 +547,26 @@ export class FileManager extends LitElement {
                 let ready = false;
 
                 while (attempts < maxAttempts && !ready) {
+                    attempts++;
                     try {
-                        const checkResponse = await fetch(url, { mode: 'no-cors' });
-                        // If no error is thrown, server is responding
-                        ready = true;
-                        console.log('Trame server is ready!');
+                        const checkResponse = await fetch(url, {
+                            method: 'GET',
+                            credentials: 'include',
+                            cache: 'no-store'
+                        });
+
+                        if (checkResponse.ok) {
+                            ready = true;
+                            console.log('Trame server is ready!');
+                            break;
+                        }
+
+                        console.log(`Attempt ${attempts}/${maxAttempts} - Trame returned HTTP ${checkResponse.status}, waiting...`);
                     } catch (e) {
-                        // Server not ready yet
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                        attempts++;
-                        console.log(`Attempt ${attempts}/${maxAttempts} - waiting for Trame...`);
+                        console.log(`Attempt ${attempts}/${maxAttempts} - Trame not reachable yet: ${e.message}`);
                     }
+
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 }
 
                 if (ready) {

@@ -13,6 +13,7 @@ import subprocess
 import json
 import time
 import asyncio
+import socket
 from typing import Dict, Optional, List
 import logging
 
@@ -88,6 +89,25 @@ def stop_container(container_id: str):
         run_docker(['rm', container_id], check=False)
     except Exception as e:
         logger.error(f"Error stopping container {container_id}: {e}")
+
+
+def is_container_port_open(container_name: str, port: int, timeout_seconds: float = 1.0) -> bool:
+    """Check if a container is accepting TCP connections on the given port."""
+    try:
+        with socket.create_connection((container_name, port), timeout=timeout_seconds):
+            return True
+    except (OSError, socket.timeout):
+        return False
+
+
+async def wait_for_container_ready(container_name: str, port: int, max_wait_seconds: int = 60) -> bool:
+    """Wait until the container starts accepting connections on the expected port."""
+    deadline = time.time() + max_wait_seconds
+    while time.time() < deadline:
+        if is_container_port_open(container_name, port):
+            return True
+        await asyncio.sleep(1)
+    return False
 
 
 async def check_idle_containers():
@@ -255,6 +275,12 @@ async def start_session(request: StartSessionRequest):
         
         container_id = result.stdout.strip()
         
+        # Wait until the container is actually serving requests before reporting success.
+        ready = await wait_for_container_ready(container_name, 8080, max_wait_seconds=60)
+        if not ready:
+            stop_container(container_id)
+            raise RuntimeError(f"Container {container_name} did not become ready on port 8080 in time")
+
         # Store session info
         active_sessions[session_id] = {
             'container_id': container_id,
