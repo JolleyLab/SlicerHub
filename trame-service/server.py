@@ -260,13 +260,22 @@ async def start_session(request: StartSessionRequest):
         if USE_GPU:
             docker_cmd.extend(['--gpus', 'all'])
         
-        # Add file path as environment variable if provided
+        # Build the explicit command to run inside the session container.
+        # This avoids relying on the image default CMD, which can vary across environments.
+        container_cmd = [
+            'python3',
+            '/app/viewer.py',
+            '--host', '0.0.0.0',
+            '--port', '9000',
+        ]
+
         if file_path:
-            # File path should be relative to /data mount point
+            # File path should be relative to the /data mount point.
             file_name = os.path.basename(file_path)
-            docker_cmd.extend(['-e', f'FILE_PATH=/data/{file_name}'])
-        
+            container_cmd.extend(['--file', f'/data/{file_name}'])
+
         docker_cmd.append('trame-slicer')
+        docker_cmd.extend(container_cmd)
         
         # Start container
         logger.info(f"Starting container {container_name} on port {port}" + (f" with file {file_path}" if file_path else ""))
