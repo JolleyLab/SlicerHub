@@ -1,6 +1,7 @@
 services:
   # Trame GPU service
   trame-job:
+    build: ./trame-server
     image: trame-slicer
     container_name: trame-job
     environment:

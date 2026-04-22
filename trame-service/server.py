@@ -250,7 +250,7 @@ async def start_session(request: StartSessionRequest):
             '--label', 'trame-service=true',
             '--label', f'user={user_id}',
             '--network', 'trame-net',
-            '-p', f'{port}:8080',
+            '-p', f'{port}:9000',
             '-v', f'{user_files_path}:/data',
             '-e', f'USER_ID={user_id}',
             '-e', 'VTK_DEFAULT_OPENGL_WINDOW=vtkEGLRenderWindow',
@@ -276,10 +276,10 @@ async def start_session(request: StartSessionRequest):
         container_id = result.stdout.strip()
         
         # Wait until the container is actually serving requests before reporting success.
-        ready = await wait_for_container_ready(container_name, 8080, max_wait_seconds=60)
+        ready = await wait_for_container_ready(container_name, 9000, max_wait_seconds=60)
         if not ready:
             stop_container(container_id)
-            raise RuntimeError(f"Container {container_name} did not become ready on port 8080 in time")
+            raise RuntimeError(f"Container {container_name} did not become ready on port 9000 in time")
 
         # Store session info
         active_sessions[session_id] = {
