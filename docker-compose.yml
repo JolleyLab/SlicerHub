@@ -86,10 +86,8 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: cloudflared
-    command: tunnel run cloud-slicer
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARED_TUNNEL_TOKEN}
     restart: unless-stopped
-    volumes:
-      - ./cloudflared:/etc/cloudflared
     networks:
       - trame-net
     depends_on:
