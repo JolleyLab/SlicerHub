@@ -1,6 +1,7 @@
 import { authenticateToken } from "../middleware/authMiddleware.js";
 import File from "../models/File.js";
 import path from "path";
+import fs from "fs";
 import https from "https";
 import http from "http";
 
@@ -110,6 +111,127 @@ export default async function containerRoutes(app) {
             res.json({ success: true, message: `Session for ${userId} stopped` });
         } catch (err) {
             console.error("Error stopping trame session:", err);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    app.post("/api/containers/save", authenticateToken, async (req, res) => {
+        const userId = req.user.id.toString();
+        const { saveMode = "overwrite", targetFileName, fileId } = req.body || {};
+
+        try {
+            const sessions = await httpRequest(`${TRAME_SERVICE_URL}/api/sessions`);
+            const userSession = sessions.sessions?.find(s => s.userId === userId);
+
+            if (!userSession) {
+                return res.status(404).json({ error: "No active session found" });
+            }
+
+            // Trigger save in the running trame-session container.
+            let normalizedName = path.basename(targetFileName || "last-saved-scene.mrb");
+            let overwriteTargetRecord = null;
+
+            if (saveMode === "overwrite") {
+                if (!fileId) {
+                    return res.status(400).json({ error: "fileId is required for overwrite saves" });
+                }
+                overwriteTargetRecord = File.findById(parseInt(fileId, 10));
+                if (!overwriteTargetRecord || overwriteTargetRecord.user_id !== req.user.id) {
+                    return res.status(404).json({ error: "Target file for overwrite not found" });
+                }
+                normalizedName = path.basename(overwriteTargetRecord.file_path || overwriteTargetRecord.stored_name);
+            }
+            const saveResult = await httpRequest(
+                `${TRAME_SERVICE_URL}/api/sessions/${userSession.sessionId}/save`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: { targetFileName: normalizedName }
+                }
+            );
+
+            // Register the saved scene file in DB for UI visibility.
+            const userDir = path.join('userFiles', userId);
+            if (!fs.existsSync(userDir)) {
+                return res.status(404).json({ error: "User file directory not found" });
+            }
+
+            const savedName = path.basename(saveResult.path || normalizedName);
+            const fullPath = path.join(userDir, savedName);
+            if (!fs.existsSync(fullPath)) {
+                return res.status(404).json({ error: "Saved scene file was not found" });
+            }
+            const latest = {
+                name: savedName,
+                size: fs.statSync(fullPath).size
+            };
+            if (latest.size <= 0) {
+                return res.status(400).json({ error: "Saved scene file is empty" });
+            }
+            const dbFilePath = path.join('userFiles', userId, savedName);
+
+            // Overwrite mode updates the active file by id; save-as-new creates a new record.
+            const existing = File.findByStoredName(savedName);
+            if (saveMode === "overwrite") {
+                const recordToUpdate = overwriteTargetRecord || existing;
+                File.updateMetadata(recordToUpdate.id, {
+                        originalName: savedName,
+                        filePath: dbFilePath,
+                        fileSize: latest.size,
+                        mimeType: 'application/x-mrb'
+                });
+                return res.json({
+                    success: true,
+                    status: "overwritten",
+                    path: dbFilePath,
+                    file: {
+                        id: recordToUpdate.id,
+                        originalName: savedName,
+                        size: latest.size,
+                        mimeType: 'application/x-mrb',
+                        uploadDate: new Date().toISOString()
+                    }
+                });
+            }
+
+            if (existing && existing.user_id === req.user.id) {
+                return res.json({
+                    success: true,
+                    status: "already-registered",
+                    path: dbFilePath,
+                    file: {
+                        id: existing.id,
+                        originalName: savedName,
+                        size: existing.file_size,
+                        mimeType: existing.mime_type,
+                        uploadDate: existing.upload_date
+                    }
+                });
+            }
+
+            const fileRecord = File.create({
+                userId: req.user.id,
+                originalName: savedName,
+                storedName: savedName,
+                filePath: dbFilePath,
+                fileSize: latest.size,
+                mimeType: 'application/x-mrb'
+            });
+
+            res.json({
+                success: true,
+                status: "registered",
+                path: dbFilePath,
+                file: {
+                    id: fileRecord.id,
+                    originalName: fileRecord.originalName,
+                    size: fileRecord.fileSize,
+                    mimeType: fileRecord.mimeType,
+                    uploadDate: fileRecord.uploadDate
+                }
+            });
+        } catch (err) {
+            console.error("Error saving trame session:", err);
             res.status(500).json({ error: err.message });
         }
     });

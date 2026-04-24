@@ -153,6 +153,7 @@ export class TrameApp extends LitElement {
     this.user = user;
     this.isAuthenticated = true;
     this.name = user.username;
+    this.startInactivityTimer();
   }
 
   handleShowRegister() {

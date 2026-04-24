@@ -7,6 +7,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import json
+from pathlib import Path
+import threading
+import time
 
 from trame.app import get_server
 from trame.app.testing import enable_testing
@@ -42,6 +46,7 @@ class CustomMedicalViewer:
 
         # Add server-side file loading method
         self._register_file_loading()
+        self._start_save_request_watcher()
 
     @property
     def server(self):
@@ -84,6 +89,105 @@ class CustomMedicalViewer:
             # Force state update to client
             self._server.state.flush()
             print("File loading completed, state flushed")
+
+        @self._server.controller.add("save_current_scene")
+        def save_current_scene():
+            self._save_scene_to_disk()
+
+    def _save_scene_to_disk(self) -> bool:
+        """Save active scene to a stable path to avoid save-file clutter."""
+        output_dir = Path("/data")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / "last-saved-scene.mrb"
+        return self._save_scene_to_path(output_path)
+
+    def _save_scene_to_path(self, output_path: Path) -> bool:
+        """Persist the live scene directly to MRB at a target path."""
+        success = False
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Prefer the viewer's native save workflow when available, since it can
+            # apply viewer-specific state sync before writing.
+            load_logic = getattr(self._logic, "_load_files_logic", None)
+            if load_logic and hasattr(load_logic, "_on_save_scene"):
+                load_logic._on_save_scene(str(output_path))
+                success = output_path.exists() and output_path.stat().st_size > 0
+            else:
+                # Fallback: direct MRB write using atomic replace.
+                temp_output_path = output_path.with_suffix(f"{output_path.suffix}.tmp")
+                scene = self._slicer_app.scene
+                scene.SetURL(str(temp_output_path))
+                scene.SetRootDirectory(str(temp_output_path.parent))
+                success = bool(scene.WriteToMRB(str(temp_output_path)))
+                if success:
+                    temp_size = temp_output_path.stat().st_size if temp_output_path.exists() else 0
+                    if temp_size > 0:
+                        temp_output_path.replace(output_path)
+                    else:
+                        success = False
+            success = success and output_path.exists() and output_path.stat().st_size > 0
+        except Exception as err:
+            print(f"Save exception for {output_path}: {err}")
+            success = False
+
+        if success:
+            print(f"Scene saved successfully: {output_path} ({output_path.stat().st_size} bytes)")
+        else:
+            size = output_path.stat().st_size if output_path.exists() else 0
+            print(f"Failed to save scene: {output_path} (size={size})")
+        return success
+
+    def _start_save_request_watcher(self) -> None:
+        """Watch for JSON save requests created by the session manager in /tmp."""
+        request_pattern = "/tmp/trame-save-request-*.json"
+
+        def _watch():
+            while True:
+                try:
+                    import glob
+                    request_files = glob.glob(request_pattern)
+                    for request_file in request_files:
+                        req_path = Path(request_file)
+                        payload = {}
+                        try:
+                            payload = json.loads(req_path.read_text())
+                        except Exception:
+                            payload = {}
+                        req_path.unlink(missing_ok=True)
+
+                        request_id = str(payload.get("request_id", "unknown"))
+                        requested_path = payload.get("output_path")
+
+                        success = False
+                        output_path = None
+                        error_message = None
+                        try:
+                            if requested_path:
+                                output_path = Path(requested_path)
+                                success = self._save_scene_to_path(output_path)
+                            else:
+                                success = self._save_scene_to_disk()
+                                output_path = Path("/data/last-saved-scene.mrb")
+                        except Exception as err:
+                            error_message = str(err)
+                            success = False
+
+                        result_payload = {
+                            "request_id": request_id,
+                            "success": bool(success),
+                            "output_path": str(output_path) if output_path else "",
+                            "size": output_path.stat().st_size if output_path and output_path.exists() else 0,
+                            "error": error_message or "",
+                        }
+                        result_path = Path(f"/tmp/trame-save-result-{request_id}.json")
+                        result_path.write_text(json.dumps(result_payload))
+                except Exception as err:
+                    print(f"Save request watcher error: {err}")
+                time.sleep(0.5)
+
+        thread = threading.Thread(target=_watch, daemon=True)
+        thread.start()
 
     def load_input_file(self):
         """Load the input file specified at startup"""

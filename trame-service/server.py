@@ -29,6 +29,7 @@ IDLE_SHUTDOWN_MINUTES = int(os.getenv('IDLE_SHUTDOWN_MINUTES', '15'))
 
 # GPU support - set USE_GPU=false to disable for local testing without NVIDIA container runtime
 USE_GPU = os.getenv('USE_GPU', 'true').lower() not in ('false', '0', 'no')
+TRAME_IMAGE = os.getenv('TRAME_IMAGE', 'trame-slicer')
 
 
 def run_docker(args: List[str], check=True) -> subprocess.CompletedProcess:
@@ -180,6 +181,10 @@ class SessionResponse(BaseModel):
     containerName: str
 
 
+class SaveSessionRequest(BaseModel):
+    targetFileName: Optional[str] = None
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
@@ -274,11 +279,14 @@ async def start_session(request: StartSessionRequest):
             file_name = os.path.basename(file_path)
             container_cmd.extend(['--file', f'/data/{file_name}'])
 
-        docker_cmd.append('trame-slicer')
+        docker_cmd.append(TRAME_IMAGE)
         docker_cmd.extend(container_cmd)
         
         # Start container
-        logger.info(f"Starting container {container_name} on port {port}" + (f" with file {file_path}" if file_path else ""))
+        logger.info(
+            f"Starting container {container_name} from image {TRAME_IMAGE} on port {port}"
+            + (f" with file {file_path}" if file_path else "")
+        )
         
         result = run_docker(docker_cmd)
         
@@ -343,6 +351,87 @@ async def heartbeat(session_id: str):
     
     active_sessions[session_id]['last_activity'] = time.time()
     return {"status": "ok"}
+
+
+@app.post("/api/sessions/{session_id}/save")
+async def save_session(session_id: str, request: Optional[SaveSessionRequest] = None):
+    """Save the active Trame session scene into the mounted /data directory."""
+    if session_id not in active_sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session = active_sessions[session_id]
+    container_id = session["container_id"]
+    request = request or SaveSessionRequest()
+    requested_name = os.path.basename(request.targetFileName) if request.targetFileName else "last-saved-scene.mrb"
+    if not requested_name.lower().endswith(".mrb"):
+        requested_name = f"{requested_name}.mrb"
+    output_path = f"/data/{requested_name}"
+    request_id = f"{int(time.time() * 1000)}-{session_id}"
+
+    try:
+        # Ask the live viewer process to save by dropping a JSON request file.
+        request_file = f"/tmp/trame-save-request-{request_id}.json"
+        result_file = f"/tmp/trame-save-result-{request_id}.json"
+        logger.info(f"Save request {request_id}: target {output_path}")
+        run_docker(
+            [
+                "exec",
+                container_id,
+                "python3",
+                "-c",
+                (
+                    "import json; "
+                    f"payload={{'request_id': '{request_id}', 'output_path': '{output_path}'}}; "
+                    f"open('{request_file}','w').write(json.dumps(payload))"
+                ),
+            ]
+        )
+
+        # Wait for explicit result from the live viewer save watcher.
+        ready = False
+        result_payload = None
+        for _ in range(30):
+            probe = run_docker(
+                [
+                    "exec",
+                    container_id,
+                    "python3",
+                    "-c",
+                    (
+                        "import os; "
+                        f"p='{result_file}'; "
+                        "print(open(p).read() if os.path.exists(p) else '')"
+                    ),
+                ],
+                check=False,
+            )
+            raw = (probe.stdout or "").strip()
+            if raw:
+                try:
+                    result_payload = json.loads(raw)
+                    ready = True
+                    break
+                except Exception:
+                    pass
+            await asyncio.sleep(0.5)
+
+        if not ready:
+            raise RuntimeError(f"Timed out waiting for save result {result_file}")
+
+        # Cleanup result marker now that we've consumed it.
+        run_docker(["exec", container_id, "sh", "-lc", f"rm -f {result_file}"], check=False)
+
+        if not result_payload.get("success"):
+            raise RuntimeError(result_payload.get("error") or "Viewer save watcher reported failure")
+        if int(result_payload.get("size", 0)) <= 0:
+            raise RuntimeError(f"Saved file is empty: {output_path}")
+        logger.info(f"Save request {request_id} completed: {result_payload}")
+
+        session["last_activity"] = time.time()
+        return {"status": "saved", "sessionId": session_id, "path": output_path}
+    except Exception as err:
+        logger.error(f"Failed to save session {session_id}: {err}")
+        raise HTTPException(status_code=500, detail=f"Failed to save session: {err}")
 
 
 @app.get("/api/sessions")

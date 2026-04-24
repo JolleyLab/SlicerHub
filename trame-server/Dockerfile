@@ -60,6 +60,8 @@ WORKDIR /app
 # Copy the viewer entrypoint
 COPY ./viewer.py /app/viewer.py
 COPY ./start.sh /app/start.sh
+COPY ./viewer_overrides/widgets/save_client_files_button.py /app/viewer_lib/widgets/save_client_files_button.py
+COPY ./viewer_overrides/widgets/tools_strip.py /app/viewer_lib/widgets/tools_strip.py
 RUN chmod +x /app/start.sh
 
 # Expose port for Trame

@@ -4,6 +4,7 @@ import config from '../config/index.js';
 import { UnauthorizedError, ForbiddenError } from '../utils/errors.js';
 
 const { secret: JWT_SECRET, expiresIn: JWT_EXPIRES_IN } = config.jwt;
+const SESSION_IDLE_MINUTES = config.security.sessionIdleMinutes;
 
 /**
  * Generate JWT token for a user
@@ -47,12 +48,24 @@ export function authenticateToken(req, res, next) {
         const decoded = jwt.verify(token, JWT_SECRET);
 
         // Check if token is blacklisted (session deleted)
-        const session = db.prepare('SELECT id FROM sessions WHERE token_jti = ?')
+        const session = db.prepare('SELECT id, last_activity FROM sessions WHERE token_jti = ?')
             .get(decoded.jti);
 
         if (!session) {
             throw new UnauthorizedError('Invalid or expired session');
         }
+
+        // Enforce idle timeout server-side.
+        const lastActivityMs = session.last_activity ? new Date(session.last_activity).getTime() : 0;
+        const idleLimitMs = SESSION_IDLE_MINUTES * 60 * 1000;
+        if (!lastActivityMs || (Date.now() - lastActivityMs) > idleLimitMs) {
+            db.prepare('DELETE FROM sessions WHERE token_jti = ?').run(decoded.jti);
+            throw new UnauthorizedError('Session expired due to inactivity');
+        }
+
+        // Sliding activity window: refresh activity timestamp on each valid request.
+        db.prepare('UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE id = ?')
+            .run(session.id);
 
         // Attach user info to request
         req.user = {
@@ -91,8 +104,8 @@ export function requireAdmin(req, res, next) {
  */
 export function storeSession(userId, tokenJti, expiresAt, ipAddress, userAgent) {
     db.prepare(`
-        INSERT INTO sessions (user_id, token_jti, expires_at, ip_address, user_agent)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO sessions (user_id, token_jti, expires_at, last_activity, ip_address, user_agent)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
     `).run(userId, tokenJti, expiresAt, ipAddress, userAgent);
 }
 

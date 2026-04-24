@@ -212,6 +212,16 @@ export class FileManager extends LitElement {
                 font-weight: 500;
             }
 
+            .save-indicator {
+                background: #2e7d32;
+                color: white;
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 12px;
+                margin-right: 10px;
+                white-space: nowrap;
+            }
+
             .close-iframe-btn {
                 background: #f44336;
                 color: white;
@@ -233,6 +243,28 @@ export class FileManager extends LitElement {
                 margin-right: 8px;
             }
 
+            .save-scene-btn {
+                background: #4CAF50;
+                color: white;
+                border: none;
+                padding: 8px 20px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                margin-right: 8px;
+            }
+
+            .save-as-new-btn {
+                background: #FF9800;
+                color: white;
+                border: none;
+                padding: 8px 20px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                margin-right: 8px;
+            }
+
             .close-iframe-btn:hover {
                 background: #d32f2f;
             }
@@ -241,7 +273,27 @@ export class FileManager extends LitElement {
                 background: #1976D2;
             }
 
+            .save-scene-btn:hover {
+                background: #43A047;
+            }
+
+            .save-as-new-btn:hover {
+                background: #F57C00;
+            }
+
             .open-window-btn:disabled {
+                background: #ccc;
+                cursor: not-allowed;
+                opacity: 0.6;
+            }
+
+            .save-scene-btn:disabled {
+                background: #ccc;
+                cursor: not-allowed;
+                opacity: 0.6;
+            }
+
+            .save-as-new-btn:disabled {
                 background: #ccc;
                 cursor: not-allowed;
                 opacity: 0.6;
@@ -275,7 +327,11 @@ export class FileManager extends LitElement {
             launching: { type: Boolean },
             showIframe: { type: Boolean },
             iframeUrl: { type: String },
-            currentFileName: { type: String }
+            currentFileId: { type: Number },
+            currentFileName: { type: String },
+            currentStoredName: { type: String },
+            hasUnsavedChanges: { type: Boolean },
+            saveIndicatorMessage: { type: String }
         };
     }
 
@@ -292,8 +348,15 @@ export class FileManager extends LitElement {
         this.launching = false;
         this.showIframe = false;
         this.iframeUrl = '';
+        this.currentFileId = null;
         this.currentFileName = '';
+        this.currentStoredName = '';
         this.heartbeatInterval = null;
+        this.hasUnsavedChanges = false;
+        this.iframeActivityCleanup = null;
+        this.saveIndicatorMessage = '';
+        this.saveIndicatorTimeout = null;
+        this.saveIndicatorActivityCleanup = null;
     }
 
     connectedCallback() {
@@ -536,7 +599,9 @@ export class FileManager extends LitElement {
                 console.log('Trame container started, URL:', url);
 
                 // Show iframe immediately with loading message
+                this.currentFileId = file.id;
                 this.currentFileName = file.originalName;
+                this.currentStoredName = file.storedName || file.originalName;
                 this.iframeUrl = 'about:blank';
                 this.showIframe = true;
 
@@ -574,6 +639,7 @@ export class FileManager extends LitElement {
                     console.log('Loading Trame in iframe...');
                     this.iframeUrl = url;
                     this.success = `Launched ${file.originalName} in Trame`;
+                    this.hasUnsavedChanges = false;
 
                     // Start heartbeat to keep container alive
                     this.startHeartbeat();
@@ -602,25 +668,197 @@ export class FileManager extends LitElement {
 
     handleIframeLoad(e) {
         console.log('Iframe loaded successfully');
+        this.attachIframeActivityTracking();
     }
+    attachIframeActivityTracking() {
+        if (this.iframeActivityCleanup) {
+            this.iframeActivityCleanup();
+            this.iframeActivityCleanup = null;
+        }
+
+        try {
+            const iframe = this.shadowRoot.querySelector('.trame-iframe');
+            const iframeDoc = iframe?.contentWindow?.document;
+            if (!iframeDoc) return;
+
+            const markDirty = () => {
+                this.hasUnsavedChanges = true;
+            };
+            const events = ['pointerdown', 'keydown', 'input', 'change', 'wheel'];
+            events.forEach((eventName) => iframeDoc.addEventListener(eventName, markDirty, true));
+
+            this.iframeActivityCleanup = () => {
+                events.forEach((eventName) => iframeDoc.removeEventListener(eventName, markDirty, true));
+            };
+        } catch (err) {
+            console.log('Unable to attach iframe activity tracking:', err.message);
+        }
+    }
+
 
     handleIframeError(e) {
         console.error('Iframe error:', e);
         this.error = 'Failed to load Trame in iframe';
     }
 
-    async closeIframe() {
+    buildTimestampedFileName(originalName) {
+        const baseName = originalName || 'scene.mrb';
+        const dotIndex = baseName.lastIndexOf('.');
+        const hasExt = dotIndex > 0;
+        const namePart = hasExt ? baseName.slice(0, dotIndex) : baseName;
+        const extPart = hasExt ? baseName.slice(dotIndex) : '.mrb';
+
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+        return `${namePart}-${stamp}${extPart}`;
+    }
+
+    async saveCurrentScene(mode = 'overwrite') {
+        if (!this.iframeUrl || this.iframeUrl === 'about:blank') {
+            this.error = 'Trame is not ready yet';
+            return false;
+        }
+
+        try {
+            // Flush pending UI edits inside the iframe before server-side save.
+            try {
+                const iframe = this.shadowRoot.querySelector('.trame-iframe');
+                const iframeWin = iframe?.contentWindow;
+                const iframeDoc = iframeWin?.document;
+                iframeWin?.focus?.();
+                const active = iframeDoc?.activeElement;
+                if (active && typeof active.blur === 'function') {
+                    active.blur();
+                }
+            } catch (_) {
+                // Best effort only.
+            }
+
+            // Give Trame widgets a brief moment to commit changes.
+            await new Promise(resolve => setTimeout(resolve, 350));
+
+            const targetFileName = mode === 'saveAsNew'
+                ? this.buildTimestampedFileName(this.currentFileName)
+                : (this.currentStoredName || this.currentFileName || 'last-saved-scene.mrb');
+
+            const response = await fetch(`${API_URL}/api/containers/save`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'include',
+                body: JSON.stringify({
+                    saveMode: mode,
+                    targetFileName,
+                    fileId: this.currentFileId
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Save failed: ${response.status} - ${errorText}`);
+            }
+
+            await this.loadFiles();
+            await this.loadStats();
+
+            this.success = mode === 'saveAsNew'
+                ? `Scene saved as new file: ${targetFileName}`
+                : `Scene saved: ${targetFileName}`;
+            this.error = '';
+            this.hasUnsavedChanges = false;
+            this.showSaveIndicator(
+                mode === 'saveAsNew'
+                    ? 'Saved as new file'
+                    : 'Saved'
+            );
+            return true;
+        } catch (err) {
+            console.error('Save scene error:', err);
+            this.error = err.message || 'Failed to save scene';
+            return false;
+        }
+    }
+
+    showSaveIndicator(message) {
+        this.saveIndicatorMessage = message;
+
+        if (this.saveIndicatorTimeout) {
+            clearTimeout(this.saveIndicatorTimeout);
+            this.saveIndicatorTimeout = null;
+        }
+
+        const scheduleHide = () => {
+            if (this.saveIndicatorTimeout) {
+                clearTimeout(this.saveIndicatorTimeout);
+            }
+            this.saveIndicatorTimeout = setTimeout(() => {
+                this.saveIndicatorMessage = '';
+                if (this.saveIndicatorActivityCleanup) {
+                    this.saveIndicatorActivityCleanup();
+                    this.saveIndicatorActivityCleanup = null;
+                }
+            }, 3000);
+        };
+
+        if (!this.saveIndicatorActivityCleanup) {
+            const onActivity = () => scheduleHide();
+            const events = ['pointerdown', 'keydown', 'wheel', 'touchstart'];
+            events.forEach((eventName) => window.addEventListener(eventName, onActivity, true));
+            this.saveIndicatorActivityCleanup = () => {
+                events.forEach((eventName) => window.removeEventListener(eventName, onActivity, true));
+            };
+        }
+
+        scheduleHide();
+    }
+
+    async saveCurrentSceneAsNew() {
+        return this.saveCurrentScene('saveAsNew');
+    }
+
+    async closeIframe(withPrompt = true) {
+        if (withPrompt && this.hasUnsavedChanges && this.iframeUrl && this.iframeUrl !== 'about:blank') {
+            const shouldSave = window.confirm('Save scene before closing Trame?');
+            if (shouldSave) {
+                const saved = await this.saveCurrentScene('overwrite');
+                if (!saved) {
+                    const continueClose = window.confirm('Save failed. Close Trame anyway?');
+                    if (!continueClose) {
+                        return;
+                    }
+                }
+            }
+        }
+
         // Stop heartbeat
         this.stopHeartbeat();
 
         // Hide iframe
         this.showIframe = false;
         this.iframeUrl = '';
+        this.hasUnsavedChanges = false;
+        if (this.iframeActivityCleanup) {
+            this.iframeActivityCleanup();
+            this.iframeActivityCleanup = null;
+        }
+        if (this.saveIndicatorTimeout) {
+            clearTimeout(this.saveIndicatorTimeout);
+            this.saveIndicatorTimeout = null;
+        }
+        this.saveIndicatorMessage = '';
+        if (this.saveIndicatorActivityCleanup) {
+            this.saveIndicatorActivityCleanup();
+            this.saveIndicatorActivityCleanup = null;
+        }
 
         // Cleanup container
         await this.cleanupContainer();
         this.success = `Closed Trame session for ${this.currentFileName}`;
         this.currentFileName = '';
+        this.currentStoredName = '';
+        this.currentFileId = null;
     }
 
     openInNewWindow() {
@@ -760,8 +998,17 @@ export class FileManager extends LitElement {
                     <div class="iframe-header">
                         <div class="iframe-title">🚀 Trame: ${this.currentFileName}</div>
                         <div>
+                            ${this.saveIndicatorMessage ? html`
+                                <span class="save-indicator">${this.saveIndicatorMessage}</span>
+                            ` : ''}
                             <button class="open-window-btn" @click=${this.openInNewWindow} ?disabled=${this.iframeUrl === 'about:blank'}>
                                 🗗 Open in New Window
+                            </button>
+                            <button class="save-scene-btn" @click=${() => this.saveCurrentScene('overwrite')} ?disabled=${this.iframeUrl === 'about:blank'}>
+                                💾 Save Scene
+                            </button>
+                            <button class="save-as-new-btn" @click=${this.saveCurrentSceneAsNew} ?disabled=${this.iframeUrl === 'about:blank'}>
+                                🧾 Save As New
                             </button>
                             <button class="close-iframe-btn" @click=${this.closeIframe}>
                                 ✕ Close Trame

@@ -52,6 +52,18 @@ class File {
     }
 
     /**
+     * Update an existing file record's metadata
+     */
+    static updateMetadata(fileId, { originalName, filePath, fileSize, mimeType }) {
+        const stmt = db.prepare(`
+            UPDATE files
+            SET original_name = ?, file_path = ?, file_size = ?, mime_type = ?, upload_date = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `);
+        return stmt.run(originalName, filePath, fileSize, mimeType, fileId);
+    }
+
+    /**
      * Delete a file record
      */
     static delete(fileId) {

@@ -72,7 +72,8 @@ const config = {
     // Security
     security: {
         bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS || '10', 10),
-        passwordMinLength: parseInt(process.env.PASSWORD_MIN_LENGTH || '8', 10)
+        passwordMinLength: parseInt(process.env.PASSWORD_MIN_LENGTH || '8', 10),
+        sessionIdleMinutes: parseInt(process.env.SESSION_IDLE_MINUTES || '30', 10)
     }
 };
 

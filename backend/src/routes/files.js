@@ -105,6 +105,7 @@ export default function fileRoutes(app) {
         const formattedFiles = files.map(file => ({
             id: file.id,
             originalName: file.original_name,
+            storedName: file.stored_name,
             size: file.file_size,
             mimeType: file.mime_type,
             uploadDate: file.upload_date

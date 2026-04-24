@@ -31,6 +31,7 @@ services:
       - USE_GPU=true
       - IDLE_SHUTDOWN_MINUTES=15
       - WORKSPACE_ROOT=${PWD:-/workspace}
+      - TRAME_IMAGE=trame-slicer
     networks:
       - trame-net
 
@@ -89,6 +90,8 @@ services:
     container_name: cloudflared
     command: tunnel --no-autoupdate --protocol http2 --url http://nginx:80 run --token ${CLOUDFLARED_TUNNEL_TOKEN}
     restart: unless-stopped
+    profiles:
+      - cloudflare
     networks:
       - trame-net
     depends_on:

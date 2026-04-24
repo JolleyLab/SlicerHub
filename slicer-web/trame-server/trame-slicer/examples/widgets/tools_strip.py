@@ -28,7 +28,7 @@ class ToolsStrip(Div):
 
         with self:
             LoadClientVolumeFilesButton(server=server, slicer_app=slicer_app)
-            SaveClientFilesButton(server=server)
+            SaveClientFilesButton(server=server, slicer_app=slicer_app)
             VolumePropertyButton(server=server, slicer_app=slicer_app)
             LayoutButton(
                 server=server,

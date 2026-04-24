@@ -122,11 +122,19 @@ function initializeDatabase() {
             token_jti TEXT UNIQUE NOT NULL,
             expires_at DATETIME NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
             ip_address TEXT,
             user_agent TEXT,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )
     `);
+
+    // Backward-compatible migration for existing databases
+    try {
+        dbWrapper.exec('ALTER TABLE sessions ADD COLUMN last_activity DATETIME DEFAULT CURRENT_TIMESTAMP');
+    } catch (e) {
+        // Ignore if column already exists
+    }
 
     // Files table (for user file uploads)
     dbWrapper.exec(`
