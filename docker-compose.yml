@@ -1,8 +1,9 @@
 services:
-  # Trame GPU service
+  # Session image: same TRAME_IMAGE for build tag and for trame-service (avoids remote "wrong image" drift).
+  # Override in `.env`, e.g. TRAME_IMAGE=slicer-web-trame:dev-savebtn then: docker compose build trame-job
   trame-job:
     build: ./trame-server
-    image: trame-slicer
+    image: ${TRAME_IMAGE:-slicer-web-trame:local}
     container_name: trame-job
     environment:
       VTK_DEFAULT_OPENGL_WINDOW: vtkEGLRenderWindow
@@ -31,7 +32,7 @@ services:
       - USE_GPU=true
       - IDLE_SHUTDOWN_MINUTES=15
       - WORKSPACE_ROOT=${PWD:-/workspace}
-      - TRAME_IMAGE=trame-slicer
+      - TRAME_IMAGE=${TRAME_IMAGE:-slicer-web-trame:local}
     networks:
       - trame-net
 

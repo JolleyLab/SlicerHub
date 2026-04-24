@@ -66,7 +66,7 @@ const config = {
             ? '//./pipe/docker_engine'
             : '/var/run/docker.sock',
         network: process.env.DOCKER_NETWORK || 'trame-net',
-        defaultImage: process.env.DOCKER_IMAGE || 'trame-slicer'
+        defaultImage: process.env.DOCKER_IMAGE || 'slicer-web-trame:local'
     },
 
     // Security

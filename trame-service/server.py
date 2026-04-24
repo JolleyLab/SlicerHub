@@ -29,7 +29,7 @@ IDLE_SHUTDOWN_MINUTES = int(os.getenv('IDLE_SHUTDOWN_MINUTES', '15'))
 
 # GPU support - set USE_GPU=false to disable for local testing without NVIDIA container runtime
 USE_GPU = os.getenv('USE_GPU', 'true').lower() not in ('false', '0', 'no')
-TRAME_IMAGE = os.getenv('TRAME_IMAGE', 'trame-slicer')
+TRAME_IMAGE = (os.getenv('TRAME_IMAGE') or 'slicer-web-trame:local').strip() or 'slicer-web-trame:local'
 
 
 def run_docker(args: List[str], check=True) -> subprocess.CompletedProcess:
@@ -44,6 +44,40 @@ def run_docker(args: List[str], check=True) -> subprocess.CompletedProcess:
         raise
     except FileNotFoundError:
         raise RuntimeError("Docker CLI not found. Ensure Docker is installed.")
+
+
+def trame_image_inspect() -> dict:
+    """Return whether TRAME_IMAGE exists locally and basic metadata (for /health and startup)."""
+    r = run_docker(
+        [
+            'image', 'inspect', TRAME_IMAGE,
+            '--format', '{{.Id}}\t{{.Created}}\t{{json .RepoTags}}',
+        ],
+        check=False,
+    )
+    if r.returncode != 0:
+        return {
+            'present': False,
+            'id': None,
+            'created': None,
+            'repo_tags': [],
+            'inspect_error': (r.stderr or r.stdout or '').strip(),
+        }
+    parts = (r.stdout or '').strip().split('\t', 2)
+    img_id = parts[0] if parts else None
+    created = parts[1] if len(parts) > 1 else None
+    tags_raw = parts[2] if len(parts) > 2 else '[]'
+    try:
+        repo_tags = json.loads(tags_raw) if tags_raw else []
+    except json.JSONDecodeError:
+        repo_tags = [tags_raw] if tags_raw else []
+    return {
+        'present': True,
+        'id': img_id,
+        'created': created,
+        'repo_tags': repo_tags,
+        'inspect_error': None,
+    }
 
 
 def check_docker_available() -> bool:
@@ -136,6 +170,23 @@ async def check_idle_containers():
 async def lifespan(app: FastAPI):
     """Handle startup and shutdown"""
     logger.info("Trame service starting")
+    img = trame_image_inspect()
+    logger.info(
+        "TRAME_IMAGE=%s present=%s id=%s created=%s repo_tags=%s",
+        TRAME_IMAGE,
+        img.get('present'),
+        (img.get('id') or '')[:12] if img.get('id') else None,
+        img.get('created'),
+        img.get('repo_tags'),
+    )
+    if not img.get('present'):
+        logger.error(
+            "TRAME_IMAGE %s is not on this Docker host — session starts will fail until you "
+            "`docker compose build trame-job` (same TRAME_IMAGE in compose/.env) and "
+            "`docker compose up -d --force-recreate trame-service`. Inspect error: %s",
+            TRAME_IMAGE,
+            img.get('inspect_error'),
+        )
     
     # Check Docker availability
     if not check_docker_available():
@@ -189,10 +240,16 @@ class SaveSessionRequest(BaseModel):
 async def health_check():
     """Health check endpoint"""
     docker_ok = check_docker_available()
+    img = trame_image_inspect()
     return {
         "status": "healthy" if docker_ok else "degraded",
         "docker": "available" if docker_ok else "unavailable",
-        "active_sessions": len(active_sessions)
+        "active_sessions": len(active_sessions),
+        "trameImage": TRAME_IMAGE,
+        "trameImagePresent": img.get("present", False),
+        "trameImageId": img.get("id"),
+        "trameImageCreated": img.get("created"),
+        "trameRepoTags": img.get("repo_tags"),
     }
 
 
@@ -202,6 +259,19 @@ async def start_session(request: StartSessionRequest):
     
     if not check_docker_available():
         raise HTTPException(status_code=503, detail="Docker is not available")
+
+    img = trame_image_inspect()
+    if not img.get("present"):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Docker image not found: {TRAME_IMAGE}. "
+                "Build the session image on this host (same name as compose `trame-job.image`) "
+                "and recreate trame-service: `docker compose build trame-job && "
+                "docker compose up -d --force-recreate trame-service`. "
+                f"Docker said: {img.get('inspect_error') or 'unknown'}"
+            ),
+        )
     
     user_id = request.userId
     file_path = request.filePath

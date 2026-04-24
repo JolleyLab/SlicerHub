@@ -30,5 +30,5 @@ docker run --rm --gpus all nvidia/cuda:12.2.0-runtime-ubuntu22.04 nvidia-smi
 echo "=== Done! GPU is ready for Docker containers ==="
 echo "Next: git clone your repo, then run:"
 echo "  cd slicer-web"
-echo "  docker build -t trame-slicer ./trame-server"
+echo "  docker build -t slicer-web-trame:local ./trame-server"
 echo "  docker compose up"
