@@ -394,7 +394,13 @@ export class TrameApp extends LitElement {
       }
 
       const data = await res.json();
-      const url = data.frontendUrl;
+      let url = data.frontendUrl;
+      try {
+        const u = new URL(url, window.location.href);
+        url = `${window.location.origin}${u.pathname}${u.search}${u.hash}`;
+      } catch {
+        /* keep API url */
+      }
 
       if (this.useIframe) {
         // Wait a moment for Trame to fully start, then show iframe

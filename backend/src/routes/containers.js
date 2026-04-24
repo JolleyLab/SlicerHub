@@ -8,6 +8,25 @@ import http from "http";
 // Trame service configuration
 const TRAME_SERVICE_URL = process.env.TRAME_SERVICE_URL || "http://localhost:8090";
 
+/** Scheme the browser used to reach the app (not necessarily the Express↔nginx hop). */
+function getClientFacingProtocol(req) {
+    const chain = req.headers["x-forwarded-proto"];
+    if (chain) {
+        const first = chain.split(",")[0].trim().toLowerCase();
+        if (first === "https" || first === "http") return first;
+    }
+    const cf = req.headers["cf-visitor"];
+    if (cf) {
+        try {
+            const scheme = JSON.parse(cf).scheme;
+            if (scheme === "https" || scheme === "http") return scheme;
+        } catch {
+            /* ignore */
+        }
+    }
+    return req.protocol === "https" ? "https" : "http";
+}
+
 // Simple HTTP request helper
 function httpRequest(url, options = {}) {
     return new Promise((resolve, reject) => {
@@ -78,8 +97,8 @@ export default async function containerRoutes(app) {
             });
 
             // Return URL routed through nginx using userId so nginx can resolve the container by name
-            const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
-            const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+            const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
+            const protocol = getClientFacingProtocol(req);
             const frontendUrl = `${protocol}://${host}/trame-session/user-${sessionData.userId}/`;
 
             res.json({

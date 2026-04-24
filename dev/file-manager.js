@@ -1,6 +1,17 @@
 import { LitElement, html, css } from 'lit-element';
 import { API_URL } from './config.js';
 
+/** Match Trame URL to this tab's origin so polling/iframe work when the API returns http:// behind an https edge. */
+function resolveTramePageUrl(frontendUrl) {
+    if (!frontendUrl) return '';
+    try {
+        const u = new URL(frontendUrl, window.location.href);
+        return `${window.location.origin}${u.pathname}${u.search}${u.hash}`;
+    } catch {
+        return frontendUrl;
+    }
+}
+
 export class FileManager extends LitElement {
     static get styles() {
         return css`
@@ -595,7 +606,7 @@ export class FileManager extends LitElement {
 
             if (response.ok) {
                 const data = await response.json();
-                const url = data.frontendUrl;
+                const url = resolveTramePageUrl(data.frontendUrl);
                 console.log('Trame container started, URL:', url);
 
                 // Show iframe immediately with loading message
