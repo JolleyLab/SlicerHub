@@ -3,6 +3,7 @@ import { API_URL } from './config.js';
 import './login-form.js';
 import './register-form.js';
 import './file-manager.js';
+import './user-menu.js';
 
 export class TrameApp extends LitElement {
   static get styles() {
@@ -289,7 +290,10 @@ export class TrameApp extends LitElement {
         <div class="user-info">
           <span class="user-name">Welcome, ${this.user.username}!</span>
         </div>
-        <button class="logout-btn" @click=${this.handleLogout}>Logout</button>
+        <user-menu
+          username=${this.user.username}
+          @logout-request=${this.handleLogout}>
+        </user-menu>
       </div>
       
       <!-- Old Trame controls - commented out but kept for reference
