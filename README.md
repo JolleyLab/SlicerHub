@@ -1,6 +1,17 @@
-# LitElement JavaScript starter 
+# slicer-web
 
-This project includes a sample component using LitElement with JavaScript.
+GPU-enabled web application for file management and medical visualization workflows.
+
+## License
+
+This repository currently includes the existing BSD-3-Clause license in `LICENSE`.
+
+## Runtime Licensing Note (Important)
+
+Some GPU deployment paths use NVIDIA container/runtime components with separate license terms.
+
+- Those runtime terms are separate from this repository's source code license.
+- See `THIRD_PARTY_RUNTIME.md` for details and current distribution guidance.
 
 ## Setup
 

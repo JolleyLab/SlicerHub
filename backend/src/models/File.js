@@ -7,17 +7,18 @@ class File {
     /**
      * Create a new file record
      */
-    static create({ userId, originalName, storedName, filePath, fileSize, mimeType }) {
+    static create({ userId, projectId = null, originalName, storedName, filePath, fileSize, mimeType }) {
         const stmt = db.prepare(`
-            INSERT INTO files (user_id, original_name, stored_name, file_path, file_size, mime_type)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO files (user_id, project_id, original_name, stored_name, file_path, file_size, mime_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         `);
 
-        const result = stmt.run(userId, originalName, storedName, filePath, fileSize, mimeType);
+        const result = stmt.run(userId, projectId, originalName, storedName, filePath, fileSize, mimeType);
 
         return {
             id: result.lastInsertRowid,
             userId,
+            projectId,
             originalName,
             storedName,
             filePath,
@@ -33,6 +34,14 @@ class File {
     static findByUserId(userId) {
         const stmt = db.prepare('SELECT * FROM files WHERE user_id = ? ORDER BY upload_date DESC');
         return stmt.all(userId);
+    }
+
+    /**
+     * Find all files for a project
+     */
+    static findByProjectId(projectId) {
+        const stmt = db.prepare('SELECT * FROM files WHERE project_id = ? ORDER BY upload_date DESC, id DESC');
+        return stmt.all(projectId);
     }
 
     /**

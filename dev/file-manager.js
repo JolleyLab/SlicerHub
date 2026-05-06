@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit-element';
 import { API_URL } from './config.js';
+import { initializeTheme } from './components/theme.js';
 
 /** Match Trame URL to this tab's origin so polling/iframe work when the API returns http:// behind an https edge. */
 function resolveTramePageUrl(frontendUrl) {
@@ -18,6 +19,9 @@ export class FileManager extends LitElement {
             :host {
                 display: block;
                 padding: 20px;
+                color: var(--color-text-primary);
+                font-family: var(--font-family-base);
+                font-feature-settings: var(--font-feature-defaults);
             }
 
             .file-manager {
@@ -28,6 +32,17 @@ export class FileManager extends LitElement {
             h2 {
                 margin-top: 0;
                 color: #333;
+            }
+
+            .dev-projects-button {
+                margin-bottom: 14px;
+                padding: 8px 12px;
+                border: 1px dashed #666;
+                border-radius: 8px;
+                background: #f5f5f5;
+                color: #333;
+                font: inherit;
+                cursor: pointer;
             }
 
             .upload-area {
@@ -157,6 +172,15 @@ export class FileManager extends LitElement {
 
             .delete-btn:hover {
                 background: #d32f2f;
+            }
+
+            .share-btn {
+                background: #673ab7;
+                color: white;
+            }
+
+            .share-btn:hover {
+                background: #5e35b1;
             }
 
             .error {
@@ -322,6 +346,105 @@ export class FileManager extends LitElement {
                 width: 100%;
                 height: 100%;
             }
+
+            .share-dialog-overlay {
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.45);
+                z-index: 1100;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 16px;
+            }
+
+            .share-dialog {
+                background: var(--color-surface, var(--color-background));
+                color: var(--color-text-primary);
+                border: 1px solid var(--color-border);
+                border-radius: 10px;
+                width: min(520px, 100%);
+                padding: 16px;
+                box-shadow: 0 8px 30px var(--color-shadow, rgba(0, 0, 0, 0.25));
+            }
+
+            .share-dialog h3 {
+                margin: 0 0 12px;
+            }
+
+            .share-field {
+                margin: 10px 0;
+            }
+
+            .share-field label {
+                display: block;
+                margin-bottom: 6px;
+                font-size: 14px;
+                color: var(--color-text-primary);
+                font-weight: 500;
+            }
+
+            .share-field select,
+            .share-field input {
+                width: 100%;
+                padding: 8px 10px;
+                border: 1px solid var(--color-border);
+                border-radius: 10px;
+                box-sizing: border-box;
+                font-size: 14px;
+                font: inherit;
+                color: var(--color-text-primary);
+                background: var(--color-surface, var(--color-background));
+            }
+
+            .share-help {
+                font-size: 12px;
+                color: var(--color-text-secondary);
+                margin-top: 6px;
+            }
+
+            .share-dialog-actions {
+                display: flex;
+                justify-content: flex-end;
+                gap: 8px;
+                margin-top: 14px;
+            }
+
+            .secondary-button,
+            .primary-button {
+                border: 1px solid var(--color-border);
+                border-radius: 10px;
+                min-height: 42px;
+                padding: 8px 16px;
+                font: inherit;
+                font-weight: 600;
+                cursor: pointer;
+            }
+
+            .secondary-button {
+                background: transparent;
+                color: var(--color-text-primary);
+            }
+
+            .primary-button {
+                background: var(--color-primary);
+                color: var(--color-background);
+            }
+
+            .primary-button:hover,
+            .primary-button:focus-visible {
+                background: var(--color-accent);
+                color: var(--color-text-primary);
+                outline: none;
+                transform: translateY(-1px);
+            }
+
+            .primary-button:disabled,
+            .secondary-button:disabled {
+                opacity: 0.6;
+                cursor: not-allowed;
+                transform: none;
+            }
         `;
     }
 
@@ -342,12 +465,19 @@ export class FileManager extends LitElement {
             currentFileName: { type: String },
             currentStoredName: { type: String },
             hasUnsavedChanges: { type: Boolean },
-            saveIndicatorMessage: { type: String }
+            saveIndicatorMessage: { type: String },
+            sharingFileId: { type: Number },
+            showShareDialog: { type: Boolean },
+            shareTargetFile: { type: Object },
+            shareDurationHours: { type: Number },
+            shareAllowedEmails: { type: String },
+            shareDialogError: { type: String }
         };
     }
 
     constructor() {
         super();
+        initializeTheme();
         this.files = [];
         this.selectedFile = null;
         this.uploading = false;
@@ -368,6 +498,12 @@ export class FileManager extends LitElement {
         this.saveIndicatorMessage = '';
         this.saveIndicatorTimeout = null;
         this.saveIndicatorActivityCleanup = null;
+        this.sharingFileId = null;
+        this.showShareDialog = false;
+        this.shareTargetFile = null;
+        this.shareDurationHours = 72;
+        this.shareAllowedEmails = '';
+        this.shareDialogError = '';
     }
 
     connectedCallback() {
@@ -563,6 +699,86 @@ export class FileManager extends LitElement {
         } catch (err) {
             console.error('Delete error:', err);
             this.error = 'Network error during delete';
+        }
+    }
+
+    openShareDialog(file) {
+        this.shareTargetFile = file;
+        this.shareDurationHours = 72;
+        this.shareAllowedEmails = '';
+        this.shareDialogError = '';
+        this.showShareDialog = true;
+    }
+
+    closeShareDialog() {
+        this.showShareDialog = false;
+        this.shareTargetFile = null;
+        this.shareDialogError = '';
+    }
+
+    async createShareLink() {
+        const file = this.shareTargetFile;
+        if (!file?.id) return;
+        this.error = '';
+        this.success = '';
+        this.sharingFileId = file.id;
+        try {
+            const rawEmails = this.shareAllowedEmails
+                .split(',')
+                .map((email) => email.trim())
+                .filter((email) => email.length > 0);
+
+            const uniqueEmails = [...new Set(rawEmails)];
+            const allowedUserIds = [];
+            for (const email of uniqueEmails) {
+                const userResponse = await fetch(`${API_URL}/api/users/lookup?email=${encodeURIComponent(email)}`, {
+                    credentials: 'include'
+                });
+                const userData = await userResponse.json().catch(() => ({}));
+                if (!userResponse.ok) {
+                    const msg = userData?.error?.message || userData?.message || `Could not resolve user: ${email}`;
+                    throw new Error(msg);
+                }
+                if (userData?.user?.id) {
+                    allowedUserIds.push(userData.user.id);
+                }
+            }
+
+            const response = await fetch(`${API_URL}/api/files/${file.id}/share-links`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    expiresInHours: Number(this.shareDurationHours || 72),
+                    allowedUserIds
+                })
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                this.shareDialogError = data?.error?.message || data?.message || 'Failed to create share link';
+                return;
+            }
+
+            const shareUrl = data?.shareLink?.url;
+            if (!shareUrl) {
+                this.error = 'Share link was created but no URL was returned';
+                return;
+            }
+
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(shareUrl);
+                this.success = `Read-only share link copied for ${file.originalName}`;
+            } else {
+                this.success = `Read-only share link: ${shareUrl}`;
+            }
+            this.closeShareDialog();
+        } catch (err) {
+            console.error('Share link creation error:', err);
+            this.shareDialogError = err.message || 'Failed to create share link';
+        } finally {
+            this.sharingFileId = null;
         }
     }
 
@@ -924,10 +1140,20 @@ export class FileManager extends LitElement {
         });
     }
 
+    openProjectsFlowForTesting() {
+        this.dispatchEvent(new CustomEvent('open-projects-flow', {
+            bubbles: true,
+            composed: true
+        }));
+    }
+
     render() {
         return html`
             <div class="file-manager">
                 <h2>📁 File Manager</h2>
+                <button class="dev-projects-button" type="button" @click=${() => this.openProjectsFlowForTesting()}>
+                    Open Projects Flow (Dev)
+                </button>
 
                 ${this.error ? html`<div class="error">${this.error}</div>` : ''}
                 ${this.success ? html`<div class="success">${this.success}</div>` : ''}
@@ -995,6 +1221,13 @@ export class FileManager extends LitElement {
                                 <button class="action-btn download-btn" @click=${() => this.downloadFile(file)}>
                                     ⬇️ Download
                                 </button>
+                                <button
+                                    class="action-btn share-btn"
+                                    @click=${() => this.openShareDialog(file)}
+                                    ?disabled=${this.sharingFileId === file.id}
+                                >
+                                    ${this.sharingFileId === file.id ? 'Creating...' : '🔗 Share'}
+                                </button>
                                 <button class="action-btn delete-btn" @click=${() => this.deleteFile(file)}>
                                     🗑️ Delete
                                 </button>
@@ -1047,6 +1280,47 @@ export class FileManager extends LitElement {
                                 referrerpolicy="origin"
                             ></iframe>
                         `}
+                    </div>
+                </div>
+            ` : ''}
+
+            ${this.showShareDialog ? html`
+                <div class="share-dialog-overlay" @click=${(e) => { if (e.target === e.currentTarget) this.closeShareDialog(); }}>
+                    <div class="share-dialog">
+                        <h3>Create Share Link</h3>
+                        <div><strong>File:</strong> ${this.shareTargetFile?.originalName || ''}</div>
+                        ${this.shareDialogError ? html`<div class="error" style="margin-top:10px;">${this.shareDialogError}</div>` : ''}
+                        <div class="share-field">
+                            <label for="shareDuration">Link duration</label>
+                            <select
+                                id="shareDuration"
+                                .value=${String(this.shareDurationHours)}
+                                @change=${(e) => { this.shareDurationHours = Number(e.target.value); }}
+                            >
+                                <option value="1">1 hour</option>
+                                <option value="24">24 hours</option>
+                                <option value="72">3 days</option>
+                                <option value="168">7 days</option>
+                                <option value="720">30 days</option>
+                            </select>
+                        </div>
+                        <div class="share-field">
+                            <label for="shareEmails">Restrict to users (optional, comma-separated emails)</label>
+                            <input
+                                id="shareEmails"
+                                type="text"
+                                .value=${this.shareAllowedEmails}
+                                @input=${(e) => { this.shareAllowedEmails = e.target.value; }}
+                                placeholder="alice@example.com, bob@example.com"
+                            />
+                            <div class="share-help">Leave empty for anyone with the link. If set, recipients must sign in.</div>
+                        </div>
+                        <div class="share-dialog-actions">
+                            <button class="secondary-button" @click=${this.closeShareDialog}>Cancel</button>
+                            <button class="primary-button" @click=${this.createShareLink} ?disabled=${this.sharingFileId === this.shareTargetFile?.id}>
+                                ${this.sharingFileId === this.shareTargetFile?.id ? 'Creating...' : 'Create Link'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             ` : ''}

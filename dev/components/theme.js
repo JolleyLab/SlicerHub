@@ -3,6 +3,7 @@ export const UI_COLOR_SCHEMES = {
         background: '#ecf4f9',
         textPrimary: '#040316',
         textSecondary: '#0c0941',
+        textContrast: '#040316',
         primary: '#074174',
         secondary: '#167aac',
         accent: '#5cebd8',
@@ -12,9 +13,11 @@ export const UI_COLOR_SCHEMES = {
         background: '#060e13',
         textPrimary: '#eae9fc',
         textSecondary: '#c1bef6',
+        textContrast: '#060e13',
         primary: '#8bc5f8',
         secondary: '#53b7e9',
-        accent: '#14a390'
+        accent: '#14a390',
+        border: '#2b3a45'
     }
 };
 

@@ -8,6 +8,8 @@ import config from "./config/index.js";
 import containerRoutes from "./routes/containers.js";
 import authRoutes from "./routes/auth.js";
 import fileRoutes from "./routes/files.js";
+import userRoutes from "./routes/users.js";
+import projectRoutes from "./routes/projects.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 
 // ---------------------
@@ -30,7 +32,7 @@ app.use(cookieParser());
 // Enable CORS for your frontend
 app.use(cors({
     origin: config.server.corsOrigins,
-    methods: ["GET", "POST", "DELETE"],
+    methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true
 }));
 
@@ -39,6 +41,12 @@ authRoutes(app);
 
 // Register file routes
 fileRoutes(app);
+
+// Register user routes
+userRoutes(app);
+
+// Register project routes
+projectRoutes(app);
 
 // Register container routes
 containerRoutes(app);

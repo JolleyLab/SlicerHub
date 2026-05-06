@@ -5,9 +5,8 @@ export class UserMenu extends LitElement {
     static get styles() {
         return css`
             :host {
-                display: flex;
-                flex-direction: column;
-                gap: 10px;
+                position: relative;
+                display: inline-flex;
                 align-items: center;
                 font-family: var(--font-family-base);
                 font-feature-settings: var(--font-feature-defaults);
@@ -17,7 +16,7 @@ export class UserMenu extends LitElement {
                 border: 1px solid var(--color-border);
                 border-radius: 50%;
                 background: var(--color-accent);
-                color: var(--color-text-primary);
+                color: var(--color-text-contrast);
                 padding: 12px;
                 cursor: pointer;
                 width: 40px;
@@ -28,12 +27,48 @@ export class UserMenu extends LitElement {
             }
 
             .menu {
+                position: absolute;
+                top: calc(100% + 10px);
+                right: 0;
                 justify-content: space-around;
                 width: 220px;
                 background-color: var(--color-background);
+                border: 1px solid var(--color-border);
                 border-radius: 8px;
                 overflow: hidden;
-                z-index: 2;
+                box-shadow: 0 10px 28px var(--color-shadow, rgba(0, 0, 0, 0.16));
+                z-index: 20;
+            }
+
+            .menu::before {
+                content: '';
+                position: absolute;
+                bottom: 100%;
+                right: 14px;
+                border: 7px solid transparent;
+                border-bottom-color: var(--color-border);
+            }
+
+            .menu::after {
+                content: '';
+                position: absolute;
+                bottom: 100%;
+                right: 14px;
+                margin-bottom: -1px;
+                border: 7px solid transparent;
+                border-bottom-color: var(--color-background);
+            }
+
+            :host-context([data-theme='dark']) .menu {
+                top: calc(100% + 18px);
+                border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+                box-shadow:
+                    0 0 0 1px color-mix(in srgb, var(--color-primary) 28%, transparent),
+                    0 14px 28px rgba(0, 0, 0, 0.35);
+            }
+
+            :host-context([data-theme='dark']) .menu::before {
+                border-bottom-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
             }
 
             .menu-item {
@@ -74,8 +109,22 @@ export class UserMenu extends LitElement {
                 font-weight: 300;
             }
 
-            .theme-toggle-label {
+            .theme-toggle-control {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .theme-icon {
                 font-size: 14px;
+                line-height: 1;
+                opacity: 0.45;
+                transition: opacity 0.2s ease, transform 0.2s ease;
+            }
+
+            .theme-icon.active {
+                opacity: 1;
+                transform: scale(1.08);
             }
 
             .switch {
@@ -178,11 +227,15 @@ export class UserMenu extends LitElement {
                     <div class="menu-title">Signed in as ${this.username}</div>
                     <hr>
                     <div class="theme-toggle-row">
-                        <span class="theme-toggle-label">Enable Dark Mode</span>
-                        <label class="switch" aria-label="Toggle theme">
-                            <input type="checkbox" .checked=${isDarkTheme} @change=${this.toggleTheme}>
-                            <span class="slider"></span>
-                        </label>
+                        <span>Theme</span>
+                        <div class="theme-toggle-control">
+                            <span class="theme-icon ${isDarkTheme ? '' : 'active'}" title="Light mode">☀</span>
+                            <label class="switch" aria-label="Toggle theme">
+                                <input type="checkbox" .checked=${isDarkTheme} @change=${this.toggleTheme}>
+                                <span class="slider"></span>
+                            </label>
+                            <span class="theme-icon ${isDarkTheme ? 'active' : ''}" title="Dark mode">🌙</span>
+                        </div>
                     </div>
                     <button class="menu-item" @click=${this.requestLogout}>Logout</button>
                 </div>

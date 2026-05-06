@@ -1,5 +1,6 @@
 import { authenticateToken } from "../middleware/authMiddleware.js";
 import File from "../models/File.js";
+import Project from "../models/Project.js";
 import path from "path";
 import fs from "fs";
 import https from "https";
@@ -78,9 +79,35 @@ export default async function containerRoutes(app) {
             // If fileId provided, get the file path
             if (fileId) {
                 const file = File.findById(fileId);
-                if (file && file.user_id === req.user.id) {
-                    // Extract just the filename, since it will be mounted at /data in container
-                    filePath = path.basename(file.file_path);
+                const projectId = Number(file?.project_id);
+                const projectRole = Number.isInteger(projectId) && projectId > 0
+                    ? Project.findForUser({ projectId, userId: req.user.id })?.userRole
+                    : null;
+                const canAccess = !!file && (
+                    file.user_id === req.user.id
+                    || projectRole === 'admin'
+                    || projectRole === 'collaborator'
+                    || projectRole === 'observer'
+                );
+
+                if (canAccess) {
+                    // Trame service mounts the launching user's directory. If this file belongs to
+                    // someone else, stage a local copy in the launcher's folder first.
+                    if (file.user_id !== req.user.id) {
+                        const launcherDir = path.join('userFiles', userId);
+                        fs.mkdirSync(launcherDir, { recursive: true });
+
+                        const sourcePath = file.file_path;
+                        if (sourcePath && fs.existsSync(sourcePath)) {
+                            const sharedName = `shared-${file.id}-${path.basename(sourcePath)}`;
+                            const targetPath = path.join(launcherDir, sharedName);
+                            fs.copyFileSync(sourcePath, targetPath);
+                            filePath = sharedName;
+                        }
+                    } else {
+                        // Extract just the filename, since it will be mounted at /data in container.
+                        filePath = path.basename(file.file_path);
+                    }
                 }
             }
 

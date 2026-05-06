@@ -3,14 +3,18 @@ import { API_URL } from './config.js';
 import './login-form.js';
 import './register-form.js';
 import './file-manager.js';
-import './user-menu.js';
+import './components/user-menu.js';
+import './components/status-card.js';
+import './MyProjects/myProjectsEmptyState.js';
+import './MyProjects/createProjectForm.js';
+import './MyProjects/projectReviewPage.js';
 
 export class TrameApp extends LitElement {
   static get styles() {
     return css`
       :host {
         display: block;
-        padding: 16px;
+        padding: 0;
       }
 
       .header {
@@ -20,7 +24,7 @@ export class TrameApp extends LitElement {
         padding: 10px 16px;
         background: #f5f5f5;
         border-bottom: 1px solid #ddd;
-        margin: -16px -16px 16px -16px;
+        margin: 0 0 16px 0;
       }
 
       .user-info {
@@ -98,7 +102,15 @@ export class TrameApp extends LitElement {
       // Auth properties
       isAuthenticated: { type: Boolean },
       user: { type: Object },
-      showLogin: { type: Boolean }
+      showLogin: { type: Boolean },
+      currentView: { type: String },
+      selectedProjectId: { type: Number },
+      shareToken: { type: String },
+      shareLoading: { type: Boolean },
+      shareError: { type: String },
+      shareErrorStatus: { type: Number },
+      shareIframeUrl: { type: String },
+      shareFileName: { type: String }
     };
   }
 
@@ -115,10 +127,20 @@ export class TrameApp extends LitElement {
     this.isAuthenticated = false;
     this.user = null;
     this.showLogin = true; // Show login by default
+    this.currentView = 'projects';
+    this.selectedProjectId = null;
     this.inactivityTimeout = null;
+    this.shareToken = new URLSearchParams(window.location.search).get('share') || '';
+    this.shareLoading = false;
+    this.shareError = '';
+    this.shareErrorStatus = 0;
+    this.shareIframeUrl = '';
+    this.shareFileName = '';
 
     // Check for existing session
-    this.checkExistingSession();
+    if (!this.shareToken) {
+      this.checkExistingSession();
+    }
   }
 
 
@@ -163,6 +185,30 @@ export class TrameApp extends LitElement {
 
   handleShowLogin() {
     this.showLogin = true;
+  }
+
+  openProjectsFlow() {
+    this.currentView = 'projects';
+  }
+
+  openCreateProjectFlow() {
+    this.currentView = 'create-project';
+  }
+
+  openProjectReviewFlow(e) {
+    this.selectedProjectId = Number(e.detail?.projectId);
+    this.currentView = 'project-review';
+  }
+
+  handleProjectsMenuSelection(e) {
+    const selectedKey = e.detail?.selectedKey;
+    if (selectedKey === 'my-files') {
+      this.currentView = 'files';
+      return;
+    }
+    if (selectedKey === 'my-projects') {
+      this.currentView = 'projects';
+    }
   }
 
   startInactivityTimer() {
@@ -240,6 +286,10 @@ export class TrameApp extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    if (this.shareToken) {
+      this.launchSharedViewer();
+      return;
+    }
     // Cleanup any existing containers when page loads
     if (this.isAuthenticated) {
       this.cleanupContainer();
@@ -266,6 +316,55 @@ export class TrameApp extends LitElement {
   }
 
   render() {
+    if (this.shareToken) {
+      if (this.shareLoading) {
+        return html`<div class="auth-container">Loading shared viewer...</div>`;
+      }
+      if (this.shareError) {
+        const requiresSignIn = this.shareErrorStatus === 403 && this.shareError.toLowerCase().includes('sign in');
+        const signInUrl = `${window.location.pathname}${window.location.search}`;
+        return html`
+          <div class="auth-container">
+            <status-card
+              tone="error"
+              title="Unable to open shared file"
+              .message=${this.shareError}
+            >
+              ${requiresSignIn ? html`
+                <button
+                  slot="actions"
+                  class="primary"
+                  @click=${() => { window.location.href = signInUrl; }}
+                >
+                  Sign in and retry
+                </button>
+              ` : ''}
+              <button
+                slot="actions"
+                @click=${() => this.launchSharedViewer()}
+              >
+                Try again
+              </button>
+              <button
+                slot="actions"
+                @click=${() => { window.location.href = '/'; }}
+              >
+                Back to app
+              </button>
+            </status-card>
+          </div>
+        `;
+      }
+      return html`
+        <div class="header">
+          <div class="user-info">
+            <span class="user-name">Shared Read-Only Viewer: ${this.shareFileName || 'File'}</span>
+          </div>
+        </div>
+        <iframe src="${this.shareIframeUrl}"></iframe>
+      `;
+    }
+
     // Show auth forms if not authenticated
     if (!this.isAuthenticated) {
       return html`
@@ -286,15 +385,17 @@ export class TrameApp extends LitElement {
 
     // Show main app if authenticated
     return html`
-      <div class="header">
-        <div class="user-info">
-          <span class="user-name">Welcome, ${this.user.username}!</span>
+      ${this.currentView === 'files' ? html`
+        <div class="header">
+          <div class="user-info">
+            <span class="user-name">Welcome, ${this.user.username}!</span>
+          </div>
+          <user-menu
+            username=${this.user.username}
+            @logout-request=${this.handleLogout}>
+          </user-menu>
         </div>
-        <user-menu
-          username=${this.user.username}
-          @logout-request=${this.handleLogout}>
-        </user-menu>
-      </div>
+      ` : ''}
       
       <!-- Old Trame controls - commented out but kept for reference
       <div class="controls">
@@ -325,8 +426,33 @@ export class TrameApp extends LitElement {
       ` : ''}
       -->
 
-      <!-- File Manager Section -->
-      <file-manager></file-manager>
+      ${this.currentView === 'files' ? html`
+        <file-manager @open-projects-flow=${this.openProjectsFlow}></file-manager>
+      ` : ''}
+      ${this.currentView === 'projects' ? html`
+        <my-projects-landing-page
+          .username=${this.user?.username || 'Guest'}
+          @menu-selection-change=${this.handleProjectsMenuSelection}
+          @create-project-request=${this.openCreateProjectFlow}
+          @project-selected=${this.openProjectReviewFlow}
+          @logout-request=${this.handleLogout}
+        ></my-projects-landing-page>
+      ` : ''}
+      ${this.currentView === 'create-project' ? html`
+        <create-project-form
+          .username=${this.user?.username || 'Guest'}
+          @menu-selection-change=${this.handleProjectsMenuSelection}
+          @logout-request=${this.handleLogout}
+        ></create-project-form>
+      ` : ''}
+      ${this.currentView === 'project-review' ? html`
+        <project-review-page
+          .username=${this.user?.username || 'Guest'}
+          .projectId=${this.selectedProjectId}
+          @menu-selection-change=${this.handleProjectsMenuSelection}
+          @logout-request=${this.handleLogout}
+        ></project-review-page>
+      ` : ''}
     `;
   }
 
@@ -452,6 +578,49 @@ export class TrameApp extends LitElement {
       await new Promise(r => setTimeout(r, interval));
     }
     throw new Error("Trame app did not become ready in time");
+  }
+
+  async launchSharedViewer() {
+    if (!this.shareToken) return;
+    this.shareLoading = true;
+    this.shareError = '';
+    this.shareErrorStatus = 0;
+
+    try {
+      const response = await fetch(`${API_URL}/api/share-links/${encodeURIComponent(this.shareToken)}/launch`, {
+        credentials: 'include'
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        this.shareErrorStatus = response.status;
+        const backendMessage = data?.error?.message || data?.message || '';
+        if (response.status === 404) {
+          this.shareError = 'This share link is invalid, expired, or the file is no longer available.';
+        } else if (response.status === 403 && backendMessage.toLowerCase().includes('sign in')) {
+          this.shareError = 'This shared file is restricted. Please sign in with an allowed account.';
+        } else if (response.status === 403) {
+          this.shareError = 'Your account is not allowed to access this shared file.';
+        } else {
+          this.shareError = backendMessage || 'Failed to open shared file.';
+        }
+        return;
+      }
+
+      const url = data?.frontendUrl;
+      if (!url) {
+        this.shareError = 'Unable to open shared viewer';
+        return;
+      }
+
+      this.shareIframeUrl = url;
+      this.shareFileName = data?.file?.originalName || 'Shared file';
+    } catch (err) {
+      console.error('Shared viewer launch error:', err);
+      this.shareError = 'Failed to load shared viewer';
+      this.shareErrorStatus = 0;
+    } finally {
+      this.shareLoading = false;
+    }
   }
 }
 

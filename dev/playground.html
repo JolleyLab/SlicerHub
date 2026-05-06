@@ -36,29 +36,117 @@
             min-height: 100vh;
             background: var(--color-background, #f5f5f5);
             color: var(--color-text-primary, #222222);
-            padding: 24px;
+            padding: 16px;
             box-sizing: border-box;
         }
 
+        .page-layout {
+            display: grid;
+            grid-template-columns: 240px minmax(0, 1fr);
+            gap: 16px;
+            align-items: start;
+        }
+
+        .left-rail {
+            align-self: start;
+        }
+
         .playground-shell {
-            max-width: 720px;
-            margin: 0 auto;
+            width: 100%;
+            max-width: 960px;
             background: var(--color-surface, #ffffff);
             border: 1px solid var(--color-border, #dddddd);
             border-radius: 10px;
             padding: 20px;
             box-shadow: 0 6px 18px var(--color-shadow, rgba(0, 0, 0, 0.1));
         }
+
+        .layout-preview {
+            display: grid;
+            grid-template-columns: 220px 1fr;
+            gap: 16px;
+            margin-top: 16px;
+            align-items: start;
+        }
+
+        .preview-content {
+            border: 1px dashed var(--color-border, #dddddd);
+            border-radius: 10px;
+            min-height: 160px;
+            padding: 16px;
+            color: var(--color-text-secondary, #555555);
+            background: color-mix(in srgb, var(--color-background, #f5f5f5) 92%, white 8%);
+        }
+
+        @media (max-width: 640px) {
+            .page-layout {
+                grid-template-columns: 1fr;
+            }
+
+            .left-rail {
+                position: static;
+            }
+
+            .layout-preview {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 </head>
 <body>
-    <div class="playground-shell">
-        <h2>Lit Playground</h2>
-        <p>Use this page to test local components without running the whole app.</p>
-        <user-menu username="Local Tester"></user-menu>
-    </div>
+    <!--<my-projects-empty-state username="Local Tester"></my-projects-empty-state>-->
+    <create-project-form username="Local Tester"></create-project-form>
 
-    <script type="module" src="./theme.js"></script>
-    <script type="module" src="./user-menu.js"></script>
+    <script type="module">
+        // Development-only mock API for playground testing.
+        // This file is not used by the production app runtime.
+        const MOCK_USERS_BY_EMAIL = {
+            'alex@example.com': { id: 101, username: 'alex', email: 'alex@example.com' },
+            'jamie@example.com': { id: 102, username: 'jamie', email: 'jamie@example.com' }
+        };
+
+        // Intercept only collaborator lookup requests in playground.
+        // All other requests continue to use the browser's normal fetch.
+        const originalFetch = window.fetch.bind(window);
+
+        window.fetch = async (input, init = {}) => {
+            const requestUrl = typeof input === 'string' ? input : input.url;
+            const method = (init.method || 'GET').toUpperCase();
+
+            if (method === 'GET' && requestUrl.includes('/api/users/lookup')) {
+                const url = new URL(requestUrl, window.location.origin);
+                const email = (url.searchParams.get('email') || '').trim();
+
+                if (!email) {
+                    return new Response(JSON.stringify({
+                        error: { message: 'Email is required', status: 400 }
+                    }), {
+                        status: 400,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+
+                const user = MOCK_USERS_BY_EMAIL[email];
+                if (!user) {
+                    return new Response(JSON.stringify({
+                        error: { message: 'No matching user found', status: 404 }
+                    }), {
+                        status: 404,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+
+                return new Response(JSON.stringify({ user }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            }
+
+            return originalFetch(input, init);
+        };
+    </script>
+    <script type="module" src="./components/theme.js"></script>
+    <script type="module" src="./MyProjects/myProjectsEmptyState.js"></script>
+    <script type="module" src="./MyProjects/createProjectForm.js"></script>
 </body>
 </html>

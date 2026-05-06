@@ -1,6 +1,7 @@
 import bcrypt from 'bcrypt';
 import db from '../db/database.js';
 import config from '../config/index.js';
+import { ConflictError } from '../utils/errors.js';
 
 const SALT_ROUNDS = config.security.bcryptRounds;
 
@@ -19,7 +20,7 @@ class User {
             .get(username, email);
 
         if (existing) {
-            throw new Error('Username or email already exists');
+            throw new ConflictError('Username or email already exists');
         }
 
         // Hash password

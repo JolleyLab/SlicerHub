@@ -60,6 +60,15 @@ export class ConflictError extends AppError {
 }
 
 /**
+ * 429 Too Many Requests - Rate limit exceeded
+ */
+export class TooManyRequestsError extends AppError {
+    constructor(message = 'Too many requests') {
+        super(message, 429);
+    }
+}
+
+/**
  * 500 Internal Server Error - Unexpected server errors
  */
 export class InternalError extends AppError {
