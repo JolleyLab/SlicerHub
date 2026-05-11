@@ -1,29 +1,13 @@
 import { LitElement, html, css } from 'lit-element';
+import { APP_MENU_ITEMS } from '../components/app-menu.js';
 import '../components/page-layout-template.js';
 import '../components/add-button.js';
+import '../components/page-content-message.js';
 import { listMyProjects } from '../services/projects.js';
 
 export class MyProjectsLandingPage extends LitElement {
     static get styles() {
         return css`
-            .empty-state-note {
-                margin-top: 16px;
-                padding: 12px 14px;
-                border: 1px dashed var(--color-text-secondary);
-                border-radius: 10px;
-                color: var(--color-text-secondary);
-            }
-
-            .status-note {
-                margin-top: 16px;
-                color: var(--color-text-secondary);
-            }
-
-            .error-note {
-                margin-top: 16px;
-                color: #c62828;
-            }
-
             .project-grid {
                 margin-top: 16px;
                 display: grid;
@@ -110,10 +94,7 @@ export class MyProjectsLandingPage extends LitElement {
     constructor() {
         super();
         this.username = 'Guest';
-        this.menuItems = [
-            { key: 'my-projects', label: 'My Projects' },
-            { key: 'my-files', label: 'My Files' }
-        ];
+        this.menuItems = APP_MENU_ITEMS;
         this.projects = [];
         this.loading = false;
         this.loadingMore = false;
@@ -206,15 +187,13 @@ export class MyProjectsLandingPage extends LitElement {
                 @menu-selection-change=${this.handleMenuSelectionChange}
             >
                 ${this.loading ? html`
-                    <div slot="content" class="status-note">Loading projects...</div>
+                    <page-content-message slot="content" variant="status" message="Loading projects..."></page-content-message>
                 ` : ''}
                 ${this.error ? html`
-                    <div slot="content" class="error-note">${this.error}</div>
+                    <page-content-message slot="content" variant="error" .message=${this.error}></page-content-message>
                 ` : ''}
                 ${!this.loading && this.projects.length === 0 ? html`
-                    <div slot="content" class="empty-state-note">
-                        Your project list is empty.
-                    </div>
+                    <page-content-message slot="content" variant="empty" message="Your project list is empty."></page-content-message>
                 ` : ''}
                 ${this.projects.length > 0 ? html`
                     <div slot="content" class="project-grid">

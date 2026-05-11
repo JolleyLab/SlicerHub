@@ -1,6 +1,13 @@
 import { LitElement, html, css } from 'lit-element';
 import { API_URL } from './config.js';
 import { initializeTheme } from './components/theme.js';
+import { APP_MENU_ITEMS } from './components/app-menu.js';
+import './components/page-layout-template.js';
+import './components/page-content-message.js';
+import './components/file-storage-summary.js';
+import './components/file-list-row.js';
+import './components/add-button.js';
+import './components/app-dialog.js';
 
 /** Match Trame URL to this tab's origin so polling/iframe work when the API returns http:// behind an https edge. */
 function resolveTramePageUrl(frontendUrl) {
@@ -18,185 +25,112 @@ export class FileManager extends LitElement {
         return css`
             :host {
                 display: block;
-                padding: 20px;
                 color: var(--color-text-primary);
                 font-family: var(--font-family-base);
                 font-feature-settings: var(--font-feature-defaults);
             }
 
-            .file-manager {
-                max-width: 800px;
-                margin: 0 auto;
+            .files-section-title {
+                margin: 20px 0 0;
+                font-size: 1.05rem;
+                font-weight: 600;
+                color: var(--color-text-primary);
             }
 
-            h2 {
-                margin-top: 0;
-                color: #333;
-            }
-
-            .dev-projects-button {
-                margin-bottom: 14px;
-                padding: 8px 12px;
-                border: 1px dashed #666;
-                border-radius: 8px;
-                background: #f5f5f5;
-                color: #333;
-                font: inherit;
-                cursor: pointer;
-            }
-
-            .upload-area {
-                border: 2px dashed #4CAF50;
-                border-radius: 8px;
-                padding: 40px;
-                text-align: center;
-                margin-bottom: 30px;
-                background: #f9f9f9;
-                transition: all 0.3s;
-            }
-
-            .upload-area.drag-over {
-                background: #e8f5e9;
-                border-color: #2e7d32;
-            }
-
-            .upload-area input[type="file"] {
-                display: none;
-            }
-
-            .upload-btn {
-                padding: 12px 24px;
-                background: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 16px;
-                margin-top: 10px;
-            }
-
-            .upload-btn:hover {
-                background: #45a049;
-            }
-
-            .upload-btn:disabled {
-                background: #ccc;
-                cursor: not-allowed;
-            }
-
-            .file-info {
-                margin-top: 10px;
-                color: #666;
-                font-size: 14px;
-            }
-
-            .storage-stats {
-                background: #f5f5f5;
-                padding: 15px;
-                border-radius: 8px;
-                margin-bottom: 20px;
+            .file-list {
+                margin-top: 12px;
                 display: flex;
-                justify-content: space-between;
-                align-items: center;
+                flex-direction: column;
+                gap: 8px;
             }
 
-            .files-list {
-                margin-top: 20px;
+            file-list-row .file-action-icon {
+                width: 16px;
+                height: 16px;
+                display: block;
             }
 
-            .file-item {
+            add-button {
+                margin-top: 16px;
+            }
+
+            .file-list-toolbar {
+                margin-top: 12px;
                 display: flex;
-                justify-content: space-between;
+                flex-wrap: wrap;
                 align-items: center;
-                padding: 15px;
-                background: white;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                margin-bottom: 10px;
+                gap: 12px;
             }
 
-            .file-item:hover {
-                background: #f9f9f9;
-            }
-
-            .file-details {
+            .file-list-search {
                 flex: 1;
+                min-width: 180px;
+                max-width: 320px;
+                padding: 8px 12px;
+                border: 1px solid var(--color-border);
+                border-radius: 10px;
+                font: inherit;
+                color: var(--color-text-primary);
+                background: var(--color-surface, var(--color-background));
+                box-sizing: border-box;
             }
 
-            .file-name {
-                font-weight: 500;
-                color: #333;
-                margin-bottom: 5px;
+            .file-list-search:focus-visible {
+                outline: 2px solid var(--color-secondary);
+                outline-offset: 1px;
             }
 
-            .file-meta {
-                font-size: 12px;
-                color: #777;
-            }
-
-            .file-actions {
-                display: flex;
-                gap: 10px;
-            }
-
-            .action-btn {
-                padding: 8px 16px;
-                border: none;
-                border-radius: 4px;
+            .file-list-sort {
+                padding: 8px 10px;
+                border: 1px solid var(--color-border);
+                border-radius: 10px;
+                font: inherit;
+                color: var(--color-text-primary);
+                background: var(--color-surface, var(--color-background));
+                min-width: 220px;
                 cursor: pointer;
-                font-size: 14px;
             }
 
-            .download-btn {
-                background: #2196F3;
-                color: white;
+            .file-list-pager {
+                margin-top: 14px;
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
             }
 
-            .download-btn:hover {
-                background: #0b7dda;
+            .file-list-pager-meta {
+                color: var(--color-text-secondary);
+                font-size: 0.92rem;
             }
 
-            .launch-btn {
-                background: #4CAF50;
-                color: white;
+            .file-list-pager-buttons {
+                display: inline-flex;
+                gap: 8px;
             }
 
-            .launch-btn:hover {
-                background: #45a049;
+            .file-list-pager-btn {
+                border: 1px solid var(--color-border);
+                border-radius: 10px;
+                background: transparent;
+                color: var(--color-text-primary);
+                min-height: 38px;
+                padding: 8px 14px;
+                font: inherit;
+                font-weight: 600;
+                cursor: pointer;
             }
 
-            .delete-btn {
-                background: #f44336;
-                color: white;
+            .file-list-pager-btn:hover:not(:disabled),
+            .file-list-pager-btn:focus-visible:not(:disabled) {
+                background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+                outline: none;
             }
 
-            .delete-btn:hover {
-                background: #d32f2f;
-            }
-
-            .share-btn {
-                background: #673ab7;
-                color: white;
-            }
-
-            .share-btn:hover {
-                background: #5e35b1;
-            }
-
-            .error {
-                color: #f44336;
-                background: #ffebee;
-                padding: 10px;
-                border-radius: 4px;
-                margin-bottom: 15px;
-            }
-
-            .success {
-                color: #4CAF50;
-                background: #e8f5e9;
-                padding: 10px;
-                border-radius: 4px;
-                margin-bottom: 15px;
+            .file-list-pager-btn:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
             }
 
             .spinner {
@@ -213,12 +147,6 @@ export class FileManager extends LitElement {
 
             @keyframes spin {
                 to { transform: rotate(360deg); }
-            }
-
-            .empty-state {
-                text-align: center;
-                padding: 40px;
-                color: #999;
             }
 
             .iframe-overlay {
@@ -347,6 +275,31 @@ export class FileManager extends LitElement {
                 height: 100%;
             }
 
+            .iframe-header .action-btn {
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-size: 14px;
+                font: inherit;
+            }
+
+            .iframe-header select.action-btn {
+                border: 1px solid #ccc;
+                background: #fff;
+                color: #333;
+                cursor: pointer;
+            }
+
+            .iframe-header .share-btn {
+                border: none;
+                background: #673ab7;
+                color: white;
+                cursor: pointer;
+            }
+
+            .iframe-header .share-btn:hover {
+                background: #5e35b1;
+            }
+
             .share-dialog-overlay {
                 position: fixed;
                 inset: 0;
@@ -445,6 +398,70 @@ export class FileManager extends LitElement {
                 cursor: not-allowed;
                 transform: none;
             }
+
+            .upload-area {
+                border: 2px dashed var(--color-border);
+                border-radius: 10px;
+                padding: 22px 16px;
+                text-align: center;
+                background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface, var(--color-background)));
+                transition: border-color 0.2s ease, background-color 0.2s ease;
+            }
+
+            .upload-area.drag-over {
+                border-color: var(--color-primary);
+                background: color-mix(in srgb, var(--color-primary) 12%, var(--color-surface, var(--color-background)));
+            }
+
+            .upload-area input[type="file"] {
+                display: none;
+            }
+
+            .upload-message {
+                color: var(--color-text-secondary);
+                margin-bottom: 10px;
+            }
+
+            .upload-button {
+                border: 1px solid var(--color-border);
+                border-radius: 10px;
+                min-height: 38px;
+                padding: 8px 14px;
+                font: inherit;
+                font-weight: 600;
+                cursor: pointer;
+                background: var(--color-primary);
+                color: var(--color-background);
+            }
+
+            .upload-button.secondary {
+                background: transparent;
+                color: var(--color-text-primary);
+            }
+
+            .upload-button:disabled {
+                opacity: 0.6;
+                cursor: not-allowed;
+            }
+
+            .upload-file-info {
+                margin-top: 10px;
+                color: var(--color-text-secondary);
+                font-size: 0.95rem;
+            }
+
+            .upload-actions {
+                margin-top: 10px;
+                display: flex;
+                justify-content: center;
+                gap: 8px;
+            }
+
+            .upload-dialog-error {
+                margin-top: 12px;
+                color: #c62828;
+                font-size: 0.9rem;
+            }
         `;
     }
 
@@ -455,6 +472,7 @@ export class FileManager extends LitElement {
             uploading: { type: Boolean },
             loading: { type: Boolean },
             error: { type: String },
+            uploadError: { type: String },
             success: { type: String },
             stats: { type: Object },
             dragOver: { type: Boolean },
@@ -471,7 +489,17 @@ export class FileManager extends LitElement {
             shareTargetFile: { type: Object },
             shareDurationHours: { type: Number },
             shareAllowedEmails: { type: String },
-            shareDialogError: { type: String }
+            shareDialogError: { type: String },
+            shareMode: { type: String },
+            viewerShareMode: { type: String },
+            username: { type: String },
+            menuItems: { type: Array },
+            fileListSearch: { type: String },
+            fileListSearchDraft: { type: String },
+            fileListOrder: { type: String },
+            filePage: { type: Number },
+            pageSize: { type: Number },
+            totalFileCount: { type: Number }
         };
     }
 
@@ -483,6 +511,7 @@ export class FileManager extends LitElement {
         this.uploading = false;
         this.loading = false;
         this.error = '';
+        this.uploadError = '';
         this.success = '';
         this.stats = { bytesUsed: 0, megabytesUsed: '0.00', fileCount: 0 };
         this.dragOver = false;
@@ -504,6 +533,35 @@ export class FileManager extends LitElement {
         this.shareDurationHours = 72;
         this.shareAllowedEmails = '';
         this.shareDialogError = '';
+        this.shareMode = 'whole_file';
+        this.viewerShareMode = 'whole_file';
+        this.username = 'Guest';
+        this.menuItems = APP_MENU_ITEMS;
+        this.fileListSearch = '';
+        this.fileListSearchDraft = '';
+        this.fileListOrder = 'date-desc';
+        this.filePage = 0;
+        this.pageSize = 20;
+        this.totalFileCount = 0;
+        this._fileSearchTimer = null;
+    }
+
+    get fileListTotalPages() {
+        if (this.totalFileCount <= 0) return 1;
+        return Math.ceil(this.totalFileCount / this.pageSize);
+    }
+
+    get fileListRangeLabel() {
+        if (this.totalFileCount <= 0) return '0 files';
+        const start = this.filePage * this.pageSize + 1;
+        const end = Math.min((this.filePage + 1) * this.pageSize, this.totalFileCount);
+        const base = `Showing ${start}–${end} of ${this.totalFileCount}`;
+        if (this.totalFileCount <= this.pageSize) return base;
+        return `${base} · Page ${this.filePage + 1} of ${this.fileListTotalPages}`;
+    }
+
+    get showFileListPager() {
+        return this.totalFileCount > this.pageSize;
     }
 
     connectedCallback() {
@@ -529,22 +587,45 @@ export class FileManager extends LitElement {
 
     disconnectedCallback() {
         super.disconnectedCallback();
+        if (this._fileSearchTimer) {
+            clearTimeout(this._fileSearchTimer);
+            this._fileSearchTimer = null;
+        }
         // Stop heartbeat if component is removed
         this.stopHeartbeat();
         // Remove event listener
         window.removeEventListener('beforeunload', this.handleBeforeUnload);
     }
 
-    async loadFiles() {
+    async loadFiles(snapDepth = 0) {
         this.loading = true;
         try {
-            const response = await fetch(`${API_URL}/api/files`, {
+            const [sortBy, sortDir] = this.fileListOrder.split('-');
+            const params = new URLSearchParams({
+                limit: String(this.pageSize),
+                offset: String(this.filePage * this.pageSize),
+                search: this.fileListSearch,
+                sortBy,
+                sortDir
+            });
+            const response = await fetch(`${API_URL}/api/files?${params}`, {
                 credentials: 'include'
             });
 
             if (response.ok) {
                 const data = await response.json();
-                this.files = data.files;
+                this.files = data.files || [];
+                this.totalFileCount = data.pagination?.total ?? 0;
+                if (
+                    snapDepth < 2
+                    && this.files.length === 0
+                    && this.filePage > 0
+                    && this.totalFileCount > 0
+                ) {
+                    this.filePage = Math.max(0, Math.ceil(this.totalFileCount / this.pageSize) - 1);
+                    await this.loadFiles(snapDepth + 1);
+                    return;
+                }
             } else {
                 this.error = 'Failed to load files';
             }
@@ -571,40 +652,99 @@ export class FileManager extends LitElement {
         }
     }
 
-    handleFileSelect(e) {
-        this.selectedFile = e.target.files[0];
-        this.error = '';
-        this.success = '';
+    handleMenuSelectionChange(event) {
+        this.dispatchEvent(new CustomEvent('menu-selection-change', {
+            detail: event.detail,
+            bubbles: true,
+            composed: true
+        }));
     }
 
-    handleDragOver(e) {
-        e.preventDefault();
+    openFileUploadDialog() {
+        this.uploadError = '';
+        this.selectedFile = null;
+        this.dragOver = false;
+        this.updateComplete.then(() => {
+            const input = this.shadowRoot?.querySelector('#my-files-upload-input');
+            if (input) input.value = '';
+            this.shadowRoot?.querySelector('#file-upload-dialog')?.openDialog();
+        });
+    }
+
+    closeFileUploadDialog() {
+        this.shadowRoot?.querySelector('#file-upload-dialog')?.closeDialog();
+    }
+
+    handleUploadDialogFileSelect(event) {
+        this.selectedFile = event.target.files?.[0] || null;
+        this.uploadError = '';
+    }
+
+    handleUploadDialogDragOver(event) {
+        event.preventDefault();
         this.dragOver = true;
     }
 
-    handleDragLeave(e) {
-        e.preventDefault();
+    handleUploadDialogDragLeave(event) {
+        event.preventDefault();
         this.dragOver = false;
     }
 
-    handleDrop(e) {
-        e.preventDefault();
+    handleUploadDialogDrop(event) {
+        event.preventDefault();
         this.dragOver = false;
-
-        const files = e.dataTransfer.files;
-        if (files.length > 0) {
+        const files = event.dataTransfer?.files;
+        if (files?.length > 0) {
             this.selectedFile = files[0];
+            this.uploadError = '';
         }
+    }
+
+    handleAddFileFromButton() {
+        this.openFileUploadDialog();
+    }
+
+    handleFileSearchInput(e) {
+        this.fileListSearchDraft = e.target.value;
+        if (this._fileSearchTimer) {
+            clearTimeout(this._fileSearchTimer);
+        }
+        this._fileSearchTimer = setTimeout(() => {
+            this._fileSearchTimer = null;
+            const next = this.fileListSearchDraft.trim();
+            if (next === this.fileListSearch) return;
+            this.fileListSearch = next;
+            this.filePage = 0;
+            this.loadFiles();
+        }, 350);
+    }
+
+    handleFileOrderChange(e) {
+        this.fileListOrder = e.target.value;
+        this.filePage = 0;
+        this.loadFiles();
+    }
+
+    handleFilePagerPrev() {
+        if (this.filePage <= 0) return;
+        this.filePage -= 1;
+        this.loadFiles();
+    }
+
+    handleFilePagerNext() {
+        if ((this.filePage + 1) * this.pageSize >= this.totalFileCount) return;
+        this.filePage += 1;
+        this.loadFiles();
     }
 
     async uploadFile() {
         if (!this.selectedFile) {
-            this.error = 'Please select a file';
+            this.uploadError = 'Please choose a file.';
             return;
         }
 
         this.uploading = true;
-        this.error = '';
+        this.uploadError = '';
         this.success = '';
 
         try {
@@ -622,14 +762,12 @@ export class FileManager extends LitElement {
             if (response.ok) {
                 this.success = 'File uploaded successfully!';
                 this.selectedFile = null;
-
-                // Clear file input
-                const input = this.shadowRoot.querySelector('input[type="file"]');
+                this.filePage = 0;
+                const input = this.shadowRoot?.querySelector('#my-files-upload-input');
                 if (input) input.value = '';
-
-                // Reload files and stats
                 await this.loadFiles();
                 await this.loadStats();
+                this.closeFileUploadDialog();
             } else {
                 // Handle error response properly - error might be nested
                 console.error('Upload error:', data);
@@ -645,11 +783,11 @@ export class FileManager extends LitElement {
                     errorMsg = `Upload failed: ${response.statusText}`;
                 }
 
-                this.error = errorMsg;
+                this.uploadError = errorMsg;
             }
         } catch (err) {
             console.error('Upload error:', err);
-            this.error = 'Network error during upload';
+            this.uploadError = err.message || 'Network error during upload';
         } finally {
             this.uploading = false;
         }
@@ -702,11 +840,12 @@ export class FileManager extends LitElement {
         }
     }
 
-    openShareDialog(file) {
+    openShareDialog(file, options = {}) {
         this.shareTargetFile = file;
         this.shareDurationHours = 72;
         this.shareAllowedEmails = '';
         this.shareDialogError = '';
+        this.shareMode = options.mode === 'current_view' ? 'current_view' : 'whole_file';
         this.showShareDialog = true;
     }
 
@@ -752,7 +891,9 @@ export class FileManager extends LitElement {
                 },
                 body: JSON.stringify({
                     expiresInHours: Number(this.shareDurationHours || 72),
-                    allowedUserIds
+                    allowedUserIds,
+                    shareMode: this.shareMode,
+                    viewState: this.shareMode === 'current_view' ? await this.captureCurrentViewState() : null
                 })
             });
             const data = await response.json();
@@ -782,6 +923,29 @@ export class FileManager extends LitElement {
         }
     }
 
+    async captureCurrentViewState() {
+        const response = await fetch(`${API_URL}/api/containers/view-state`, {
+            credentials: 'include'
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data?.error?.message || data?.message || 'Unable to capture current view');
+        }
+        return data?.viewState || { captureMode: 'fallback' };
+    }
+
+    openViewerShareDialog() {
+        if (!this.currentFileId) {
+            this.error = 'No active file to share';
+            return;
+        }
+        const file = this.files.find((item) => Number(item.id) === Number(this.currentFileId)) || {
+            id: this.currentFileId,
+            originalName: this.currentFileName
+        };
+        this.openShareDialog(file, { mode: this.viewerShareMode });
+    }
+
     async cleanupContainer() {
         try {
             await fetch(`${API_URL}/api/containers/stop`, {
@@ -803,6 +967,7 @@ export class FileManager extends LitElement {
         this.launching = true;
 
         try {
+            this.stopHeartbeat();
             // Clean up any existing container first
             console.log('Cleaning up existing containers...');
             await this.cleanupContainer();
@@ -1105,14 +1270,16 @@ export class FileManager extends LitElement {
     }
 
     startHeartbeat() {
-        // Send heartbeat every 60 seconds to keep container alive
-        this.stopHeartbeat(); // Clear any existing interval
-        this.heartbeatInterval = setInterval(() => {
+        // Extend sliding lease on Trame (see SESSION_TTL_SECONDS on trame-service).
+        this.stopHeartbeat();
+        const ping = () => {
             fetch(`${API_URL}/api/containers/heartbeat`, {
                 method: 'POST',
                 credentials: 'include'
-            }).catch(err => console.log('Heartbeat failed:', err.message));
-        }, 60000); // 60 seconds
+            }).catch((err) => console.log('Heartbeat failed:', err.message));
+        };
+        ping();
+        this.heartbeatInterval = setInterval(ping, 60000);
     }
 
     stopHeartbeat() {
@@ -1131,6 +1298,7 @@ export class FileManager extends LitElement {
     }
 
     formatDate(dateString) {
+        if (!dateString) return '';
         return new Date(dateString).toLocaleDateString('en-US', {
             year: 'numeric',
             month: 'short',
@@ -1140,102 +1308,213 @@ export class FileManager extends LitElement {
         });
     }
 
-    openProjectsFlowForTesting() {
-        this.dispatchEvent(new CustomEvent('open-projects-flow', {
-            bubbles: true,
-            composed: true
-        }));
+    /** Size plus modified / viewed timestamps from API (camelCase). */
+    formatFileMetaLine(file) {
+        const modifiedAt = file.lastModifiedAt || file.uploadDate;
+        const parts = [
+            this.formatBytes(file.size),
+            `Modified ${this.formatDate(modifiedAt)}`
+        ];
+        if (file.lastViewedAt) {
+            parts.push(`Viewed ${this.formatDate(file.lastViewedAt)}`);
+        }
+        return parts.join(' · ');
     }
 
     render() {
         return html`
-            <div class="file-manager">
-                <h2>📁 File Manager</h2>
-                <button class="dev-projects-button" type="button" @click=${() => this.openProjectsFlowForTesting()}>
-                    Open Projects Flow (Dev)
-                </button>
+            <page-layout-template
+                .menuItems=${this.menuItems}
+                .username=${this.username}
+                selectedMenuKey="my-files"
+                homeHref="/file-manager"
+                homeLabel="Home"
+                pageTitle="My Files"
+                pageDescription="Upload, open, and manage your scene files."
+                @menu-selection-change=${this.handleMenuSelectionChange}
+            >
+                ${this.error ? html`
+                    <page-content-message slot="content" variant="error" .message=${this.error}></page-content-message>
+                ` : ''}
+                ${this.success ? html`
+                    <page-content-message slot="content" variant="success" .message=${this.success}></page-content-message>
+                ` : ''}
 
-                ${this.error ? html`<div class="error">${this.error}</div>` : ''}
-                ${this.success ? html`<div class="success">${this.success}</div>` : ''}
+                <add-button
+                    slot="content"
+                    title="Add file"
+                    @add-button-click=${this.handleAddFileFromButton}
+                ></add-button>
 
-                <div class="storage-stats">
-                    <div>
-                        <strong>Storage Used:</strong> ${this.stats.megabytesUsed} MB
+
+                ${this.loading ? html`
+                    <page-content-message slot="content" variant="status" message="Loading files..."></page-content-message>
+                ` : ''}
+                ${!this.loading && this.totalFileCount === 0 && !this.fileListSearch ? html`
+                    <page-content-message
+                        slot="content"
+                        variant="empty"
+                        message="No files uploaded yet. Use Add file to upload."
+                    ></page-content-message>
+                ` : ''}
+                ${!this.loading && this.totalFileCount === 0 && this.fileListSearch ? html`
+                    <page-content-message
+                        slot="content"
+                        variant="empty"
+                        message="No files match your search."
+                    ></page-content-message>
+                ` : ''}
+
+                ${!this.loading && (this.totalFileCount > 0 || this.fileListSearch) ? html`
+                    <h2 slot="content" class="files-section-title">Your files</h2>
+                    <div slot="content" class="file-list-toolbar">
+                        <input
+                            type="search"
+                            class="file-list-search"
+                            placeholder="Search by file name…"
+                            aria-label="Search files by name"
+                            .value=${this.fileListSearchDraft}
+                            @input=${this.handleFileSearchInput}
+                        />
+                        <select
+                            class="file-list-sort"
+                            aria-label="Sort files"
+                            .value=${this.fileListOrder}
+                            @change=${this.handleFileOrderChange}
+                        >
+                            <option value="date-desc">Last modified (newest first)</option>
+                            <option value="date-asc">Last modified (oldest first)</option>
+                            <option value="viewed-desc">Recently viewed</option>
+                            <option value="name-asc">Name (A–Z)</option>
+                            <option value="name-desc">Name (Z–A)</option>
+                        </select>
                     </div>
-                    <div>
-                        <strong>Files:</strong> ${this.stats.fileCount}
-                    </div>
-                </div>
-
-                <div 
-                    class="upload-area ${this.dragOver ? 'drag-over' : ''}"
-                    @dragover=${this.handleDragOver}
-                    @dragleave=${this.handleDragLeave}
-                    @drop=${this.handleDrop}
-                >
-                    <div>📤 Drag & drop file here or click to browse</div>
-                    <input 
-                        type="file" 
-                        id="fileInput"
-                        @change=${this.handleFileSelect}
-                        ?disabled=${this.uploading}
-                    />
-                    <label for="fileInput">
-                        <button class="upload-btn" @click=${() => this.shadowRoot.querySelector('#fileInput').click()} ?disabled=${this.uploading}>
-                            Choose File
-                        </button>
-                    </label>
-                    
-                    ${this.selectedFile ? html`
-                        <div class="file-info">
-                            Selected: ${this.selectedFile.name} (${this.formatBytes(this.selectedFile.size)})
-                        </div>
-                        <button class="upload-btn" @click=${this.uploadFile} ?disabled=${this.uploading}>
-                            ${this.uploading ? html`<span class="spinner"></span>Uploading...` : 'Upload File'}
-                        </button>
-                    ` : ''}
-                </div>
-
-                <div class="files-list">
-                    <h3>Your Files</h3>
-                    ${this.loading ? html`<div>Loading files...</div>` : ''}
-                    
-                    ${this.files.length === 0 && !this.loading ? html`
-                        <div class="empty-state">
-                            No files uploaded yet. Upload your first file above!
-                        </div>
-                    ` : ''}
-
-                    ${this.files.map(file => html`
-                        <div class="file-item">
-                            <div class="file-details">
-                                <div class="file-name">${file.originalName}</div>
-                                <div class="file-meta">
-                                    ${this.formatBytes(file.size)} • ${file.mimeType} • ${this.formatDate(file.uploadDate)}
-                                </div>
-                            </div>
-                            <div class="file-actions">
-                                <button class="action-btn launch-btn" @click=${() => this.launchFile(file)}>
-                                    🚀 Launch
-                                </button>
-                                <button class="action-btn download-btn" @click=${() => this.downloadFile(file)}>
-                                    ⬇️ Download
+                    <div slot="content" class="file-list">
+                        ${this.files.map((file) => html`
+                            <file-list-row
+                                .fileName=${file.originalName}
+                                .metaLine=${this.formatFileMetaLine(file)}
+                                @name-click=${() => this.launchFile(file)}
+                            >
+                                <button
+                                    slot="actions"
+                                    class="file-icon-button"
+                                    type="button"
+                                    aria-label="Download file"
+                                    title="Download file"
+                                    @click=${() => this.downloadFile(file)}
+                                >
+                                    <svg class="file-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path fill="currentColor" d="M5 20h14v-2H5v2zm7-18v10.17l3.59-3.58L17 10l-5 5-5-5 1.41-1.41L11 12.17V2h2z"></path>
+                                    </svg>
                                 </button>
                                 <button
-                                    class="action-btn share-btn"
-                                    @click=${() => this.openShareDialog(file)}
+                                    slot="actions"
+                                    class="file-icon-button"
+                                    type="button"
+                                    aria-label="Create share link"
+                                    title="Create share link"
                                     ?disabled=${this.sharingFileId === file.id}
+                                    @click=${() => this.openShareDialog(file)}
                                 >
-                                    ${this.sharingFileId === file.id ? 'Creating...' : '🔗 Share'}
+                                    <svg class="file-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"></path>
+                                    </svg>
                                 </button>
-                                <button class="action-btn delete-btn" @click=${() => this.deleteFile(file)}>
-                                    🗑️ Delete
+                                <button
+                                    slot="actions"
+                                    class="file-icon-button"
+                                    type="button"
+                                    aria-label="Delete file"
+                                    title="Delete file"
+                                    @click=${() => this.deleteFile(file)}
+                                >
+                                    <svg class="file-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path fill="currentColor" d="M9 3h6l1 2h4v2h-2v13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7H4V5h4l1-2zm7 4H8v13h8V7zm-6 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
+                                    </svg>
+                                </button>
+                            </file-list-row>
+                        `)}
+                    </div>
+                    ${this.showFileListPager ? html`
+                        <div slot="content" class="file-list-pager">
+                            <span class="file-list-pager-meta">${this.fileListRangeLabel}</span>
+                            <div class="file-list-pager-buttons">
+                                <button
+                                    type="button"
+                                    class="file-list-pager-btn"
+                                    ?disabled=${this.filePage <= 0}
+                                    @click=${this.handleFilePagerPrev}
+                                >
+                                    Previous
+                                </button>
+                                <button
+                                    type="button"
+                                    class="file-list-pager-btn"
+                                    ?disabled=${(this.filePage + 1) * this.pageSize >= this.totalFileCount}
+                                    @click=${this.handleFilePagerNext}
+                                >
+                                    Next
                                 </button>
                             </div>
                         </div>
-                    `)}
+                    ` : ''}
+                ` : ''}
+                <file-storage-summary
+                    slot="content"
+                    .megabytesUsed=${this.stats.megabytesUsed}
+                    .fileCount=${this.stats.fileCount}
+                ></file-storage-summary>
+            </page-layout-template>
+
+            <app-dialog id="file-upload-dialog" title="Add file">
+                <div
+                    class="upload-area ${this.dragOver ? 'drag-over' : ''}"
+                    @dragover=${this.handleUploadDialogDragOver}
+                    @dragleave=${this.handleUploadDialogDragLeave}
+                    @drop=${this.handleUploadDialogDrop}
+                >
+                    <div class="upload-message">Drag and drop a file here, or choose a file to upload.</div>
+                    <input
+                        type="file"
+                        id="my-files-upload-input"
+                        @change=${this.handleUploadDialogFileSelect}
+                        ?disabled=${this.uploading}
+                    />
+                    <button
+                        class="upload-button secondary"
+                        type="button"
+                        ?disabled=${this.uploading}
+                        @click=${() => this.shadowRoot?.querySelector('#my-files-upload-input')?.click()}
+                    >
+                        Choose File
+                    </button>
+                    ${this.selectedFile ? html`
+                        <div class="upload-file-info">
+                            Selected: ${this.selectedFile.name} (${this.formatBytes(this.selectedFile.size)})
+                        </div>
+                        <div class="upload-actions">
+                            <button
+                                class="upload-button"
+                                type="button"
+                                ?disabled=${this.uploading}
+                                @click=${() => this.uploadFile()}
+                            >
+                                ${this.uploading ? 'Uploading...' : 'Upload File'}
+                            </button>
+                            <button
+                                class="upload-button secondary"
+                                type="button"
+                                ?disabled=${this.uploading}
+                                @click=${() => this.closeFileUploadDialog()}
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    ` : ''}
+                    ${this.uploadError ? html`<div class="upload-dialog-error">${this.uploadError}</div>` : ''}
                 </div>
-            </div>
+            </app-dialog>
 
             ${this.showIframe ? html`
                 <div class="iframe-overlay">
@@ -1247,6 +1526,18 @@ export class FileManager extends LitElement {
                             ` : ''}
                             <button class="open-window-btn" @click=${this.openInNewWindow} ?disabled=${this.iframeUrl === 'about:blank'}>
                                 🗗 Open in New Window
+                            </button>
+                            <select
+                                class="action-btn"
+                                style="margin-right:8px;"
+                                .value=${this.viewerShareMode}
+                                @change=${(e) => { this.viewerShareMode = e.target.value; }}
+                            >
+                                <option value="whole_file">Share whole file</option>
+                                <option value="current_view">Share current view</option>
+                            </select>
+                            <button class="action-btn share-btn" @click=${() => this.openViewerShareDialog()} ?disabled=${this.iframeUrl === 'about:blank'}>
+                                🔗 Share
                             </button>
                             <button class="save-scene-btn" @click=${() => this.saveCurrentScene('overwrite')} ?disabled=${this.iframeUrl === 'about:blank'}>
                                 💾 Save Scene
@@ -1289,7 +1580,20 @@ export class FileManager extends LitElement {
                     <div class="share-dialog">
                         <h3>Create Share Link</h3>
                         <div><strong>File:</strong> ${this.shareTargetFile?.originalName || ''}</div>
-                        ${this.shareDialogError ? html`<div class="error" style="margin-top:10px;">${this.shareDialogError}</div>` : ''}
+                        ${this.shareDialogError ? html`
+                            <page-content-message variant="error" .message=${this.shareDialogError}></page-content-message>
+                        ` : ''}
+                        <div class="share-field">
+                            <label for="shareMode">Share mode</label>
+                            <select
+                                id="shareMode"
+                                .value=${this.shareMode}
+                                @change=${(e) => { this.shareMode = e.target.value; }}
+                            >
+                                <option value="whole_file">Open with whole file</option>
+                                <option value="current_view">Open with my current view</option>
+                            </select>
+                        </div>
                         <div class="share-field">
                             <label for="shareDuration">Link duration</label>
                             <select

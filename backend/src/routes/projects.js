@@ -201,7 +201,9 @@ export default function projectRoutes(app) {
             storedName: file.stored_name,
             size: file.file_size,
             mimeType: file.mime_type,
-            uploadDate: file.upload_date
+            uploadDate: file.upload_date,
+            lastModifiedAt: file.last_modified_at || file.upload_date,
+            lastViewedAt: file.last_viewed_at || null
         }));
 
         res.json({ files });

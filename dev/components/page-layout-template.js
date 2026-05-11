@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
+import { APP_MENU_ITEMS, DEFAULT_MENU_KEY } from './app-menu.js';
 import './navigation-header.js';
 import './side-menu.js';
 
@@ -80,13 +81,10 @@ export class PageShellTemplate extends LitElement {
         super();
         initializeTheme();
         this.username = 'Guest';
-        this.selectedMenuKey = 'my-projects';
+        this.selectedMenuKey = DEFAULT_MENU_KEY;
         this.pageTitle = '';
         this.pageDescription = '';
-        this.menuItems = [
-            { key: 'my-projects', label: 'My Projects' },
-            { key: 'my-files', label: 'My Files' }
-        ];
+        this.menuItems = APP_MENU_ITEMS;
         this.homeHref = '/file-manager';
         this.homeLabel = 'Home';
     }

@@ -119,6 +119,24 @@ function httpRequest(url, options = {}) {
     });
 }
 
+async function httpRequestWithRetry(url, options = {}, retries = 1, retryDelayMs = 300) {
+    try {
+        return await httpRequest(url, options);
+    } catch (err) {
+        const message = String(err?.message || '').toLowerCase();
+        const isTransient =
+            message.includes('socket hang up')
+            || message.includes('econnreset')
+            || message.includes('etimedout')
+            || message.includes('eai_again');
+        if (!isTransient || retries <= 0) {
+            throw err;
+        }
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        return httpRequestWithRetry(url, options, retries - 1, retryDelayMs);
+    }
+}
+
 function parseAllowedUserIds(rawValue) {
     if (!Array.isArray(rawValue)) return [];
     const unique = new Set();
@@ -127,6 +145,10 @@ function parseAllowedUserIds(rawValue) {
         if (Number.isInteger(id) && id > 0) unique.add(id);
     });
     return [...unique];
+}
+
+function parseShareMode(rawValue) {
+    return rawValue === 'current_view' ? 'current_view' : 'whole_file';
 }
 
 const createShareLinkRateLimit = createRateLimiter({
@@ -218,6 +240,7 @@ export default function fileRoutes(app) {
             mimeType: req.file.mimetype
         });
 
+        const createdRow = File.findById(fileRecord.id);
         res.status(201).json({
             message: 'File uploaded successfully',
             file: {
@@ -225,7 +248,9 @@ export default function fileRoutes(app) {
                 originalName: fileRecord.originalName,
                 size: fileRecord.fileSize,
                 mimeType: fileRecord.mimeType,
-                uploadDate: fileRecord.uploadDate
+                uploadDate: createdRow?.upload_date || fileRecord.uploadDate,
+                lastModifiedAt: createdRow?.last_modified_at || createdRow?.upload_date || fileRecord.uploadDate,
+                lastViewedAt: createdRow?.last_viewed_at || null
             }
         });
     }));
@@ -234,19 +259,41 @@ export default function fileRoutes(app) {
      * Get list of user's files
      */
     app.get('/api/files', authenticateToken, asyncHandler(async (req, res) => {
-        const files = File.findByUserId(req.user.id);
+        const limit = Math.min(Math.max(parseInt(String(req.query.limit), 10) || 20, 1), 100);
+        const offset = Math.max(parseInt(String(req.query.offset), 10) || 0, 0);
+        const search = typeof req.query.search === 'string' ? req.query.search : '';
+        const rawSortBy = req.query.sortBy;
+        const sortBy = rawSortBy === 'name' ? 'name' : rawSortBy === 'viewed' ? 'viewed' : 'date';
+        const sortDir = req.query.sortDir === 'asc' ? 'asc' : 'desc';
 
-        // Format response
-        const formattedFiles = files.map(file => ({
+        const { files, total } = File.listForUser(req.user.id, {
+            limit,
+            offset,
+            search,
+            sortBy,
+            sortDir
+        });
+
+        const formattedFiles = files.map((file) => ({
             id: file.id,
             originalName: file.original_name,
             storedName: file.stored_name,
             size: file.file_size,
             mimeType: file.mime_type,
-            uploadDate: file.upload_date
+            uploadDate: file.upload_date,
+            lastModifiedAt: file.last_modified_at || file.upload_date,
+            lastViewedAt: file.last_viewed_at || null
         }));
 
-        res.json({ files: formattedFiles });
+        res.json({
+            files: formattedFiles,
+            pagination: {
+                total,
+                limit,
+                offset,
+                hasMore: offset + formattedFiles.length < total
+            }
+        });
     }));
 
     /**
@@ -334,13 +381,22 @@ export default function fileRoutes(app) {
         }
         const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString();
         const allowedUserIds = parseAllowedUserIds(req.body?.allowedUserIds);
+        const shareMode = parseShareMode(req.body?.shareMode);
+        const viewState = req.body?.viewState && typeof req.body.viewState === 'object'
+            ? req.body.viewState
+            : null;
+        if (shareMode === 'current_view' && !viewState) {
+            throw new ValidationError('viewState is required when shareMode is current_view');
+        }
 
         const share = ShareLink.create({
             fileId,
             createdByUserId: req.user.id,
             readOnly: true,
             expiresAt,
-            allowedUserIds
+            allowedUserIds,
+            shareMode,
+            viewState
         });
 
         const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
@@ -354,7 +410,8 @@ export default function fileRoutes(app) {
                 url: shareUrl,
                 expiresAt: share.expiresAt,
                 readOnly: true,
-                allowedUserIds: share.allowedUserIds
+                allowedUserIds: share.allowedUserIds,
+                shareMode: share.shareMode
             }
         });
     }));
@@ -378,6 +435,7 @@ export default function fileRoutes(app) {
         }
         const requester = getOptionalAuthenticatedUser(req);
         const allowedUserIds = ShareLink.getAllowedUserIds(share);
+        const viewState = ShareLink.getViewState(share);
         if (allowedUserIds.length > 0) {
             if (!requester) {
                 throw new ForbiddenError('This shared file requires sign in');
@@ -403,7 +461,13 @@ export default function fileRoutes(app) {
         const stagedPath = path.join(sessionDir, sharedName);
         fs.copyFileSync(sourcePath, stagedPath);
 
-        const sessionData = await httpRequest(`${TRAME_SERVICE_URL}/api/sessions/start`, {
+        let sessionData = null;
+        let viewStateApplied = false;
+        let viewStateApplyError = null;
+        let viewStateApplyDebug = null;
+
+        // Start session first; this is required and should fail request if unavailable.
+        sessionData = await httpRequestWithRetry(`${TRAME_SERVICE_URL}/api/sessions/start`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -411,13 +475,21 @@ export default function fileRoutes(app) {
             body: {
                 userId: sessionUserId,
                 filePath: sharedName,
-                readOnly: true
+                readOnly: true,
+                viewState: viewState || null,
             }
-        });
+        }, 2, 500);
+
+        // Replay is applied later from the shared viewer after iframe load.
+        viewStateApplied = !viewState;
+        viewStateApplyError = null;
+        viewStateApplyDebug = null;
 
         const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
         const protocol = getClientFacingProtocol(req);
         const frontendUrl = `${protocol}://${host}/trame-session/user-${sessionData.userId}/`;
+
+        File.touchLastViewed(file.id);
 
         res.json({
             frontendUrl,
@@ -425,10 +497,61 @@ export default function fileRoutes(app) {
                 id: file.id,
                 originalName: file.original_name
             },
-            readOnly: true
+            readOnly: true,
+            shareMode: share.share_mode || 'whole_file',
+            viewStateApplied,
+            viewStateApplyError,
+            viewStateApplyDebug
         });
         })
     );
+
+    /**
+     * Re-apply shared view state after viewer iframe is loaded.
+     * This helps when scene initialization overrides early replay.
+     */
+    app.post('/api/share-links/:token/replay-view-state', asyncHandler(async (req, res) => {
+        const token = (req.params.token || '').trim();
+        if (!token) {
+            throw new ValidationError('Share token is required');
+        }
+
+        const share = ShareLink.findByToken(token);
+        if (!share || ShareLink.isExpired(share)) {
+            throw new NotFoundError('Share link is invalid or expired');
+        }
+
+        const viewState = ShareLink.getViewState(share);
+        if (!viewState) {
+            return res.json({ applied: true, skipped: true, reason: 'no_view_state' });
+        }
+
+        const sessionUserId = `share-${share.id}`;
+        const sessions = await httpRequestWithRetry(`${TRAME_SERVICE_URL}/api/sessions`, { method: 'GET' }, 2, 400);
+        const targetSession = sessions.sessions?.find((s) => String(s.userId) === sessionUserId);
+        if (!targetSession?.sessionId) {
+            return res.status(404).json({ applied: false, reason: 'share_session_not_found' });
+        }
+
+        const applyResult = await httpRequestWithRetry(
+            `${TRAME_SERVICE_URL}/api/sessions/${targetSession.sessionId}/apply-view-state`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: { viewState }
+            },
+            1,
+            350
+        );
+
+        const applied = applyResult?.status === 'applied';
+        return res.json({
+            applied,
+            sessionId: targetSession.sessionId,
+            error: applied ? null : (applyResult?.error || 'View-state replay did not fully apply'),
+            debug: applyResult?.debug || null
+        });
+    }));
 
     /**
      * Get user storage statistics

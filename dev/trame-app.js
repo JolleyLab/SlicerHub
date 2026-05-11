@@ -1,9 +1,9 @@
 import { LitElement, html, css } from 'lit-element';
 import { API_URL } from './config.js';
+import { APP_VIEWS, DEFAULT_APP_VIEW } from './components/app-views.js';
 import './login-form.js';
 import './register-form.js';
 import './file-manager.js';
-import './components/user-menu.js';
 import './components/status-card.js';
 import './MyProjects/myProjectsEmptyState.js';
 import './MyProjects/createProjectForm.js';
@@ -110,7 +110,8 @@ export class TrameApp extends LitElement {
       shareError: { type: String },
       shareErrorStatus: { type: Number },
       shareIframeUrl: { type: String },
-      shareFileName: { type: String }
+      shareFileName: { type: String },
+      shareReplayStatus: { type: String }
     };
   }
 
@@ -127,7 +128,7 @@ export class TrameApp extends LitElement {
     this.isAuthenticated = false;
     this.user = null;
     this.showLogin = true; // Show login by default
-    this.currentView = 'projects';
+    this.currentView = DEFAULT_APP_VIEW;
     this.selectedProjectId = null;
     this.inactivityTimeout = null;
     this.shareToken = new URLSearchParams(window.location.search).get('share') || '';
@@ -136,6 +137,11 @@ export class TrameApp extends LitElement {
     this.shareErrorStatus = 0;
     this.shareIframeUrl = '';
     this.shareFileName = '';
+    this.shareReplayStatus = '';
+    this.shareReplayPollTimer = null;
+    this.shareReplayAttempts = 0;
+    this.shareReplayInFlight = false;
+    this._trameHeartbeatInterval = null;
 
     // Check for existing session
     if (!this.shareToken) {
@@ -187,27 +193,23 @@ export class TrameApp extends LitElement {
     this.showLogin = true;
   }
 
-  openProjectsFlow() {
-    this.currentView = 'projects';
-  }
-
   openCreateProjectFlow() {
-    this.currentView = 'create-project';
+    this.currentView = APP_VIEWS.CREATE_PROJECT;
   }
 
   openProjectReviewFlow(e) {
     this.selectedProjectId = Number(e.detail?.projectId);
-    this.currentView = 'project-review';
+    this.currentView = APP_VIEWS.PROJECT_REVIEW;
   }
 
   handleProjectsMenuSelection(e) {
     const selectedKey = e.detail?.selectedKey;
     if (selectedKey === 'my-files') {
-      this.currentView = 'files';
+      this.currentView = APP_VIEWS.FILES;
       return;
     }
     if (selectedKey === 'my-projects') {
-      this.currentView = 'projects';
+      this.currentView = APP_VIEWS.PROJECTS;
     }
   }
 
@@ -298,9 +300,35 @@ export class TrameApp extends LitElement {
     // Don't cleanup on main page unload anymore - only when Trame window closes
   }
 
+  disconnectedCallback() {
+    this.stopTrameHeartbeat();
+    this.stopSharedReplayPolling();
+    super.disconnectedCallback();
+  }
+
+  startTrameHeartbeat() {
+    this.stopTrameHeartbeat();
+    const ping = () => {
+      fetch(`${API_URL}/api/containers/heartbeat`, {
+        method: 'POST',
+        credentials: 'include'
+      }).catch(() => {});
+    };
+    ping();
+    this._trameHeartbeatInterval = setInterval(ping, 60000);
+  }
+
+  stopTrameHeartbeat() {
+    if (this._trameHeartbeatInterval) {
+      clearInterval(this._trameHeartbeatInterval);
+      this._trameHeartbeatInterval = null;
+    }
+  }
+
   async cleanupContainer() {
     if (!this.isAuthenticated) return;
 
+    this.stopTrameHeartbeat();
     try {
       await fetch(`${API_URL}/api/containers/stop`, {
         method: "POST",
@@ -359,9 +387,10 @@ export class TrameApp extends LitElement {
         <div class="header">
           <div class="user-info">
             <span class="user-name">Shared Read-Only Viewer: ${this.shareFileName || 'File'}</span>
+            ${this.shareReplayStatus ? html`<span style="margin-left:10px; color:#666; font-size:12px;">${this.shareReplayStatus}</span>` : ''}
           </div>
         </div>
-        <iframe src="${this.shareIframeUrl}"></iframe>
+        <iframe src="${this.shareIframeUrl}" @load=${this.handleSharedIframeLoad}></iframe>
       `;
     }
 
@@ -385,18 +414,6 @@ export class TrameApp extends LitElement {
 
     // Show main app if authenticated
     return html`
-      ${this.currentView === 'files' ? html`
-        <div class="header">
-          <div class="user-info">
-            <span class="user-name">Welcome, ${this.user.username}!</span>
-          </div>
-          <user-menu
-            username=${this.user.username}
-            @logout-request=${this.handleLogout}>
-          </user-menu>
-        </div>
-      ` : ''}
-      
       <!-- Old Trame controls - commented out but kept for reference
       <div class="controls">
         <h1>Hello, ${this.name}!</h1>
@@ -426,10 +443,14 @@ export class TrameApp extends LitElement {
       ` : ''}
       -->
 
-      ${this.currentView === 'files' ? html`
-        <file-manager @open-projects-flow=${this.openProjectsFlow}></file-manager>
+      ${this.currentView === APP_VIEWS.FILES ? html`
+        <file-manager
+          .username=${this.user?.username || 'Guest'}
+          @menu-selection-change=${this.handleProjectsMenuSelection}
+          @logout-request=${this.handleLogout}
+        ></file-manager>
       ` : ''}
-      ${this.currentView === 'projects' ? html`
+      ${this.currentView === APP_VIEWS.PROJECTS ? html`
         <my-projects-landing-page
           .username=${this.user?.username || 'Guest'}
           @menu-selection-change=${this.handleProjectsMenuSelection}
@@ -438,14 +459,14 @@ export class TrameApp extends LitElement {
           @logout-request=${this.handleLogout}
         ></my-projects-landing-page>
       ` : ''}
-      ${this.currentView === 'create-project' ? html`
+      ${this.currentView === APP_VIEWS.CREATE_PROJECT ? html`
         <create-project-form
           .username=${this.user?.username || 'Guest'}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @logout-request=${this.handleLogout}
         ></create-project-form>
       ` : ''}
-      ${this.currentView === 'project-review' ? html`
+      ${this.currentView === APP_VIEWS.PROJECT_REVIEW ? html`
         <project-review-page
           .username=${this.user?.username || 'Guest'}
           .projectId=${this.selectedProjectId}
@@ -475,6 +496,7 @@ export class TrameApp extends LitElement {
   }
 
   async closeIframe() {
+    this.stopTrameHeartbeat();
     this.showIframe = false;
     this.iframeUrl = "";
 
@@ -537,6 +559,7 @@ export class TrameApp extends LitElement {
         await new Promise(resolve => setTimeout(resolve, 2000));
         this.iframeUrl = url;
         this.showIframe = true;
+        this.startTrameHeartbeat();
         this.output = "Trame app loaded in iframe";
       } else {
         // Wait for Trame to start, then redirect new window
@@ -614,6 +637,7 @@ export class TrameApp extends LitElement {
 
       this.shareIframeUrl = url;
       this.shareFileName = data?.file?.originalName || 'Shared file';
+      this.shareReplayStatus = '';
     } catch (err) {
       console.error('Shared viewer launch error:', err);
       this.shareError = 'Failed to load shared viewer';
@@ -621,6 +645,85 @@ export class TrameApp extends LitElement {
     } finally {
       this.shareLoading = false;
     }
+  }
+
+  async handleSharedIframeLoad() {
+    if (!this.shareToken) return;
+    this.startSharedReplayPolling();
+  }
+
+  startSharedReplayPolling() {
+    if (!this.shareToken) return;
+    this.stopSharedReplayPolling();
+    this.shareReplayAttempts = 0;
+    this.shareReplayInFlight = false;
+    this.shareReplayStatus = 'Applying shared view...';
+
+    const scheduleNext = (delayMs) => {
+      this.shareReplayPollTimer = setTimeout(() => {
+        this.shareReplayPollTimer = null;
+        tick();
+      }, delayMs);
+    };
+
+    const tick = async () => {
+      if (!this.shareToken) return;
+      if (this.shareReplayInFlight) {
+        scheduleNext(2000);
+        return;
+      }
+
+      this.shareReplayInFlight = true;
+      this.shareReplayAttempts += 1;
+      try {
+        const response = await fetch(`${API_URL}/api/share-links/${encodeURIComponent(this.shareToken)}/replay-view-state`, {
+          method: 'POST'
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data?.error?.message || data?.message || 'Replay request failed');
+        }
+        if (data?.applied) {
+          this.shareReplayStatus = 'Shared view applied';
+          this.stopSharedReplayPolling();
+          setTimeout(() => {
+            if (this.shareReplayStatus === 'Shared view applied') this.shareReplayStatus = '';
+          }, 3000);
+          return;
+        }
+
+        if (this.shareReplayAttempts >= 24) {
+          this.shareReplayStatus = data?.error || 'Could not apply shared view';
+          this.stopSharedReplayPolling();
+        } else {
+          this.shareReplayStatus = `Applying shared view... (${this.shareReplayAttempts}/24)`;
+          scheduleNext(5000);
+        }
+      } catch (err) {
+        console.error('Shared replay error:', err);
+        if (this.shareReplayAttempts >= 24) {
+          this.shareReplayStatus = 'Could not apply shared view';
+          this.stopSharedReplayPolling();
+        } else {
+          this.shareReplayStatus = `Applying shared view... (${this.shareReplayAttempts}/24)`;
+          // Back off slightly more on transient failures.
+          scheduleNext(7000);
+        }
+      } finally {
+        this.shareReplayInFlight = false;
+      }
+    };
+
+    // Start one request immediately, then schedule only after each response.
+    tick();
+  }
+
+  stopSharedReplayPolling() {
+    if (this.shareReplayPollTimer) {
+      clearTimeout(this.shareReplayPollTimer);
+      this.shareReplayPollTimer = null;
+    }
+    this.shareReplayInFlight = false;
   }
 }
 

@@ -30,7 +30,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - USE_GPU=true
-      - IDLE_SHUTDOWN_MINUTES=15
+      # Sliding lease: renewed by browser heartbeat + Trame API activity (default 1800s if unset).
+      - SESSION_TTL_SECONDS=${SESSION_TTL_SECONDS:-1800}
+      # Hard stop after this many seconds from session start even with heartbeats (0 = off).
+      - MAX_SESSION_WALL_SECONDS=${MAX_SESSION_WALL_SECONDS:-28800}
+      - PRUNE_EXITED_INTERVAL_SECONDS=${PRUNE_EXITED_INTERVAL_SECONDS:-300}
       - WORKSPACE_ROOT=${PWD:-/workspace}
       - TRAME_IMAGE=${TRAME_IMAGE:-slicer-web-trame:local}
     networks:

@@ -29,6 +29,19 @@ function getClientFacingProtocol(req) {
 }
 
 // Simple HTTP request helper
+function fileRowToApiSnapshot(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        originalName: row.original_name,
+        size: row.file_size,
+        mimeType: row.mime_type,
+        uploadDate: row.upload_date,
+        lastModifiedAt: row.last_modified_at || row.upload_date,
+        lastViewedAt: row.last_viewed_at || null
+    };
+}
+
 function httpRequest(url, options = {}) {
     return new Promise((resolve, reject) => {
         const urlObj = new URL(url);
@@ -75,6 +88,7 @@ export default async function containerRoutes(app) {
 
         try {
             let filePath = null;
+            let viewedFileRecord = null;
 
             // If fileId provided, get the file path
             if (fileId) {
@@ -91,6 +105,7 @@ export default async function containerRoutes(app) {
                 );
 
                 if (canAccess) {
+                    viewedFileRecord = file;
                     // Trame service mounts the launching user's directory. If this file belongs to
                     // someone else, stage a local copy in the launcher's folder first.
                     if (file.user_id !== req.user.id) {
@@ -122,6 +137,10 @@ export default async function containerRoutes(app) {
                     filePath: filePath
                 }
             });
+
+            if (viewedFileRecord?.id) {
+                File.touchLastViewed(viewedFileRecord.id);
+            }
 
             // Return URL routed through nginx using userId so nginx can resolve the container by name
             const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
@@ -226,32 +245,24 @@ export default async function containerRoutes(app) {
                         fileSize: latest.size,
                         mimeType: 'application/x-mrb'
                 });
+                File.touchLastViewed(recordToUpdate.id);
+                const overwrittenRow = File.findById(recordToUpdate.id);
                 return res.json({
                     success: true,
                     status: "overwritten",
                     path: dbFilePath,
-                    file: {
-                        id: recordToUpdate.id,
-                        originalName: savedName,
-                        size: latest.size,
-                        mimeType: 'application/x-mrb',
-                        uploadDate: new Date().toISOString()
-                    }
+                    file: fileRowToApiSnapshot(overwrittenRow)
                 });
             }
 
             if (existing && existing.user_id === req.user.id) {
+                File.touchLastViewed(existing.id);
+                const existingRow = File.findById(existing.id);
                 return res.json({
                     success: true,
                     status: "already-registered",
                     path: dbFilePath,
-                    file: {
-                        id: existing.id,
-                        originalName: savedName,
-                        size: existing.file_size,
-                        mimeType: existing.mime_type,
-                        uploadDate: existing.upload_date
-                    }
+                    file: fileRowToApiSnapshot(existingRow)
                 });
             }
 
@@ -263,18 +274,14 @@ export default async function containerRoutes(app) {
                 fileSize: latest.size,
                 mimeType: 'application/x-mrb'
             });
+            File.touchLastViewed(fileRecord.id);
 
+            const createdRow = File.findById(fileRecord.id);
             res.json({
                 success: true,
                 status: "registered",
                 path: dbFilePath,
-                file: {
-                    id: fileRecord.id,
-                    originalName: fileRecord.originalName,
-                    size: fileRecord.fileSize,
-                    mimeType: fileRecord.mimeType,
-                    uploadDate: fileRecord.uploadDate
-                }
+                file: fileRowToApiSnapshot(createdRow)
             });
         } catch (err) {
             console.error("Error saving trame session:", err);
@@ -282,22 +289,54 @@ export default async function containerRoutes(app) {
         }
     });
 
-    // Heartbeat endpoint - check session status
+    app.get("/api/containers/view-state", authenticateToken, async (req, res) => {
+        const userId = req.user.id.toString();
+        try {
+            const sessions = await httpRequest(`${TRAME_SERVICE_URL}/api/sessions`);
+            const userSession = sessions.sessions?.find(s => s.userId === userId);
+            if (!userSession) {
+                return res.status(404).json({ error: "No active session found" });
+            }
+            const state = await httpRequest(`${TRAME_SERVICE_URL}/api/sessions/${userSession.sessionId}/view-state`, {
+                method: 'GET'
+            });
+            return res.json({
+                sessionId: userSession.sessionId,
+                viewState: state?.viewState || null
+            });
+        } catch (err) {
+            console.error("Error reading trame view state:", err);
+            return res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Heartbeat — extends sliding lease on the Trame service (TTL + optional wall cap).
     app.post("/api/containers/heartbeat", authenticateToken, async (req, res) => {
-        const userId = req.user.id.toString(); // Use numeric user ID
+        const userId = req.user.id.toString();
 
         try {
             const sessions = await httpRequest(`${TRAME_SERVICE_URL}/api/sessions`);
+            const userSession = sessions.sessions?.find((s) => s.userId === userId);
 
-            const userSession = sessions.sessions?.find(s => s.userId === userId);
-
-            if (userSession) {
-                res.json({ success: true, status: "running" });
-            } else {
-                res.status(404).json({ error: "No active session found" });
+            if (!userSession) {
+                return res.status(404).json({ error: "No active session found" });
             }
+
+            const hb = await httpRequest(
+                `${TRAME_SERVICE_URL}/api/sessions/${userSession.sessionId}/heartbeat`,
+                { method: "POST" }
+            );
+
+            return res.json({
+                success: true,
+                status: "running",
+                sessionId: userSession.sessionId,
+                leaseExpiresAt: hb.leaseExpiresAt ?? null,
+                sessionTtlSeconds: hb.sessionTtlSeconds ?? sessions.sessionTtlSeconds ?? null,
+                maxSessionWallSeconds: hb.maxSessionWallSeconds ?? sessions.maxSessionWallSeconds ?? null
+            });
         } catch (err) {
-            console.error("Error checking session status:", err);
+            console.error("Error extending trame session lease:", err);
             res.status(500).json({ error: err.message });
         }
     });

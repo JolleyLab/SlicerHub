@@ -155,6 +155,8 @@ const migrations = [
                 expires_at DATETIME,
                 read_only INTEGER DEFAULT 1,
                 allowed_user_ids TEXT,
+                share_mode TEXT DEFAULT 'whole_file',
+                view_state_json TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 revoked_at DATETIME,
                 FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
@@ -171,6 +173,24 @@ const migrations = [
         up: `
             ALTER TABLE share_links
             ADD COLUMN allowed_user_ids TEXT;
+        `
+    },
+    {
+        id: '006_add_share_mode_and_view_state_to_share_links',
+        up: `
+            ALTER TABLE share_links
+            ADD COLUMN share_mode TEXT DEFAULT 'whole_file';
+
+            ALTER TABLE share_links
+            ADD COLUMN view_state_json TEXT;
+        `
+    },
+    {
+        id: '007_add_file_last_modified_and_last_viewed',
+        up: `
+            ALTER TABLE files ADD COLUMN last_modified_at DATETIME;
+            ALTER TABLE files ADD COLUMN last_viewed_at DATETIME;
+            UPDATE files SET last_modified_at = upload_date WHERE last_modified_at IS NULL;
         `
     }
 ];

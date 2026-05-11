@@ -9,8 +9,8 @@ class File {
      */
     static create({ userId, projectId = null, originalName, storedName, filePath, fileSize, mimeType }) {
         const stmt = db.prepare(`
-            INSERT INTO files (user_id, project_id, original_name, stored_name, file_path, file_size, mime_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO files (user_id, project_id, original_name, stored_name, file_path, file_size, mime_type, last_modified_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         `);
 
         const result = stmt.run(userId, projectId, originalName, storedName, filePath, fileSize, mimeType);
@@ -32,15 +32,66 @@ class File {
      * Find all files for a user
      */
     static findByUserId(userId) {
-        const stmt = db.prepare('SELECT * FROM files WHERE user_id = ? ORDER BY upload_date DESC');
+        const stmt = db.prepare(`
+            SELECT * FROM files WHERE user_id = ?
+            ORDER BY COALESCE(last_modified_at, upload_date) DESC, id DESC
+        `);
         return stmt.all(userId);
+    }
+
+    /**
+     * List files for a user with pagination, optional name search, and sort.
+     * @returns {{ files: Array, total: number }}
+     */
+    static listForUser(userId, options = {}) {
+        const limit = Math.min(Math.max(Number(options.limit) || 20, 1), 100);
+        const offset = Math.max(Number(options.offset) || 0, 0);
+        const search = (options.search || '').trim();
+        const rawSort = options.sortBy;
+        const sortBy = rawSort === 'name' ? 'name' : rawSort === 'viewed' ? 'viewed' : 'date';
+        const sortDir = options.sortDir === 'asc' ? 'ASC' : 'DESC';
+
+        let orderSql;
+        if (sortBy === 'name') {
+            orderSql = `original_name ${sortDir} COLLATE NOCASE, id ${sortDir}`;
+        } else if (sortBy === 'viewed') {
+            // Most recent first; files never opened in the viewer sort last.
+            orderSql = '(last_viewed_at IS NULL) ASC, last_viewed_at DESC, id DESC';
+        } else {
+            orderSql = `COALESCE(last_modified_at, upload_date) ${sortDir}, id ${sortDir}`;
+        }
+
+        if (!search) {
+            const countStmt = db.prepare('SELECT COUNT(*) as total FROM files WHERE user_id = ?');
+            const { total } = countStmt.get(userId);
+            const listStmt = db.prepare(
+                `SELECT * FROM files WHERE user_id = ? ORDER BY ${orderSql} LIMIT ? OFFSET ?`
+            );
+            const files = listStmt.all(userId, limit, offset);
+            return { files, total: total ?? 0 };
+        }
+
+        const escapeForLike = (s) => s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+        const pattern = `%${escapeForLike(search)}%`;
+        const countStmt = db.prepare(
+            "SELECT COUNT(*) as total FROM files WHERE user_id = ? AND original_name LIKE ? ESCAPE '\\'"
+        );
+        const { total } = countStmt.get(userId, pattern);
+        const listStmt = db.prepare(
+            `SELECT * FROM files WHERE user_id = ? AND original_name LIKE ? ESCAPE '\\' ORDER BY ${orderSql} LIMIT ? OFFSET ?`
+        );
+        const files = listStmt.all(userId, pattern, limit, offset);
+        return { files, total: total ?? 0 };
     }
 
     /**
      * Find all files for a project
      */
     static findByProjectId(projectId) {
-        const stmt = db.prepare('SELECT * FROM files WHERE project_id = ? ORDER BY upload_date DESC, id DESC');
+        const stmt = db.prepare(`
+            SELECT * FROM files WHERE project_id = ?
+            ORDER BY COALESCE(last_modified_at, upload_date) DESC, id DESC
+        `);
         return stmt.all(projectId);
     }
 
@@ -66,10 +117,23 @@ class File {
     static updateMetadata(fileId, { originalName, filePath, fileSize, mimeType }) {
         const stmt = db.prepare(`
             UPDATE files
-            SET original_name = ?, file_path = ?, file_size = ?, mime_type = ?, upload_date = CURRENT_TIMESTAMP
+            SET original_name = ?, file_path = ?, file_size = ?, mime_type = ?,
+                last_modified_at = CURRENT_TIMESTAMP
             WHERE id = ?
         `);
         return stmt.run(originalName, filePath, fileSize, mimeType, fileId);
+    }
+
+    /**
+     * Record that someone opened this file in the viewer (or follow-up activity).
+     */
+    static touchLastViewed(fileId) {
+        const id = Number(fileId);
+        if (!Number.isInteger(id) || id <= 0) return { changes: 0 };
+        const stmt = db.prepare(`
+            UPDATE files SET last_viewed_at = CURRENT_TIMESTAMP WHERE id = ?
+        `);
+        return stmt.run(id);
     }
 
     /**

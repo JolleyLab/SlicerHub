@@ -1,7 +1,9 @@
 import { LitElement, html, css } from 'lit-element';
 import { API_URL } from '../config.js';
+import { APP_MENU_ITEMS } from '../components/app-menu.js';
 import '../components/page-layout-template.js';
 import '../components/add-button.js';
+import '../components/file-list-row.js';
 import '../components/app-dialog.js';
 import './collaboratorSearch.js';
 import './collaboratorResultRow.js';
@@ -71,68 +73,7 @@ export class ProjectReviewPage extends LitElement {
                 gap: 8px;
             }
 
-            .file-row {
-                border: 1px dashed var(--color-border);
-                border-radius: 10px;
-                padding: 10px 12px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                gap: 12px;
-                flex-wrap: wrap;
-            }
-
-            .file-main {
-                min-width: 0;
-                flex: 1;
-            }
-
-            .file-name-button {
-                border: none;
-                background: transparent;
-                color: var(--color-text-primary);
-                font: inherit;
-                color: var(--color-text-primary);
-                font-weight: 600;
-                padding: 0;
-                cursor: pointer;
-                text-align: left;
-            }
-
-            .file-meta {
-                color: var(--color-text-secondary);
-                font-size: 0.9rem;
-            }
-
-            .file-action-group {
-                display: inline-flex;
-                align-items: center;
-                gap: 8px;
-            }
-
-            .file-icon-button {
-                border: none;
-                border-radius: 8px;
-                background: transparent;
-                color: var(--color-text-primary);
-                width: 34px;
-                height: 34px;
-                padding: 0;
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                cursor: pointer;
-            }
-
-            .file-icon-button:hover,
-            .file-icon-button:focus-visible,
-            .file-name-button:hover,
-            .file-name-button:focus-visible {
-                background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-                outline: none;
-            }
-
-            .file-action-icon {
+            file-list-row .file-action-icon {
                 width: 16px;
                 height: 16px;
                 display: block;
@@ -358,10 +299,7 @@ export class ProjectReviewPage extends LitElement {
         super();
         this.username = 'Guest';
         this.projectId = null;
-        this.menuItems = [
-            { key: 'my-projects', label: 'My Projects' },
-            { key: 'my-files', label: 'My Files' }
-        ];
+        this.menuItems = APP_MENU_ITEMS;
         this.loading = false;
         this.saving = false;
         this.formError = '';
@@ -383,6 +321,7 @@ export class ProjectReviewPage extends LitElement {
         this.uploadError = '';
         this.uploadSuccess = '';
         this.toastTimeout = null;
+        this._trameHeartbeatInterval = null;
     }
 
     updated(changedProperties) {
@@ -392,6 +331,7 @@ export class ProjectReviewPage extends LitElement {
     }
 
     disconnectedCallback() {
+        this.stopTrameHeartbeat();
         if (this.toastTimeout) {
             clearTimeout(this.toastTimeout);
             this.toastTimeout = null;
@@ -509,6 +449,18 @@ export class ProjectReviewPage extends LitElement {
         return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
     }
 
+    formatProjectFileMetaLine(file) {
+        const modifiedAt = file.lastModifiedAt || file.uploadDate;
+        const parts = [
+            this.formatBytes(file.size),
+            `Modified ${this.formatDate(modifiedAt)}`
+        ];
+        if (file.lastViewedAt) {
+            parts.push(`Viewed ${this.formatDate(file.lastViewedAt)}`);
+        }
+        return parts.join(' · ');
+    }
+
     handleFileSelect(event) {
         this.selectedFile = event.target.files?.[0] || null;
         this.uploadError = '';
@@ -618,6 +570,7 @@ export class ProjectReviewPage extends LitElement {
     async handleLaunchFile(file) {
         this.uploadError = '';
         try {
+            this.stopTrameHeartbeat();
             await this.cleanupContainerSession();
 
             const response = await fetch(`${API_URL}/api/containers/start`, {
@@ -668,8 +621,28 @@ export class ProjectReviewPage extends LitElement {
 
             this.iframeUrl = url;
             this.showToast(`Launched ${file.originalName}`);
+            this.startTrameHeartbeat();
         } catch (error) {
             this.uploadError = error.message || 'Unable to launch file.';
+        }
+    }
+
+    startTrameHeartbeat() {
+        this.stopTrameHeartbeat();
+        const ping = () => {
+            fetch(`${API_URL}/api/containers/heartbeat`, {
+                method: 'POST',
+                credentials: 'include'
+            }).catch(() => {});
+        };
+        ping();
+        this._trameHeartbeatInterval = setInterval(ping, 60000);
+    }
+
+    stopTrameHeartbeat() {
+        if (this._trameHeartbeatInterval) {
+            clearInterval(this._trameHeartbeatInterval);
+            this._trameHeartbeatInterval = null;
         }
     }
 
@@ -686,6 +659,7 @@ export class ProjectReviewPage extends LitElement {
     }
 
     async closeIframe() {
+        this.stopTrameHeartbeat();
         this.showIframe = false;
         this.iframeUrl = '';
         this.currentFileName = '';
@@ -882,47 +856,38 @@ export class ProjectReviewPage extends LitElement {
                         ${this.projectFiles.length > 0 ? html`
                             <div class="file-list">
                                 ${this.projectFiles.map((file) => html`
-                                    <div class="file-row">
-                                        <div class="file-main">
+                                    <file-list-row
+                                        .fileName=${file.originalName}
+                                        .metaLine=${this.formatProjectFileMetaLine(file)}
+                                        @name-click=${() => this.handleLaunchFile(file)}
+                                    >
+                                        <button
+                                            slot="actions"
+                                            class="file-icon-button"
+                                            type="button"
+                                            aria-label="Download file"
+                                            title="Download file"
+                                            @click=${() => this.handleDownloadFile(file)}
+                                        >
+                                            <svg class="file-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                                <path fill="currentColor" d="M5 20h14v-2H5v2zm7-18v10.17l3.59-3.58L17 10l-5 5-5-5 1.41-1.41L11 12.17V2h2z"></path>
+                                            </svg>
+                                        </button>
+                                        ${this.canDeleteProjectFiles ? html`
                                             <button
-                                                class="file-name-button"
-                                                type="button"
-                                                title="Launch file"
-                                                @click=${() => this.handleLaunchFile(file)}
-                                            >
-                                                ${file.originalName}
-                                            </button>
-                                            <div class="file-meta">
-                                                ${this.formatBytes(file.size)} • ${file.mimeType || 'Unknown type'} • ${this.formatDate(file.uploadDate)}
-                                            </div>
-                                        </div>
-                                        <div class="file-action-group">
-                                            <button
+                                                slot="actions"
                                                 class="file-icon-button"
                                                 type="button"
-                                                aria-label="Download file"
-                                                title="Download file"
-                                                @click=${() => this.handleDownloadFile(file)}
+                                                aria-label="Delete file"
+                                                title="Delete file"
+                                                @click=${() => this.handleDeleteFile(file)}
                                             >
                                                 <svg class="file-action-icon" viewBox="0 0 24 24" aria-hidden="true">
-                                                    <path fill="currentColor" d="M5 20h14v-2H5v2zm7-18v10.17l3.59-3.58L17 10l-5 5-5-5 1.41-1.41L11 12.17V2h2z"></path>
+                                                    <path fill="currentColor" d="M9 3h6l1 2h4v2h-2v13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7H4V5h4l1-2zm7 4H8v13h8V7zm-6 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
                                                 </svg>
                                             </button>
-                                            ${this.canDeleteProjectFiles ? html`
-                                                <button
-                                                    class="file-icon-button"
-                                                    type="button"
-                                                    aria-label="Delete file"
-                                                    title="Delete file"
-                                                    @click=${() => this.handleDeleteFile(file)}
-                                                >
-                                                    <svg class="file-action-icon" viewBox="0 0 24 24" aria-hidden="true">
-                                                        <path fill="currentColor" d="M9 3h6l1 2h4v2h-2v13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7H4V5h4l1-2zm7 4H8v13h8V7zm-6 3h2v7h-2v-7zm4 0h2v7h-2v-7z"></path>
-                                                    </svg>
-                                                </button>
-                                            ` : ''}
-                                        </div>
-                                    </div>
+                                        ` : ''}
+                                    </file-list-row>
                                 `)}
                             </div>
                         ` : ''}

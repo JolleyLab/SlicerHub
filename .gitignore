@@ -1,6 +1,8 @@
 # Dependencies
 node_modules/
 /node_modules/
+.venv/
+**/.venv/
 
 # Database files (contains user data)
 backend/data/*.db
@@ -16,6 +18,8 @@ trame-server/userFiles/
 # Environment variables (may contain secrets)
 .env
 backend/.env
+.env.local
+.env.*.local
 
 # Logs
 *.log
@@ -46,6 +50,15 @@ build/
 tmp/
 temp/
 .cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+.python-version
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
 # Docker volumes (if any local development volumes)
 volumes/

@@ -4,15 +4,23 @@ import db from '../db/database.js';
 const DEFAULT_EXPIRATION_HOURS = 72;
 
 class ShareLink {
-    static create({ fileId, createdByUserId, expiresAt = null, readOnly = true, allowedUserIds = [] }) {
+    static create({
+        fileId,
+        createdByUserId,
+        expiresAt = null,
+        readOnly = true,
+        allowedUserIds = [],
+        shareMode = 'whole_file',
+        viewState = null
+    }) {
         const token = crypto.randomBytes(24).toString('hex');
         const effectiveExpiresAt = expiresAt || new Date(Date.now() + DEFAULT_EXPIRATION_HOURS * 60 * 60 * 1000).toISOString();
         const normalizedAllowedUserIds = Array.isArray(allowedUserIds)
             ? [...new Set(allowedUserIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))]
             : [];
         const stmt = db.prepare(`
-            INSERT INTO share_links (token, file_id, created_by_user_id, expires_at, read_only, allowed_user_ids)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO share_links (token, file_id, created_by_user_id, expires_at, read_only, allowed_user_ids, share_mode, view_state_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         const result = stmt.run(
@@ -21,7 +29,9 @@ class ShareLink {
             createdByUserId,
             effectiveExpiresAt,
             readOnly ? 1 : 0,
-            JSON.stringify(normalizedAllowedUserIds)
+            JSON.stringify(normalizedAllowedUserIds),
+            shareMode,
+            viewState ? JSON.stringify(viewState) : null
         );
 
         return {
@@ -31,7 +41,9 @@ class ShareLink {
             createdByUserId,
             expiresAt: effectiveExpiresAt,
             readOnly: !!readOnly,
-            allowedUserIds: normalizedAllowedUserIds
+            allowedUserIds: normalizedAllowedUserIds,
+            shareMode,
+            viewState: viewState || null
         };
     }
 
@@ -56,6 +68,15 @@ class ShareLink {
             return parsed.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0);
         } catch (_) {
             return [];
+        }
+    }
+
+    static getViewState(shareLink) {
+        if (!shareLink?.view_state_json) return null;
+        try {
+            return JSON.parse(shareLink.view_state_json);
+        } catch (_) {
+            return null;
         }
     }
 }
