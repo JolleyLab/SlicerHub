@@ -1,0 +1,94 @@
+import fs from 'fs';
+import path from 'path';
+import { createReadStream } from 'fs';
+import { OBJECT_KEY_PREFIX } from './contract.js';
+
+class LocalStorage {
+    get backend() {
+        return 'local';
+    }
+
+    userDir(userId) {
+        return path.join(OBJECT_KEY_PREFIX, String(userId));
+    }
+
+    ensureUserDir(userId) {
+        const dir = this.userDir(userId);
+        fs.mkdirSync(dir, { recursive: true });
+        return dir;
+    }
+
+    relativeDbPathForUser(userId, fileName) {
+        return `${OBJECT_KEY_PREFIX}/${String(userId)}/${path.basename(fileName)}`;
+    }
+
+    normalizeKey(filePath) {
+        return String(filePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    }
+
+    resolvePath(key) {
+        const normalized = this.normalizeKey(key);
+        const prefix = `${OBJECT_KEY_PREFIX}/`;
+        if (!normalized.startsWith(prefix) || normalized.includes('..')) {
+            throw new Error('Invalid storage key');
+        }
+        return normalized;
+    }
+
+    async exists(key) {
+        const resolved = this.resolvePath(key);
+        return !!resolved && fs.existsSync(resolved);
+    }
+
+    async write({ key, buffer, contentType }) {
+        const resolved = this.resolvePath(key);
+        fs.mkdirSync(path.dirname(resolved), { recursive: true });
+        fs.writeFileSync(resolved, buffer);
+        return { key: this.normalizeKey(key), bytes: buffer.length, contentType };
+    }
+
+    async openReadStream(key) {
+        return createReadStream(this.resolvePath(key));
+    }
+
+    async stat(key) {
+        const resolved = this.resolvePath(key);
+        const info = fs.statSync(resolved);
+        return { size: info.size };
+    }
+
+    /**
+     * Local disk: no presigned URLs. Object backend will return HTTPS URLs for GPU pull.
+     */
+    async getPresignedReadUrl() {
+        return null;
+    }
+
+    async copy(sourceKey, targetKey) {
+        const src = this.resolvePath(sourceKey);
+        const dest = this.resolvePath(targetKey);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.copyFileSync(src, dest);
+        return this.normalizeKey(targetKey);
+    }
+
+    async ensureStagedCopy({ sourceKey, userId, fileName }) {
+        const targetKey = this.relativeDbPathForUser(userId, fileName);
+        if (!(await this.exists(sourceKey))) {
+            throw new Error(`Source file not found: ${sourceKey}`);
+        }
+        if (!(await this.exists(targetKey))) {
+            await this.copy(sourceKey, targetKey);
+        }
+        return targetKey;
+    }
+
+    async delete(key) {
+        const resolved = this.resolvePath(key);
+        if (fs.existsSync(resolved)) {
+            fs.unlinkSync(resolved);
+        }
+    }
+}
+
+export default new LocalStorage();

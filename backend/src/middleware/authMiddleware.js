@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import db from '../db/database.js';
 import config from '../config/index.js';
@@ -28,7 +29,7 @@ export function generateToken(user) {
  * Generate unique JWT ID
  */
 function generateJti() {
-    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    return `${Date.now()}-${crypto.randomBytes(12).toString('hex')}`;
 }
 
 /**
@@ -82,7 +83,7 @@ export function authenticateToken(req, res, next) {
         } else if (error.name === 'TokenExpiredError') {
             next(new UnauthorizedError('Token expired'));
         } else if (error.name === 'JsonWebTokenError') {
-            next(new ForbiddenError('Invalid token'));
+            next(new UnauthorizedError('Session expired — please sign in again'));
         } else {
             next(error);
         }
@@ -102,11 +103,11 @@ export function requireAdmin(req, res, next) {
 /**
  * Store session in database
  */
-export function storeSession(userId, tokenJti, expiresAt, ipAddress, userAgent) {
+export function storeSession(userId, tokenJti, expiresAt, userAgent) {
     db.prepare(`
-        INSERT INTO sessions (user_id, token_jti, expires_at, last_activity, ip_address, user_agent)
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
-    `).run(userId, tokenJti, expiresAt, ipAddress, userAgent);
+        INSERT INTO sessions (user_id, token_jti, expires_at, last_activity, user_agent)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)
+    `).run(userId, tokenJti, expiresAt, userAgent);
 }
 
 /**

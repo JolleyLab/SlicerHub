@@ -32,6 +32,10 @@ The application uses centralized configuration in `dev/config.js` to support dif
 
 - **API_URL**: Base URL for the backend API (default: `http://localhost:8080`)
 - **TRAME_URL**: Base URL for the Trame server (default: `http://localhost:8000`)
+- **TRAME_VIEWER_PUBLIC_BASE_URL**: Optional backend override for viewer URLs when GPU sessions are hosted on a separate domain/host (example: `https://gpu.yourcompany.com`)
+- **TRAME_SESSION_RUNTIME**: Session runtime on the GPU plane (`docker` default, or `process` for standard hosts without nested Docker)
+- **TRAME_VIEWER_BIN**: Python executable for process runtime (default: `python3`)
+- **TRAME_VIEWER_SCRIPT**: Viewer entry script for process runtime (default in compose: `/workspace/trame-server/viewer.py`)
 
 ### Option 1: Environment Variables (Recommended)
 
@@ -74,10 +78,13 @@ For production, **always** set these environment variables:
 # Windows
 $env:JWT_SECRET = "your-secure-random-secret-key"
 $env:NODE_ENV = "production"
+$env:TRAME_VIEWER_PUBLIC_BASE_URL = "https://gpu.yourcompany.com"
 
 # Linux/Mac
 export JWT_SECRET="your-secure-random-secret-key"
 export NODE_ENV="production"
+export TRAME_VIEWER_PUBLIC_BASE_URL="https://gpu.yourcompany.com"
+export TRAME_SESSION_RUNTIME="process"
 ```
 
 ## Docker Deployment
@@ -142,6 +149,18 @@ Default ports can be modified in:
 - **Backend**: `backend/src/index.js` or via `PORT` environment variable
 - **Frontend**: Development server configuration
 - **Trame**: Launched dynamically by backend, uses available ports
+
+### Vast.ai (GPU plane)
+
+For Vast.ai GPU billing, configure `VAST_GPU_IMAGE` and related env vars on the backend, then use **Project → GPU Provider** in the app. See **[docs/gpu-providers.md](docs/gpu-providers.md)**. GPU image assets are under **`scripts/vast/`** (`Dockerfile.vast-gpu`, on-start script, nginx config).
+
+### Process runtime routing
+
+When `TRAME_SESSION_RUNTIME=process`, viewer sessions bind host ports in the `9000-9009` range and the backend returns URLs like:
+
+- `/trame-session-port/{port}/`
+
+Nginx proxies those routes to `trame-service:{port}` on the Docker network. This avoids Docker-in-Docker while preserving multi-user session isolation.
 
 ## File Storage
 

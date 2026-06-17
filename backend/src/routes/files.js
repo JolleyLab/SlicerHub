@@ -10,6 +10,8 @@ import Project from '../models/Project.js';
 import ShareLink from '../models/ShareLink.js';
 import db from '../db/database.js';
 import config from '../config/index.js';
+import objectStorage from '../storage/index.js';
+import { buildViewerFrontendUrl, getClientFacingProtocol } from '../utils/viewerUrl.js';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { createRateLimiter, getRateLimitClientIp } from '../middleware/rateLimit.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
@@ -18,7 +20,7 @@ import { ValidationError, NotFoundError, ForbiddenError } from '../utils/errors.
 const TRAME_SERVICE_URL = process.env.TRAME_SERVICE_URL || 'http://localhost:8090';
 
 // Use memory storage - we'll save to disk ourselves after auth
-const storage = multer.memoryStorage();
+const uploadStorage = multer.memoryStorage();
 
 // File filter - validate file types
 const fileFilter = (req, file, cb) => {
@@ -55,7 +57,7 @@ const fileFilter = (req, file, cb) => {
 
 // Configure multer
 const upload = multer({
-    storage: storage,
+    storage: uploadStorage,
     fileFilter: fileFilter,
     limits: {
         fileSize: 500 * 1024 * 1024, // 500MB max file size (for medical imaging files)
@@ -67,15 +69,6 @@ function getProjectRoleForFile(file, userId) {
     if (!Number.isInteger(projectId) || projectId <= 0) return null;
     const project = Project.findForUser({ projectId, userId });
     return project?.userRole || null;
-}
-
-function getClientFacingProtocol(req) {
-    const chain = req.headers['x-forwarded-proto'];
-    if (chain) {
-        const first = chain.split(',')[0].trim().toLowerCase();
-        if (first === 'https' || first === 'http') return first;
-    }
-    return req.protocol === 'https' ? 'https' : 'http';
 }
 
 function httpRequest(url, options = {}) {
@@ -172,6 +165,13 @@ const launchShareLinkPerTokenAndIpRateLimit = createRateLimiter({
     getKey: (req) => `share-launch:token:${req.params.token || 'unknown'}:ip:${getRateLimitClientIp(req)}`
 });
 
+const replayShareLinkPerTokenAndIpRateLimit = createRateLimiter({
+    windowMs: 60 * 1000,
+    max: 30,
+    message: 'Too many view-state replay requests for this link. Please wait and try again.',
+    getKey: (req) => `share-replay:token:${req.params.token || 'unknown'}:ip:${getRateLimitClientIp(req)}`
+});
+
 function getOptionalAuthenticatedUser(req) {
     try {
         const authHeader = req.headers.authorization;
@@ -217,25 +217,24 @@ export default function fileRoutes(app) {
             projectId = parsedProjectId;
         }
 
-        // Create user directory
-        const userDir = path.join('userFiles', req.user.id.toString());
-        fs.mkdirSync(userDir, { recursive: true });
+        objectStorage.ensureUserDir(req.user.id);
 
-        // Generate safe filename
         const sanitized = req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
         const uniqueName = `${uuidv4()}-${sanitized}`;
-        const filePath = path.join(userDir, uniqueName);
+        const filePath = objectStorage.relativeDbPathForUser(req.user.id, uniqueName);
 
-        // Write file to disk
-        fs.writeFileSync(filePath, req.file.buffer);
+        await objectStorage.write({
+            key: filePath,
+            buffer: req.file.buffer,
+            contentType: req.file.mimetype
+        });
 
-        // Save file metadata to database
         const fileRecord = File.create({
             userId: req.user.id,
             projectId,
             originalName: req.file.originalname,
             storedName: uniqueName,
-            filePath: filePath,
+            filePath,
             fileSize: req.file.size,
             mimeType: req.file.mimetype
         });
@@ -317,13 +316,19 @@ export default function fileRoutes(app) {
             throw new ForbiddenError('You do not have permission to access this file');
         }
 
-        // Check if file exists on disk
-        if (!fs.existsSync(file.file_path)) {
-            throw new NotFoundError('File not found on disk');
+        const objectKey = objectStorage.normalizeKey(file.file_path);
+        if (!(await objectStorage.exists(objectKey))) {
+            throw new NotFoundError('File not found in storage');
         }
 
-        // Send file
-        res.download(file.file_path, file.original_name);
+        res.setHeader('Content-Disposition', `attachment; filename="${file.original_name}"`);
+        const stream = await objectStorage.openReadStream(objectKey);
+        stream.on('error', () => {
+            if (!res.headersSent) {
+                res.status(500).json({ error: { message: 'Failed to read file' } });
+            }
+        });
+        stream.pipe(res);
     }));
 
     /**
@@ -347,9 +352,9 @@ export default function fileRoutes(app) {
             throw new ForbiddenError('You do not have permission to delete this file');
         }
 
-        // Delete from disk
-        if (fs.existsSync(file.file_path)) {
-            fs.unlinkSync(file.file_path);
+        const objectKey = objectStorage.normalizeKey(file.file_path);
+        if (await objectStorage.exists(objectKey)) {
+            await objectStorage.delete(objectKey);
         }
 
         // Delete from database
@@ -449,17 +454,19 @@ export default function fileRoutes(app) {
         if (!file) {
             throw new NotFoundError('Shared file no longer exists');
         }
-        if (!fs.existsSync(file.file_path)) {
-            throw new NotFoundError('Shared file not found on disk');
+        const objectKey = objectStorage.normalizeKey(file.file_path);
+        if (!(await objectStorage.exists(objectKey))) {
+            throw new NotFoundError('Shared file not found in storage');
         }
 
         const sessionUserId = `share-${share.id}`;
-        const sessionDir = path.join('userFiles', sessionUserId);
-        fs.mkdirSync(sessionDir, { recursive: true });
-        const sourcePath = file.file_path;
-        const sharedName = `shared-${file.id}-${path.basename(sourcePath)}`;
-        const stagedPath = path.join(sessionDir, sharedName);
-        fs.copyFileSync(sourcePath, stagedPath);
+        objectStorage.ensureUserDir(sessionUserId);
+        const sharedName = `shared-${file.id}-${path.basename(objectKey)}`;
+        await objectStorage.ensureStagedCopy({
+            sourceKey: objectKey,
+            userId: sessionUserId,
+            fileName: sharedName
+        });
 
         let sessionData = null;
         let viewStateApplied = false;
@@ -485,9 +492,7 @@ export default function fileRoutes(app) {
         viewStateApplyError = null;
         viewStateApplyDebug = null;
 
-        const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
-        const protocol = getClientFacingProtocol(req);
-        const frontendUrl = `${protocol}://${host}/trame-session/user-${sessionData.userId}/`;
+        const frontendUrl = buildViewerFrontendUrl(req, sessionData.userId, sessionData.port);
 
         File.touchLastViewed(file.id);
 
@@ -510,7 +515,9 @@ export default function fileRoutes(app) {
      * Re-apply shared view state after viewer iframe is loaded.
      * This helps when scene initialization overrides early replay.
      */
-    app.post('/api/share-links/:token/replay-view-state', asyncHandler(async (req, res) => {
+    app.post('/api/share-links/:token/replay-view-state',
+        replayShareLinkPerTokenAndIpRateLimit,
+        asyncHandler(async (req, res) => {
         const token = (req.params.token || '').trim();
         if (!token) {
             throw new ValidationError('Share token is required');

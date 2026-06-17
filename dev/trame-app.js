@@ -8,6 +8,13 @@ import './components/status-card.js';
 import './MyProjects/myProjectsEmptyState.js';
 import './MyProjects/createProjectForm.js';
 import './MyProjects/projectReviewPage.js';
+import { resolveTramePageUrl } from './utils/trameViewerUrl.js';
+import {
+  installViewerActivityListeners,
+  markViewerActivity,
+  resetViewerActivity
+} from './utils/viewerActivity.js';
+import { sendTrameContainerHeartbeat } from './utils/trameHeartbeat.js';
 
 export class TrameApp extends LitElement {
   static get styles() {
@@ -162,11 +169,31 @@ export class TrameApp extends LitElement {
         this.isAuthenticated = true;
         this.name = this.user.username;
         this.startInactivityTimer();
+        return;
+      }
+
+      if (res.status === 401 || res.status === 403) {
+        await this.clearStaleSession();
       }
     } catch (err) {
       // No valid session - stay logged out
       console.log('No existing session');
     }
+  }
+
+  async clearStaleSession() {
+    try {
+      await fetch(`${API_URL}/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'include'
+      });
+    } catch (_) {
+      // best effort — logout clears invalid cookies server-side
+    }
+    this.user = null;
+    this.isAuthenticated = false;
+    this.showLogin = true;
+    this.stopInactivityTimer();
   }
 
   handleLoginSuccess(e) {
@@ -288,6 +315,7 @@ export class TrameApp extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    installViewerActivityListeners();
     if (this.shareToken) {
       this.launchSharedViewer();
       return;
@@ -306,12 +334,17 @@ export class TrameApp extends LitElement {
     super.disconnectedCallback();
   }
 
+  async handleViewerInactivityTimeout() {
+    if (!this.showIframe) return;
+    this.output = 'Viewer closed after inactivity';
+    await this.closeIframe();
+  }
+
   startTrameHeartbeat() {
     this.stopTrameHeartbeat();
     const ping = () => {
-      fetch(`${API_URL}/api/containers/heartbeat`, {
-        method: 'POST',
-        credentials: 'include'
+      sendTrameContainerHeartbeat({
+        onIdleTimeout: () => this.handleViewerInactivityTimeout()
       }).catch(() => {});
     };
     ping();
@@ -497,6 +530,7 @@ export class TrameApp extends LitElement {
 
   async closeIframe() {
     this.stopTrameHeartbeat();
+    resetViewerActivity();
     this.showIframe = false;
     this.iframeUrl = "";
 
@@ -546,18 +580,13 @@ export class TrameApp extends LitElement {
       }
 
       const data = await res.json();
-      let url = data.frontendUrl;
-      try {
-        const u = new URL(url, window.location.href);
-        url = `${window.location.origin}${u.pathname}${u.search}${u.hash}`;
-      } catch {
-        /* keep API url */
-      }
+      const url = resolveTramePageUrl(data.frontendUrl);
 
       if (this.useIframe) {
         // Wait a moment for Trame to fully start, then show iframe
         await new Promise(resolve => setTimeout(resolve, 2000));
         this.iframeUrl = url;
+        markViewerActivity();
         this.showIframe = true;
         this.startTrameHeartbeat();
         this.output = "Trame app loaded in iframe";

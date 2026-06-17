@@ -1,0 +1,22 @@
+# Vast GPU node (process-mode trame). See scripts/vast/README.md
+ARG TRAME_BASE_IMAGE=slicer-web-trame:local
+FROM ${TRAME_BASE_IMAGE}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nginx \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY trame-service /opt/trame-service
+COPY scripts/vast/onstart-process-mode.sh /opt/slicer-vast/onstart-process-mode.sh
+COPY scripts/vast/nginx-gpu-node.conf /opt/slicer-vast/nginx-gpu-node.conf
+RUN chmod +x /opt/slicer-vast/onstart-process-mode.sh \
+    && mkdir -p /workspace/slicer-web/backend/userFiles
+
+ENV TRAME_SERVICE_DIR=/opt/trame-service
+ENV NGINX_CONF=/opt/slicer-vast/nginx-gpu-node.conf
+ENV WORKSPACE_ROOT=/workspace/slicer-web
+
+ENTRYPOINT ["/bin/bash", "-lc"]
+CMD ["sleep infinity"]

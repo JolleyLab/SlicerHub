@@ -69,6 +69,22 @@ const config = {
         defaultImage: process.env.DOCKER_IMAGE || 'slicer-web-trame:local'
     },
 
+    // Trame viewer routing
+    trame: {
+        viewerPublicBaseUrl: (process.env.TRAME_VIEWER_PUBLIC_BASE_URL || '').trim()
+    },
+
+    // Object storage (S3-API compatible; not used until STORAGE_BACKEND=object is implemented)
+    objectStorage: {
+        endpoint: (process.env.OBJECT_STORAGE_ENDPOINT || '').trim(),
+        bucket: (process.env.OBJECT_STORAGE_BUCKET || '').trim(),
+        accessKey: (process.env.OBJECT_STORAGE_ACCESS_KEY || '').trim(),
+        secretKey: (process.env.OBJECT_STORAGE_SECRET_KEY || '').trim(),
+        prefix: (process.env.OBJECT_STORAGE_PREFIX || '').trim(),
+        forcePathStyle: process.env.OBJECT_STORAGE_FORCE_PATH_STYLE !== 'false',
+        region: (process.env.OBJECT_STORAGE_REGION || 'us-east-1').trim()
+    },
+
     // Security
     security: {
         bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS || '10', 10),
@@ -78,8 +94,21 @@ const config = {
 };
 
 // Validate configuration on startup
-if (config.isProduction && config.jwt.secret.includes('dev-secret')) {
-    throw new Error('FATAL: Cannot use default JWT secret in production!');
+const WEAK_JWT_SECRETS = new Set([
+    'dev-secret-CHANGE-IN-PRODUCTION',
+    'please-change-this-to-a-secure-random-string-in-production',
+    'generate-a-secure-random-string-here'
+]);
+if (config.isProduction) {
+    if (config.jwt.secret.includes('dev-secret') || WEAK_JWT_SECRETS.has(config.jwt.secret)) {
+        throw new Error('FATAL: Set a strong random JWT_SECRET in production (see .env.example)');
+    }
+    if (!process.env.GPU_CREDENTIALS_KEY?.trim()) {
+        throw new Error('FATAL: GPU_CREDENTIALS_KEY must be set in production');
+    }
+    if (!process.env.TRAME_SYNC_TOKEN?.trim() || process.env.TRAME_SYNC_TOKEN === 'test-sync-token-local') {
+        throw new Error('FATAL: Set a strong TRAME_SYNC_TOKEN in production (not the compose default)');
+    }
 }
 
 export default config;

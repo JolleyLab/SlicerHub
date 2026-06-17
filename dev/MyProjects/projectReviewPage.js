@@ -8,16 +8,35 @@ import '../components/app-dialog.js';
 import './collaboratorSearch.js';
 import './collaboratorResultRow.js';
 import { getProjectById, updateProjectCollaborators, listProjectFiles } from '../services/projects.js';
+import {
+    getProjectGpu,
+    listGpuProviders,
+    configureProjectGpuProvider,
+    setActiveProjectGpuProvider,
+    setProjectGpuDefaultProvider,
+    startProjectGpuBilling,
+    stopProjectGpuBilling,
+    acknowledgeProjectGpuError,
+    sendProjectGpuHeartbeat,
+    prestageProjectGpu
+} from '../services/projectGpu.js';
+import { resolveTramePageUrl, isRemoteTrameViewerUrl } from '../utils/trameViewerUrl.js';
+import {
+    scheduleViewerStopOnLeave,
+    cancelViewerStopOnLeave
+} from '../utils/viewerGraceStop.js';
+import {
+    installViewerActivityListeners,
+    markViewerActivity,
+    resetViewerActivity,
+    setViewerIdleMs,
+    isViewerUserActive
+} from '../utils/viewerActivity.js';
+import { sendTrameContainerHeartbeat } from '../utils/trameHeartbeat.js';
 
-function resolveTramePageUrl(frontendUrl) {
-    if (!frontendUrl) return '';
-    try {
-        const u = new URL(frontendUrl, window.location.href);
-        return `${window.location.origin}${u.pathname}${u.search}${u.hash}`;
-    } catch {
-        return frontendUrl;
-    }
-}
+const GPU_PROVIDER_CONSOLE_URLS = {
+    vast: 'https://cloud.vast.ai/instances/'
+};
 
 export class ProjectReviewPage extends LitElement {
     static get styles() {
@@ -49,6 +68,14 @@ export class ProjectReviewPage extends LitElement {
                 box-shadow: 0 10px 28px var(--color-shadow, rgba(0, 0, 0, 0.2));
                 max-width: min(360px, calc(100vw - 40px));
                 font-weight: 500;
+            }
+
+            .error-alert-message {
+                margin: 0;
+                line-height: 1.5;
+                color: var(--color-text-primary);
+                white-space: pre-wrap;
+                word-break: break-word;
             }
 
             .collaborators-panel {
@@ -122,6 +149,7 @@ export class ProjectReviewPage extends LitElement {
             .iframe-container {
                 flex: 1;
                 display: flex;
+                position: relative;
             }
 
             .trame-iframe {
@@ -139,6 +167,41 @@ export class ProjectReviewPage extends LitElement {
                 justify-content: center;
                 background: white;
                 text-align: center;
+            }
+
+            .loading-state.loading-overlay {
+                position: absolute;
+                inset: 0;
+                z-index: 2;
+            }
+
+            .viewer-loading {
+                color: var(--color-text-secondary);
+            }
+
+            .viewer-loading p {
+                margin: 0;
+                font-size: 0.95rem;
+            }
+
+            .viewer-spinner {
+                width: 40px;
+                height: 40px;
+                border: 4px solid color-mix(in srgb, var(--color-primary) 18%, transparent);
+                border-top-color: var(--color-primary);
+                border-radius: 50%;
+                animation: viewer-spin 0.8s linear infinite;
+                margin: 0 auto 16px;
+            }
+
+            @keyframes viewer-spin {
+                to { transform: rotate(360deg); }
+            }
+
+            .trame-iframe.is-loading {
+                visibility: hidden;
+                position: absolute;
+                inset: 0;
             }
 
             .files-title {
@@ -264,6 +327,298 @@ export class ProjectReviewPage extends LitElement {
             add-button {
                 margin-top: 12px;
             }
+
+            .gpu-panel {
+                margin-top: 16px;
+                border: 1px solid var(--color-border);
+                border-radius: 10px;
+                background: var(--color-surface, var(--color-background));
+                padding: 4px 10px 10px;
+            }
+
+            .gpu-panel-header {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+
+            .gpu-panel-details {
+                flex: 1;
+                min-width: min(220px, 100%);
+                margin: 0;
+            }
+
+            .gpu-panel summary {
+                cursor: pointer;
+                list-style: none;
+                font-weight: 600;
+                color: var(--color-text-primary);
+                padding: 10px 2px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .gpu-panel summary::-webkit-details-marker {
+                display: none;
+            }
+
+            .gpu-panel-summary-label {
+                flex-shrink: 0;
+            }
+
+            .gpu-panel-summary-meta {
+                flex: 1;
+                min-width: 0;
+                font-size: 0.85rem;
+                font-weight: 500;
+                color: var(--color-text-secondary);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .gpu-panel-chevron {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 20px;
+                height: 20px;
+                border: 1px solid var(--color-border);
+                border-radius: 6px;
+                font-size: 0.95rem;
+                font-weight: 700;
+                color: var(--color-text-primary);
+                background: var(--color-surface, var(--color-background));
+                transition: transform 0.15s ease, background-color 0.15s ease;
+                flex-shrink: 0;
+            }
+
+            .gpu-panel details[open] .gpu-panel-chevron {
+                transform: rotate(90deg);
+            }
+
+            .gpu-panel summary:hover .gpu-panel-chevron,
+            .gpu-panel summary:focus-visible .gpu-panel-chevron {
+                background: color-mix(in srgb, var(--color-primary) 14%, var(--color-surface, var(--color-background)));
+            }
+
+            .gpu-panel-billing-actions {
+                display: flex;
+                gap: 8px;
+                flex-shrink: 0;
+                padding: 4px 0;
+            }
+
+            .gpu-panel-billing-actions .primary-button,
+            .gpu-panel-billing-actions .secondary-button {
+                padding: 6px 12px;
+                font-size: 0.9rem;
+            }
+
+            .gpu-panel-body {
+                padding: 0 2px 4px;
+            }
+
+            .gpu-title {
+                font-weight: 600;
+                color: var(--color-text-primary);
+                margin-bottom: 10px;
+            }
+
+            .gpu-field {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                margin-bottom: 12px;
+            }
+
+            .gpu-field label {
+                font-size: 0.9rem;
+                color: var(--color-text-secondary);
+            }
+
+            .gpu-field select,
+            .gpu-field input,
+            .gpu-field textarea {
+                border: 1px solid var(--color-border);
+                border-radius: 8px;
+                padding: 8px 10px;
+                font: inherit;
+                background: var(--color-background);
+                color: var(--color-text-primary);
+            }
+
+            .gpu-field textarea {
+                min-height: 72px;
+                resize: vertical;
+            }
+
+            .gpu-status {
+                font-size: 0.95rem;
+                color: var(--color-text-secondary);
+                margin-bottom: 10px;
+            }
+
+            .gpu-status-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+                margin-bottom: 10px;
+            }
+
+            .gpu-status-row .gpu-status {
+                margin-bottom: 0;
+                flex: 1;
+                min-width: 0;
+            }
+
+            .gpu-info-button {
+                border: 1px solid var(--color-border);
+                border-radius: 8px;
+                background: transparent;
+                color: var(--color-text-secondary);
+                width: 32px;
+                height: 32px;
+                padding: 0;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                flex-shrink: 0;
+            }
+
+            .gpu-info-button:hover,
+            .gpu-info-button:focus-visible {
+                background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+                color: var(--color-text-primary);
+                outline: none;
+            }
+
+            .gpu-info-button[aria-expanded="true"] {
+                background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+                color: var(--color-text-primary);
+            }
+
+            .gpu-info-icon {
+                width: 18px;
+                height: 18px;
+            }
+
+            .gpu-details {
+                font-size: 0.85rem;
+                color: var(--color-text-secondary);
+                border: 1px solid var(--color-border);
+                border-radius: 8px;
+                padding: 10px 12px;
+                margin-bottom: 10px;
+                background: color-mix(in srgb, var(--color-border) 25%, transparent);
+            }
+
+            .gpu-detail-row {
+                display: grid;
+                grid-template-columns: minmax(88px, 34%) 1fr;
+                gap: 6px 10px;
+                padding: 4px 0;
+            }
+
+            .gpu-detail-row + .gpu-detail-row {
+                border-top: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+            }
+
+            .gpu-detail-label {
+                font-weight: 600;
+                color: var(--color-text-primary);
+            }
+
+            .gpu-detail-value {
+                line-height: 1.4;
+                word-break: break-word;
+            }
+
+            .gpu-detail-value-with-link {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+            }
+
+            .gpu-console-link {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 22px;
+                height: 22px;
+                border-radius: 4px;
+                color: var(--color-text-secondary);
+                text-decoration: none;
+                flex-shrink: 0;
+            }
+
+            .gpu-console-link:hover,
+            .gpu-console-link:focus-visible {
+                color: var(--color-text-primary);
+                background: color-mix(in srgb, var(--color-border) 50%, transparent);
+            }
+
+            .gpu-console-link svg {
+                width: 16px;
+                height: 16px;
+            }
+
+            .gpu-status strong {
+                color: var(--color-text-primary);
+            }
+
+            .gpu-hint {
+                font-size: 0.85rem;
+                color: var(--color-text-secondary);
+                margin-top: 6px;
+            }
+
+            .gpu-title-row add-button {
+                margin-top: 0;
+            }
+
+            .gpu-title-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+                margin-bottom: 8px;
+            }
+
+            .gpu-title-row .gpu-title {
+                margin-bottom: 0;
+            }
+
+            .gpu-dialog-form {
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                min-width: min(360px, 100%);
+            }
+
+            .gpu-dialog-actions {
+                display: flex;
+                gap: 8px;
+                justify-content: flex-end;
+                margin-top: 4px;
+            }
+
+            .gpu-dialog-checkbox {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 0.9rem;
+                color: var(--color-text-secondary);
+                cursor: pointer;
+            }
+
+            .gpu-dialog-checkbox input {
+                margin: 0;
+            }
         `;
     }
 
@@ -274,8 +629,9 @@ export class ProjectReviewPage extends LitElement {
             menuItems: { type: Array },
             loading: { type: Boolean },
             saving: { type: Boolean },
-            formError: { type: String },
             toastMessage: { type: String },
+            errorAlertTitle: { type: String },
+            errorAlertMessage: { type: String },
             projectName: { type: String },
             collaborators: { type: Array },
             originalCollaborators: { type: Array },
@@ -286,12 +642,32 @@ export class ProjectReviewPage extends LitElement {
             loadingProjectFiles: { type: Boolean },
             showIframe: { type: Boolean },
             iframeUrl: { type: String },
+            viewerLoading: { type: Boolean },
+            launchingFileId: { type: Number },
             currentFileName: { type: String },
             selectedFile: { type: Object },
             uploading: { type: Boolean },
             dragOver: { type: Boolean },
-            uploadError: { type: String },
-            uploadSuccess: { type: String }
+            uploadSuccess: { type: String },
+            gpuProviders: { type: Array },
+            configuredProviders: { type: Array },
+            gpuSettings: { type: Object },
+            gpuActiveProviderId: { type: String },
+            gpuInstance: { type: Object },
+            canManageGpu: { type: Boolean },
+            gpuSaving: { type: Boolean },
+            gpuDialogProviderId: { type: String },
+            gpuDialogApiKey: { type: String },
+            gpuDialogUseAsDefault: { type: Boolean },
+            gpuDialogSaving: { type: Boolean },
+            gpuBillingBusy: { type: Boolean },
+            gpuBillingLease: { type: Object },
+            stagedFileIds: { type: Array },
+            gpuPrestageActive: { type: Boolean },
+            remoteActivity: { type: Object },
+            remoteProvision: { type: Object },
+            gpuDetailsOpen: { type: Boolean },
+            gpuPanelOpen: { type: Boolean }
         };
     }
 
@@ -302,8 +678,9 @@ export class ProjectReviewPage extends LitElement {
         this.menuItems = APP_MENU_ITEMS;
         this.loading = false;
         this.saving = false;
-        this.formError = '';
         this.toastMessage = '';
+        this.errorAlertTitle = '';
+        this.errorAlertMessage = '';
         this.projectName = '';
         this.collaborators = [];
         this.originalCollaborators = [];
@@ -314,24 +691,84 @@ export class ProjectReviewPage extends LitElement {
         this.loadingProjectFiles = false;
         this.showIframe = false;
         this.iframeUrl = '';
+        this.viewerLoading = false;
+        this.launchingFileId = null;
         this.currentFileName = '';
         this.selectedFile = null;
         this.uploading = false;
         this.dragOver = false;
-        this.uploadError = '';
         this.uploadSuccess = '';
+        this.gpuProviders = [];
+        this.configuredProviders = [{ id: 'local', label: 'Local', configured: true }];
+        this.gpuSettings = null;
+        this.gpuActiveProviderId = 'local';
+        this.gpuInstance = null;
+        this.canManageGpu = false;
+        this.gpuSaving = false;
+        this.gpuDialogProviderId = 'vast';
+        this.gpuDialogApiKey = '';
+        this.gpuDialogUseAsDefault = true;
+        this.gpuDialogSaving = false;
+        this.gpuBillingBusy = false;
+        this.gpuBillingLease = null;
+        this.stagedFileIds = [];
+        this.gpuPrestageActive = false;
+        this.remoteActivity = null;
+        this.remoteProvision = null;
+        this.gpuDetailsOpen = false;
+        this.gpuPanelOpen = false;
+        this._prestageHoverTimer = null;
+        this._autoPrestageDone = false;
         this.toastTimeout = null;
+        this._lastErrorAlertKey = '';
+        this._errorAlertKind = null;
         this._trameHeartbeatInterval = null;
+        this._gpuPollInterval = null;
+        this._gpuBillingHeartbeatInterval = null;
     }
 
     updated(changedProperties) {
         if (changedProperties.has('projectId') && this.projectId) {
             this.loadProject();
+            return;
+        }
+        if (changedProperties.has('gpuSettings') || changedProperties.has('configuredProviders')) {
+            this.syncGpuProviderSelect();
+        }
+        if (changedProperties.has('loading') && !this.loading) {
+            this.syncGpuProviderSelect();
+        }
+    }
+
+    applyGpuSettings(settings) {
+        this.gpuSettings = settings;
+        this.gpuActiveProviderId = settings?.providerId || 'local';
+    }
+
+    connectedCallback() {
+        super.connectedCallback();
+        installViewerActivityListeners();
+        if (this.projectId) {
+            cancelViewerStopOnLeave(this.projectId);
         }
     }
 
     disconnectedCallback() {
         this.stopTrameHeartbeat();
+        this.stopGpuBillingHeartbeat();
+        this.stopGpuPolling();
+        const hadViewer = this.showIframe || (this.iframeUrl && this.iframeUrl !== 'about:blank');
+        const projectId = this.projectId;
+        if (hadViewer && projectId) {
+            scheduleViewerStopOnLeave(projectId, () => {
+                this.cleanupContainerSession(projectId);
+            });
+        }
+        this.showIframe = false;
+        this.iframeUrl = '';
+        this.viewerLoading = false;
+        this.launchingFileId = null;
+        this.currentFileName = '';
         if (this.toastTimeout) {
             clearTimeout(this.toastTimeout);
             this.toastTimeout = null;
@@ -348,6 +785,109 @@ export class ProjectReviewPage extends LitElement {
             this.toastMessage = '';
             this.toastTimeout = null;
         }, 3000);
+    }
+
+    showErrorAlert(message, { title = 'Something went wrong', force = false, kind = null } = {}) {
+        const text = String(message || '').trim();
+        if (!text) return;
+
+        const key = `${title}\0${text}`;
+        if (!force && key === this._lastErrorAlertKey) {
+            return;
+        }
+        this._lastErrorAlertKey = key;
+        this.errorAlertTitle = title;
+        this.errorAlertMessage = text;
+        this._errorAlertKind = kind;
+        this.requestUpdate();
+        queueMicrotask(() => {
+            this.renderRoot?.querySelector('#error-alert-dialog')?.openDialog();
+        });
+    }
+
+    gpuErrorTitle(errorSource, message) {
+        if (errorSource === 'vast' || String(message || '').startsWith('Vast.ai: ')) {
+            return 'Problem on Vast.ai';
+        }
+        return 'GPU problem in Slicer Web';
+    }
+
+    showGpuErrorAlert(message, errorSource = null) {
+        this.showErrorAlert(message, {
+            title: this.gpuErrorTitle(errorSource, message),
+            kind: 'gpu',
+            force: true
+        });
+    }
+
+    get shouldCleanupGpuOnErrorDismiss() {
+        if (this._errorAlertKind !== 'gpu' || !this.canManageGpu) return false;
+        return this.gpuInstance?.status === 'error' && !!this.gpuInstance?.instanceId;
+    }
+
+    get errorAlertDismissLabel() {
+        if (this._errorAlertKind === 'gpu' && this.gpuInstance?.instanceId) {
+            return 'OK — remove instance';
+        }
+        if (this._errorAlertKind === 'gpu') {
+            return 'OK — dismiss';
+        }
+        return 'OK';
+    }
+
+    async dismissErrorAlert() {
+        const cleanupGpu = this.shouldCleanupGpuOnErrorDismiss;
+
+        this.renderRoot?.querySelector('#error-alert-dialog')?.closeDialog();
+        this.errorAlertMessage = '';
+        this.errorAlertTitle = '';
+        this._errorAlertKind = null;
+
+        if (!cleanupGpu) return;
+
+        this.gpuBillingBusy = true;
+        try {
+            const data = await acknowledgeProjectGpuError(this.projectId);
+            this.gpuInstance = data.instance || this.gpuInstance;
+            this.remoteProvision = null;
+            this.clearErrorAlertDedupe();
+            if (data.status === 'stopping') {
+                this.showToast('Removing GPU instance…');
+                this.maybeStartGpuPolling();
+            } else {
+                this.showToast('GPU error cleared.');
+            }
+            await this.loadProjectGpu();
+        } catch (error) {
+            this.showErrorAlert(error.message || 'Could not remove the GPU instance.', {
+                title: 'GPU cleanup',
+                force: true
+            });
+        } finally {
+            this.gpuBillingBusy = false;
+        }
+    }
+
+    clearErrorAlertDedupe() {
+        this._lastErrorAlertKey = '';
+    }
+
+    pickGpuStatusError(data, prevStatus) {
+        if (data.settings?.credentialsUnreadable) {
+            return 'Saved GPU API key could not be read. Re-enter your Vast API key and save.';
+        }
+        if (data.remoteProvision?.failure) {
+            return `Vast.ai: ${data.remoteProvision.failure}`;
+        }
+        if (data.reconcileChanged && (data.reconcileReason || data.instance?.errorMessage)) {
+            return data.reconcileReason || data.instance.errorMessage;
+        }
+        if (data.instance?.status === 'error' && data.instance?.errorMessage) {
+            if (prevStatus !== 'error' || data.reconcileChanged) {
+                return data.instance.errorMessage;
+            }
+        }
+        return '';
     }
 
     handleMenuSelectionChange(event) {
@@ -403,7 +943,6 @@ export class ProjectReviewPage extends LitElement {
 
     async loadProject() {
         this.loading = true;
-        this.formError = '';
         this.toastMessage = '';
         try {
             const data = await getProjectById(this.projectId);
@@ -415,9 +954,12 @@ export class ProjectReviewPage extends LitElement {
             const collaborators = data.collaborators || [];
             this.collaborators = this.sortCollaborators(collaborators.map((entry) => ({ ...entry })));
             this.originalCollaborators = this.sortCollaborators(collaborators.map((entry) => ({ ...entry })));
-            await this.loadProjectFiles();
+            await Promise.all([this.loadProjectFiles(), this.loadProjectGpu()]);
         } catch (error) {
-            this.formError = error.message || 'Unable to load project.';
+            this.showErrorAlert(error.message || 'Unable to load project.', {
+                title: 'Unable to load project',
+                force: true
+            });
             this.projectName = '';
             this.collaborators = [];
             this.originalCollaborators = [];
@@ -461,9 +1003,283 @@ export class ProjectReviewPage extends LitElement {
         return parts.join(' · ');
     }
 
+    isFileStagedOnGpu(file) {
+        return (this.stagedFileIds || []).includes(file.id);
+    }
+
+    isRemoteGpuRunning() {
+        if (this.savedGpuProviderId === 'local') return false;
+        return this.gpuInstance?.status === 'running';
+    }
+
+    usesRemoteGpuProvider() {
+        return this.savedGpuProviderId !== 'local';
+    }
+
+    syncConfiguredProvidersFromSettings(settings) {
+        const providers = settings?.configuredProviders;
+        if (Array.isArray(providers) && providers.length) {
+            this.configuredProviders = providers.map((entry) => ({ ...entry }));
+            return;
+        }
+        this.configuredProviders = [{ id: 'local', label: 'Local', configured: true, isDefault: true }];
+    }
+
+    ensureConfiguredProviderListed(providerId) {
+        if (providerId === 'local' || this.isGpuProviderConfigured(providerId)) {
+            return;
+        }
+        const meta = this.gpuProviders.find((provider) => provider.id === providerId);
+        if (!meta) return;
+        this.configuredProviders = [
+            ...this.configuredProviders,
+            { id: providerId, label: meta.label, configured: true }
+        ];
+    }
+
+    syncGpuProviderSelect() {
+        if (this.loading || !this.gpuSettings) return;
+        const value = this.gpuActiveProviderId || this.savedGpuProviderId;
+        const apply = () => {
+            const select = this.renderRoot?.querySelector('#gpu-provider');
+            if (!select) return;
+            if (select.value !== value) {
+                select.value = value;
+            }
+        };
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(apply);
+        } else {
+            apply();
+        }
+    }
+
+    async handleGpuProviderChange(event) {
+        const next = event.target.value;
+        const prev = this.savedGpuProviderId;
+        if (next === prev) return;
+
+        if (next === 'local') {
+            this.gpuDetailsOpen = false;
+            this.stopGpuBillingHeartbeat();
+        }
+        await this.persistActiveGpuProvider(next);
+    }
+
+    async persistActiveGpuProvider(providerId) {
+        if (!this.canManageGpu) return;
+
+        this.gpuSaving = true;
+        try {
+            const data = await setActiveProjectGpuProvider(this.projectId, providerId);
+            this.applyGpuSettings(data.settings);
+            this.syncConfiguredProvidersFromSettings(data.settings);
+            this.syncGpuProviderSelect();
+        } catch (error) {
+            this.showErrorAlert(error.message || 'Unable to switch GPU provider.', {
+                title: 'GPU settings',
+                force: true
+            });
+            this.requestUpdate();
+        } finally {
+            this.gpuSaving = false;
+        }
+    }
+
+    get gpuDialogProviderOptions() {
+        return (this.gpuProviders || []).filter((provider) => provider.id !== 'local');
+    }
+
+    isGpuProviderConfigured(providerId) {
+        return (this.configuredProviders || []).some(
+            (entry) => entry.id === providerId && entry.configured
+        );
+    }
+
+    get gpuDialogApiKeyPlaceholder() {
+        const entry = (this.configuredProviders || []).find((p) => p.id === this.gpuDialogProviderId);
+        if (entry?.apiKeyMasked) {
+            return `Saved (${entry.apiKeyMasked}) — leave blank to keep`;
+        }
+        return 'Paste API key';
+    }
+
+    updateGpuDialogDefaultCheckbox() {
+        const providerId = this.gpuDialogProviderId;
+        const isNew = !this.isGpuProviderConfigured(providerId);
+        const isCurrentDefault = (this.gpuSettings?.defaultProviderId || 'local') === providerId;
+        this.gpuDialogUseAsDefault = isNew || isCurrentDefault;
+    }
+
+    openGpuProviderDialog(providerId = null) {
+        if (!this.canManageGpu) return;
+        const options = this.gpuDialogProviderOptions;
+        const unconfigured = options.find((provider) => !this.isGpuProviderConfigured(provider.id));
+        this.gpuDialogProviderId = providerId
+            || unconfigured?.id
+            || this.gpuActiveProviderId
+            || options[0]?.id
+            || 'vast';
+        this.gpuDialogApiKey = '';
+        this.updateGpuDialogDefaultCheckbox();
+        this.renderRoot?.querySelector('#gpu-provider-dialog')?.openDialog();
+    }
+
+    get gpuProviderDialogTitle() {
+        return this.isGpuProviderConfigured(this.gpuDialogProviderId)
+            ? 'Configure GPU Provider'
+            : 'Add GPU Provider';
+    }
+
+    async handleDefaultProviderChange(event) {
+        const defaultProviderId = event.target.value;
+        const current = this.gpuSettings?.defaultProviderId || 'local';
+        if (defaultProviderId === current || this.gpuSaving) return;
+
+        this.gpuSaving = true;
+        try {
+            const data = await setProjectGpuDefaultProvider(this.projectId, defaultProviderId);
+            this.applyGpuSettings(data.settings);
+            this.syncConfiguredProvidersFromSettings(data.settings);
+            this.showToast('Default GPU provider updated.');
+        } catch (error) {
+            this.showErrorAlert(error.message || 'Unable to set default GPU provider.', {
+                title: 'GPU settings',
+                force: true
+            });
+            this.requestUpdate();
+        } finally {
+            this.gpuSaving = false;
+        }
+    }
+
+    closeGpuProviderDialog() {
+        this.renderRoot?.querySelector('#gpu-provider-dialog')?.closeDialog();
+    }
+
+    handleGpuDialogProviderChange(event) {
+        this.gpuDialogProviderId = event.target.value;
+        this.gpuDialogApiKey = '';
+        this.updateGpuDialogDefaultCheckbox();
+    }
+
+    handleGpuDialogUseAsDefaultChange(event) {
+        this.gpuDialogUseAsDefault = event.target.checked;
+    }
+
+    handleGpuDialogApiKeyInput(event) {
+        this.gpuDialogApiKey = event.target.value;
+    }
+
+    async handleSaveGpuProviderDialog() {
+        if (!this.canManageGpu || this.gpuDialogSaving) return;
+
+        const providerId = this.gpuDialogProviderId;
+        const configured = this.isGpuProviderConfigured(providerId);
+        if (!this.gpuDialogApiKey.trim() && !configured) {
+            this.showErrorAlert('API key is required for this provider.', {
+                title: 'GPU provider',
+                force: true
+            });
+            return;
+        }
+
+        this.gpuDialogSaving = true;
+        try {
+            const payload = {
+                providerId,
+                setAsDefault: this.gpuDialogUseAsDefault
+            };
+            if (this.gpuDialogApiKey.trim()) {
+                payload.apiKey = this.gpuDialogApiKey.trim();
+            }
+            const data = await configureProjectGpuProvider(this.projectId, payload);
+            this.applyGpuSettings(data.settings);
+            this.syncConfiguredProvidersFromSettings(data.settings);
+            this.ensureConfiguredProviderListed(providerId);
+            this.gpuDialogApiKey = '';
+            this.closeGpuProviderDialog();
+            this.showToast('GPU provider saved.');
+        } catch (error) {
+            this.showErrorAlert(error.message || 'Unable to save GPU provider.', {
+                title: 'GPU provider',
+                force: true
+            });
+        } finally {
+            this.gpuDialogSaving = false;
+        }
+    }
+
+    getRemoteGpuLaunchBlockMessage() {
+        if (this.gpuSaving) {
+            return 'GPU provider is updating. Try again in a moment.';
+        }
+        if (!this.projectId || !this.usesRemoteGpuProvider()) return null;
+        if (this.isRemoteGpuRunning()) return null;
+
+        const status = this.gpuInstance?.status || 'idle';
+        if (status === 'provisioning') {
+            return 'GPU is still starting. Wait until it shows “Ready to open files,” then try again.';
+        }
+        if (status === 'stopping') {
+            return 'GPU is shutting down. Try again in a moment.';
+        }
+        if (status === 'error') {
+            return this.gpuInstance?.errorMessage
+                || 'GPU billing is unavailable. Start billing again or contact the project admin.';
+        }
+        if (!this.canManageGpu) {
+            return 'GPU billing is not running. Ask the project admin to start billing before opening files.';
+        }
+        return 'Start GPU billing on this project before opening files.';
+    }
+
+    getFileLaunchTitle(file) {
+        if (this.launchingFileId === file.id) return 'Opening…';
+        const block = this.getRemoteGpuLaunchBlockMessage();
+        if (block) return block;
+        return 'Open file';
+    }
+
+    parseApiErrorMessage(data, fallback) {
+        if (typeof data?.error === 'string') return data.error;
+        if (data?.error?.message) return data.error.message;
+        if (typeof data?.message === 'string') return data.message;
+        return fallback;
+    }
+
+    maybePrestageRecentFiles() {
+        if (!this.isRemoteGpuRunning()) {
+            this._autoPrestageDone = false;
+            return;
+        }
+        if (this._autoPrestageDone || this.gpuPrestageActive) return;
+        this._autoPrestageDone = true;
+        prestageProjectGpu(this.projectId)
+            .then((data) => {
+                this.stagedFileIds = data.stagedFileIds || this.stagedFileIds;
+                this.gpuPrestageActive = false;
+            })
+            .catch(() => {
+                this._autoPrestageDone = false;
+            });
+    }
+
+    handleFileHover(file) {
+        if (!this.isRemoteGpuRunning()) return;
+        if (this.isFileStagedOnGpu(file)) return;
+        clearTimeout(this._prestageHoverTimer);
+        this._prestageHoverTimer = setTimeout(() => {
+            prestageProjectGpu(this.projectId, { fileIds: [file.id] })
+                .then((data) => {
+                    this.stagedFileIds = data.stagedFileIds || this.stagedFileIds;
+                })
+                .catch(() => {});
+        }, 100);
+    }
+
     handleFileSelect(event) {
         this.selectedFile = event.target.files?.[0] || null;
-        this.uploadError = '';
     }
 
     handleDragOver(event) {
@@ -482,7 +1298,6 @@ export class ProjectReviewPage extends LitElement {
         const files = event.dataTransfer?.files;
         if (files?.length > 0) {
             this.selectedFile = files[0];
-            this.uploadError = '';
         }
     }
 
@@ -496,8 +1311,6 @@ export class ProjectReviewPage extends LitElement {
             const data = await listProjectFiles(this.projectId);
             this.projectFiles = data.files || [];
         } catch (error) {
-            // Keep the page usable even if project files endpoint is temporarily unavailable.
-            this.uploadError = '';
             this.projectFiles = [];
         } finally {
             this.loadingProjectFiles = false;
@@ -506,7 +1319,6 @@ export class ProjectReviewPage extends LitElement {
 
     openFileUploadDialog() {
         if (!this.canUploadFiles) return;
-        this.uploadError = '';
         this.selectedFile = null;
         this.dragOver = false;
         const input = this.renderRoot?.querySelector('#project-upload-input');
@@ -520,12 +1332,11 @@ export class ProjectReviewPage extends LitElement {
 
     async uploadFileToProject() {
         if (!this.selectedFile || !this.canUploadFiles || !this.projectId) {
-            this.uploadError = 'Please choose a file.';
+            this.showErrorAlert('Please choose a file.', { title: 'Upload file', force: true });
             return;
         }
 
         this.uploading = true;
-        this.uploadError = '';
 
         try {
             const formData = new FormData();
@@ -559,40 +1370,425 @@ export class ProjectReviewPage extends LitElement {
             } else if (response.statusText) {
                 errorMsg = `Upload failed: ${response.statusText}`;
             }
-            this.uploadError = errorMsg;
+            this.showErrorAlert(errorMsg, { title: 'Upload failed', force: true });
         } catch (error) {
-            this.uploadError = error.message || 'Network error during upload';
+            this.showErrorAlert(error.message || 'Network error during upload', {
+                title: 'Upload failed',
+                force: true
+            });
         } finally {
             this.uploading = false;
         }
     }
 
+    async loadProjectGpu() {
+        if (this.projectId) {
+            cancelViewerStopOnLeave(this.projectId);
+        }
+        const prevStatus = this.gpuInstance?.status;
+        try {
+            const providerData = await listGpuProviders();
+            this.gpuProviders = providerData.providers || [];
+            const data = await getProjectGpu(this.projectId);
+            this.applyGpuSettings(data.settings);
+            this.gpuInstance = data.instance;
+            this.gpuBillingLease = data.billingLease || null;
+            this.stagedFileIds = data.stagedFileIds || [];
+            this.gpuPrestageActive = !!data.prestageActive;
+            this.remoteActivity = data.remoteActivity || null;
+            this.remoteProvision = data.remoteProvision || null;
+            if (data.billingLease?.viewerLeaveGraceMinutes) {
+                window.__GPU_VIEWER_LEAVE_GRACE_MINUTES__ = data.billingLease.viewerLeaveGraceMinutes;
+            }
+            if (data.billingLease?.viewerSessionTtlMinutes) {
+                setViewerIdleMs(data.billingLease.viewerSessionTtlMinutes * 60 * 1000);
+            }
+            this.canManageGpu = !!data.canManage;
+            this.syncConfiguredProvidersFromSettings(data.settings);
+
+            this.syncGpuProviderSelect();
+
+            const gpuErr = this.pickGpuStatusError(data, prevStatus);
+            if (gpuErr) {
+                this.showGpuErrorAlert(gpuErr, data.instance?.errorSource);
+            } else if (prevStatus === 'error' && data.instance?.status !== 'error') {
+                this.clearErrorAlertDedupe();
+            }
+
+            this.maybeStartGpuPolling();
+            this.maybeStartGpuBillingHeartbeat();
+            this.maybePrestageRecentFiles();
+        } catch (error) {
+            this.showErrorAlert(error.message || 'Unable to load GPU settings.', {
+                title: 'GPU problem'
+            });
+        }
+    }
+
+    stopGpuPolling() {
+        if (this._gpuPollInterval) {
+            clearInterval(this._gpuPollInterval);
+            this._gpuPollInterval = null;
+        }
+    }
+
+    maybeStartGpuPolling() {
+        this.stopGpuPolling();
+        const status = this.gpuInstance?.status;
+        if (!['provisioning', 'stopping', 'running'].includes(status)) return;
+        this._gpuPollInterval = setInterval(() => {
+            this.loadProjectGpu().catch(() => {});
+        }, status === 'running' ? 20000 : 5000);
+    }
+
+    stopGpuBillingHeartbeat() {
+        if (this._gpuBillingHeartbeatInterval) {
+            clearInterval(this._gpuBillingHeartbeatInterval);
+            this._gpuBillingHeartbeatInterval = null;
+        }
+    }
+
+    maybeStartGpuBillingHeartbeat() {
+        this.stopGpuBillingHeartbeat();
+        const isRemoteRunning = this.gpuInstance?.status === 'running'
+            && this.savedGpuProviderId !== 'local';
+        if (!isRemoteRunning) return;
+
+        const ping = () => {
+            const viewerOpen = this.showIframe && !!this.iframeUrl && this.iframeUrl !== 'about:blank';
+            const viewerActive = viewerOpen && isViewerUserActive();
+            sendProjectGpuHeartbeat(this.projectId, { viewerActive })
+                .then((data) => {
+                    if (data.billingStopped) {
+                        this.gpuInstance = data.instance || this.gpuInstance;
+                        this.gpuBillingLease = null;
+                        this.showErrorAlert(
+                            data.reason || data.instance?.errorMessage
+                                || 'GPU instance is no longer available.',
+                            { title: 'GPU stopped' }
+                        );
+                        this.stopGpuBillingHeartbeat();
+                        this.stopGpuPolling();
+                        return;
+                    }
+                    if (data.remoteActivity) {
+                        this.remoteActivity = data.remoteActivity;
+                    }
+                    if (data.billingLease) {
+                        this.gpuBillingLease = data.billingLease;
+                    }
+                })
+                .catch((error) => {
+                    if (error.status === 404) {
+                        this.stopGpuBillingHeartbeat();
+                        this.loadProjectGpu().catch(() => {});
+                    }
+                });
+        };
+        ping();
+        this._gpuBillingHeartbeatInterval = setInterval(ping, 60000);
+    }
+
+    formatBillingTime(iso) {
+        if (!iso) return '';
+        try {
+            return new Date(iso).toLocaleString();
+        } catch (_) {
+            return iso;
+        }
+    }
+
+    /** Persisted provider from the server — gates file open and billing. */
+    get savedGpuProviderId() {
+        return this.gpuActiveProviderId || this.gpuSettings?.providerId || 'local';
+    }
+
+    get selectedGpuProvider() {
+        return this.gpuProviders.find((p) => p.id === this.savedGpuProviderId) || null;
+    }
+
+    /** Active provider — always matches persisted server settings. */
+    get activeGpuProviderId() {
+        return this.savedGpuProviderId;
+    }
+
+    get gpuStatusLabel() {
+        const status = this.gpuInstance?.status || 'idle';
+        const labels = {
+            idle: 'Not running',
+            provisioning: 'Provisioning GPU…',
+            running: 'Billing active',
+            stopping: 'Stopping…',
+            error: 'Error'
+        };
+        return labels[status] || status;
+    }
+
+    get gpuFriendlySummary() {
+        if (this.savedGpuProviderId === 'local') {
+            return 'Local viewer';
+        }
+        const status = this.gpuInstance?.status || 'idle';
+        if (!this.canManageGpu && status === 'idle') {
+            return 'GPU not running — ask project admin';
+        }
+        if (status === 'provisioning') {
+            if (this.remoteProvision?.failure) {
+                return 'GPU start failed on Vast';
+            }
+            if (this.remoteProvision?.statusMessage) {
+                return this.remoteProvision.statusMessage;
+            }
+            return 'Starting GPU…';
+        }
+        if (status === 'error' && this.gpuInstance?.errorMessage) {
+            return this.gpuInstance.errorMessage;
+        }
+        const labels = {
+            idle: 'GPU not running',
+            running: 'Ready to open files',
+            stopping: 'Shutting down…',
+            error: 'GPU unavailable'
+        };
+        return labels[status] || 'GPU status unknown';
+    }
+
+    get showGpuInfoButton() {
+        return this.savedGpuProviderId !== 'local';
+    }
+
+    getProviderConsoleUrl(providerId) {
+        const fromApi = this.gpuProviders.find((p) => p.id === providerId)?.consoleUrl;
+        return fromApi || GPU_PROVIDER_CONSOLE_URLS[providerId] || null;
+    }
+
+    get gpuDetailEntries() {
+        if (this.savedGpuProviderId === 'local') {
+            return [];
+        }
+
+        const entries = [];
+        const provider = this.gpuProviders.find((p) => p.id === this.savedGpuProviderId);
+        entries.push({
+            label: 'Provider',
+            value: provider?.label || this.savedGpuProviderId,
+            href: this.getProviderConsoleUrl(this.savedGpuProviderId)
+        });
+        entries.push({ label: 'Status', value: this.gpuStatusLabel });
+
+        if (this.gpuInstance?.status === 'provisioning' && this.remoteProvision) {
+            if (this.remoteProvision.actualStatus) {
+                entries.push({
+                    label: 'Vast status',
+                    value: this.remoteProvision.actualStatus
+                });
+            }
+            if (this.remoteProvision.statusMessage) {
+                entries.push({
+                    label: 'Vast message',
+                    value: this.remoteProvision.statusMessage
+                });
+            }
+        }
+        if (this.gpuInstance?.status === 'error' && this.gpuInstance?.errorMessage) {
+            entries.push({ label: 'Error', value: this.gpuInstance.errorMessage });
+        }
+
+        if (this.gpuInstance?.metadata?.dph) {
+            entries.push({
+                label: 'Estimated cost',
+                value: `~$${Number(this.gpuInstance.metadata.dph).toFixed(2)}/hr`
+            });
+        }
+        if (this.gpuInstance?.status === 'running' && this.gpuInstance.gpuHost) {
+            entries.push({ label: 'Host', value: this.gpuInstance.gpuHost });
+        }
+        if (this.gpuInstance?.status === 'running' && this.remoteActivity) {
+            if (this.remoteActivity.hasActiveSession) {
+                entries.push({ label: 'Viewer', value: 'Active' });
+            } else if (this.remoteActivity.sessionCount === 0) {
+                entries.push({ label: 'Viewer', value: 'Idle (no scene open)' });
+            }
+        }
+        if (this.gpuInstance?.status === 'running' && this.gpuPrestageActive) {
+            entries.push({
+                label: 'Files',
+                value: 'Preparing recent scenes on the GPU…'
+            });
+        }
+        if (this.gpuBillingLease && this.gpuInstance?.status === 'running') {
+            const lease = this.gpuBillingLease;
+            let billing = `Auto-stops after ${lease.idleMinutes} min idle`;
+            if (lease.idleShutdownAt) {
+                billing += ` (by ${this.formatBillingTime(lease.idleShutdownAt)})`;
+            }
+            if (lease.wallEndsAt) {
+                billing += `; max ${lease.maxWallMinutes} min (ends ${this.formatBillingTime(lease.wallEndsAt)})`;
+            }
+            entries.push({ label: 'Billing limits', value: billing });
+            entries.push({
+                label: 'Viewer sessions',
+                value: `Leaving this tab stops the viewer after ${lease.viewerLeaveGraceMinutes ?? 10} min. `
+                    + `Viewer and billing stop ~${lease.viewerSessionTtlMinutes ?? 30} min after last interaction. `
+                    + 'Other browser tabs can stay open for side-by-side compare.'
+            });
+        }
+        if (this.canManageGpu) {
+            entries.push({
+                label: 'Note',
+                value: 'Start billing before opening files. Scenes copy to the GPU when opened.'
+            });
+        } else {
+            entries.push({
+                label: 'Note',
+                value: 'Project admin manages GPU billing.'
+            });
+        }
+        return entries;
+    }
+
+    get gpuPanelSummaryMeta() {
+        const provider = this.configuredProviders.find((p) => p.id === this.savedGpuProviderId);
+        const label = provider?.label || (this.savedGpuProviderId === 'local' ? 'Local' : this.savedGpuProviderId);
+        if (this.savedGpuProviderId === 'local') {
+            return label;
+        }
+        return `${label} · ${this.gpuFriendlySummary}`;
+    }
+
+    handleGpuPanelToggle(event) {
+        this.gpuPanelOpen = event.target.open;
+    }
+
+    toggleGpuDetails() {
+        this.gpuDetailsOpen = !this.gpuDetailsOpen;
+    }
+
+    renderGpuProviderDetailValue(entry) {
+        if (!entry.href) {
+            return entry.value;
+        }
+        return html`
+            <span class="gpu-detail-value-with-link">
+                <span>${entry.value}</span>
+                <a
+                    class="gpu-console-link"
+                    href=${entry.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open ${entry.value} console"
+                    aria-label="Open ${entry.value} console"
+                    @click=${(e) => e.stopPropagation()}
+                >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path fill="currentColor" d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-7.59 7.59L10 14.17 19.41 4.83V8h2V3h-7z"></path>
+                    </svg>
+                </a>
+            </span>
+        `;
+    }
+
+    get canStartGpuBilling() {
+        return this.canManageGpu
+            && this.savedGpuProviderId !== 'local'
+            && this.isGpuProviderConfigured(this.savedGpuProviderId)
+            && ['idle', 'error'].includes(this.gpuInstance?.status || 'idle')
+            && !this.gpuBillingBusy
+            && !this.gpuSaving;
+    }
+
+    get canStopGpuBilling() {
+        const inst = this.gpuInstance;
+        if (!this.canManageGpu || this.gpuBillingBusy) return false;
+        if (inst?.status === 'provisioning') return true;
+        if (inst?.status === 'stopping') return true;
+        if (inst?.status === 'error' && inst?.instanceId) return true;
+        return inst?.status === 'running' && !!inst?.instanceId;
+    }
+
+    async handleStartGpuBilling() {
+        if (!this.canStartGpuBilling) return;
+        this.gpuBillingBusy = true;
+        try {
+            const data = await startProjectGpuBilling(this.projectId);
+            this.gpuInstance = data.instance;
+            this.clearErrorAlertDedupe();
+            this.showToast('GPU provisioning started.');
+            this.maybeStartGpuPolling();
+        } catch (error) {
+            this.showErrorAlert(error.message || 'Unable to start GPU billing.', {
+                title: 'GPU billing',
+                force: true
+            });
+        } finally {
+            this.gpuBillingBusy = false;
+        }
+    }
+
+    async handleStopGpuBilling() {
+        if (!this.canStopGpuBilling) return;
+        this.gpuBillingBusy = true;
+        try {
+            const data = await stopProjectGpuBilling(this.projectId);
+            this.gpuInstance = data.instance;
+            this.showToast('Stopping GPU billing…');
+            this.maybeStartGpuPolling();
+        } catch (error) {
+            this.showErrorAlert(error.message || 'Unable to stop GPU billing.', {
+                title: 'GPU billing',
+                force: true
+            });
+        } finally {
+            this.gpuBillingBusy = false;
+        }
+    }
+
     async handleLaunchFile(file) {
-        this.uploadError = '';
+        const gpuBlock = this.getRemoteGpuLaunchBlockMessage();
+        if (gpuBlock) {
+            this.showErrorAlert(gpuBlock, { title: 'GPU not ready', force: true });
+            return;
+        }
+
+        if (this.projectId) {
+            cancelViewerStopOnLeave(this.projectId);
+        }
+        this.currentFileName = file.originalName;
+        this.launchingFileId = file.id;
+        this.viewerLoading = true;
+        this.showIframe = true;
+        this.iframeUrl = 'about:blank';
+
         try {
             this.stopTrameHeartbeat();
-            await this.cleanupContainerSession();
+            await this.cleanupContainerSession(this.projectId);
+
+            if (this.isRemoteGpuRunning() && !this.isFileStagedOnGpu(file)) {
+                try {
+                    const prestageData = await prestageProjectGpu(this.projectId, { fileIds: [file.id] });
+                    this.stagedFileIds = prestageData.stagedFileIds || this.stagedFileIds;
+                } catch (_) {
+                    // containers/start will sync if prestage failed
+                }
+            }
 
             const response = await fetch(`${API_URL}/api/containers/start`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
-                body: JSON.stringify({ fileId: file.id })
+                body: JSON.stringify({ fileId: file.id, projectId: this.projectId })
             });
 
             const data = await response.json();
             if (!response.ok) {
-                throw new Error(data?.error || data?.message || 'Failed to launch file');
+                throw new Error(this.parseApiErrorMessage(data, 'Failed to launch file'));
             }
 
             const url = resolveTramePageUrl(data.frontendUrl);
-            this.currentFileName = file.originalName;
-            this.iframeUrl = 'about:blank';
-            this.showIframe = true;
 
-            const maxAttempts = 60;
+            const maxAttempts = 30;
             let attempts = 0;
-            let ready = false;
+            let ready = data.viewerReady === true || isRemoteTrameViewerUrl(url);
 
             while (attempts < maxAttempts && !ready) {
                 attempts += 1;
@@ -609,30 +1805,100 @@ export class ProjectReviewPage extends LitElement {
                 } catch (_) {
                     // keep waiting
                 }
-                await new Promise((resolve) => setTimeout(resolve, 1000));
+                await new Promise((resolve) => setTimeout(resolve, 300));
             }
 
             if (!ready) {
-                this.showIframe = false;
-                this.iframeUrl = '';
-                this.currentFileName = '';
                 throw new Error('Trame took too long to start. Try again.');
             }
 
             this.iframeUrl = url;
+            markViewerActivity();
             this.showToast(`Launched ${file.originalName}`);
             this.startTrameHeartbeat();
         } catch (error) {
-            this.uploadError = error.message || 'Unable to launch file.';
+            this.showIframe = false;
+            this.iframeUrl = '';
+            this.currentFileName = '';
+            this.viewerLoading = false;
+            this.launchingFileId = null;
+            this.showErrorAlert(error.message || 'Unable to launch file.', {
+                title: 'Unable to open file',
+                force: true
+            });
+        }
+    }
+
+    get viewerLoadingMessage() {
+        const name = this.currentFileName || 'scene';
+        if (this.isRemoteGpuRunning()) {
+            return `Starting GPU viewer for ${name}… Large scenes can take 1–3 minutes on the GPU.`;
+        }
+        return `Opening ${name}…`;
+    }
+
+    handleViewerIframeLoad() {
+        if (this.iframeUrl && this.iframeUrl !== 'about:blank') {
+            this.viewerLoading = false;
+            this.launchingFileId = null;
+            markViewerActivity();
+            this.attachViewerIframeActivityTracking();
+        }
+    }
+
+    attachViewerIframeActivityTracking() {
+        if (this._viewerIframeActivityCleanup) {
+            this._viewerIframeActivityCleanup();
+            this._viewerIframeActivityCleanup = null;
+        }
+
+        try {
+            const iframe = this.renderRoot?.querySelector('.trame-iframe');
+            const iframeDoc = iframe?.contentWindow?.document;
+            if (!iframeDoc) return;
+
+            const onActivity = () => markViewerActivity();
+            const events = ['pointerdown', 'keydown', 'wheel', 'touchstart'];
+            events.forEach((eventName) => {
+                iframeDoc.addEventListener(eventName, onActivity, { passive: true, capture: true });
+            });
+
+            this._viewerIframeActivityCleanup = () => {
+                events.forEach((eventName) => {
+                    iframeDoc.removeEventListener(eventName, onActivity, { capture: true });
+                });
+            };
+        } catch (_) {
+            // Cross-origin iframe: rely on postMessage from the viewer.
+        }
+    }
+
+    async handleViewerInactivityTimeout() {
+        if (!this.showIframe) return;
+        this.showToast('Viewer closed after inactivity');
+        await this.closeIframe();
+        if (
+            this.savedGpuProviderId !== 'local'
+            && this.canManageGpu
+            && this.gpuInstance?.status === 'running'
+        ) {
+            try {
+                const data = await stopProjectGpuBilling(this.projectId);
+                this.gpuInstance = data.instance;
+                this.gpuBillingLease = null;
+                this.showToast('GPU billing stopped after inactivity');
+                this.maybeStartGpuPolling();
+            } catch (error) {
+                console.warn('GPU billing stop after idle failed:', error.message);
+            }
         }
     }
 
     startTrameHeartbeat() {
         this.stopTrameHeartbeat();
         const ping = () => {
-            fetch(`${API_URL}/api/containers/heartbeat`, {
-                method: 'POST',
-                credentials: 'include'
+            sendTrameContainerHeartbeat({
+                onIdleTimeout: () => this.handleViewerInactivityTimeout()
             }).catch(() => {});
         };
         ping();
@@ -646,12 +1912,14 @@ export class ProjectReviewPage extends LitElement {
         }
     }
 
-    async cleanupContainerSession() {
+    async cleanupContainerSession(projectId = null) {
         try {
+            const payload = projectId ? { projectId } : {};
             await fetch(`${API_URL}/api/containers/stop`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                credentials: 'include'
+                credentials: 'include',
+                body: JSON.stringify(payload)
             });
         } catch (_) {
             // best effort
@@ -660,14 +1928,26 @@ export class ProjectReviewPage extends LitElement {
 
     async closeIframe() {
         this.stopTrameHeartbeat();
+        resetViewerActivity();
+        if (this._viewerIframeActivityCleanup) {
+            this._viewerIframeActivityCleanup();
+            this._viewerIframeActivityCleanup = null;
+        }
+        if (this.projectId) {
+            cancelViewerStopOnLeave(this.projectId);
+        }
         this.showIframe = false;
         this.iframeUrl = '';
         this.currentFileName = '';
-        await this.cleanupContainerSession();
+        this.viewerLoading = false;
+        this.launchingFileId = null;
+        await this.cleanupContainerSession(this.projectId);
+        if (this.savedGpuProviderId !== 'local' && this.gpuInstance?.status === 'running') {
+            sendProjectGpuHeartbeat(this.projectId, { viewerActive: false }).catch(() => {});
+        }
     }
 
     async handleDownloadFile(file) {
-        this.uploadError = '';
         try {
             const response = await fetch(`${API_URL}/api/files/${file.id}`, {
                 credentials: 'include'
@@ -691,7 +1971,10 @@ export class ProjectReviewPage extends LitElement {
             a.click();
             window.URL.revokeObjectURL(url);
         } catch (error) {
-            this.uploadError = error.message || 'Unable to download file.';
+            this.showErrorAlert(error.message || 'Unable to download file.', {
+                title: 'Download failed',
+                force: true
+            });
         }
     }
 
@@ -700,7 +1983,6 @@ export class ProjectReviewPage extends LitElement {
         const confirmed = window.confirm(`Delete ${file.originalName}?`);
         if (!confirmed) return;
 
-        this.uploadError = '';
         try {
             const response = await fetch(`${API_URL}/api/files/${file.id}`, {
                 method: 'DELETE',
@@ -720,7 +2002,10 @@ export class ProjectReviewPage extends LitElement {
             await this.loadProjectFiles();
             this.showToast('File deleted successfully.');
         } catch (error) {
-            this.uploadError = error.message || 'Unable to delete file.';
+            this.showErrorAlert(error.message || 'Unable to delete file.', {
+                title: 'Delete failed',
+                force: true
+            });
         }
     }
 
@@ -757,14 +2042,12 @@ export class ProjectReviewPage extends LitElement {
     }
 
     handleCancelCollaboratorChanges() {
-        this.formError = '';
         this.collaborators = this.sortCollaborators(this.originalCollaborators.map((entry) => ({ ...entry })));
     }
 
     async handleSaveCollaborators() {
         if (!this.canEditCollaborators || !this.hasPendingCollaboratorChanges) return;
         this.saving = true;
-        this.formError = '';
 
         try {
             const payload = this.collaborators.map((entry) => ({
@@ -775,7 +2058,10 @@ export class ProjectReviewPage extends LitElement {
             this.originalCollaborators = this.sortCollaborators(this.collaborators.map((entry) => ({ ...entry })));
             this.showToast('Collaborators updated.');
         } catch (error) {
-            this.formError = error.message || 'Unable to save collaborator changes.';
+            this.showErrorAlert(error.message || 'Unable to save collaborator changes.', {
+                title: 'Unable to save',
+                force: true
+            });
         } finally {
             this.saving = false;
         }
@@ -845,6 +2131,149 @@ export class ProjectReviewPage extends LitElement {
                             </div>
                         ` : ''}
                     </div>
+                    <div slot="content" class="gpu-panel">
+                        <div class="gpu-panel-header">
+                            <details
+                                class="gpu-panel-details"
+                                ?open=${this.gpuPanelOpen}
+                                @toggle=${(e) => this.handleGpuPanelToggle(e)}
+                            >
+                                <summary>
+                                    <span class="gpu-panel-summary-label">GPU Provider</span>
+                                    <span class="gpu-panel-chevron" aria-hidden="true">▸</span>
+                                    <span class="gpu-panel-summary-meta">${this.gpuPanelSummaryMeta}</span>
+                                </summary>
+                                <div class="gpu-panel-body">
+                                    ${this.canManageGpu ? html`
+                                        <div class="gpu-title-row">
+                                            <div class="gpu-title" style="margin-bottom: 0;">Providers</div>
+                                            <add-button
+                                                title="Add Provider"
+                                                @add-button-click=${() => this.openGpuProviderDialog()}
+                                            ></add-button>
+                                        </div>
+                                    ` : ''}
+                                    ${this.canManageGpu ? html`
+                                        <div class="gpu-field">
+                                            <label for="gpu-provider">Active provider</label>
+                                            <select
+                                                id="gpu-provider"
+                                                .value=${this.gpuActiveProviderId}
+                                                ?disabled=${this.gpuSaving}
+                                                @change=${(e) => this.handleGpuProviderChange(e)}
+                                            >
+                                                ${this.configuredProviders.map((provider) => html`
+                                                    <option
+                                                        value=${provider.id}
+                                                        ?selected=${this.gpuActiveProviderId === provider.id}
+                                                    >
+                                                        ${provider.label}
+                                                    </option>
+                                                `)}
+                                            </select>
+                                        </div>
+                                        <div class="gpu-field">
+                                            <label for="gpu-default-provider">Default provider</label>
+                                            <select
+                                                id="gpu-default-provider"
+                                                .value=${this.gpuSettings?.defaultProviderId || 'local'}
+                                                ?disabled=${this.gpuSaving}
+                                                @change=${(e) => this.handleDefaultProviderChange(e)}
+                                            >
+                                                ${this.configuredProviders.map((provider) => html`
+                                                    <option
+                                                        value=${provider.id}
+                                                        ?selected=${(this.gpuSettings?.defaultProviderId || 'local') === provider.id}
+                                                    >
+                                                        ${provider.label}
+                                                    </option>
+                                                `)}
+                                            </select>
+                                            <div class="gpu-hint">Which provider is pre-selected; use Active provider above for this session.</div>
+                                        </div>
+                                        ${this.isGpuProviderConfigured(this.gpuActiveProviderId)
+                                            && this.gpuActiveProviderId !== 'local' ? html`
+                                            <button
+                                                class="secondary-button"
+                                                type="button"
+                                                ?disabled=${this.gpuSaving}
+                                                @click=${() => this.openGpuProviderDialog(this.gpuActiveProviderId)}
+                                            >
+                                                Configure ${(this.configuredProviders.find((p) => p.id === this.gpuActiveProviderId) || {}).label || 'provider'}…
+                                            </button>
+                                        ` : ''}
+                                        ${this.gpuSaving ? html`
+                                            <div class="gpu-hint">Updating GPU settings…</div>
+                                        ` : ''}
+                                        ${this.configuredProviders.length === 1 ? html`
+                                            <div class="gpu-hint">Add a remote provider to enable cloud GPU billing.</div>
+                                        ` : ''}
+                                    ` : html`
+                                        <div class="gpu-hint">
+                                            Active: ${(this.configuredProviders.find((p) => p.id === this.activeGpuProviderId) || { label: 'Local' }).label}
+                                        </div>
+                                    `}
+                                    ${this.showGpuInfoButton ? html`
+                                        <div class="gpu-status-row">
+                                            <div class="gpu-status">
+                                                <strong>${this.gpuFriendlySummary}</strong>
+                                            </div>
+                                            <button
+                                                class="gpu-info-button"
+                                                type="button"
+                                                aria-label="GPU details"
+                                                title="GPU details"
+                                                aria-expanded=${this.gpuDetailsOpen ? 'true' : 'false'}
+                                                @click=${() => this.toggleGpuDetails()}
+                                            >
+                                                <svg class="gpu-info-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                                    <path fill="currentColor" d="M11 7h2v2h-2V7zm0 4h2v6h-2v-6zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"></path>
+                                                </svg>
+                                            </button>
+                                        </div>
+                                        ${this.gpuDetailsOpen ? html`
+                                            <div class="gpu-details">
+                                                ${this.gpuDetailEntries.map((entry) => html`
+                                                    <div class="gpu-detail-row">
+                                                        <div class="gpu-detail-label">${entry.label}</div>
+                                                        <div class="gpu-detail-value">
+                                                            ${entry.label === 'Provider'
+                                                                ? this.renderGpuProviderDetailValue(entry)
+                                                                : entry.value}
+                                                        </div>
+                                                    </div>
+                                                `)}
+                                            </div>
+                                        ` : ''}
+                                    ` : html`
+                                        <div class="gpu-status">
+                                            <strong>${this.gpuFriendlySummary}</strong>
+                                        </div>
+                                    `}
+                                </div>
+                            </details>
+                            ${this.canManageGpu && this.savedGpuProviderId !== 'local' ? html`
+                                <div class="gpu-panel-billing-actions">
+                                    <button
+                                        class="primary-button"
+                                        type="button"
+                                        ?disabled=${!this.canStartGpuBilling}
+                                        @click=${() => this.handleStartGpuBilling()}
+                                    >
+                                        ${this.gpuBillingBusy && this.gpuInstance?.status !== 'running' ? 'Working…' : 'Start Billing'}
+                                    </button>
+                                    <button
+                                        class="secondary-button"
+                                        type="button"
+                                        ?disabled=${!this.canStopGpuBilling}
+                                        @click=${() => this.handleStopGpuBilling()}
+                                    >
+                                        Stop Billing
+                                    </button>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
                     <div slot="content" class="files-panel">
                         <div class="files-title">Project Files</div>
                         ${this.loadingProjectFiles ? html`
@@ -859,7 +2288,10 @@ export class ProjectReviewPage extends LitElement {
                                     <file-list-row
                                         .fileName=${file.originalName}
                                         .metaLine=${this.formatProjectFileMetaLine(file)}
+                                        .nameButtonDisabled=${this.viewerLoading || !!this.getRemoteGpuLaunchBlockMessage()}
+                                        .nameButtonTitle=${this.getFileLaunchTitle(file)}
                                         @name-click=${() => this.handleLaunchFile(file)}
+                                        @mouseenter=${() => this.handleFileHover(file)}
                                     >
                                         <button
                                             slot="actions"
@@ -904,9 +2336,18 @@ export class ProjectReviewPage extends LitElement {
                         </button>
                     </div>
                 ` : ''}
-                ${this.formError ? html`<div slot="content" class="form-error">${this.formError}</div>` : ''}
-                ${this.uploadError ? html`<div slot="content" class="form-error">${this.uploadError}</div>` : ''}
             </page-layout-template>
+            <app-dialog id="error-alert-dialog" title=${this.errorAlertTitle || 'Something went wrong'}>
+                <p class="error-alert-message">${this.errorAlertMessage}</p>
+                <button
+                    slot="actions"
+                    class="primary-button"
+                    type="button"
+                    @click=${() => this.dismissErrorAlert()}
+                >
+                    ${this.errorAlertDismissLabel}
+                </button>
+            </app-dialog>
             <app-dialog id="collaborator-dialog" title="Add Collaborators">
                 <collaborator-search
                     @collaborators-cancel=${() => this.closeCollaboratorDialog()}
@@ -959,6 +2400,58 @@ export class ProjectReviewPage extends LitElement {
                     ` : ''}
                 </div>
             </app-dialog>
+            <app-dialog id="gpu-provider-dialog" title=${this.gpuProviderDialogTitle}>
+                <div class="gpu-dialog-form">
+                    <div class="gpu-field">
+                        <label for="gpu-dialog-provider">Provider</label>
+                        <select
+                            id="gpu-dialog-provider"
+                            .value=${this.gpuDialogProviderId}
+                            @change=${(e) => this.handleGpuDialogProviderChange(e)}
+                        >
+                            ${this.gpuDialogProviderOptions.map((provider) => html`
+                                <option value=${provider.id}>${provider.label}</option>
+                            `)}
+                        </select>
+                    </div>
+                    <div class="gpu-field">
+                        <label for="gpu-dialog-api-key">API key</label>
+                        <input
+                            id="gpu-dialog-api-key"
+                            type="password"
+                            placeholder=${this.gpuDialogApiKeyPlaceholder}
+                            .value=${this.gpuDialogApiKey}
+                            @input=${(e) => this.handleGpuDialogApiKeyInput(e)}
+                        />
+                    </div>
+                    <label class="gpu-dialog-checkbox">
+                        <input
+                            type="checkbox"
+                            .checked=${this.gpuDialogUseAsDefault}
+                            @change=${(e) => this.handleGpuDialogUseAsDefaultChange(e)}
+                        />
+                        Use as default
+                    </label>
+                    <div class="gpu-dialog-actions">
+                        <button
+                            class="secondary-button"
+                            type="button"
+                            ?disabled=${this.gpuDialogSaving}
+                            @click=${() => this.closeGpuProviderDialog()}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            class="primary-button"
+                            type="button"
+                            ?disabled=${this.gpuDialogSaving}
+                            @click=${() => this.handleSaveGpuProviderDialog()}
+                        >
+                            ${this.gpuDialogSaving ? 'Saving…' : 'Save'}
+                        </button>
+                    </div>
+                </div>
+            </app-dialog>
             ${this.showIframe ? html`
                 <div class="iframe-overlay">
                     <div class="iframe-header">
@@ -968,23 +2461,25 @@ export class ProjectReviewPage extends LitElement {
                         </button>
                     </div>
                     <div class="iframe-container">
-                        ${this.iframeUrl === 'about:blank' ? html`
-                            <div class="loading-state">
-                                <div>
-                                    <h3>Starting Trame...</h3>
-                                    <p>This may take a few seconds</p>
-                                </div>
-                            </div>
-                        ` : html`
+                        ${this.iframeUrl !== 'about:blank' ? html`
                             <iframe
-                                class="trame-iframe"
+                                class="trame-iframe ${this.viewerLoading ? 'is-loading' : ''}"
                                 src="${this.iframeUrl}"
                                 allow="clipboard-read; clipboard-write; cross-origin-isolated"
                                 allowfullscreen
                                 frameborder="0"
                                 referrerpolicy="origin"
+                                @load=${() => this.handleViewerIframeLoad()}
                             ></iframe>
-                        `}
+                        ` : ''}
+                        ${this.viewerLoading ? html`
+                            <div class="loading-state ${this.iframeUrl !== 'about:blank' ? 'loading-overlay' : ''}">
+                                <div class="viewer-loading">
+                                    <div class="viewer-spinner" role="status" aria-label="Loading viewer"></div>
+                                    <p>${this.viewerLoadingMessage}</p>
+                                </div>
+                            </div>
+                        ` : ''}
                     </div>
                 </div>
             ` : ''}

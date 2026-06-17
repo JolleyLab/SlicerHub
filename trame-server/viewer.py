@@ -50,6 +50,35 @@ class CustomMedicalViewer:
         self._start_save_request_watcher()
         self._start_view_state_request_watcher()
         self._start_apply_view_state_request_watcher()
+        self._register_parent_activity_bridge()
+
+    def _register_parent_activity_bridge(self) -> None:
+        """Notify the parent frame when the user interacts with the viewer."""
+        from trame.widgets import html
+
+        with self._server.ui:
+            html.Script(
+                """
+                (function () {
+                  function notify() {
+                    try {
+                      window.parent.postMessage({ type: 'slicer-viewer-activity' }, '*');
+                    } catch (e) {}
+                  }
+                  var last = 0;
+                  function throttled() {
+                    var now = Date.now();
+                    if (now - last < 5000) return;
+                    last = now;
+                    notify();
+                  }
+                  ['mousemove', 'mousedown', 'keydown', 'wheel', 'touchstart'].forEach(function (evt) {
+                    window.addEventListener(evt, throttled, { passive: true });
+                  });
+                  notify();
+                })();
+                """
+            )
 
     @property
     def server(self):

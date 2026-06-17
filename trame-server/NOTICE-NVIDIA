@@ -1,0 +1,10 @@
+This image is derived from NVIDIA CUDA container images. NVIDIA software
+contained in this image remains subject to NVIDIA's Deep Learning Container
+License and other applicable NVIDIA license terms.
+
+Official license documents:
+
+  https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+  https://docs.nvidia.com/cuda/eula/index.html
+
+Source repository notice: licenses/NVIDIA-NOTICE.md (slicer-web project)

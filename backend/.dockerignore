@@ -1,5 +1,16 @@
 node_modules
 npm-debug.log
 .env
+.env.*
 .git
 .gitignore
+data
+data/**
+userFiles
+userFiles/**
+*.db
+*.db-journal
+scripts/smoke-sync-to-trame.mjs
+test-run.js
+**/__pycache__
+**/*.pyc

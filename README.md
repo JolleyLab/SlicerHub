@@ -11,7 +11,7 @@ This repository currently includes the existing BSD-3-Clause license in `LICENSE
 Some GPU deployment paths use NVIDIA container/runtime components with separate license terms.
 
 - Those runtime terms are separate from this repository's source code license.
-- See `THIRD_PARTY_RUNTIME.md` for details and current distribution guidance.
+- See [`THIRD_PARTY_RUNTIME.md`](THIRD_PARTY_RUNTIME.md) and [`licenses/NVIDIA-NOTICE.md`](licenses/NVIDIA-NOTICE.md) for official NVIDIA license links and GPU image details.
 
 ## Setup
 

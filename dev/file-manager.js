@@ -8,17 +8,13 @@ import './components/file-storage-summary.js';
 import './components/file-list-row.js';
 import './components/add-button.js';
 import './components/app-dialog.js';
-
-/** Match Trame URL to this tab's origin so polling/iframe work when the API returns http:// behind an https edge. */
-function resolveTramePageUrl(frontendUrl) {
-    if (!frontendUrl) return '';
-    try {
-        const u = new URL(frontendUrl, window.location.href);
-        return `${window.location.origin}${u.pathname}${u.search}${u.hash}`;
-    } catch {
-        return frontendUrl;
-    }
-}
+import { resolveTramePageUrl, isRemoteTrameViewerUrl } from './utils/trameViewerUrl.js';
+import {
+    installViewerActivityListeners,
+    markViewerActivity,
+    resetViewerActivity
+} from './utils/viewerActivity.js';
+import { sendTrameContainerHeartbeat } from './utils/trameHeartbeat.js';
 
 export class FileManager extends LitElement {
     static get styles() {
@@ -566,6 +562,7 @@ export class FileManager extends LitElement {
 
     connectedCallback() {
         super.connectedCallback();
+        installViewerActivityListeners();
         this.loadFiles();
         this.loadStats();
         // Cleanup any running containers when page loads
@@ -948,14 +945,16 @@ export class FileManager extends LitElement {
 
     async cleanupContainer() {
         try {
-            await fetch(`${API_URL}/api/containers/stop`, {
+            const response = await fetch(`${API_URL}/api/containers/stop`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
                 },
                 credentials: 'include'
             });
-            console.log("Cleaned up existing container");
+            if (response.ok) {
+                console.log("Cleaned up existing container");
+            }
         } catch (err) {
             // Ignore errors - container might not exist
         }
@@ -1001,7 +1000,7 @@ export class FileManager extends LitElement {
                 console.log('Waiting for Trame to be ready...');
                 const maxAttempts = 60; // 60 seconds max (file loading can take time)
                 let attempts = 0;
-                let ready = false;
+                let ready = isRemoteTrameViewerUrl(url);
 
                 while (attempts < maxAttempts && !ready) {
                     attempts++;
@@ -1030,6 +1029,7 @@ export class FileManager extends LitElement {
                     // Update iframe with actual URL
                     console.log('Loading Trame in iframe...');
                     this.iframeUrl = url;
+                    markViewerActivity();
                     this.success = `Launched ${file.originalName} in Trame`;
                     this.hasUnsavedChanges = false;
 
@@ -1047,6 +1047,10 @@ export class FileManager extends LitElement {
                     errorMsg = data.error.message;
                 } else if (data.message) {
                     errorMsg = data.message;
+                }
+                if (response.status === 401 || response.status === 403) {
+                    errorMsg = 'Session expired — please sign out and sign in again.';
+                    this.dispatchEvent(new CustomEvent('logout-request', { bubbles: true, composed: true }));
                 }
                 this.error = errorMsg;
             }
@@ -1075,6 +1079,7 @@ export class FileManager extends LitElement {
 
             const markDirty = () => {
                 this.hasUnsavedChanges = true;
+                markViewerActivity();
             };
             const events = ['pointerdown', 'keydown', 'input', 'change', 'wheel'];
             events.forEach((eventName) => iframeDoc.addEventListener(eventName, markDirty, true));
@@ -1226,6 +1231,7 @@ export class FileManager extends LitElement {
 
         // Stop heartbeat
         this.stopHeartbeat();
+        resetViewerActivity();
 
         // Hide iframe
         this.showIframe = false;
@@ -1269,13 +1275,17 @@ export class FileManager extends LitElement {
         }
     }
 
+    async handleViewerInactivityTimeout() {
+        if (!this.showIframe) return;
+        this.success = 'Viewer closed after inactivity';
+        await this.closeIframe(false);
+    }
+
     startHeartbeat() {
-        // Extend sliding lease on Trame (see SESSION_TTL_SECONDS on trame-service).
         this.stopHeartbeat();
         const ping = () => {
-            fetch(`${API_URL}/api/containers/heartbeat`, {
-                method: 'POST',
-                credentials: 'include'
+            sendTrameContainerHeartbeat({
+                onIdleTimeout: () => this.handleViewerInactivityTimeout()
             }).catch((err) => console.log('Heartbeat failed:', err.message));
         };
         ping();

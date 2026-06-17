@@ -10,12 +10,56 @@ import {
 import jwt from 'jsonwebtoken';
 import { ValidationError, UnauthorizedError, NotFoundError } from '../utils/errors.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { createRateLimiter, getRateLimitClientIp } from '../middleware/rateLimit.js';
+
+const AUTH_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+const authPerIpRateLimit = createRateLimiter({
+    windowMs: 60 * 1000,
+    max: 30,
+    message: 'Too many authentication attempts. Please wait and try again.',
+    getKey: (req) => `auth:ip:${getRateLimitClientIp(req)}`
+});
+
+const registerPerIpRateLimit = createRateLimiter({
+    windowMs: 60 * 1000,
+    max: 10,
+    message: 'Too many registration attempts. Please wait and try again.',
+    getKey: (req) => `register:ip:${getRateLimitClientIp(req)}`
+});
+
+function authCookieOptions() {
+    const secure = process.env.COOKIE_SECURE === 'true'
+        || (process.env.COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production');
+    return {
+        httpOnly: true,
+        secure,
+        sameSite: 'strict',
+        path: '/',
+        maxAge: AUTH_COOKIE_MAX_AGE_MS
+    };
+}
+
+function clearAuthCookie(res) {
+    const secure = process.env.COOKIE_SECURE === 'true'
+        || (process.env.COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production');
+    res.clearCookie('token', {
+        httpOnly: true,
+        secure,
+        sameSite: 'strict',
+        path: '/'
+    });
+}
 
 export default function authRoutes(app) {
     /**
      * Register new user
      */
-    app.post('/api/auth/register', asyncHandler(async (req, res) => {
+    app.post('/api/auth/register', registerPerIpRateLimit, asyncHandler(async (req, res) => {
+        if (process.env.REGISTRATION_ENABLED === 'false') {
+            throw new ValidationError('Registration is disabled on this server');
+        }
+
         const { username, email, password } = req.body;
 
         // Validate input
@@ -47,17 +91,10 @@ export default function authRoutes(app) {
             user.id,
             decoded.jti,
             expiresAt,
-            req.ip,
             req.get('user-agent')
         );
 
-        // Set httpOnly cookie
-        res.cookie('token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-        });
+        res.cookie('token', token, authCookieOptions());
 
         res.status(201).json({
             message: 'User created successfully',
@@ -73,7 +110,7 @@ export default function authRoutes(app) {
     /**
      * Login
      */
-    app.post('/api/auth/login', asyncHandler(async (req, res) => {
+    app.post('/api/auth/login', authPerIpRateLimit, asyncHandler(async (req, res) => {
         const { username, password } = req.body;
 
         if (!username || !password) {
@@ -97,17 +134,10 @@ export default function authRoutes(app) {
             user.id,
             decoded.jti,
             expiresAt,
-            req.ip,
             req.get('user-agent')
         );
 
-        // Set httpOnly cookie
-        res.cookie('token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-        });
+        res.cookie('token', token, authCookieOptions());
 
         res.json({
             message: 'Login successful',
@@ -123,34 +153,26 @@ export default function authRoutes(app) {
     /**
      * Logout
      */
-    app.post('/api/auth/logout', authenticateToken, asyncHandler(async (req, res) => {
-        // Stop any running containers for this user
-        try {
-            const containerManager = require('../docker/containerManager');
-            await containerManager.stopContainer(req.user.userId);
-        } catch (err) {
-            // Container might not exist, continue with logout
-            console.log('Container cleanup during logout:', err.message);
-        }
-
-        // Get token from header or cookie
+    app.post('/api/auth/logout', asyncHandler(async (req, res) => {
         const authHeader = req.headers['authorization'];
         const token = authHeader && authHeader.split(' ')[1] || req.cookies?.token;
 
         if (token) {
             const decoded = decodeToken(token);
-            if (decoded && decoded.jti) {
+            if (decoded?.jti) {
                 deleteSession(decoded.jti);
+            }
+            if (decoded?.userId) {
+                try {
+                    const { stopContainer } = await import('../docker/containerManager.js');
+                    await stopContainer(String(decoded.userId));
+                } catch (err) {
+                    console.log('Container cleanup during logout:', err.message);
+                }
             }
         }
 
-        // Clear the cookie
-        res.clearCookie('token', {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict'
-        });
-
+        clearAuthCookie(res);
         res.json({ message: 'Logout successful' });
     }));
 
@@ -195,17 +217,10 @@ export default function authRoutes(app) {
             user.id,
             decoded.jti,
             expiresAt,
-            req.ip,
             req.get('user-agent')
         );
 
-        // Set new httpOnly cookie
-        res.cookie('token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-        });
+        res.cookie('token', token, authCookieOptions());
 
         res.json({ user });
     }));

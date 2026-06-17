@@ -3,7 +3,7 @@ Trame Visualization Service - Manages multiple concurrent Trame sessions using D
 Uses subprocess to call Docker CLI directly (more reliable on Windows than docker-py)
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
@@ -14,12 +14,18 @@ import json
 import time
 import asyncio
 import socket
+import re
+import urllib.request
 from typing import Dict, Optional, List
 import logging
+from runtime import create_runtime
+from runtime.ipc import write_json_file, read_json_file, remove_file
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+runtime = create_runtime(logger)
+RUNTIME_MODE = getattr(runtime, "mode", "docker")
 
 # Track active sessions: session_id -> {container_id, container_name, port, user_id,
 #   last_activity, started_at, lease_expires_at}
@@ -52,68 +58,144 @@ PRUNE_EXITED_INTERVAL_SECONDS = int(os.getenv("PRUNE_EXITED_INTERVAL_SECONDS", "
 # GPU support - set USE_GPU=false to disable for local testing without NVIDIA container runtime
 USE_GPU = os.getenv('USE_GPU', 'true').lower() not in ('false', '0', 'no')
 TRAME_IMAGE = (os.getenv('TRAME_IMAGE') or 'slicer-web-trame:local').strip() or 'slicer-web-trame:local'
+TRAME_SYNC_TOKEN = (os.getenv('TRAME_SYNC_TOKEN') or '').strip()
 
 
-def run_docker(args: List[str], check=True) -> subprocess.CompletedProcess:
-    """Run a docker CLI command"""
+def workspace_root() -> str:
+    return os.getenv('WORKSPACE_ROOT', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def user_files_dir(user_id: str) -> str:
+    return os.path.join(workspace_root(), "backend", "userFiles", user_id)
+
+
+def docker_bind_source_path(native_path: str) -> str:
+    """
+    Map a path visible inside trame-service to a host path for `docker run -v`.
+
+    Inside compose, repo is mounted at WORKSPACE_ROOT (/workspace). Nested docker
+    must bind the real host directory (HOST_WORKSPACE_ROOT), not /workspace/...
+    """
+    native = os.path.normpath(native_path)
+    host_root = (os.getenv("HOST_WORKSPACE_ROOT") or "").strip()
+    ws_root = os.path.normpath(workspace_root())
+
+    if host_root:
+        try:
+            rel = os.path.relpath(native, ws_root)
+        except ValueError:
+            rel = None
+        if rel and not rel.startswith(".."):
+            host_path = os.path.join(host_root, rel)
+        else:
+            host_path = native
+    else:
+        host_path = native
+
+    host_path = host_path.replace("\\", "/")
+    if len(host_path) >= 2 and host_path[1] == ":":
+        drive, tail = host_path.split(":", 1)
+        host_path = f"/{drive.lower()}{tail}"
+    return host_path
+
+
+def save_output_path(session: dict, requested_name: str) -> str:
+    if RUNTIME_MODE == "process":
+        base = session.get("user_files_path") or user_files_dir(session["user_id"])
+        return os.path.join(base, requested_name)
+    return f"/data/{requested_name}"
+
+
+def is_process_alive(pid: str) -> bool:
     try:
-        cmd = ['docker'] + args
-        logger.debug(f"Running: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, check=check)
-        return result
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Docker command failed: {e.stderr}")
-        raise
-    except FileNotFoundError:
-        raise RuntimeError("Docker CLI not found. Ensure Docker is installed.")
+        os.kill(int(pid), 0)
+        return True
+    except (ProcessLookupError, ValueError, PermissionError, OSError):
+        return False
+
+
+async def write_viewer_request_file(container_id: str, request_file: str, payload: dict) -> None:
+    if RUNTIME_MODE == "process":
+        write_json_file(request_file, payload)
+        return
+    payload_json = json.dumps(payload)
+    run_docker(
+        [
+            "exec",
+            container_id,
+            "python3",
+            "-c",
+            (
+                "import json; "
+                f"open({json.dumps(request_file)}, 'w').write({json.dumps(payload_json)})"
+            ),
+        ]
+    )
+
+
+async def poll_viewer_result_file(
+    container_id: str,
+    result_file: str,
+    poll_count: int,
+    poll_interval_seconds: float,
+) -> Optional[dict]:
+    if RUNTIME_MODE == "process":
+        for _ in range(poll_count):
+            payload = read_json_file(result_file)
+            if payload is not None:
+                remove_file(result_file)
+                return payload
+            await asyncio.sleep(poll_interval_seconds)
+        return None
+
+    for _ in range(poll_count):
+        probe = run_docker(
+            [
+                "exec",
+                container_id,
+                "python3",
+                "-c",
+                (
+                    "import os; "
+                    f"p={json.dumps(result_file)}; "
+                    "print(open(p).read() if os.path.exists(p) else '')"
+                ),
+            ],
+            check=False,
+        )
+        raw = (probe.stdout or "").strip()
+        if raw:
+            try:
+                return json.loads(raw)
+            except Exception:
+                pass
+        await asyncio.sleep(poll_interval_seconds)
+    return None
+
+
+async def cleanup_viewer_result_file(container_id: str, result_file: str) -> None:
+    if RUNTIME_MODE == "process":
+        remove_file(result_file)
+        return
+    if not result_file.startswith("/tmp/trame-"):
+        logger.warning("Refusing to delete unexpected result file path: %s", result_file)
+        return
+    run_docker(["exec", container_id, "rm", "-f", result_file], check=False)
+
+
+def run_docker(args: List[str], check=True):
+    """Compatibility wrapper while runtime adapter is introduced."""
+    return runtime.run_command(args, check=check)
 
 
 def trame_image_inspect() -> dict:
     """Return whether TRAME_IMAGE exists locally and basic metadata (for /health and startup)."""
-    r = run_docker(
-        [
-            'image', 'inspect', TRAME_IMAGE,
-            '--format', '{{.Id}}\t{{.Created}}\t{{json .RepoTags}}',
-        ],
-        check=False,
-    )
-    if r.returncode != 0:
-        return {
-            'present': False,
-            'id': None,
-            'created': None,
-            'repo_tags': [],
-            'inspect_error': (r.stderr or r.stdout or '').strip(),
-        }
-    parts = (r.stdout or '').strip().split('\t', 2)
-    img_id = parts[0] if parts else None
-    created = parts[1] if len(parts) > 1 else None
-    tags_raw = parts[2] if len(parts) > 2 else '[]'
-    try:
-        repo_tags = json.loads(tags_raw) if tags_raw else []
-    except json.JSONDecodeError:
-        repo_tags = [tags_raw] if tags_raw else []
-    return {
-        'present': True,
-        'id': img_id,
-        'created': created,
-        'repo_tags': repo_tags,
-        'inspect_error': None,
-    }
+    return runtime.image_inspect(TRAME_IMAGE)
 
 
 def check_docker_available() -> bool:
     """Check if Docker is available"""
-    try:
-        result = run_docker(['version', '--format', '{{.Server.Version}}'], check=False)
-        if result.returncode == 0:
-            logger.info(f"Docker available, version: {result.stdout.strip()}")
-            return True
-        logger.error(f"Docker check failed: {result.stderr}")
-        return False
-    except Exception as e:
-        logger.error(f"Docker check failed: {e}")
-        return False
+    return runtime.check_available()
 
 
 def get_running_containers() -> List[dict]:
@@ -139,20 +221,8 @@ def get_running_containers() -> List[dict]:
 
 
 def stop_container(container_id: str):
-    """Stop and remove a container (single rm -f avoids stopped-but-not-deleted leftovers)."""
-    try:
-        logger.info(f"Removing container {container_id}")
-        r = run_docker(["rm", "-f", container_id], check=False)
-        if r.returncode != 0:
-            logger.warning(
-                "docker rm -f %s exited %s stderr=%s stdout=%s",
-                container_id,
-                r.returncode,
-                (r.stderr or "").strip(),
-                (r.stdout or "").strip(),
-            )
-    except Exception as e:
-        logger.error(f"Error removing container {container_id}: {e}")
+    """Stop and remove a runtime session container."""
+    runtime.stop_container(container_id)
 
 
 def touch_session_activity(session_id: str) -> Optional[float]:
@@ -171,23 +241,14 @@ def touch_session_activity(session_id: str) -> Optional[float]:
 
 
 def prune_stopped_trame_containers():
-    """Remove stopped session containers left behind after crashes or partial cleanups."""
-    try:
-        r = run_docker(
-            ["container", "prune", "-f", "--filter", "label=trame-service=true"],
-            check=False,
-        )
-        out = (r.stdout or "").strip().replace("\n", " ")
-        if out:
-            logger.info("Trame container prune: %s", out)
-    except Exception as e:
-        logger.error(f"Trame container prune failed: {e}")
+    """Remove stale runtime session instances left behind after crashes or partial cleanups."""
+    runtime.prune_stopped_sessions()
 
 
-def is_container_port_open(container_name: str, port: int, timeout_seconds: float = 1.0) -> bool:
-    """Check if a container is accepting TCP connections on the given port."""
+def is_host_port_open(host: str, port: int, timeout_seconds: float = 1.0) -> bool:
+    """Check if a host is accepting TCP connections on the given port."""
     try:
-        with socket.create_connection((container_name, port), timeout=timeout_seconds):
+        with socket.create_connection((host, port), timeout=timeout_seconds):
             return True
     except (OSError, socket.timeout):
         return False
@@ -197,9 +258,9 @@ async def wait_for_container_ready(container_name: str, port: int, max_wait_seco
     """Wait until the container starts accepting connections on the expected port."""
     deadline = time.time() + max_wait_seconds
     while time.time() < deadline:
-        if is_container_port_open(container_name, port):
+        if is_host_port_open(container_name, port):
             return True
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.25)
     return False
 
 
@@ -210,11 +271,15 @@ async def enforce_session_leases():
             await asyncio.sleep(60)
             now = time.time()
             for session_id, session in list(active_sessions.items()):
+                if RUNTIME_MODE == "process" and not is_process_alive(session.get("container_id", "")):
+                    logger.info("Session %s process is no longer running, removing session", session_id)
+                    del active_sessions[session_id]
+                    continue
                 lease_end = session.get("lease_expires_at")
                 if lease_end is None or now >= lease_end:
                     idle_min = (now - session.get("last_activity", now)) / 60.0
                     logger.info(
-                        "Session %s lease expired (last activity %.1f min ago), removing container",
+                        "Session %s lease expired (last activity %.1f min ago), removing session",
                         session_id,
                         idle_min,
                     )
@@ -236,28 +301,27 @@ async def prune_exited_trame_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle startup and shutdown"""
-    logger.info("Trame service starting")
-    img = trame_image_inspect()
-    logger.info(
-        "TRAME_IMAGE=%s present=%s id=%s created=%s repo_tags=%s",
-        TRAME_IMAGE,
-        img.get('present'),
-        (img.get('id') or '')[:12] if img.get('id') else None,
-        img.get('created'),
-        img.get('repo_tags'),
-    )
-    if not img.get('present'):
-        logger.error(
-            "TRAME_IMAGE %s is not on this Docker host — session starts will fail until you "
-            "`docker compose build trame-job` (same TRAME_IMAGE in compose/.env) and "
-            "`docker compose up -d --force-recreate trame-service`. Inspect error: %s",
+    logger.info("Trame service starting (runtime=%s)", RUNTIME_MODE)
+    if RUNTIME_MODE == "docker":
+        img = trame_image_inspect()
+        logger.info(
+            "TRAME_IMAGE=%s present=%s id=%s created=%s repo_tags=%s",
             TRAME_IMAGE,
-            img.get('inspect_error'),
+            img.get('present'),
+            (img.get('id') or '')[:12] if img.get('id') else None,
+            img.get('created'),
+            img.get('repo_tags'),
         )
-    
-    # Check Docker availability
+        if not img.get('present'):
+            logger.error(
+                "TRAME_IMAGE %s is not on this Docker host — session starts will fail until you "
+                "`docker compose build trame-job` (same TRAME_IMAGE in compose/.env) and "
+                "`docker compose up -d --force-recreate trame-service`. Inspect error: %s",
+                TRAME_IMAGE,
+                img.get('inspect_error'),
+            )
     if not check_docker_available():
-        logger.error("Docker is not available!")
+        logger.error("Session runtime is not available")
 
     lease_task = asyncio.create_task(enforce_session_leases())
     prune_task = asyncio.create_task(prune_exited_trame_loop())
@@ -311,18 +375,54 @@ class SaveSessionRequest(BaseModel):
     targetFileName: Optional[str] = None
 
 
+class HeartbeatRequest(BaseModel):
+    userActive: bool = False
+
+
 class ApplyViewStateRequest(BaseModel):
     viewState: dict
+
+
+class PullFileRequest(BaseModel):
+    userId: str
+    fileName: str
+    sourceUrl: str
+
+
+def _verify_sync_auth(authorization: Optional[str]) -> None:
+    if not TRAME_SYNC_TOKEN:
+        raise HTTPException(status_code=403, detail="File sync is not configured on this host")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing sync authorization")
+    token = authorization[7:].strip()
+    if token != TRAME_SYNC_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid sync authorization")
+
+
+def _safe_user_file(user_id: str, file_name: str) -> str:
+    if not re.match(r"^[a-zA-Z0-9._-]+$", user_id):
+        raise HTTPException(status_code=400, detail="Invalid userId")
+    safe_name = os.path.basename(file_name)
+    if not safe_name or safe_name in (".", "..") or ".." in safe_name:
+        raise HTTPException(status_code=400, detail="Invalid fileName")
+    return safe_name
+
+
+def _safe_user_id(user_id: str) -> str:
+    if not re.match(r"^[a-zA-Z0-9._-]+$", user_id):
+        raise HTTPException(status_code=400, detail="Invalid userId")
+    return user_id
 
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    docker_ok = check_docker_available()
-    img = trame_image_inspect()
+    runtime_ok = check_docker_available()
+    img = trame_image_inspect() if RUNTIME_MODE == "docker" else {"present": True}
     return {
-        "status": "healthy" if docker_ok else "degraded",
-        "docker": "available" if docker_ok else "unavailable",
+        "status": "healthy" if runtime_ok else "degraded",
+        "runtime": RUNTIME_MODE,
+        "docker": "available" if runtime_ok else "unavailable",
         "active_sessions": len(active_sessions),
         "trameImage": TRAME_IMAGE,
         "trameImagePresent": img.get("present", False),
@@ -335,24 +435,27 @@ async def health_check():
 @app.post("/api/sessions/start", response_model=SessionResponse)
 async def start_session(request: StartSessionRequest):
     """Start a new Trame visualization session"""
-    
+
     if not check_docker_available():
+        if RUNTIME_MODE == "process":
+            raise HTTPException(status_code=503, detail="Process runtime is not available")
         raise HTTPException(status_code=503, detail="Docker is not available")
 
-    img = trame_image_inspect()
-    if not img.get("present"):
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                f"Docker image not found: {TRAME_IMAGE}. "
-                "Build the session image on this host (same name as compose `trame-job.image`) "
-                "and recreate trame-service: `docker compose build trame-job && "
-                "docker compose up -d --force-recreate trame-service`. "
-                f"Docker said: {img.get('inspect_error') or 'unknown'}"
-            ),
-        )
+    if RUNTIME_MODE != "process":
+        img = trame_image_inspect()
+        if not img.get("present"):
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Docker image not found: {TRAME_IMAGE}. "
+                    "Build the session image on this host (same name as compose `trame-job.image`) "
+                    "and recreate trame-service: `docker compose build trame-job && "
+                    "docker compose up -d --force-recreate trame-service`. "
+                    f"Docker said: {img.get('inspect_error') or 'unknown'}"
+                ),
+            )
     
-    user_id = request.userId
+    user_id = _safe_user_id(request.userId)
     file_path = request.filePath
     view_state = request.viewState or None
     session_id = f"trame-{user_id}-{int(time.time())}"
@@ -374,91 +477,138 @@ async def start_session(request: StartSessionRequest):
         raise HTTPException(status_code=503, detail="No available ports")
     
     # Build paths - use environment variable if set, otherwise calculate
-    workspace_root = os.getenv('WORKSPACE_ROOT', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    user_files_path = os.path.join(workspace_root, "backend", "userFiles", user_id)
-    os.makedirs(user_files_path, exist_ok=True)
-    
-    # Convert Windows path to Docker-compatible path
-    user_files_path = user_files_path.replace('\\', '/')
-    if ':' in user_files_path:
-        # Convert C:/path to /c/path for Docker
-        drive, path = user_files_path.split(':', 1)
-        user_files_path = f"/{drive.lower()}{path}"
+    user_files_path_native = user_files_dir(user_id)
+    os.makedirs(user_files_path_native, exist_ok=True)
     
     container_name = f"trame-session-{user_id}"
     
     try:
-        # Remove any existing container with the same name
-        logger.info(f"Cleaning up any existing container named {container_name}")
-        run_docker(['rm', '-f', container_name], check=False)
-        
-        # Build the explicit command to run inside the session container.
-        # This avoids relying on the image default CMD, which can vary across environments.
-        container_cmd = [
-            'python3',
-            '/app/viewer.py',
-            '--host', '0.0.0.0',
-            '--port', '9000',
-        ]
-
-        if file_path:
-            # File path should be relative to the /data mount point.
-            file_name = os.path.basename(file_path)
-            container_cmd.extend(['--file', f'/data/{file_name}'])
-        if view_state:
-            encoded_state = json.dumps(view_state, separators=(',', ':'))
-            container_cmd.extend(['--view-state', encoded_state])
-
         container_id = ""
         port = None
         last_error = None
-        for candidate_port in candidate_ports:
-            # Build docker run command for this port candidate.
-            docker_cmd = [
-                'run',
-                '-d',
-                '--name', container_name,
-                '--label', 'trame-service=true',
-                '--label', f'user={user_id}',
-                '--network', 'trame-net',
-                '-p', f'{candidate_port}:9000',
-                '-v', f'{user_files_path}:/data',
-                '-e', f'USER_ID={user_id}',
-                '-e', 'VTK_DEFAULT_OPENGL_WINDOW=vtkEGLRenderWindow',
+        if RUNTIME_MODE == "process":
+            viewer_bin = (os.getenv("TRAME_VIEWER_BIN") or "python3").strip() or "python3"
+            viewer_script = (os.getenv("TRAME_VIEWER_SCRIPT") or "/app/viewer.py").strip() or "/app/viewer.py"
+            process_cmd_base = [viewer_bin, viewer_script, "--host", "0.0.0.0"]
+            process_env = os.environ.copy()
+            pythonpath = (os.getenv("PYTHONPATH") or "/app").strip() or "/app"
+            process_env["PYTHONPATH"] = pythonpath
+
+            for candidate_port in candidate_ports:
+                process_cmd = process_cmd_base + ["--port", str(candidate_port)]
+                if file_path:
+                    file_name = os.path.basename(file_path)
+                    process_cmd.extend(["--file", os.path.join(user_files_path_native, file_name)])
+                if view_state:
+                    encoded_state = json.dumps(view_state, separators=(",", ":"))
+                    process_cmd.extend(["--view-state", encoded_state])
+
+                logger.info(
+                    "Starting process session %s on port %s%s",
+                    container_name,
+                    candidate_port,
+                    f" with file {file_path}" if file_path else "",
+                )
+                try:
+                    kwargs = {}
+                    if os.name != "nt":
+                        kwargs["start_new_session"] = True
+                    proc = subprocess.Popen(
+                        process_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        env=process_env,
+                        cwd="/app",
+                        **kwargs,
+                    )
+                    if proc.poll() is not None:
+                        err_out = (proc.stderr.read() or b"").decode("utf-8", errors="replace").strip()
+                        raise RuntimeError(
+                            f"viewer process exited immediately with code {proc.returncode}"
+                            + (f": {err_out}" if err_out else "")
+                        )
+                    if not await wait_for_container_ready("127.0.0.1", candidate_port, max_wait_seconds=60):
+                        runtime.stop_container(str(proc.pid))
+                        continue
+                    container_id = str(proc.pid)
+                    port = candidate_port
+                    break
+                except Exception as err:
+                    last_error = err
+                    continue
+        else:
+            user_files_path = docker_bind_source_path(user_files_path_native)
+            logger.info("Binding user files for docker session: %s -> /data", user_files_path)
+
+            # Remove any existing container with the same name
+            logger.info(f"Cleaning up any existing container named {container_name}")
+            run_docker(['rm', '-f', container_name], check=False)
+
+            # Build the explicit command to run inside the session container.
+            # This avoids relying on the image default CMD, which can vary across environments.
+            container_cmd = [
+                'python3',
+                '/app/viewer.py',
+                '--host', '0.0.0.0',
+                '--port', '9000',
             ]
 
-            # Add GPU support if available (set USE_GPU=false for local testing without NVIDIA runtime)
-            if USE_GPU:
-                docker_cmd.extend(['--gpus', 'all'])
-            docker_cmd.append(TRAME_IMAGE)
-            docker_cmd.extend(container_cmd)
+            if file_path:
+                # File path should be relative to the /data mount point.
+                file_name = os.path.basename(file_path)
+                container_cmd.extend(['--file', f'/data/{file_name}'])
+            if view_state:
+                encoded_state = json.dumps(view_state, separators=(',', ':'))
+                container_cmd.extend(['--view-state', encoded_state])
 
-            logger.info(
-                f"Starting container {container_name} from image {TRAME_IMAGE} on port {candidate_port}"
-                + (f" with file {file_path}" if file_path else "")
-            )
-            try:
-                result = run_docker(docker_cmd)
-                container_id = result.stdout.strip()
-                port = candidate_port
-                break
-            except Exception as err:
-                message = str(err).lower()
-                last_error = err
-                # Retry next candidate when Docker reports bind collisions.
-                if "port is already allocated" in message or "bind for 0.0.0.0" in message:
-                    run_docker(['rm', '-f', container_name], check=False)
-                    continue
-                raise
+            for candidate_port in candidate_ports:
+                # Build docker run command for this port candidate.
+                docker_cmd = [
+                    'run',
+                    '-d',
+                    '--name', container_name,
+                    '--label', 'trame-service=true',
+                    '--label', f'user={user_id}',
+                    '--network', 'trame-net',
+                    '-p', f'{candidate_port}:9000',
+                    '-v', f'{user_files_path}:/data',
+                    '-e', f'USER_ID={user_id}',
+                    '-e', 'VTK_DEFAULT_OPENGL_WINDOW=vtkEGLRenderWindow',
+                ]
+
+                # Add GPU support if available (set USE_GPU=false for local testing without NVIDIA runtime)
+                if USE_GPU:
+                    docker_cmd.extend(['--gpus', 'all'])
+                docker_cmd.append(TRAME_IMAGE)
+                docker_cmd.extend(container_cmd)
+
+                logger.info(
+                    f"Starting container {container_name} from image {TRAME_IMAGE} on port {candidate_port}"
+                    + (f" with file {file_path}" if file_path else "")
+                )
+                try:
+                    result = run_docker(docker_cmd)
+                    container_id = result.stdout.strip()
+                    port = candidate_port
+                    break
+                except Exception as err:
+                    message = str(err).lower()
+                    last_error = err
+                    # Retry next candidate when Docker reports bind collisions.
+                    if "port is already allocated" in message or "bind for 0.0.0.0" in message:
+                        run_docker(['rm', '-f', container_name], check=False)
+                        continue
+                    raise
 
         if not container_id or port is None:
             raise RuntimeError(f"No available host port could be bound for {container_name}: {last_error}")
-        
-        # Wait until the container is actually serving requests before reporting success.
-        ready = await wait_for_container_ready(container_name, 9000, max_wait_seconds=60)
-        if not ready:
-            stop_container(container_id)
-            raise RuntimeError(f"Container {container_name} did not become ready on port 9000 in time")
+
+        # Wait until the Docker container is actually serving requests before reporting success.
+        if RUNTIME_MODE != "process":
+            ready = await wait_for_container_ready(container_name, 9000, max_wait_seconds=60)
+            if not ready:
+                stop_container(container_id)
+                raise RuntimeError(f"Container {container_name} did not become ready on port 9000 in time")
 
         # Store session info (sliding lease from touch_session_activity)
         now = time.time()
@@ -467,6 +617,7 @@ async def start_session(request: StartSessionRequest):
             "container_name": container_name,
             "port": port,
             "user_id": user_id,
+            "user_files_path": user_files_path_native,
             "started_at": now,
             "last_activity": now,
             "lease_expires_at": now + SESSION_TTL_SECONDS,
@@ -509,16 +660,22 @@ async def stop_session(session_id: str):
 
 
 @app.post("/api/sessions/{session_id}/heartbeat")
-async def heartbeat(session_id: str):
-    """Extend the session sliding lease (called periodically while the viewer is open)."""
-    lease_end = touch_session_activity(session_id)
-    if lease_end is None:
+async def heartbeat(session_id: str, request: Optional[HeartbeatRequest] = None):
+    """Extend the session sliding lease only when the viewer reports user activity."""
+    request = request or HeartbeatRequest()
+    if session_id not in active_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
+    session = active_sessions[session_id]
+    if request.userActive:
+        lease_end = touch_session_activity(session_id)
+    else:
+        lease_end = session.get("lease_expires_at")
     return {
         "status": "ok",
         "sessionTtlSeconds": SESSION_TTL_SECONDS,
         "leaseExpiresAt": lease_end,
         "maxSessionWallSeconds": MAX_SESSION_WALL_SECONDS or None,
+        "leaseExtended": request.userActive,
     }
 
 
@@ -534,61 +691,24 @@ async def save_session(session_id: str, request: Optional[SaveSessionRequest] = 
     requested_name = os.path.basename(request.targetFileName) if request.targetFileName else "last-saved-scene.mrb"
     if not requested_name.lower().endswith(".mrb"):
         requested_name = f"{requested_name}.mrb"
-    output_path = f"/data/{requested_name}"
+    output_path = save_output_path(session, requested_name)
     request_id = f"{int(time.time() * 1000)}-{session_id}"
 
     try:
-        # Ask the live viewer process to save by dropping a JSON request file.
         request_file = f"/tmp/trame-save-request-{request_id}.json"
         result_file = f"/tmp/trame-save-result-{request_id}.json"
         logger.info(f"Save request {request_id}: target {output_path}")
-        run_docker(
-            [
-                "exec",
-                container_id,
-                "python3",
-                "-c",
-                (
-                    "import json; "
-                    f"payload={{'request_id': '{request_id}', 'output_path': '{output_path}'}}; "
-                    f"open('{request_file}','w').write(json.dumps(payload))"
-                ),
-            ]
+        await write_viewer_request_file(
+            container_id,
+            request_file,
+            {"request_id": request_id, "output_path": output_path},
         )
 
-        # Wait for explicit result from the live viewer save watcher.
-        ready = False
-        result_payload = None
-        for _ in range(30):
-            probe = run_docker(
-                [
-                    "exec",
-                    container_id,
-                    "python3",
-                    "-c",
-                    (
-                        "import os; "
-                        f"p='{result_file}'; "
-                        "print(open(p).read() if os.path.exists(p) else '')"
-                    ),
-                ],
-                check=False,
-            )
-            raw = (probe.stdout or "").strip()
-            if raw:
-                try:
-                    result_payload = json.loads(raw)
-                    ready = True
-                    break
-                except Exception:
-                    pass
-            await asyncio.sleep(0.5)
-
-        if not ready:
+        result_payload = await poll_viewer_result_file(container_id, result_file, 30, 0.5)
+        if not result_payload:
             raise RuntimeError(f"Timed out waiting for save result {result_file}")
 
-        # Cleanup result marker now that we've consumed it.
-        run_docker(["exec", container_id, "sh", "-lc", f"rm -f {result_file}"], check=False)
+        await cleanup_viewer_result_file(container_id, result_file)
 
         if not result_payload.get("success"):
             raise RuntimeError(result_payload.get("error") or "Viewer save watcher reported failure")
@@ -614,51 +734,15 @@ async def apply_view_state(session_id: str, request: ApplyViewStateRequest):
     request_id = f"{int(time.time() * 1000)}-{session_id}"
     request_file = f"/tmp/trame-apply-view-state-request-{request_id}.json"
     result_file = f"/tmp/trame-apply-view-state-result-{request_id}.json"
-    request_payload_json = json.dumps({
-        "request_id": request_id,
-        "view_state": request.viewState or {}
-    })
     try:
-        run_docker(
-            [
-                "exec",
-                container_id,
-                "python3",
-                "-c",
-                (
-                    f"open('{request_file}','w').write({json.dumps(request_payload_json)})"
-                ),
-            ]
+        await write_viewer_request_file(
+            container_id,
+            request_file,
+            {"request_id": request_id, "view_state": request.viewState or {}},
         )
 
-        result_payload = None
-        # Keep this timeout longer than viewer-side replay retries.
-        # Viewer may wait ~40s for late MRB scene initialization.
-        for _ in range(130):
-            probe = run_docker(
-                [
-                    "exec",
-                    container_id,
-                    "python3",
-                    "-c",
-                    (
-                        "import os; "
-                        f"p='{result_file}'; "
-                        "print(open(p).read() if os.path.exists(p) else '')"
-                    ),
-                ],
-                check=False,
-            )
-            raw = (probe.stdout or "").strip()
-            if raw:
-                try:
-                    result_payload = json.loads(raw)
-                    break
-                except Exception:
-                    pass
-            await asyncio.sleep(0.5)
-
-        run_docker(["exec", container_id, "sh", "-lc", f"rm -f {result_file}"], check=False)
+        result_payload = await poll_viewer_result_file(container_id, result_file, 130, 0.5)
+        await cleanup_viewer_result_file(container_id, result_file)
         if not result_payload:
             return {
                 "status": "failed",
@@ -693,46 +777,14 @@ async def get_view_state(session_id: str):
     request_file = f"/tmp/trame-view-state-request-{request_id}.json"
     result_file = f"/tmp/trame-view-state-result-{request_id}.json"
     try:
-        run_docker(
-            [
-                "exec",
-                container_id,
-                "python3",
-                "-c",
-                (
-                    "import json; "
-                    f"payload={{'request_id': '{request_id}'}}; "
-                    f"open('{request_file}','w').write(json.dumps(payload))"
-                ),
-            ]
+        await write_viewer_request_file(
+            container_id,
+            request_file,
+            {"request_id": request_id},
         )
 
-        result_payload = None
-        for _ in range(30):
-            probe = run_docker(
-                [
-                    "exec",
-                    container_id,
-                    "python3",
-                    "-c",
-                    (
-                        "import os; "
-                        f"p='{result_file}'; "
-                        "print(open(p).read() if os.path.exists(p) else '')"
-                    ),
-                ],
-                check=False,
-            )
-            raw = (probe.stdout or "").strip()
-            if raw:
-                try:
-                    result_payload = json.loads(raw)
-                    break
-                except Exception:
-                    pass
-            await asyncio.sleep(0.35)
-
-        run_docker(["exec", container_id, "sh", "-lc", f"rm -f {result_file}"], check=False)
+        result_payload = await poll_viewer_result_file(container_id, result_file, 30, 0.35)
+        await cleanup_viewer_result_file(container_id, result_file)
         if not result_payload or not result_payload.get("success"):
             return {"viewState": {"captureMode": "fallback"}}
 
@@ -741,6 +793,66 @@ async def get_view_state(session_id: str):
     except Exception as err:
         logger.error(f"Failed to capture view state for {session_id}: {err}")
         raise HTTPException(status_code=500, detail=f"Failed to capture view state: {err}")
+
+
+@app.get("/api/files/{user_id}/{file_name}/stat")
+async def file_stat(user_id: str, file_name: str, authorization: Optional[str] = Header(None)):
+    """Return on-disk size for sync skip (control plane checks before re-uploading)."""
+    _verify_sync_auth(authorization)
+    safe_name = _safe_user_file(user_id, file_name)
+    dest = os.path.join(user_files_dir(user_id), safe_name)
+    if not os.path.isfile(dest):
+        raise HTTPException(status_code=404, detail="File not found")
+    return {"bytes": os.path.getsize(dest), "fileName": safe_name}
+
+
+@app.post("/api/files/pull")
+async def pull_file(request: PullFileRequest, authorization: Optional[str] = Header(None)):
+    """Fetch a scene from a temporary HTTPS URL (e.g. presigned object storage) into userFiles."""
+    _verify_sync_auth(authorization)
+    safe_name = _safe_user_file(request.userId, request.fileName)
+    if not request.sourceUrl.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Invalid sourceUrl")
+
+    dest_dir = user_files_dir(request.userId)
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, safe_name)
+
+    try:
+        with urllib.request.urlopen(request.sourceUrl, timeout=300) as resp:
+            with open(dest, "wb") as out:
+                while True:
+                    chunk = resp.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+    except Exception as err:
+        logger.error(f"File pull failed for {request.userId}/{safe_name}: {err}")
+        raise HTTPException(status_code=502, detail=f"Pull failed: {err}")
+
+    return {"status": "ok", "path": dest, "bytes": os.path.getsize(dest)}
+
+
+@app.put("/api/files/{user_id}/{file_name}")
+async def upload_file(
+    user_id: str,
+    file_name: str,
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    """Stream upload from control plane (local storage backend)."""
+    _verify_sync_auth(authorization)
+    safe_name = _safe_user_file(user_id, file_name)
+    dest_dir = user_files_dir(user_id)
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, safe_name)
+    total = 0
+    with open(dest, "wb") as out:
+        async for chunk in request.stream():
+            if chunk:
+                out.write(chunk)
+                total += len(chunk)
+    return {"status": "ok", "path": dest, "bytes": total}
 
 
 @app.get("/api/sessions")

@@ -9,7 +9,14 @@ const dbPath = config.database.path;
 // Initialize SQL.js
 const SQL = await initSqlJs();
 
-// Load or create database
+// Load or create database (seed from host bind mount on first named-volume start).
+const seedPath = process.env.DB_SEED_PATH || '/app/data-seed/users.db';
+if (!fs.existsSync(dbPath) && fs.existsSync(seedPath)) {
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    fs.copyFileSync(seedPath, dbPath);
+    console.log(`Seeded database from ${seedPath}`);
+}
+
 let db;
 if (fs.existsSync(dbPath)) {
     const buffer = fs.readFileSync(dbPath);
@@ -18,34 +25,121 @@ if (fs.existsSync(dbPath)) {
     db = new SQL.Database();
 }
 
-// Save database to disk
-function saveDatabase() {
-    const data = db.export();
-    const buffer = Buffer.from(data);
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    fs.writeFileSync(dbPath, buffer);
+// Save database to disk. sql.js exports the full DB on each flush — keep writes
+// debounced and off the hot path so Windows Docker bind mounts stay stable.
+let saveInProgress = false;
+let savePending = false;
+let saveTimer = null;
+let deferSaves = false;
+const SAVE_DEBOUNCE_MS = parseInt(process.env.DB_SAVE_DEBOUNCE_MS || '500', 10);
+
+function writeDatabaseSync() {
+    const buffer = Buffer.from(db.export());
+    const dir = path.dirname(dbPath);
+    fs.mkdirSync(dir, { recursive: true });
+
+    const writeInPlace = () => {
+        fs.writeFileSync(dbPath, buffer);
+    };
+
+    // Windows Docker Desktop bind mounts reject rename/copy; write in place in dev.
+    if (process.env.DB_SAVE_DIRECT === 'true') {
+        writeInPlace();
+        return;
+    }
+
+    const tmpPath = `${dbPath}.tmp`;
+    try {
+        fs.writeFileSync(tmpPath, buffer);
+        if (!fs.existsSync(tmpPath)) {
+            writeInPlace();
+            return;
+        }
+        try {
+            fs.renameSync(tmpPath, dbPath);
+        } catch {
+            writeInPlace();
+            try {
+                fs.unlinkSync(tmpPath);
+            } catch (_) {
+                // best effort cleanup
+            }
+        }
+    } catch {
+        writeInPlace();
+    }
 }
 
-// Auto-save every 5 seconds
-setInterval(saveDatabase, 5000);
+function saveDatabase() {
+    if (saveInProgress) {
+        savePending = true;
+        return;
+    }
 
-// Save on exit
-process.on('exit', saveDatabase);
-process.on('SIGINT', () => {
+    saveInProgress = true;
+    try {
+        do {
+            savePending = false;
+            try {
+                writeDatabaseSync();
+            } catch (err) {
+                console.error('Database save failed:', err.message);
+            }
+        } while (savePending);
+    } finally {
+        saveInProgress = false;
+    }
+}
+
+function flushDatabaseSync() {
+    if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+    }
     saveDatabase();
-    process.exit();
+}
+
+function scheduleSave() {
+    if (deferSaves) return;
+    if (saveTimer) return;
+    saveTimer = setTimeout(() => {
+        saveTimer = null;
+        saveDatabase();
+    }, Math.max(100, SAVE_DEBOUNCE_MS));
+    if (saveTimer.unref) {
+        saveTimer.unref();
+    }
+}
+
+function shutdownDatabase(signal) {
+    try {
+        flushDatabaseSync();
+    } catch (err) {
+        console.error(`Database save on ${signal} failed:`, err.message);
+    }
+    process.exit(0);
+}
+
+process.on('exit', () => {
+    try {
+        flushDatabaseSync();
+    } catch (err) {
+        console.error('Database save on exit failed:', err.message);
+    }
 });
+process.on('SIGINT', () => shutdownDatabase('SIGINT'));
+process.on('SIGTERM', () => shutdownDatabase('SIGTERM'));
 
 // Wrapper to match better-sqlite3 API
 const dbWrapper = {
     exec: (sql) => {
         db.run(sql);
-        saveDatabase();
+        scheduleSave();
     },
     prepare: (sql) => ({
         run: (...params) => {
             db.run(sql, params);
-            saveDatabase();
+            scheduleSave();
 
             // Get last insert rowid
             let lastId = null;
@@ -192,6 +286,63 @@ const migrations = [
             ALTER TABLE files ADD COLUMN last_viewed_at DATETIME;
             UPDATE files SET last_modified_at = upload_date WHERE last_modified_at IS NULL;
         `
+    },
+    {
+        id: '008_drop_sessions_ip_address',
+        up: `ALTER TABLE sessions DROP COLUMN ip_address;`
+    },
+    {
+        id: '009_project_gpu_settings',
+        up: `
+            CREATE TABLE IF NOT EXISTS project_gpu_settings (
+                project_id INTEGER PRIMARY KEY,
+                provider_id TEXT NOT NULL DEFAULT 'local',
+                credentials_enc TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_by_user_id INTEGER,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS project_gpu_instances (
+                project_id INTEGER PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'idle',
+                instance_id TEXT,
+                gpu_host TEXT,
+                ssh_host TEXT,
+                ssh_port INTEGER,
+                trame_api_port INTEGER,
+                viewer_port INTEGER,
+                trame_service_url TEXT,
+                viewer_public_base_url TEXT,
+                metadata_json TEXT,
+                error_message TEXT,
+                provision_started_at DATETIME,
+                provision_finished_at DATETIME,
+                destroyed_at DATETIME,
+                created_by_user_id INTEGER,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+        `
+    },
+    {
+        id: '010_project_gpu_billing_activity',
+        up: `
+            ALTER TABLE project_gpu_instances
+            ADD COLUMN billing_last_activity_at DATETIME;
+        `
+    },
+    {
+        id: '011_project_gpu_default_provider',
+        up: `
+            ALTER TABLE project_gpu_settings
+            ADD COLUMN default_provider_id TEXT NOT NULL DEFAULT 'local';
+            UPDATE project_gpu_settings
+            SET default_provider_id = provider_id;
+        `
     }
 ];
 
@@ -218,8 +369,9 @@ function runMigrations() {
             } catch (error) {
                 const message = String(error?.message || '');
                 const isDuplicateColumn = message.includes('duplicate column name');
+                const isNoSuchColumn = message.includes('no such column');
 
-                if (isDuplicateColumn) {
+                if (isDuplicateColumn || isNoSuchColumn) {
                     // If schema was partially updated before this migration was recorded,
                     // mark it as applied so startup can proceed safely.
                     dbWrapper
@@ -270,7 +422,6 @@ function initializeDatabase() {
             expires_at DATETIME NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
-            ip_address TEXT,
             user_agent TEXT,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )
@@ -334,7 +485,11 @@ function initializeDatabase() {
     console.log('Database initialized successfully');
 }
 
-// Initialize on import
+// Initialize on import — batch writes during migrations, then one flush.
+deferSaves = true;
 initializeDatabase();
+deferSaves = false;
+flushDatabaseSync();
 
 export default dbWrapper;
+export { flushDatabaseSync as flushDatabase };

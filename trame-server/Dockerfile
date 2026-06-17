@@ -1,4 +1,9 @@
+# GPU base image — NVIDIA CUDA runtime (separate license terms).
+# See licenses/NVIDIA-NOTICE.md and THIRD_PARTY_RUNTIME.md in the repo root.
 FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
+
+# NVIDIA redistribution notice (also in licenses/NVIDIA-NOTICE.md at repo root).
+LABEL org.opencontainers.image.licenses="BSD-3-Clause AND NVIDIA-CUDA-container-terms"
 
 # Environment variables
 ENV PYTHONUNBUFFERED=1
@@ -58,6 +63,8 @@ ENV TRAME_INTERACTIVE_RATIO=0.5
 WORKDIR /app
 
 # Copy the viewer entrypoint
+RUN mkdir -p /usr/share/doc/slicer-web
+COPY ./NOTICE-NVIDIA /usr/share/doc/slicer-web/NOTICE-NVIDIA
 COPY ./viewer.py /app/viewer.py
 COPY ./start.sh /app/start.sh
 COPY ./viewer_overrides/widgets/save_client_files_button.py /app/viewer_lib/widgets/save_client_files_button.py

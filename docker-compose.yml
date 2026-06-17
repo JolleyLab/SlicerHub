@@ -25,18 +25,30 @@ services:
     build: ./trame-service
     container_name: trame-service
     ports:
-      - "8090:8090"
+      # Localhost only — demo users reach the app via nginx:8000, not these ports.
+      - "127.0.0.1:8090:8090"
+      # Viewer ports 9000-9009 are published by per-session containers (docker runtime)
+      # or by the process-mode trame-service container (see scripts/local preflight).
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - .:/workspace
+      - ./trame-service:/app
     environment:
       - USE_GPU=true
+      # Local stack: always docker (spawns slicer-web-trame session containers).
+      # Process mode is for Vast GPU nodes only — not the slim trame-service image.
+      - TRAME_SESSION_RUNTIME=docker
       # Sliding lease: renewed by browser heartbeat + Trame API activity (default 1800s if unset).
       - SESSION_TTL_SECONDS=${SESSION_TTL_SECONDS:-1800}
       # Hard stop after this many seconds from session start even with heartbeats (0 = off).
       - MAX_SESSION_WALL_SECONDS=${MAX_SESSION_WALL_SECONDS:-28800}
       - PRUNE_EXITED_INTERVAL_SECONDS=${PRUNE_EXITED_INTERVAL_SECONDS:-300}
-      - WORKSPACE_ROOT=${PWD:-/workspace}
+      - WORKSPACE_ROOT=/workspace
+      # Host repo path for nested `docker run -v` (required on Windows Docker Desktop).
+      - HOST_WORKSPACE_ROOT=${PWD}
       - TRAME_IMAGE=${TRAME_IMAGE:-slicer-web-trame:local}
+      # Local dev / smoke-gpu-sync.ps1 (per-instance token used on Vast)
+      - TRAME_SYNC_TOKEN=${TRAME_SYNC_TOKEN:-test-sync-token-local}
     networks:
       - trame-net
 
@@ -45,20 +57,47 @@ services:
     build: ./backend
     container_name: backend
     ports:
-      - "8081:8080" # Exposed to host
+      # Localhost only — use nginx:8000 or SSH tunnel for direct API access.
+      - "127.0.0.1:8081:8080"
+    env_file:
+      - .env
     volumes:
       - ./backend:/app
       - /app/node_modules  # Prevent host node_modules from overriding container's Linux-compiled modules
+      - slicer-backend-data:/app/data
+      - ./backend/data:/app/data-seed:ro
       - ./nginx:/nginx
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - NODE_ENV=development
+      - DB_PATH=/app/data/users.db
+      - DB_SAVE_DIRECT=true
       - JWT_SECRET=${JWT_SECRET:-please-change-this-to-a-secure-random-string-in-production}
-      - WORKSPACE_ROOT=${PWD:-/workspace}
-      - TRAME_SERVICE_URL=http://trame-service:8090
+      - GPU_CREDENTIALS_KEY=${GPU_CREDENTIALS_KEY:-}
+      - WORKSPACE_ROOT=/workspace
+      - TRAME_SERVICE_URL=${TRAME_SERVICE_URL:-http://trame-service:8090}
+      - TRAME_VIEWER_PUBLIC_BASE_URL=${TRAME_VIEWER_PUBLIC_BASE_URL:-}
+      - TRAME_SESSION_RUNTIME=docker
+      - VAST_GPU_IMAGE=${VAST_GPU_IMAGE:-}
+      - VAST_GPU_NAME=${VAST_GPU_NAME:-RTX_4090}
+      - VAST_MIN_CUDA=${VAST_MIN_CUDA:-}
+      - VAST_OFFER_TYPE=${VAST_OFFER_TYPE:-}
+      - VAST_SEARCH_JSON=${VAST_SEARCH_JSON:-}
+      - VAST_MAX_DPH=${VAST_MAX_DPH:-2.0}
+      - VAST_MIN_DISK_GB=${VAST_MIN_DISK_GB:-40}
+      - VAST_INSTANCE_LABEL=${VAST_INSTANCE_LABEL:-slicer-web-gpu}
+      - VAST_OPEN_PORTS=${VAST_OPEN_PORTS:--p 8090:8090 -p 80:80}
+      - VAST_RUNTYPE=${VAST_RUNTYPE:-args}
+      - GPU_BILLING_IDLE_MINUTES=${GPU_BILLING_IDLE_MINUTES:-60}
+      - GPU_BILLING_MAX_WALL_MINUTES=${GPU_BILLING_MAX_WALL_MINUTES:-480}
+      - GPU_VIEWER_SESSION_TTL_SECONDS=${GPU_VIEWER_SESSION_TTL_SECONDS:-1800}
+      - GPU_VIEWER_LEAVE_GRACE_MINUTES=${GPU_VIEWER_LEAVE_GRACE_MINUTES:-10}
+      - SESSION_TTL_SECONDS=${SESSION_TTL_SECONDS:-1800}
+      - GPU_PRESTAGE_MAX_FILES=${GPU_PRESTAGE_MAX_FILES:-3}
+      - GPU_PRESTAGE_MAX_MB=${GPU_PRESTAGE_MAX_MB:-500}
+      - GPU_PRESTAGE_MAX_FILE_MB=${GPU_PRESTAGE_MAX_FILE_MB:-1024}
     depends_on:
       - trame-job
-      - trame-service
     networks:
       - trame-net
 
@@ -106,3 +145,6 @@ networks:
   trame-net:
     name: trame-net
     driver: bridge
+
+volumes:
+  slicer-backend-data:
