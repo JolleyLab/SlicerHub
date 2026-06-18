@@ -7,7 +7,7 @@ import https from "https";
 import http from "http";
 import storage from "../storage/index.js";
 import { buildViewerFrontendUrl } from "../utils/viewerUrl.js";
-import { buildInternalViewerCheckUrl, waitForViewerReady } from "../utils/viewerReady.js";
+import { buildInternalViewerCheckUrl, waitForViewerReady, isLocalDockerSession } from "../utils/viewerReady.js";
 import {
     getTrameContextForProject,
     syncProjectFile,
@@ -146,6 +146,7 @@ export default async function containerRoutes(app) {
                 touchProjectBillingActivity(trameContext.projectId);
             }
 
+            const startedAt = Date.now();
             const sessionData = await httpRequest(`${trameServiceUrl}/api/sessions/start`, {
                 method: 'POST',
                 headers: {
@@ -169,11 +170,18 @@ export default async function containerRoutes(app) {
                 trameContext
             );
 
-            const viewerCheckUrl = buildInternalViewerCheckUrl(sessionData.port, trameContext);
-            const viewerReady = await waitForViewerReady(viewerCheckUrl, {
-                maxWaitMs: trameContext ? 120000 : 60000,
-                intervalMs: 400
-            });
+            const viewerCheckUrl = buildInternalViewerCheckUrl(
+                sessionData.userId,
+                sessionData.port,
+                trameContext
+            );
+            let viewerReady = true;
+            if (!isLocalDockerSession(trameContext)) {
+                viewerReady = await waitForViewerReady(viewerCheckUrl, {
+                    maxWaitMs: trameContext ? 120000 : 15000,
+                    intervalMs: 200
+                });
+            }
 
             console.log('Trame session started', {
                 userId,
@@ -181,7 +189,8 @@ export default async function containerRoutes(app) {
                 sessionPort: sessionData.port,
                 frontendUrl,
                 trameServiceUrl,
-                viewerReady
+                viewerReady,
+                startMs: Date.now() - startedAt
             });
 
             res.json({

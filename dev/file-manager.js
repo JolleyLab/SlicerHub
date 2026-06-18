@@ -1047,11 +1047,8 @@ export class FileManager extends LitElement {
 
         try {
             this.stopHeartbeat();
-            console.log('Cleaning up existing containers...');
-            this.viewerLoadingDetail = `Preparing session for ${file.originalName}… This can take 1–3 minutes for large scenes.`;
-            await this.cleanupContainer();
-
             console.log('Starting Trame container for file:', file.originalName);
+            this.viewerLoadingDetail = `Preparing session for ${file.originalName}… This can take 1–3 minutes for large scenes.`;
             const response = await fetch(`${API_URL}/api/containers/start`, {
                 method: 'POST',
                 headers: {

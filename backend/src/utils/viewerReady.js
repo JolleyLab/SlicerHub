@@ -1,7 +1,7 @@
 import http from 'http';
 import https from 'https';
 
-function probeUrl(url, timeoutMs = 5000) {
+function probeUrl(url, timeoutMs = 2000) {
     return new Promise((resolve, reject) => {
         const urlObj = new URL(url);
         const client = urlObj.protocol === 'https:' ? https : http;
@@ -24,11 +24,30 @@ function probeUrl(url, timeoutMs = 5000) {
     });
 }
 
-export function buildInternalViewerCheckUrl(sessionPort, trameContext) {
+export function isLocalDockerSession(trameContext) {
+    if (trameContext) return false;
+    const runtime = (process.env.TRAME_SESSION_RUNTIME || 'docker').trim().toLowerCase();
+    return runtime === 'docker';
+}
+
+export function buildInternalViewerCheckUrl(sessionUserId, sessionPort, trameContext) {
     if (trameContext?.viewerPublicBaseUrl) {
         return `http://nginx:80/trame-session-port/${sessionPort}/`;
     }
-    return `http://trame-service:${sessionPort}/`;
+
+    const runtime = (trameContext?.runtime || process.env.TRAME_SESSION_RUNTIME || 'docker')
+        .trim()
+        .toLowerCase();
+    if (runtime === 'process') {
+        return `http://trame-service:${sessionPort}/`;
+    }
+
+    const userId = String(sessionUserId || '').trim();
+    if (!userId) {
+        return `http://trame-service:${sessionPort}/`;
+    }
+    // Docker sessions listen on 9000 inside trame-session-{userId}, not on trame-service.
+    return `http://trame-session-${userId}:9000/`;
 }
 
 export async function waitForViewerReady(checkUrl, { maxWaitMs = 120000, intervalMs = 400 } = {}) {

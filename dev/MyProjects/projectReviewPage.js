@@ -1760,7 +1760,6 @@ export class ProjectReviewPage extends LitElement {
         try {
             this.stopTrameHeartbeat();
             this.viewerLoadingDetail = `Preparing session for ${file.originalName}…`;
-            await this.cleanupContainerSession(this.projectId);
 
             if (this.isRemoteGpuRunning() && !this.isFileStagedOnGpu(file)) {
                 try {
