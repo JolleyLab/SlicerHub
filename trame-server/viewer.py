@@ -54,16 +54,15 @@ class CustomMedicalViewer:
 
     def _register_parent_activity_bridge(self) -> None:
         """Notify the parent frame when the user interacts with the viewer."""
-        @self._server.controller.add("on_server_ready")
-        def _add_activity_bridge(**_kwargs):
-            from trame.widgets import html
+        from trame.widgets import html
 
-            ui = self._server.ui
-            if not hasattr(ui, "__enter__"):
-                print("Parent activity bridge skipped: server.ui not ready")
-                return
+        ui_ctx = getattr(self._ui, "ui", None)
+        if ui_ctx is None or not hasattr(ui_ctx, "__enter__"):
+            print("Parent activity bridge skipped: MedicalViewerUI.ui not ready")
+            return
 
-            with ui:
+        try:
+            with ui_ctx:
                 html.Script(
                     """
                 (function () {
@@ -86,6 +85,8 @@ class CustomMedicalViewer:
                 })();
                 """
                 )
+        except Exception as exc:
+            print(f"Parent activity bridge skipped: {exc}")
 
     @property
     def server(self):

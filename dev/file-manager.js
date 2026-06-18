@@ -9,9 +9,11 @@ import './components/file-list-row.js';
 import './components/add-button.js';
 import './components/app-dialog.js';
 import { resolveTramePageUrl, isRemoteTrameViewerUrl } from './utils/trameViewerUrl.js';
+import { probeViewerUrl } from './utils/viewerReadiness.js';
 import {
     installViewerActivityListeners,
     markViewerActivity,
+    onViewerReadySignal,
     resetViewerActivity
 } from './utils/viewerActivity.js';
 import { sendTrameContainerHeartbeat } from './utils/trameHeartbeat.js';
@@ -171,6 +173,13 @@ export class FileManager extends LitElement {
                 font-weight: 500;
             }
 
+            .iframe-status {
+                margin-left: 12px;
+                font-size: 13px;
+                font-weight: 400;
+                color: #ffc107;
+            }
+
             .save-indicator {
                 background: #2e7d32;
                 color: white;
@@ -289,6 +298,21 @@ export class FileManager extends LitElement {
                 margin: 0;
                 font-size: 0.95rem;
                 line-height: 1.45;
+            }
+
+            .viewer-loading .dismiss-scene-loading {
+                margin-top: 16px;
+                background: transparent;
+                border: 1px solid color-mix(in srgb, var(--color-primary) 40%, transparent);
+                color: var(--color-text-secondary);
+                border-radius: 4px;
+                padding: 8px 14px;
+                cursor: pointer;
+                font-size: 0.9rem;
+            }
+
+            .viewer-loading .dismiss-scene-loading:hover {
+                background: color-mix(in srgb, var(--color-primary) 8%, transparent);
             }
 
             .viewer-spinner {
@@ -506,6 +530,12 @@ export class FileManager extends LitElement {
                 color: #c62828;
                 font-size: 0.9rem;
             }
+
+            .close-prompt-message {
+                margin: 0;
+                line-height: 1.45;
+                color: var(--color-text-secondary);
+            }
         `;
     }
 
@@ -523,6 +553,7 @@ export class FileManager extends LitElement {
             launching: { type: Boolean },
             launchingFileId: { type: Number },
             viewerLoading: { type: Boolean },
+            viewerSceneLoading: { type: Boolean },
             viewerLoadingDetail: { type: String },
             showIframe: { type: Boolean },
             iframeUrl: { type: String },
@@ -546,7 +577,8 @@ export class FileManager extends LitElement {
             fileListOrder: { type: String },
             filePage: { type: Number },
             pageSize: { type: Number },
-            totalFileCount: { type: Number }
+            totalFileCount: { type: Number },
+            closePromptMode: { type: String }
         };
     }
 
@@ -565,7 +597,10 @@ export class FileManager extends LitElement {
         this.launching = false;
         this.launchingFileId = null;
         this.viewerLoading = false;
+        this.viewerSceneLoading = false;
         this.viewerLoadingDetail = '';
+        this.viewerSceneLoadingTimeout = null;
+        this.viewerReadySignalCleanup = null;
         this.showIframe = false;
         this.iframeUrl = '';
         this.currentFileId = null;
@@ -594,6 +629,8 @@ export class FileManager extends LitElement {
         this.pageSize = 20;
         this.totalFileCount = 0;
         this._fileSearchTimer = null;
+        this.closePromptMode = null;
+        this._closePromptResolver = null;
     }
 
     get fileListTotalPages() {
@@ -617,6 +654,9 @@ export class FileManager extends LitElement {
     connectedCallback() {
         super.connectedCallback();
         installViewerActivityListeners();
+        this.viewerReadySignalCleanup = onViewerReadySignal(() => {
+            this.clearViewerSceneLoading();
+        });
         this.loadFiles();
         this.loadStats();
         // Cleanup any running containers when page loads
@@ -638,6 +678,11 @@ export class FileManager extends LitElement {
 
     disconnectedCallback() {
         super.disconnectedCallback();
+        if (this.viewerReadySignalCleanup) {
+            this.viewerReadySignalCleanup();
+            this.viewerReadySignalCleanup = null;
+        }
+        this.clearViewerSceneLoadingTimer();
         if (this._fileSearchTimer) {
             clearTimeout(this._fileSearchTimer);
             this._fileSearchTimer = null;
@@ -1022,11 +1067,45 @@ export class FileManager extends LitElement {
         return `Opening ${name}… Large scenes can take 1–3 minutes.`;
     }
 
+    get showViewerOverlay() {
+        return this.viewerLoading || this.viewerSceneLoading;
+    }
+
+    clearViewerSceneLoadingTimer() {
+        if (this.viewerSceneLoadingTimeout) {
+            clearTimeout(this.viewerSceneLoadingTimeout);
+            this.viewerSceneLoadingTimeout = null;
+        }
+    }
+
+    clearViewerSceneLoading() {
+        this.clearViewerSceneLoadingTimer();
+        this.viewerSceneLoading = false;
+        this.viewerLoadingDetail = '';
+        this.launchingFileId = null;
+    }
+
+    beginViewerSceneLoading() {
+        this.clearViewerSceneLoadingTimer();
+        this.viewerLoading = false;
+        const name = this.currentFileName || 'scene';
+        this.viewerLoadingDetail = `Loading ${name} inside the viewer… Large scenes can take 1–3 minutes.`;
+        this.viewerSceneLoading = true;
+        this.viewerSceneLoadingTimeout = setTimeout(() => {
+            this.clearViewerSceneLoading();
+        }, 180000);
+    }
+
+    dismissViewerSceneLoading() {
+        this.clearViewerSceneLoading();
+    }
+
     async launchFile(file) {
         this.error = '';
         this.success = '';
         this.launching = true;
         this.launchingFileId = file.id;
+        this.clearViewerSceneLoading();
         this.viewerLoading = true;
         this.viewerLoadingDetail = `Starting viewer for ${file.originalName}…`;
         this.currentFileId = file.id;
@@ -1034,6 +1113,7 @@ export class FileManager extends LitElement {
         this.currentStoredName = file.storedName || file.originalName;
         this.showIframe = true;
         this.iframeUrl = 'about:blank';
+        await this.updateComplete;
 
         try {
             this.stopHeartbeat();
@@ -1042,6 +1122,7 @@ export class FileManager extends LitElement {
             await this.cleanupContainer();
 
             console.log('Starting Trame container for file:', file.originalName);
+            this.viewerLoadingDetail = `Starting viewer session for ${file.originalName}…`;
             const response = await fetch(`${API_URL}/api/containers/start`, {
                 method: 'POST',
                 headers: {
@@ -1059,35 +1140,31 @@ export class FileManager extends LitElement {
                 console.log('Trame container started, URL:', url);
 
                 this.viewerLoadingDetail = `Waiting for viewer to respond…`;
-                const maxAttempts = 90;
+                const maxAttempts = data.viewerReady === true || isRemoteTrameViewerUrl(url) ? 0 : 30;
                 let attempts = 0;
                 let ready = data.viewerReady === true || isRemoteTrameViewerUrl(url);
 
                 while (attempts < maxAttempts && !ready) {
                     attempts++;
-                    try {
-                        const checkResponse = await fetch(url, {
-                            method: 'GET',
-                            credentials: 'include',
-                            cache: 'no-store'
-                        });
-
-                        if (checkResponse.ok) {
-                            ready = true;
-                            console.log('Trame server is ready!');
-                            break;
-                        }
-
-                        console.log(`Attempt ${attempts}/${maxAttempts} - Trame returned HTTP ${checkResponse.status}, waiting...`);
-                    } catch (e) {
-                        console.log(`Attempt ${attempts}/${maxAttempts} - Trame not reachable yet: ${e.message}`);
+                    ready = await probeViewerUrl(url);
+                    if (ready) {
+                        console.log('Trame server is ready!');
+                        break;
                     }
-
+                    console.log(`Attempt ${attempts}/${maxAttempts} - Trame not reachable yet, waiting...`);
                     await new Promise(resolve => setTimeout(resolve, 1000));
                 }
 
                 if (ready) {
                     console.log('Loading Trame in iframe...');
+                    this.viewerLoadingDetail = `Loading ${file.originalName}…`;
+                    this.iframeUrl = url;
+                    markViewerActivity();
+                    this.success = `Launched ${file.originalName} in Trame`;
+                    this.hasUnsavedChanges = false;
+                    this.startHeartbeat();
+                } else if (url) {
+                    console.warn('Viewer readiness probe timed out; loading iframe anyway.');
                     this.viewerLoadingDetail = `Loading ${file.originalName}…`;
                     this.iframeUrl = url;
                     markViewerActivity();
@@ -1122,6 +1199,8 @@ export class FileManager extends LitElement {
             this.currentFileId = null;
             this.viewerLoading = false;
             this.viewerLoadingDetail = '';
+            this.viewerSceneLoading = false;
+            this.clearViewerSceneLoadingTimer();
             this.launchingFileId = null;
         } finally {
             this.launching = false;
@@ -1131,10 +1210,8 @@ export class FileManager extends LitElement {
     handleIframeLoad(e) {
         console.log('Iframe loaded successfully');
         if (this.iframeUrl && this.iframeUrl !== 'about:blank') {
-            this.viewerLoading = false;
-            this.viewerLoadingDetail = '';
-            this.launchingFileId = null;
             markViewerActivity();
+            this.beginViewerSceneLoading();
         }
         this.attachIframeActivityTracking();
     }
@@ -1170,6 +1247,8 @@ export class FileManager extends LitElement {
         this.error = 'Failed to load Trame in iframe';
         this.viewerLoading = false;
         this.viewerLoadingDetail = '';
+        this.viewerSceneLoading = false;
+        this.clearViewerSceneLoadingTimer();
         this.launchingFileId = null;
     }
 
@@ -1290,14 +1369,43 @@ export class FileManager extends LitElement {
         return this.saveCurrentScene('saveAsNew');
     }
 
+    promptCloseChoice(mode) {
+        return new Promise((resolve) => {
+            this._closePromptResolver = resolve;
+            this.closePromptMode = mode;
+            this.updateComplete.then(() => {
+                this.shadowRoot?.querySelector('#close-prompt-dialog')?.openDialog();
+            });
+        });
+    }
+
+    finishClosePrompt(choice) {
+        this.shadowRoot?.querySelector('#close-prompt-dialog')?.closeDialog();
+        this.closePromptMode = null;
+        const resolver = this._closePromptResolver;
+        this._closePromptResolver = null;
+        resolver?.(choice);
+    }
+
+    get closePromptTitle() {
+        return this.closePromptMode === 'save-failed' ? 'Save failed' : 'Unsaved changes';
+    }
+
+    get closePromptMessage() {
+        if (this.closePromptMode === 'save-failed') {
+            return 'Your changes could not be saved. Close Trame anyway?';
+        }
+        return 'Save your changes before closing Trame?';
+    }
+
     async closeIframe(withPrompt = true) {
         if (withPrompt && this.hasUnsavedChanges && this.iframeUrl && this.iframeUrl !== 'about:blank') {
-            const shouldSave = window.confirm('Save scene before closing Trame?');
-            if (shouldSave) {
+            const choice = await this.promptCloseChoice('unsaved');
+            if (choice === 'save') {
                 const saved = await this.saveCurrentScene('overwrite');
                 if (!saved) {
-                    const continueClose = window.confirm('Save failed. Close Trame anyway?');
-                    if (!continueClose) {
+                    const failedChoice = await this.promptCloseChoice('save-failed');
+                    if (failedChoice !== 'close-anyway') {
                         return;
                     }
                 }
@@ -1313,7 +1421,9 @@ export class FileManager extends LitElement {
         this.iframeUrl = '';
         this.viewerLoading = false;
         this.viewerLoadingDetail = '';
+        this.viewerSceneLoading = false;
         this.launchingFileId = null;
+        this.clearViewerSceneLoadingTimer();
         this.hasUnsavedChanges = false;
         if (this.iframeActivityCleanup) {
             this.iframeActivityCleanup();
@@ -1606,10 +1716,40 @@ export class FileManager extends LitElement {
                 </div>
             </app-dialog>
 
+            ${this.closePromptMode ? html`
+                <app-dialog
+                    id="close-prompt-dialog"
+                    title=${this.closePromptTitle}
+                    .showDefaultCloseButton=${false}
+                >
+                    <p class="close-prompt-message">${this.closePromptMessage}</p>
+                    ${this.closePromptMode === 'unsaved' ? html`
+                        <button slot="actions" class="upload-button secondary" type="button" @click=${() => this.finishClosePrompt('discard')}>
+                            Don't Save
+                        </button>
+                        <button slot="actions" class="upload-button" type="button" @click=${() => this.finishClosePrompt('save')}>
+                            Save
+                        </button>
+                    ` : html`
+                        <button slot="actions" class="upload-button secondary" type="button" @click=${() => this.finishClosePrompt('keep-open')}>
+                            Keep open
+                        </button>
+                        <button slot="actions" class="upload-button" type="button" @click=${() => this.finishClosePrompt('close-anyway')}>
+                            Close anyway
+                        </button>
+                    `}
+                </app-dialog>
+            ` : ''}
+
             ${this.showIframe ? html`
                 <div class="iframe-overlay">
                     <div class="iframe-header">
-                        <div class="iframe-title">🚀 Trame: ${this.currentFileName}</div>
+                        <div class="iframe-title">
+                            🚀 Trame: ${this.currentFileName}
+                            ${this.showViewerOverlay ? html`
+                                <span class="iframe-status">${this.viewerLoadingMessage}</span>
+                            ` : ''}
+                        </div>
                         <div>
                             ${this.saveIndicatorMessage ? html`
                                 <span class="save-indicator">${this.saveIndicatorMessage}</span>
@@ -1643,7 +1783,7 @@ export class FileManager extends LitElement {
                     <div class="iframe-container">
                         ${this.iframeUrl !== 'about:blank' ? html`
                             <iframe
-                                class="trame-iframe ${this.viewerLoading ? 'is-loading' : ''}"
+                                class="trame-iframe ${this.showViewerOverlay ? 'is-loading' : ''}"
                                 src="${this.iframeUrl}"
                                 @load=${this.handleIframeLoad}
                                 @error=${this.handleIframeError}
@@ -1653,11 +1793,20 @@ export class FileManager extends LitElement {
                                 referrerpolicy="origin"
                             ></iframe>
                         ` : ''}
-                        ${this.viewerLoading ? html`
+                        ${this.showViewerOverlay ? html`
                             <div class="loading-state ${this.iframeUrl !== 'about:blank' ? 'loading-overlay' : ''}">
                                 <div class="viewer-loading">
                                     <div class="viewer-spinner" role="status" aria-label="Loading viewer"></div>
                                     <p>${this.viewerLoadingMessage}</p>
+                                    ${this.viewerSceneLoading ? html`
+                                        <button
+                                            type="button"
+                                            class="dismiss-scene-loading"
+                                            @click=${this.dismissViewerSceneLoading}
+                                        >
+                                            Show viewer anyway
+                                        </button>
+                                    ` : ''}
                                 </div>
                             </div>
                         ` : ''}

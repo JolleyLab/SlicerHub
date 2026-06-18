@@ -36,7 +36,8 @@ export async function waitForViewerReady(checkUrl, { maxWaitMs = 120000, interva
     while (Date.now() < deadline) {
         try {
             const status = await probeUrl(checkUrl);
-            if (status >= 200 && status < 400) {
+            // Trame often returns 403 on GET while the viewer port is up.
+            if (status >= 200 && status < 400 || status === 403) {
                 return true;
             }
         } catch (_) {
