@@ -20,8 +20,7 @@ import {
     sendProjectGpuHeartbeat,
     prestageProjectGpu
 } from '../services/projectGpu.js';
-import { resolveTramePageUrl, isRemoteTrameViewerUrl } from '../utils/trameViewerUrl.js';
-import { probeViewerUrl } from '../utils/viewerReadiness.js';
+import { resolveTramePageUrl } from '../utils/trameViewerUrl.js';
 import {
     scheduleViewerStopOnLeave,
     cancelViewerStopOnLeave
@@ -29,7 +28,6 @@ import {
 import {
     installViewerActivityListeners,
     markViewerActivity,
-    onViewerReadySignal,
     resetViewerActivity,
     setViewerIdleMs,
     isViewerUserActive
@@ -186,17 +184,6 @@ export class ProjectReviewPage extends LitElement {
                 font-size: 0.95rem;
             }
 
-            .viewer-loading .dismiss-scene-loading {
-                margin-top: 16px;
-                background: transparent;
-                border: 1px solid color-mix(in srgb, var(--color-primary) 40%, transparent);
-                color: var(--color-text-secondary);
-                border-radius: 4px;
-                padding: 8px 14px;
-                cursor: pointer;
-                font-size: 0.9rem;
-            }
-
             .viewer-spinner {
                 width: 40px;
                 height: 40px;
@@ -209,12 +196,6 @@ export class ProjectReviewPage extends LitElement {
 
             @keyframes viewer-spin {
                 to { transform: rotate(360deg); }
-            }
-
-            .trame-iframe.is-loading {
-                visibility: hidden;
-                position: absolute;
-                inset: 0;
             }
 
             .files-title {
@@ -656,7 +637,6 @@ export class ProjectReviewPage extends LitElement {
             showIframe: { type: Boolean },
             iframeUrl: { type: String },
             viewerLoading: { type: Boolean },
-            viewerSceneLoading: { type: Boolean },
             viewerLoadingDetail: { type: String },
             launchingFileId: { type: Number },
             currentFileName: { type: String },
@@ -707,10 +687,7 @@ export class ProjectReviewPage extends LitElement {
         this.showIframe = false;
         this.iframeUrl = '';
         this.viewerLoading = false;
-        this.viewerSceneLoading = false;
         this.viewerLoadingDetail = '';
-        this.viewerSceneLoadingTimeout = null;
-        this.viewerReadySignalCleanup = null;
         this.launchingFileId = null;
         this.currentFileName = '';
         this.selectedFile = null;
@@ -767,20 +744,12 @@ export class ProjectReviewPage extends LitElement {
     connectedCallback() {
         super.connectedCallback();
         installViewerActivityListeners();
-        this.viewerReadySignalCleanup = onViewerReadySignal(() => {
-            this.clearViewerSceneLoading();
-        });
         if (this.projectId) {
             cancelViewerStopOnLeave(this.projectId);
         }
     }
 
     disconnectedCallback() {
-        if (this.viewerReadySignalCleanup) {
-            this.viewerReadySignalCleanup();
-            this.viewerReadySignalCleanup = null;
-        }
-        this.clearViewerSceneLoadingTimer();
         this.stopTrameHeartbeat();
         this.stopGpuBillingHeartbeat();
         this.stopGpuPolling();
@@ -794,7 +763,6 @@ export class ProjectReviewPage extends LitElement {
         this.showIframe = false;
         this.iframeUrl = '';
         this.viewerLoading = false;
-        this.viewerSceneLoading = false;
         this.viewerLoadingDetail = '';
         this.launchingFileId = null;
         this.currentFileName = '';
@@ -1784,12 +1752,10 @@ export class ProjectReviewPage extends LitElement {
         }
         this.currentFileName = file.originalName;
         this.launchingFileId = file.id;
-        this.clearViewerSceneLoading();
         this.viewerLoading = true;
         this.viewerLoadingDetail = `Starting viewer for ${file.originalName}…`;
         this.showIframe = true;
         this.iframeUrl = 'about:blank';
-        await this.updateComplete;
 
         try {
             this.stopTrameHeartbeat();
@@ -1805,7 +1771,6 @@ export class ProjectReviewPage extends LitElement {
                 }
             }
 
-            this.viewerLoadingDetail = `Starting viewer session for ${file.originalName}…`;
             const response = await fetch(`${API_URL}/api/containers/start`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1819,22 +1784,11 @@ export class ProjectReviewPage extends LitElement {
             }
 
             const url = resolveTramePageUrl(data.frontendUrl);
-            this.viewerLoadingDetail = `Waiting for viewer to respond…`;
-
-            const maxAttempts = data.viewerReady === true || isRemoteTrameViewerUrl(url) ? 0 : 30;
-            let attempts = 0;
-            let ready = data.viewerReady === true || isRemoteTrameViewerUrl(url);
-
-            while (attempts < maxAttempts && !ready) {
-                attempts += 1;
-                ready = await probeViewerUrl(url);
-                await new Promise((resolve) => setTimeout(resolve, 1000));
+            if (!url) {
+                throw new Error('Trame did not return a viewer URL.');
             }
 
-            if (!ready && !url) {
-                throw new Error('Trame took too long to start. Try again.');
-            }
-
+            this.viewerLoadingDetail = `Loading ${file.originalName}…`;
             this.iframeUrl = url;
             markViewerActivity();
             this.showToast(`Launched ${file.originalName}`);
@@ -1844,48 +1798,13 @@ export class ProjectReviewPage extends LitElement {
             this.iframeUrl = '';
             this.currentFileName = '';
             this.viewerLoading = false;
-            this.viewerSceneLoading = false;
             this.viewerLoadingDetail = '';
-            this.clearViewerSceneLoadingTimer();
             this.launchingFileId = null;
             this.showErrorAlert(error.message || 'Unable to launch file.', {
                 title: 'Unable to open file',
                 force: true
             });
         }
-    }
-
-    get showViewerOverlay() {
-        return this.viewerLoading || this.viewerSceneLoading;
-    }
-
-    clearViewerSceneLoadingTimer() {
-        if (this.viewerSceneLoadingTimeout) {
-            clearTimeout(this.viewerSceneLoadingTimeout);
-            this.viewerSceneLoadingTimeout = null;
-        }
-    }
-
-    clearViewerSceneLoading() {
-        this.clearViewerSceneLoadingTimer();
-        this.viewerSceneLoading = false;
-        this.viewerLoadingDetail = '';
-        this.launchingFileId = null;
-    }
-
-    beginViewerSceneLoading() {
-        this.clearViewerSceneLoadingTimer();
-        this.viewerLoading = false;
-        const name = this.currentFileName || 'scene';
-        this.viewerLoadingDetail = `Loading ${name} inside the viewer… Large scenes can take 1–3 minutes.`;
-        this.viewerSceneLoading = true;
-        this.viewerSceneLoadingTimeout = setTimeout(() => {
-            this.clearViewerSceneLoading();
-        }, 180000);
-    }
-
-    dismissViewerSceneLoading() {
-        this.clearViewerSceneLoading();
     }
 
     get viewerLoadingMessage() {
@@ -1901,8 +1820,10 @@ export class ProjectReviewPage extends LitElement {
 
     handleViewerIframeLoad() {
         if (this.iframeUrl && this.iframeUrl !== 'about:blank') {
+            this.viewerLoading = false;
+            this.viewerLoadingDetail = '';
+            this.launchingFileId = null;
             markViewerActivity();
-            this.beginViewerSceneLoading();
             this.attachViewerIframeActivityTracking();
         }
     }
@@ -2001,9 +1922,7 @@ export class ProjectReviewPage extends LitElement {
         this.iframeUrl = '';
         this.currentFileName = '';
         this.viewerLoading = false;
-        this.viewerSceneLoading = false;
         this.viewerLoadingDetail = '';
-        this.clearViewerSceneLoadingTimer();
         this.launchingFileId = null;
         await this.cleanupContainerSession(this.projectId);
         if (this.savedGpuProviderId !== 'local' && this.gpuInstance?.status === 'running') {
@@ -2527,7 +2446,7 @@ export class ProjectReviewPage extends LitElement {
                     <div class="iframe-container">
                         ${this.iframeUrl !== 'about:blank' ? html`
                             <iframe
-                                class="trame-iframe ${this.showViewerOverlay ? 'is-loading' : ''}"
+                                class="trame-iframe"
                                 src="${this.iframeUrl}"
                                 allow="clipboard-read; clipboard-write; cross-origin-isolated"
                                 allowfullscreen
@@ -2536,16 +2455,11 @@ export class ProjectReviewPage extends LitElement {
                                 @load=${() => this.handleViewerIframeLoad()}
                             ></iframe>
                         ` : ''}
-                        ${this.showViewerOverlay ? html`
+                        ${this.viewerLoading ? html`
                             <div class="loading-state ${this.iframeUrl !== 'about:blank' ? 'loading-overlay' : ''}">
                                 <div class="viewer-loading">
                                     <div class="viewer-spinner" role="status" aria-label="Loading viewer"></div>
                                     <p>${this.viewerLoadingMessage}</p>
-                                    ${this.viewerSceneLoading ? html`
-                                        <button type="button" class="dismiss-scene-loading" @click=${this.dismissViewerSceneLoading}>
-                                            Show viewer anyway
-                                        </button>
-                                    ` : ''}
                                 </div>
                             </div>
                         ` : ''}

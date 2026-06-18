@@ -8,12 +8,10 @@ import './components/file-storage-summary.js';
 import './components/file-list-row.js';
 import './components/add-button.js';
 import './components/app-dialog.js';
-import { resolveTramePageUrl, isRemoteTrameViewerUrl } from './utils/trameViewerUrl.js';
-import { probeViewerUrl } from './utils/viewerReadiness.js';
+import { resolveTramePageUrl } from './utils/trameViewerUrl.js';
 import {
     installViewerActivityListeners,
     markViewerActivity,
-    onViewerReadySignal,
     resetViewerActivity
 } from './utils/viewerActivity.js';
 import { sendTrameContainerHeartbeat } from './utils/trameHeartbeat.js';
@@ -300,21 +298,6 @@ export class FileManager extends LitElement {
                 line-height: 1.45;
             }
 
-            .viewer-loading .dismiss-scene-loading {
-                margin-top: 16px;
-                background: transparent;
-                border: 1px solid color-mix(in srgb, var(--color-primary) 40%, transparent);
-                color: var(--color-text-secondary);
-                border-radius: 4px;
-                padding: 8px 14px;
-                cursor: pointer;
-                font-size: 0.9rem;
-            }
-
-            .viewer-loading .dismiss-scene-loading:hover {
-                background: color-mix(in srgb, var(--color-primary) 8%, transparent);
-            }
-
             .viewer-spinner {
                 width: 40px;
                 height: 40px;
@@ -327,12 +310,6 @@ export class FileManager extends LitElement {
 
             @keyframes viewer-spin {
                 to { transform: rotate(360deg); }
-            }
-
-            .trame-iframe.is-loading {
-                visibility: hidden;
-                position: absolute;
-                inset: 0;
             }
 
             .trame-iframe {
@@ -553,7 +530,6 @@ export class FileManager extends LitElement {
             launching: { type: Boolean },
             launchingFileId: { type: Number },
             viewerLoading: { type: Boolean },
-            viewerSceneLoading: { type: Boolean },
             viewerLoadingDetail: { type: String },
             showIframe: { type: Boolean },
             iframeUrl: { type: String },
@@ -597,10 +573,7 @@ export class FileManager extends LitElement {
         this.launching = false;
         this.launchingFileId = null;
         this.viewerLoading = false;
-        this.viewerSceneLoading = false;
         this.viewerLoadingDetail = '';
-        this.viewerSceneLoadingTimeout = null;
-        this.viewerReadySignalCleanup = null;
         this.showIframe = false;
         this.iframeUrl = '';
         this.currentFileId = null;
@@ -654,9 +627,6 @@ export class FileManager extends LitElement {
     connectedCallback() {
         super.connectedCallback();
         installViewerActivityListeners();
-        this.viewerReadySignalCleanup = onViewerReadySignal(() => {
-            this.clearViewerSceneLoading();
-        });
         this.loadFiles();
         this.loadStats();
         // Cleanup any running containers when page loads
@@ -678,11 +648,6 @@ export class FileManager extends LitElement {
 
     disconnectedCallback() {
         super.disconnectedCallback();
-        if (this.viewerReadySignalCleanup) {
-            this.viewerReadySignalCleanup();
-            this.viewerReadySignalCleanup = null;
-        }
-        this.clearViewerSceneLoadingTimer();
         if (this._fileSearchTimer) {
             clearTimeout(this._fileSearchTimer);
             this._fileSearchTimer = null;
@@ -1067,45 +1032,11 @@ export class FileManager extends LitElement {
         return `Opening ${name}… Large scenes can take 1–3 minutes.`;
     }
 
-    get showViewerOverlay() {
-        return this.viewerLoading || this.viewerSceneLoading;
-    }
-
-    clearViewerSceneLoadingTimer() {
-        if (this.viewerSceneLoadingTimeout) {
-            clearTimeout(this.viewerSceneLoadingTimeout);
-            this.viewerSceneLoadingTimeout = null;
-        }
-    }
-
-    clearViewerSceneLoading() {
-        this.clearViewerSceneLoadingTimer();
-        this.viewerSceneLoading = false;
-        this.viewerLoadingDetail = '';
-        this.launchingFileId = null;
-    }
-
-    beginViewerSceneLoading() {
-        this.clearViewerSceneLoadingTimer();
-        this.viewerLoading = false;
-        const name = this.currentFileName || 'scene';
-        this.viewerLoadingDetail = `Loading ${name} inside the viewer… Large scenes can take 1–3 minutes.`;
-        this.viewerSceneLoading = true;
-        this.viewerSceneLoadingTimeout = setTimeout(() => {
-            this.clearViewerSceneLoading();
-        }, 180000);
-    }
-
-    dismissViewerSceneLoading() {
-        this.clearViewerSceneLoading();
-    }
-
     async launchFile(file) {
         this.error = '';
         this.success = '';
         this.launching = true;
         this.launchingFileId = file.id;
-        this.clearViewerSceneLoading();
         this.viewerLoading = true;
         this.viewerLoadingDetail = `Starting viewer for ${file.originalName}…`;
         this.currentFileId = file.id;
@@ -1113,7 +1044,6 @@ export class FileManager extends LitElement {
         this.currentStoredName = file.storedName || file.originalName;
         this.showIframe = true;
         this.iframeUrl = 'about:blank';
-        await this.updateComplete;
 
         try {
             this.stopHeartbeat();
@@ -1122,7 +1052,6 @@ export class FileManager extends LitElement {
             await this.cleanupContainer();
 
             console.log('Starting Trame container for file:', file.originalName);
-            this.viewerLoadingDetail = `Starting viewer session for ${file.originalName}…`;
             const response = await fetch(`${API_URL}/api/containers/start`, {
                 method: 'POST',
                 headers: {
@@ -1139,41 +1068,17 @@ export class FileManager extends LitElement {
                 const url = resolveTramePageUrl(data.frontendUrl);
                 console.log('Trame container started, URL:', url);
 
-                this.viewerLoadingDetail = `Waiting for viewer to respond…`;
-                const maxAttempts = data.viewerReady === true || isRemoteTrameViewerUrl(url) ? 0 : 30;
-                let attempts = 0;
-                let ready = data.viewerReady === true || isRemoteTrameViewerUrl(url);
-
-                while (attempts < maxAttempts && !ready) {
-                    attempts++;
-                    ready = await probeViewerUrl(url);
-                    if (ready) {
-                        console.log('Trame server is ready!');
-                        break;
-                    }
-                    console.log(`Attempt ${attempts}/${maxAttempts} - Trame not reachable yet, waiting...`);
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                if (!url) {
+                    throw new Error('Trame did not return a viewer URL.');
                 }
 
-                if (ready) {
-                    console.log('Loading Trame in iframe...');
-                    this.viewerLoadingDetail = `Loading ${file.originalName}…`;
-                    this.iframeUrl = url;
-                    markViewerActivity();
-                    this.success = `Launched ${file.originalName} in Trame`;
-                    this.hasUnsavedChanges = false;
-                    this.startHeartbeat();
-                } else if (url) {
-                    console.warn('Viewer readiness probe timed out; loading iframe anyway.');
-                    this.viewerLoadingDetail = `Loading ${file.originalName}…`;
-                    this.iframeUrl = url;
-                    markViewerActivity();
-                    this.success = `Launched ${file.originalName} in Trame`;
-                    this.hasUnsavedChanges = false;
-                    this.startHeartbeat();
-                } else {
-                    throw new Error('Trame took too long to start. Try again.');
-                }
+                // Backend already waits for the session port; load the viewer once start succeeds.
+                this.viewerLoadingDetail = `Loading ${file.originalName}…`;
+                this.iframeUrl = url;
+                markViewerActivity();
+                this.success = `Launched ${file.originalName} in Trame`;
+                this.hasUnsavedChanges = false;
+                this.startHeartbeat();
             } else {
                 const data = await response.json();
                 console.error('Failed to start container:', data);
@@ -1199,8 +1104,6 @@ export class FileManager extends LitElement {
             this.currentFileId = null;
             this.viewerLoading = false;
             this.viewerLoadingDetail = '';
-            this.viewerSceneLoading = false;
-            this.clearViewerSceneLoadingTimer();
             this.launchingFileId = null;
         } finally {
             this.launching = false;
@@ -1210,8 +1113,10 @@ export class FileManager extends LitElement {
     handleIframeLoad(e) {
         console.log('Iframe loaded successfully');
         if (this.iframeUrl && this.iframeUrl !== 'about:blank') {
+            this.viewerLoading = false;
+            this.viewerLoadingDetail = '';
+            this.launchingFileId = null;
             markViewerActivity();
-            this.beginViewerSceneLoading();
         }
         this.attachIframeActivityTracking();
     }
@@ -1247,8 +1152,6 @@ export class FileManager extends LitElement {
         this.error = 'Failed to load Trame in iframe';
         this.viewerLoading = false;
         this.viewerLoadingDetail = '';
-        this.viewerSceneLoading = false;
-        this.clearViewerSceneLoadingTimer();
         this.launchingFileId = null;
     }
 
@@ -1421,9 +1324,7 @@ export class FileManager extends LitElement {
         this.iframeUrl = '';
         this.viewerLoading = false;
         this.viewerLoadingDetail = '';
-        this.viewerSceneLoading = false;
         this.launchingFileId = null;
-        this.clearViewerSceneLoadingTimer();
         this.hasUnsavedChanges = false;
         if (this.iframeActivityCleanup) {
             this.iframeActivityCleanup();
@@ -1746,7 +1647,7 @@ export class FileManager extends LitElement {
                     <div class="iframe-header">
                         <div class="iframe-title">
                             🚀 Trame: ${this.currentFileName}
-                            ${this.showViewerOverlay ? html`
+                            ${this.viewerLoading ? html`
                                 <span class="iframe-status">${this.viewerLoadingMessage}</span>
                             ` : ''}
                         </div>
@@ -1783,7 +1684,7 @@ export class FileManager extends LitElement {
                     <div class="iframe-container">
                         ${this.iframeUrl !== 'about:blank' ? html`
                             <iframe
-                                class="trame-iframe ${this.showViewerOverlay ? 'is-loading' : ''}"
+                                class="trame-iframe"
                                 src="${this.iframeUrl}"
                                 @load=${this.handleIframeLoad}
                                 @error=${this.handleIframeError}
@@ -1793,20 +1694,11 @@ export class FileManager extends LitElement {
                                 referrerpolicy="origin"
                             ></iframe>
                         ` : ''}
-                        ${this.showViewerOverlay ? html`
+                        ${this.viewerLoading ? html`
                             <div class="loading-state ${this.iframeUrl !== 'about:blank' ? 'loading-overlay' : ''}">
                                 <div class="viewer-loading">
                                     <div class="viewer-spinner" role="status" aria-label="Loading viewer"></div>
                                     <p>${this.viewerLoadingMessage}</p>
-                                    ${this.viewerSceneLoading ? html`
-                                        <button
-                                            type="button"
-                                            class="dismiss-scene-loading"
-                                            @click=${this.dismissViewerSceneLoading}
-                                        >
-                                            Show viewer anyway
-                                        </button>
-                                    ` : ''}
                                 </div>
                             </div>
                         ` : ''}

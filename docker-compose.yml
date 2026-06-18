@@ -45,7 +45,7 @@ services:
       - PRUNE_EXITED_INTERVAL_SECONDS=${PRUNE_EXITED_INTERVAL_SECONDS:-300}
       - WORKSPACE_ROOT=/workspace
       # Host repo path for nested `docker run -v` (required on Windows Docker Desktop).
-      - HOST_WORKSPACE_ROOT=${PWD}
+      - HOST_WORKSPACE_ROOT=${HOST_WORKSPACE_ROOT:-${PWD}}
       - TRAME_IMAGE=${TRAME_IMAGE:-slicer-web-trame:local}
       # Local dev / smoke-gpu-sync.ps1 (per-instance token used on Vast)
       - TRAME_SYNC_TOKEN=${TRAME_SYNC_TOKEN:-test-sync-token-local}
