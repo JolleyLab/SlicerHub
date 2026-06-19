@@ -334,6 +334,8 @@ def poll_open_requests() -> None:
             f"[slicer_session] Open request: {path} "
             f"(fileId={payload.get('fileId', '')}, requestedAt={requested_at})"
         )
+        slicer.mrmlScene.Clear(0)
+        slicer.app.processEvents()
         if not wait_file_readable(path):
             log(f"[slicer_session] Timed out waiting for {path}")
             attempts = _failed_attempts.get(dedupe_key, 0) + 1
@@ -344,11 +346,12 @@ def poll_open_requests() -> None:
             return
 
         if load_staged_file(path):
-            clear_request()
             if requested_at:
                 _last_processed_requested_at = requested_at
             _failed_attempts.pop(dedupe_key, None)
+            clear_request()
             log(f"[slicer_session] Done: {path}")
+            QTimer.singleShot(250, poll_open_requests)
             return
 
         attempts = _failed_attempts.get(dedupe_key, 0) + 1

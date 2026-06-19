@@ -1117,18 +1117,21 @@ export class ProjectReviewPage extends LitElement {
         this.launchingFileId = file.id;
         this.currentFileName = file.originalName;
         try {
+            const data = await openFullSlicerViewer(this.projectId, file.id);
+
             const parsed = new URL(
                 resolveTramePageUrl('/slicer-gui/vnc.html?autoconnect=true&resize=scale'),
                 window.location.href
             );
-            const opened = window.open(parsed.href, '_blank');
+            // One shared Slicer session — reuse the same tab instead of opening many.
+            const opened = window.open(parsed.href, 'slicer-gui-viewer');
             if (!opened) {
                 throw new Error('Pop-up blocked. Allow pop-ups for this site and try again.');
             }
+            opened.focus();
             opened.opener = null;
 
-            const data = await openFullSlicerViewer(this.projectId, file.id);
-            this.showToast(`Opening ${data.fileName} in Full Slicer…`);
+            this.showToast(`Loading ${data.fileName} in Full Slicer — the viewer will update in a few seconds.`);
         } catch (error) {
             this.showErrorAlert(error.message || 'Unable to open Full Slicer.', {
                 title: 'Unable to open file',
