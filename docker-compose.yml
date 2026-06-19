@@ -66,6 +66,7 @@ services:
       - /app/node_modules  # Prevent host node_modules from overriding container's Linux-compiled modules
       - slicer-backend-data:/app/data
       - ./backend/data:/app/data-seed:ro
+      - ./data/slicer-gui:/app/data/slicer-gui
       - ./nginx:/nginx
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
@@ -143,6 +144,48 @@ services:
     depends_on:
       - nginx
 
+  # Full 3D Slicer desktop + noVNC (optional local GPU viewer).
+  # Requires NVIDIA Container Toolkit. VNC auth is off by default (VNC_ALLOW_NO_PASSWORD=true).
+  # Start: docker compose --profile slicer-gui up -d slicer-gui
+  # Browser: http://localhost:8000/slicer-gui/vnc.html (via nginx) or http://127.0.0.1:6080/vnc.html
+  slicer-gui:
+    build: ./slicer-gui-gpu
+    image: ${SLICER_GUI_IMAGE:-slicer-web-slicer-gui:local}
+    container_name: slicer-gui
+    profiles:
+      - slicer-gui
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+      VNC_PASSWORD: ${VNC_PASSWORD:-}
+      VNC_ALLOW_NO_PASSWORD: ${VNC_ALLOW_NO_PASSWORD:-true}
+      DISPLAY_WIDTH: ${SLICER_GUI_DISPLAY_WIDTH:-1920}
+      DISPLAY_HEIGHT: ${SLICER_GUI_DISPLAY_HEIGHT:-1080}
+      CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    ports:
+      - "127.0.0.1:6080:6080"
+      - "127.0.0.1:5901:5901"
+    volumes:
+      - slicer-gui-home:/home/slicer
+      - ./data/slicer-gui:/home/slicer/data
+      - /dev/shm:/dev/shm
+    cap_add:
+      - SYS_PTRACE
+    shm_size: 8gb
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    networks:
+      - trame-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
+
 networks:
   trame-net:
     name: trame-net
@@ -150,3 +193,4 @@ networks:
 
 volumes:
   slicer-backend-data:
+  slicer-gui-home:

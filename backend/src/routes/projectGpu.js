@@ -1,9 +1,13 @@
+import fs from 'fs';
+import path from 'path';
 import Project from '../models/Project.js';
 import ProjectGpu from '../models/ProjectGpu.js';
 import File from '../models/File.js';
+import storage from '../storage/index.js';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { ValidationError } from '../utils/errors.js';
+import { buildViewerFrontendUrl } from '../utils/viewerUrl.js';
 import { listProviders, getProvider } from '../gpu/registry.js';
 import { startBilling, stopBilling, touchProjectBillingActivity, acknowledgeGpuError, evaluateRemoteBillingStop, reportRemoteProvisionFailure } from '../gpu/orchestrator.js';
 import { computeBillingLease } from '../gpu/billingPolicy.js';
@@ -65,8 +69,81 @@ function publicGpuSettings(projectId) {
         hasApiKey: settings.hasApiKey,
         apiKeyMasked: settings.apiKeyMasked,
         credentialsUnreadable: !!settings.credentialsUnreadable,
+        useFullSlicer: settings.useFullSlicer === true,
         updatedAt: settings.updatedAt,
         configuredProviders: buildConfiguredProviders(projectId)
+    };
+}
+
+function slicerGuiDataDir() {
+    return path.join(process.cwd(), 'data', 'slicer-gui');
+}
+
+function defaultSlicerGuiViewerPath() {
+    const fromEnv = (process.env.LOCAL_SLICER_GUI_PATH || '').trim();
+    if (fromEnv) return fromEnv;
+    return '/slicer-gui/vnc.html?autoconnect=true&resize=scale';
+}
+
+async function stageProjectFileForSlicerGui({ file, launcherUserId }) {
+    if (!(await storage.exists(file.file_path))) {
+        throw new ValidationError('File not found on server');
+    }
+
+    const safeName = path.basename(file.original_name || file.file_path);
+    const destDir = slicerGuiDataDir();
+    fs.mkdirSync(destDir, { recursive: true });
+    const destPath = path.join(destDir, safeName);
+
+    let sourceKey = file.file_path;
+    if (file.user_id !== Number(launcherUserId) && String(file.user_id) !== launcherUserId) {
+        const sharedName = `shared-${file.id}-${safeName}`;
+        sourceKey = await storage.ensureStagedCopy({
+            sourceKey: file.file_path,
+            userId: launcherUserId,
+            fileName: sharedName
+        });
+    }
+
+    const srcPath = storage.resolvePath(sourceKey);
+    fs.copyFileSync(srcPath, destPath);
+    try {
+        fs.chmodSync(destPath, 0o666);
+    } catch {
+        /* best effort for cross-container read on shared mount */
+    }
+    try {
+        const fd = fs.openSync(destPath, 'r');
+        fs.fsyncSync(fd);
+        fs.closeSync(fd);
+    } catch {
+        /* fsync optional */
+    }
+
+    const containerPath = `/home/slicer/data/${safeName}`;
+    const requestFile = path.join(destDir, '.open-request.json');
+    const requestPayload = {
+        fileName: safeName,
+        containerPath,
+        requestedAt: new Date().toISOString()
+    };
+    fs.writeFileSync(`${requestFile}.tmp`, JSON.stringify(requestPayload, null, 2));
+    fs.renameSync(`${requestFile}.tmp`, requestFile);
+    try {
+        fs.chmodSync(requestFile, 0o666);
+    } catch {
+        /* best effort */
+    }
+
+    console.log('Staged full-slicer file', {
+        destPath,
+        containerPath,
+        bytes: fs.statSync(destPath).size
+    });
+
+    return {
+        fileName: safeName,
+        containerPath
     };
 }
 
@@ -274,6 +351,16 @@ export default function projectGpuRoutes(app) {
             } catch (err) {
                 throw new ValidationError(err.message || 'Unable to set default GPU provider');
             }
+        } else if (req.body?.useFullSlicer !== undefined) {
+            try {
+                ProjectGpu.setLocalOptions({
+                    projectId,
+                    useFullSlicer: req.body.useFullSlicer === true,
+                    updatedByUserId: req.user.id
+                });
+            } catch (err) {
+                throw new ValidationError(err.message || 'Unable to update local viewer option');
+            }
         } else {
             const providerId = String(req.body?.providerId || 'local').trim();
             getProvider(providerId);
@@ -316,6 +403,51 @@ export default function projectGpuRoutes(app) {
         const result = await acknowledgeGpuError({ projectId });
         const instance = ProjectGpu.getInstance(projectId);
         res.json({ ...result, instance: publicInstance(instance) });
+    }));
+
+    app.post('/api/projects/:projectId/gpu/open-full-slicer', authenticateToken, asyncHandler(async (req, res) => {
+        const projectId = parseProjectId(req.params.projectId);
+        requireProjectAccess(projectId, req.user.id);
+
+        const settings = ProjectGpu.getSettings(projectId);
+        if (settings.providerId !== 'local' || settings.useFullSlicer !== true) {
+            throw new ValidationError('Full Slicer viewer is not enabled for this project');
+        }
+
+        const fileId = Number(req.body?.fileId);
+        if (!Number.isInteger(fileId) || fileId <= 0) {
+            throw new ValidationError('fileId is required');
+        }
+
+        const file = File.findById(fileId);
+        const projectRole = Project.findForUser({ projectId, userId: req.user.id })?.userRole;
+        const canAccess = !!file && (
+            file.project_id === projectId
+            || file.user_id === req.user.id
+            || projectRole === 'admin'
+            || projectRole === 'collaborator'
+            || projectRole === 'observer'
+        );
+        if (!canAccess) {
+            throw new ValidationError('File not found or inaccessible');
+        }
+
+        const staged = await stageProjectFileForSlicerGui({
+            file,
+            launcherUserId: String(req.user.id)
+        });
+        File.touchLastViewed(file.id);
+
+        const viewerPath = defaultSlicerGuiViewerPath();
+        const frontendUrl = buildViewerFrontendUrl(req, req.user.id.toString(), null, null);
+        const origin = frontendUrl ? new URL(frontendUrl).origin : `${req.protocol}://${req.get('host')}`;
+        const slicerGuiUrl = `${origin}${viewerPath.startsWith('/') ? viewerPath : `/${viewerPath}`}`;
+
+        res.json({
+            slicerGuiUrl,
+            fileName: staged.fileName,
+            containerPath: staged.containerPath
+        });
     }));
 
     app.post('/api/projects/:projectId/gpu/prestage', authenticateToken, asyncHandler(async (req, res) => {

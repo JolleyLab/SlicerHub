@@ -14,6 +14,8 @@ import {
     configureProjectGpuProvider,
     setActiveProjectGpuProvider,
     setProjectGpuDefaultProvider,
+    setProjectGpuUseFullSlicer,
+    openFullSlicerViewer,
     startProjectGpuBilling,
     stopProjectGpuBilling,
     acknowledgeProjectGpuError,
@@ -613,6 +615,14 @@ export class ProjectReviewPage extends LitElement {
             .gpu-dialog-checkbox input {
                 margin: 0;
             }
+
+            .gpu-local-option {
+                margin-top: 8px;
+            }
+
+            .gpu-local-option .gpu-hint {
+                margin-top: 4px;
+            }
         `;
     }
 
@@ -1083,6 +1093,53 @@ export class ProjectReviewPage extends LitElement {
         }
     }
 
+    async handleUseFullSlicerChange(event) {
+        if (!this.canManageGpu || this.savedGpuProviderId !== 'local') return;
+
+        const useFullSlicer = event.target.checked;
+        this.gpuSaving = true;
+        try {
+            const data = await setProjectGpuUseFullSlicer(this.projectId, useFullSlicer);
+            this.applyGpuSettings(data.settings);
+            this.showToast(useFullSlicer ? 'Full Slicer viewer enabled.' : 'Trame viewer enabled for Local.');
+        } catch (error) {
+            event.target.checked = !useFullSlicer;
+            this.showErrorAlert(error.message || 'Unable to update local viewer option.', {
+                title: 'GPU settings',
+                force: true
+            });
+        } finally {
+            this.gpuSaving = false;
+        }
+    }
+
+    async handleLaunchFullSlicer(file) {
+        this.launchingFileId = file.id;
+        this.currentFileName = file.originalName;
+        try {
+            const parsed = new URL(
+                resolveTramePageUrl('/slicer-gui/vnc.html?autoconnect=true&resize=scale'),
+                window.location.href
+            );
+            const opened = window.open(parsed.href, '_blank');
+            if (!opened) {
+                throw new Error('Pop-up blocked. Allow pop-ups for this site and try again.');
+            }
+            opened.opener = null;
+
+            const data = await openFullSlicerViewer(this.projectId, file.id);
+            this.showToast(`Opening ${data.fileName} in Full Slicer…`);
+        } catch (error) {
+            this.showErrorAlert(error.message || 'Unable to open Full Slicer.', {
+                title: 'Unable to open file',
+                force: true
+            });
+        } finally {
+            this.launchingFileId = null;
+            this.currentFileName = '';
+        }
+    }
+
     get gpuDialogProviderOptions() {
         return (this.gpuProviders || []).filter((provider) => provider.id !== 'local');
     }
@@ -1500,6 +1557,10 @@ export class ProjectReviewPage extends LitElement {
         return this.gpuActiveProviderId || this.gpuSettings?.providerId || 'local';
     }
 
+    get useLocalFullSlicer() {
+        return this.savedGpuProviderId === 'local' && this.gpuSettings?.useFullSlicer === true;
+    }
+
     get selectedGpuProvider() {
         return this.gpuProviders.find((p) => p.id === this.savedGpuProviderId) || null;
     }
@@ -1648,7 +1709,7 @@ export class ProjectReviewPage extends LitElement {
         const provider = this.configuredProviders.find((p) => p.id === this.savedGpuProviderId);
         const label = provider?.label || (this.savedGpuProviderId === 'local' ? 'Local' : this.savedGpuProviderId);
         if (this.savedGpuProviderId === 'local') {
-            return label;
+            return this.useLocalFullSlicer ? `${label} · Full Slicer` : label;
         }
         return `${label} · ${this.gpuFriendlySummary}`;
     }
@@ -1744,6 +1805,11 @@ export class ProjectReviewPage extends LitElement {
         const gpuBlock = this.getRemoteGpuLaunchBlockMessage();
         if (gpuBlock) {
             this.showErrorAlert(gpuBlock, { title: 'GPU not ready', force: true });
+            return;
+        }
+
+        if (this.useLocalFullSlicer) {
+            await this.handleLaunchFullSlicer(file);
             return;
         }
 
@@ -2173,6 +2239,31 @@ export class ProjectReviewPage extends LitElement {
                                             </select>
                                             <div class="gpu-hint">Which provider is pre-selected; use Active provider above for this session.</div>
                                         </div>
+                                        ${this.savedGpuProviderId === 'local' ? html`
+                                            <div class="gpu-local-option">
+                                                ${this.canManageGpu ? html`
+                                                    <label class="gpu-dialog-checkbox">
+                                                        <input
+                                                            type="checkbox"
+                                                            .checked=${this.gpuSettings?.useFullSlicer === true}
+                                                            ?disabled=${this.gpuSaving}
+                                                            @change=${(e) => this.handleUseFullSlicerChange(e)}
+                                                        />
+                                                        Use Full Slicer
+                                                    </label>
+                                                ` : html`
+                                                    <div class="gpu-hint">
+                                                        ${this.gpuSettings?.useFullSlicer
+                                                            ? 'Full Slicer viewer (read-only) opens in a new tab.'
+                                                            : 'Local Trame viewer'}
+                                                    </div>
+                                                `}
+                                                <div class="gpu-hint">
+                                                    Opens the standalone GPU Slicer container in a new browser tab.
+                                                    Requires <code>docker compose --profile slicer-gui up -d slicer-gui</code>.
+                                                </div>
+                                            </div>
+                                        ` : ''}
                                         ${this.isGpuProviderConfigured(this.gpuActiveProviderId)
                                             && this.gpuActiveProviderId !== 'local' ? html`
                                             <button

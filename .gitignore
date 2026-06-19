@@ -9,6 +9,8 @@ backend/data/
 backend/userFiles/
 userFiles/
 data/
+!data/slicer-gui/
+!data/slicer-gui/.gitkeep
 trame-server/userFiles/
 
 # Environment variables (may contain secrets)

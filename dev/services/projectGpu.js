@@ -55,6 +55,20 @@ export async function setProjectGpuDefaultProvider(projectId, defaultProviderId)
     return saveProjectGpuSettings(projectId, { defaultProviderId });
 }
 
+export async function setProjectGpuUseFullSlicer(projectId, useFullSlicer) {
+    return saveProjectGpuSettings(projectId, { useFullSlicer: !!useFullSlicer });
+}
+
+export async function openFullSlicerViewer(projectId, fileId) {
+    const response = await fetch(`${API_URL}/api/projects/${projectId}/gpu/open-full-slicer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ fileId })
+    });
+    return parseResponse(response);
+}
+
 export async function startProjectGpuBilling(projectId) {
     const response = await fetch(`${API_URL}/api/projects/${projectId}/gpu/start`, {
         method: 'POST',

@@ -113,6 +113,7 @@ const ProjectGpu = {
                 defaultProviderId: 'local',
                 hasApiKey: false,
                 apiKeyMasked: '',
+                useFullSlicer: false,
                 updatedAt: null
             };
         }
@@ -125,6 +126,7 @@ const ProjectGpu = {
                 defaultProviderId: row.default_provider_id || row.provider_id || 'local',
                 hasApiKey: false,
                 apiKeyMasked: '',
+                useFullSlicer: false,
                 credentialsUnreadable: true,
                 updatedAt: row.updated_at
             };
@@ -132,14 +134,39 @@ const ProjectGpu = {
 
         const activeId = row.provider_id || 'local';
         const activeCreds = getProviderCreds(store, activeId);
+        const localPrefs = getProviderCreds(store, 'local');
         return {
             projectId: row.project_id,
             providerId: activeId,
             defaultProviderId: row.default_provider_id || activeId || 'local',
             hasApiKey: activeId !== 'local' ? !!activeCreds.apiKey : false,
             apiKeyMasked: maskSecret(activeCreds.apiKey),
+            useFullSlicer: localPrefs.useFullSlicer === true,
             updatedAt: row.updated_at
         };
+    },
+
+    setLocalOptions({ projectId, useFullSlicer, updatedByUserId }) {
+        const row = readSettingsRow(projectId);
+        const { store, unreadable } = this.getCredentialStore(projectId);
+        if (unreadable) {
+            throw new Error(
+                'Stored GPU credentials cannot be read. Re-configure remote providers before changing local options.'
+            );
+        }
+
+        store.providers.local = {
+            ...getProviderCreds(store, 'local'),
+            useFullSlicer: useFullSlicer === true
+        };
+
+        const activeId = row?.provider_id || 'local';
+        const defaultId = row?.default_provider_id || activeId || 'local';
+        writeCredentialStore(projectId, store, {
+            providerId: activeId,
+            defaultProviderId: defaultId,
+            updatedByUserId
+        });
     },
 
     getCredentials(projectId) {
