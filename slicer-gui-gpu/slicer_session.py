@@ -16,7 +16,8 @@ POLL_MS = 1000
 MAX_LOAD_ATTEMPTS = 30
 _busy = False
 _failed_attempts: dict[str, int] = {}
-_last_completed_signature = ""
+_last_processed_requested_at = ""
+_ui_wait_logged = False
 
 
 def log(message: str) -> None:
@@ -46,7 +47,15 @@ def read_request() -> dict | None:
 
 
 def request_signature(payload: dict) -> str:
-    return f"{payload.get('requestedAt', '')}:{payload.get('containerPath', '')}"
+    return (payload.get("requestedAt") or "").strip()
+
+
+def is_newer_open_request(payload: dict) -> bool:
+    global _last_processed_requested_at
+    requested_at = request_signature(payload)
+    if not requested_at:
+        return True
+    return requested_at > _last_processed_requested_at
 
 
 def wait_file_readable(path: str, timeout_s: float = 90.0) -> bool:
@@ -63,10 +72,7 @@ def wait_file_readable(path: str, timeout_s: float = 90.0) -> bool:
 
 def ui_ready() -> bool:
     layout_manager = slicer.app.layoutManager()
-    if not layout_manager or not layout_manager.sliceWidget("Red"):
-        return False
-    main_window = slicer.util.mainWindow()
-    return main_window is not None and main_window.isVisible()
+    return bool(layout_manager and layout_manager.sliceWidget("Red"))
 
 
 def iter_nodes(class_name: str) -> list:
@@ -255,6 +261,8 @@ def load_staged_file(path: str) -> bool:
     try:
         if lower.endswith(".mrb"):
             log(f"[slicer_session] loadScene: {path}")
+            slicer.mrmlScene.Clear(0)
+            slicer.app.processEvents()
             ok = bool(slicer.util.loadScene(path))
             if not ok:
                 log("[slicer_session] loadScene failed, trying ioManager.loadFile")
@@ -293,53 +301,62 @@ def load_staged_file(path: str) -> bool:
 def clear_request() -> None:
     try:
         os.remove(REQUEST_FILE)
-    except OSError:
-        pass
+    except OSError as exc:
+        log(f"[slicer_session] Could not remove request file: {exc}")
 
 
 def poll_open_requests() -> None:
-    global _busy, _last_completed_signature
+    global _busy, _last_processed_requested_at, _ui_wait_logged
     if _busy:
         return
 
     payload = read_request()
     if not payload:
+        _ui_wait_logged = False
         return
 
     path = payload["containerPath"]
-    signature = request_signature(payload)
-    if signature and signature == _last_completed_signature:
+    requested_at = request_signature(payload)
+    if not is_newer_open_request(payload):
         return
 
     if not ui_ready():
-        log("[slicer_session] UI not ready, deferring open request")
+        if not _ui_wait_logged:
+            log("[slicer_session] UI not ready, deferring open request")
+            _ui_wait_logged = True
         return
+    _ui_wait_logged = False
 
+    dedupe_key = requested_at or path
     _busy = True
     try:
-        log(f"[slicer_session] Open request: {path} ({payload.get('requestedAt', '')})")
+        log(
+            f"[slicer_session] Open request: {path} "
+            f"(fileId={payload.get('fileId', '')}, requestedAt={requested_at})"
+        )
         if not wait_file_readable(path):
             log(f"[slicer_session] Timed out waiting for {path}")
-            attempts = _failed_attempts.get(signature, 0) + 1
-            _failed_attempts[signature] = attempts
+            attempts = _failed_attempts.get(dedupe_key, 0) + 1
+            _failed_attempts[dedupe_key] = attempts
             if attempts >= MAX_LOAD_ATTEMPTS:
                 clear_request()
-                _failed_attempts.pop(signature, None)
+                _failed_attempts.pop(dedupe_key, None)
             return
 
         if load_staged_file(path):
             clear_request()
-            _last_completed_signature = signature
-            _failed_attempts.pop(signature, None)
+            if requested_at:
+                _last_processed_requested_at = requested_at
+            _failed_attempts.pop(dedupe_key, None)
             log(f"[slicer_session] Done: {path}")
             return
 
-        attempts = _failed_attempts.get(signature, 0) + 1
-        _failed_attempts[signature] = attempts
+        attempts = _failed_attempts.get(dedupe_key, 0) + 1
+        _failed_attempts[dedupe_key] = attempts
         log(f"[slicer_session] Load failed (attempt {attempts}/{MAX_LOAD_ATTEMPTS}): {path}")
         if attempts >= MAX_LOAD_ATTEMPTS:
             clear_request()
-            _failed_attempts.pop(signature, None)
+            _failed_attempts.pop(dedupe_key, None)
     finally:
         _busy = False
 

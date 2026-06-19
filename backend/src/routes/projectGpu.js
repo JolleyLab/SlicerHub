@@ -91,9 +91,15 @@ async function stageProjectFileForSlicerGui({ file, launcherUserId }) {
     }
 
     const safeName = path.basename(file.original_name || file.file_path);
+    const stagedName = `${file.id}-${safeName}`;
     const destDir = slicerGuiDataDir();
     fs.mkdirSync(destDir, { recursive: true });
-    const destPath = path.join(destDir, safeName);
+    try {
+        fs.chmodSync(destDir, 0o777);
+    } catch {
+        /* best effort for cross-container access on shared mount */
+    }
+    const destPath = path.join(destDir, stagedName);
 
     let sourceKey = file.file_path;
     if (file.user_id !== Number(launcherUserId) && String(file.user_id) !== launcherUserId) {
@@ -120,10 +126,12 @@ async function stageProjectFileForSlicerGui({ file, launcherUserId }) {
         /* fsync optional */
     }
 
-    const containerPath = `/home/slicer/data/${safeName}`;
+    const containerPath = `/home/slicer/data/${stagedName}`;
     const requestFile = path.join(destDir, '.open-request.json');
     const requestPayload = {
+        fileId: file.id,
         fileName: safeName,
+        stagedName,
         containerPath,
         requestedAt: new Date().toISOString()
     };
@@ -138,11 +146,13 @@ async function stageProjectFileForSlicerGui({ file, launcherUserId }) {
     console.log('Staged full-slicer file', {
         destPath,
         containerPath,
+        requestedAt: requestPayload.requestedAt,
         bytes: fs.statSync(destPath).size
     });
 
     return {
         fileName: safeName,
+        stagedName,
         containerPath
     };
 }

@@ -113,6 +113,8 @@ if [ -n "${CLOUDFLARE_TUNNEL_TOKEN}" ]; then
 fi
 
 echo "Starting 3D Slicer..."
+mkdir -p /home/slicer/data
+chmod 777 /home/slicer/data 2>/dev/null || true
 /usr/local/bin/launch-slicer.sh
 SLICER_PID="$(cat /tmp/slicer.pid)"
 
