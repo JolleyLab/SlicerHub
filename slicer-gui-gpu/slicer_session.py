@@ -16,8 +16,9 @@ POLL_MS = 1000
 MAX_LOAD_ATTEMPTS = 30
 _busy = False
 _failed_attempts: dict[str, int] = {}
-_last_processed_requested_at = ""
+_last_completed_key = ""
 _ui_wait_logged = False
+_poll_timer = None
 
 
 def log(message: str) -> None:
@@ -46,16 +47,22 @@ def read_request() -> dict | None:
         return None
 
 
-def request_signature(payload: dict) -> str:
-    return (payload.get("requestedAt") or "").strip()
+def request_key(payload: dict) -> str:
+    file_id = payload.get("fileId", "")
+    requested_at = (payload.get("requestedAt") or "").strip()
+    path = (payload.get("containerPath") or "").strip()
+    return f"{file_id}:{requested_at}:{path}"
 
 
-def is_newer_open_request(payload: dict) -> bool:
-    global _last_processed_requested_at
-    requested_at = request_signature(payload)
-    if not requested_at:
+def should_process_request(payload: dict) -> bool:
+    global _last_completed_key
+    key = request_key(payload)
+    if key != _last_completed_key:
         return True
-    return requested_at > _last_processed_requested_at
+    if os.path.isfile(REQUEST_FILE):
+        log(f"[slicer_session] Request file still present, retrying: {key}")
+        return True
+    return False
 
 
 def wait_file_readable(path: str, timeout_s: float = 90.0) -> bool:
@@ -65,8 +72,10 @@ def wait_file_readable(path: str, timeout_s: float = 90.0) -> bool:
             size = os.path.getsize(path)
             if size > 0:
                 return True
-        slicer.app.processEvents()
-        time.sleep(0.5)
+        # Keep the Qt event loop alive (poll timer, view refresh timers).
+        end = time.time() + 0.05
+        while time.time() < end:
+            slicer.app.processEvents()
     return False
 
 
@@ -306,7 +315,7 @@ def clear_request() -> None:
 
 
 def poll_open_requests() -> None:
-    global _busy, _last_processed_requested_at, _ui_wait_logged
+    global _busy, _last_completed_key, _ui_wait_logged
     if _busy:
         return
 
@@ -316,8 +325,9 @@ def poll_open_requests() -> None:
         return
 
     path = payload["containerPath"]
-    requested_at = request_signature(payload)
-    if not is_newer_open_request(payload):
+    requested_at = (payload.get("requestedAt") or "").strip()
+    key = request_key(payload)
+    if not should_process_request(payload):
         return
 
     if not ui_ready():
@@ -327,7 +337,7 @@ def poll_open_requests() -> None:
         return
     _ui_wait_logged = False
 
-    dedupe_key = requested_at or path
+    dedupe_key = key or requested_at or path
     _busy = True
     try:
         log(
@@ -346,8 +356,7 @@ def poll_open_requests() -> None:
             return
 
         if load_staged_file(path):
-            if requested_at:
-                _last_processed_requested_at = requested_at
+            _last_completed_key = key
             _failed_attempts.pop(dedupe_key, None)
             clear_request()
             log(f"[slicer_session] Done: {path}")
@@ -365,9 +374,10 @@ def poll_open_requests() -> None:
 
 
 def start_polling() -> None:
-    timer = QTimer()
-    timer.timeout.connect(poll_open_requests)
-    timer.start(POLL_MS)
+    global _poll_timer
+    _poll_timer = QTimer()
+    _poll_timer.timeout.connect(poll_open_requests)
+    _poll_timer.start(POLL_MS)
     log(f"[slicer_session] Polling {REQUEST_FILE} every {POLL_MS}ms")
     QTimer.singleShot(3000, poll_open_requests)
 
