@@ -20,8 +20,8 @@ VNC authentication is **off by default** (`VNC_ALLOW_NO_PASSWORD=true`). Set `VN
 | Route | URL |
 |---|---|
 | Via nginx (same origin as app) | `http://localhost:8000/slicer-gui/` |
-| Direct (localhost on host) | `http://127.0.0.1:6080/` |
-| VNC client | `localhost:5901` (no password by default) |
+| Direct (localhost debug) | `http://127.0.0.1:6080/` |
+| VNC client | Not exposed on the host; use the browser URL above |
 
 Project/data files placed on the host under `data/slicer-gui/` appear in Slicer at `/home/slicer/data`.
 

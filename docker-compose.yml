@@ -147,7 +147,7 @@ services:
   # Full 3D Slicer desktop + noVNC (optional local GPU viewer).
   # Requires NVIDIA Container Toolkit. VNC auth is off by default (VNC_ALLOW_NO_PASSWORD=true).
   # Start: docker compose --profile slicer-gui up -d slicer-gui
-  # Browser: http://localhost:8000/slicer-gui/vnc.html (via nginx) or http://127.0.0.1:6080/vnc.html
+  # Browser: http://localhost:8000/slicer-gui/vnc.html (via nginx) or http://127.0.0.1:6080/vnc.html (direct debug)
   slicer-gui:
     build: ./slicer-gui-gpu
     image: ${SLICER_GUI_IMAGE:-slicer-web-slicer-gui:local}
@@ -164,8 +164,9 @@ services:
       DISPLAY_HEIGHT: ${SLICER_GUI_DISPLAY_HEIGHT:-1080}
       CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     ports:
+      # noVNC for optional direct localhost debugging; app traffic uses nginx → slicer-gui:6080
       - "127.0.0.1:6080:6080"
-      - "127.0.0.1:5901:5901"
+      # VNC 5901 is not published — avoids host port conflicts; use /slicer-gui/ in the browser
     volumes:
       - slicer-gui-home:/home/slicer
       - ./data/slicer-gui:/home/slicer/data
