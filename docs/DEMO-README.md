@@ -2,12 +2,15 @@ If server reboots, it should restart. However if it doesn't:
 cd /SlicerWeb/
 docker compose up -d
 
-Optional full 3D Slicer GUI (local GPU, noVNC — not wired to My Projects yet):
+Optional full 3D Slicer GUI (local GPU, My Projects **Use Full Slicer**):
 ```bash
 docker compose --profile slicer-gui build slicer-gui
-docker compose --profile slicer-gui up -d slicer-gui
-# Open http://<host>:8000/slicer-gui/ — auto-connects, no VNC password
+docker compose --profile slicer-gui up -d --force-recreate slicer-gui
+# App / My Projects: http://<host>:8000/slicer-gui/vnc.html (via nginx, no host ports)
 ```
+
+Can run alongside legacy `slicer-app-1` on host `:6080` — `slicer-gui` does not publish 6080/5901 on the host.
+Manual legacy viewer (if still running): `http://<host>:6080/vnc.html`
 
 What works on ssh02 server today:
 - light mode, dark mode (under user preferences)
