@@ -72,6 +72,8 @@ RUN useradd -m -s /bin/bash slicer && \
     echo "slicer ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
 ENV SLICER_VERSION=5.10.0
+ARG SLICER_HEART_VIEWER_REPO=
+ARG SLICER_HEART_VIEWER_REF=
 WORKDIR /opt
 
 RUN wget -q -O /opt/Slicer-linux-amd64.tar.gz \
@@ -84,6 +86,24 @@ RUN wget -q -O /opt/Slicer-linux-amd64.tar.gz \
 
 RUN chmod +x /opt/Slicer/Slicer && \
     chown -R slicer:slicer /opt/Slicer
+
+RUN mkdir -p /opt/slicer-modules && \
+    if [ -n "${SLICER_HEART_VIEWER_REPO}" ]; then \
+      echo "Installing SimplifiedViewer from configured repository"; \
+      rm -rf /tmp/SlicerHeartViewer && \
+      git clone --depth 1 "${SLICER_HEART_VIEWER_REPO}" /tmp/SlicerHeartViewer; \
+      if [ -n "${SLICER_HEART_VIEWER_REF}" ]; then \
+        cd /tmp/SlicerHeartViewer && \
+        git fetch --depth 1 origin "${SLICER_HEART_VIEWER_REF}" && \
+        git checkout "${SLICER_HEART_VIEWER_REF}"; \
+      fi; \
+      test -f /tmp/SlicerHeartViewer/SimplifiedViewer/SimplifiedViewer.py; \
+      cp -R /tmp/SlicerHeartViewer/SimplifiedViewer /opt/slicer-modules/SimplifiedViewer; \
+      rm -rf /tmp/SlicerHeartViewer; \
+    else \
+      echo "SLICER_HEART_VIEWER_REPO not set; skipping bundled SimplifiedViewer"; \
+    fi && \
+    chown -R slicer:slicer /opt/slicer-modules
 
 WORKDIR /opt/novnc
 RUN git clone --depth 1 https://github.com/novnc/noVNC.git . && \
@@ -121,6 +141,21 @@ COPY --chmod=755 fix-screen-geometry.sh /usr/local/bin/fix-screen-geometry.sh
 COPY --chmod=755 apply-slicer-window-size.sh /usr/local/bin/apply-slicer-window-size.sh
 COPY --chmod=755 launch-slicer.sh /usr/local/bin/launch-slicer.sh
 COPY slicer_session.py /usr/local/bin/slicer_session.py
+COPY install-slicer-extensions.py /usr/local/bin/install-slicer-extensions.py
+
+# Sandbox provides UserStatistics (required dependency of SimplifiedViewer).
+# Install into the image home directory; runtime volume may override /home/slicer.
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb \
+    && rm -rf /var/lib/apt/lists/*
+USER slicer
+RUN mkdir -p /home/slicer/.config /home/slicer/slicer.org \
+    && xvfb-run -a /opt/Slicer/Slicer \
+        --no-splash \
+        --no-main-window \
+        --exit-after-startup \
+        --python-script /usr/local/bin/install-slicer-extensions.py Sandbox \
+    || (echo "WARNING: Sandbox extension install failed during image build" && true)
 
 EXPOSE 5901 6080
 

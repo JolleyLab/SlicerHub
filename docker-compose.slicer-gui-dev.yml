@@ -1,0 +1,19 @@
+# Optional local-dev overlay for slicer-gui.
+#
+# Mounts:
+# - your SimplifiedViewer clone (no image rebuild to update the module)
+# - local launch/session/extension scripts (so UI wiring changes apply without rebuild)
+#
+# Set in .env:
+#   SLICER_HEART_VIEWER_LOCAL_PATH=C:/Users/you/Documents/GitHub/SlicerHeartViewer/SimplifiedViewer
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.slicer-gui-dev.yml --profile slicer-gui up -d --force-recreate slicer-gui
+
+services:
+  slicer-gui:
+    volumes:
+      - ${SLICER_HEART_VIEWER_LOCAL_PATH}:/opt/slicer-modules/SimplifiedViewer:ro
+      - ./slicer-gui-gpu/launch-slicer.sh:/usr/local/bin/launch-slicer.sh:ro
+      - ./slicer-gui-gpu/slicer_session.py:/usr/local/bin/slicer_session.py:ro
+      - ./slicer-gui-gpu/install-slicer-extensions.py:/usr/local/bin/install-slicer-extensions.py:ro

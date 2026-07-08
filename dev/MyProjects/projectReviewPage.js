@@ -14,7 +14,7 @@ import {
     configureProjectGpuProvider,
     setActiveProjectGpuProvider,
     setProjectGpuDefaultProvider,
-    setProjectGpuUseFullSlicer,
+    setProjectGpuLocalSlicerViewerOptions,
     openFullSlicerViewer,
     startProjectGpuBilling,
     stopProjectGpuBilling,
@@ -22,6 +22,7 @@ import {
     sendProjectGpuHeartbeat,
     prestageProjectGpu
 } from '../services/projectGpu.js';
+import '../components/local-slicer-viewer-options.js';
 import { resolveTramePageUrl } from '../utils/trameViewerUrl.js';
 import {
     scheduleViewerStopOnLeave,
@@ -1093,17 +1094,29 @@ export class ProjectReviewPage extends LitElement {
         }
     }
 
-    async handleUseFullSlicerChange(event) {
+    async handleLocalSlicerViewerOptionsChange(event) {
         if (!this.canManageGpu || this.savedGpuProviderId !== 'local') return;
 
-        const useFullSlicer = event.target.checked;
+        const next = event?.detail || {};
+        const previous = {
+            useFullSlicer: this.gpuSettings?.useFullSlicer === true,
+            useSimplifiedViewer: this.gpuSettings?.useSimplifiedViewer === true
+        };
         this.gpuSaving = true;
         try {
-            const data = await setProjectGpuUseFullSlicer(this.projectId, useFullSlicer);
+            const data = await setProjectGpuLocalSlicerViewerOptions(this.projectId, next);
             this.applyGpuSettings(data.settings);
-            this.showToast(useFullSlicer ? 'Full Slicer viewer enabled.' : 'Trame viewer enabled for Local.');
+            if (!next.useFullSlicer) {
+                this.showToast('Trame viewer enabled for Local.');
+            } else if (next.useSimplifiedViewer) {
+                this.showToast('Full Slicer with Simplified Viewer enabled.');
+            } else {
+                this.showToast('Full Slicer viewer enabled.');
+            }
         } catch (error) {
-            event.target.checked = !useFullSlicer;
+            // Force the reusable control back to saved settings.
+            this.gpuSettings = { ...this.gpuSettings, ...previous };
+            this.requestUpdate();
             this.showErrorAlert(error.message || 'Unable to update local viewer option.', {
                 title: 'GPU settings',
                 force: true
@@ -1119,12 +1132,22 @@ export class ProjectReviewPage extends LitElement {
         try {
             const data = await openFullSlicerViewer(this.projectId, file.id);
 
-            const parsed = new URL(
-                resolveTramePageUrl('/slicer-gui/vnc.html?autoconnect=true&resize=scale'),
+            const loader = new URL(
+                resolveTramePageUrl('/slicer-gui-loader.html'),
                 window.location.href
             );
+            loader.searchParams.set('projectId', String(this.projectId));
+            loader.searchParams.set('fileName', data.fileName || file.originalName || '');
+            if (data.useSimplifiedViewer || this.useLocalSimplifiedViewer) {
+                loader.searchParams.set('simplified', '1');
+            }
+            loader.searchParams.set(
+                'vnc',
+                '/slicer-gui/vnc.html?autoconnect=true&resize=scale'
+            );
+
             // One shared Slicer session — reuse the same tab instead of opening many.
-            const opened = window.open(parsed.href, 'slicer-gui-viewer');
+            const opened = window.open(loader.href, 'slicer-gui-viewer');
             if (!opened) {
                 throw new Error('Pop-up blocked. Allow pop-ups for this site and try again.');
             }
@@ -1562,6 +1585,10 @@ export class ProjectReviewPage extends LitElement {
 
     get useLocalFullSlicer() {
         return this.savedGpuProviderId === 'local' && this.gpuSettings?.useFullSlicer === true;
+    }
+
+    get useLocalSimplifiedViewer() {
+        return this.useLocalFullSlicer && this.gpuSettings?.useSimplifiedViewer === true;
     }
 
     get selectedGpuProvider() {
@@ -2244,27 +2271,13 @@ export class ProjectReviewPage extends LitElement {
                                         </div>
                                         ${this.savedGpuProviderId === 'local' ? html`
                                             <div class="gpu-local-option">
-                                                ${this.canManageGpu ? html`
-                                                    <label class="gpu-dialog-checkbox">
-                                                        <input
-                                                            type="checkbox"
-                                                            .checked=${this.gpuSettings?.useFullSlicer === true}
-                                                            ?disabled=${this.gpuSaving}
-                                                            @change=${(e) => this.handleUseFullSlicerChange(e)}
-                                                        />
-                                                        Use Full Slicer
-                                                    </label>
-                                                ` : html`
-                                                    <div class="gpu-hint">
-                                                        ${this.gpuSettings?.useFullSlicer
-                                                            ? 'Full Slicer viewer (read-only) opens in a new tab.'
-                                                            : 'Local Trame viewer'}
-                                                    </div>
-                                                `}
-                                                <div class="gpu-hint">
-                                                    Opens the standalone GPU Slicer container in a new browser tab.
-                                                    Requires <code>docker compose --profile slicer-gui up -d slicer-gui</code>.
-                                                </div>
+                                                <local-slicer-viewer-options
+                                                    .useFullSlicer=${this.gpuSettings?.useFullSlicer === true}
+                                                    .useSimplifiedViewer=${this.gpuSettings?.useSimplifiedViewer === true}
+                                                    .canEdit=${this.canManageGpu}
+                                                    .disabled=${this.gpuSaving}
+                                                    @options-change=${(e) => this.handleLocalSlicerViewerOptionsChange(e)}
+                                                ></local-slicer-viewer-options>
                                             </div>
                                         ` : ''}
                                         ${this.isGpuProviderConfigured(this.gpuActiveProviderId)

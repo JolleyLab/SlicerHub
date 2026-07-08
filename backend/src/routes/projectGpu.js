@@ -70,6 +70,7 @@ function publicGpuSettings(projectId) {
         apiKeyMasked: settings.apiKeyMasked,
         credentialsUnreadable: !!settings.credentialsUnreadable,
         useFullSlicer: settings.useFullSlicer === true,
+        useSimplifiedViewer: settings.useSimplifiedViewer === true,
         updatedAt: settings.updatedAt,
         configuredProviders: buildConfiguredProviders(projectId)
     };
@@ -85,7 +86,7 @@ function defaultSlicerGuiViewerPath() {
     return '/slicer-gui/vnc.html?autoconnect=true&resize=scale';
 }
 
-async function stageProjectFileForSlicerGui({ file, launcherUserId }) {
+async function stageProjectFileForSlicerGui({ file, launcherUserId, useSimplifiedViewer = false }) {
     if (!(await storage.exists(file.file_path))) {
         throw new ValidationError('File not found on server');
     }
@@ -128,13 +129,27 @@ async function stageProjectFileForSlicerGui({ file, launcherUserId }) {
 
     const containerPath = `/home/slicer/data/${stagedName}`;
     const requestFile = path.join(destDir, '.open-request.json');
+    const busyFile = path.join(destDir, '.slicer-busy');
     const requestPayload = {
         fileId: file.id,
         fileName: safeName,
         stagedName,
         containerPath,
+        useSimplifiedViewer: useSimplifiedViewer === true,
         requestedAt: new Date().toISOString()
     };
+    // Mark busy before request so the loader page can cover VNC immediately.
+    fs.writeFileSync(busyFile, JSON.stringify({
+        busy: true,
+        message: 'staging',
+        fileId: file.id,
+        updatedAt: new Date().toISOString()
+    }, null, 2));
+    try {
+        fs.chmodSync(busyFile, 0o666);
+    } catch {
+        /* best effort */
+    }
     fs.writeFileSync(`${requestFile}.tmp`, JSON.stringify(requestPayload, null, 2));
     fs.renameSync(`${requestFile}.tmp`, requestFile);
     try {
@@ -147,13 +162,15 @@ async function stageProjectFileForSlicerGui({ file, launcherUserId }) {
         destPath,
         containerPath,
         requestedAt: requestPayload.requestedAt,
+        useSimplifiedViewer: requestPayload.useSimplifiedViewer,
         bytes: fs.statSync(destPath).size
     });
 
     return {
         fileName: safeName,
         stagedName,
-        containerPath
+        containerPath,
+        useSimplifiedViewer: requestPayload.useSimplifiedViewer
     };
 }
 
@@ -361,13 +378,19 @@ export default function projectGpuRoutes(app) {
             } catch (err) {
                 throw new ValidationError(err.message || 'Unable to set default GPU provider');
             }
-        } else if (req.body?.useFullSlicer !== undefined) {
+        } else if (
+            req.body?.useFullSlicer !== undefined
+            || req.body?.useSimplifiedViewer !== undefined
+        ) {
             try {
-                ProjectGpu.setLocalOptions({
-                    projectId,
-                    useFullSlicer: req.body.useFullSlicer === true,
-                    updatedByUserId: req.user.id
-                });
+                const patch = { projectId, updatedByUserId: req.user.id };
+                if (req.body?.useFullSlicer !== undefined) {
+                    patch.useFullSlicer = req.body.useFullSlicer === true;
+                }
+                if (req.body?.useSimplifiedViewer !== undefined) {
+                    patch.useSimplifiedViewer = req.body.useSimplifiedViewer === true;
+                }
+                ProjectGpu.setLocalOptions(patch);
             } catch (err) {
                 throw new ValidationError(err.message || 'Unable to update local viewer option');
             }
@@ -444,7 +467,8 @@ export default function projectGpuRoutes(app) {
 
         const staged = await stageProjectFileForSlicerGui({
             file,
-            launcherUserId: String(req.user.id)
+            launcherUserId: String(req.user.id),
+            useSimplifiedViewer: settings.useSimplifiedViewer === true
         });
         File.touchLastViewed(file.id);
 
@@ -456,7 +480,40 @@ export default function projectGpuRoutes(app) {
         res.json({
             slicerGuiUrl,
             fileName: staged.fileName,
-            containerPath: staged.containerPath
+            containerPath: staged.containerPath,
+            useSimplifiedViewer: staged.useSimplifiedViewer === true
+        });
+    }));
+
+    app.get('/api/projects/:projectId/gpu/full-slicer-status', authenticateToken, asyncHandler(async (req, res) => {
+        const projectId = parseProjectId(req.params.projectId);
+        requireProjectAccess(projectId, req.user.id);
+
+        const busyFile = path.join(slicerGuiDataDir(), '.slicer-busy');
+        const requestFile = path.join(slicerGuiDataDir(), '.open-request.json');
+        let busy = false;
+        let message = '';
+        let updatedAt = null;
+        if (fs.existsSync(busyFile)) {
+            busy = true;
+            try {
+                const payload = JSON.parse(fs.readFileSync(busyFile, 'utf8'));
+                message = payload.message || 'loading';
+                updatedAt = payload.updatedAt || null;
+            } catch {
+                message = 'loading';
+            }
+        } else if (fs.existsSync(requestFile)) {
+            // Request staged but poller has not finished yet.
+            busy = true;
+            message = 'queued';
+        }
+
+        res.json({
+            busy,
+            message,
+            updatedAt,
+            useSimplifiedViewer: ProjectGpu.getSettings(projectId).useSimplifiedViewer === true
         });
     }));
 

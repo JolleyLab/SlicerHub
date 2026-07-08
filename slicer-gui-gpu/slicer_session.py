@@ -11,14 +11,19 @@ import slicer
 from qt import QTimer
 
 REQUEST_FILE = "/home/slicer/data/.open-request.json"
+BUSY_FILE = "/home/slicer/data/.slicer-busy"
 LOG_FILE = "/home/slicer/data/slicer-session.log"
 POLL_MS = 1000
 MAX_LOAD_ATTEMPTS = 30
+_OVERLAY_HOLD_MS = 1800
 _busy = False
 _failed_attempts: dict[str, int] = {}
 _last_completed_key = ""
 _ui_wait_logged = False
 _poll_timer = None
+_load_overlay = None
+_overlay_raise_timer = None
+_hidden_view_widgets: list = []
 
 
 def log(message: str) -> None:
@@ -242,6 +247,348 @@ def schedule_view_refresh() -> None:
     QTimer.singleShot(3000, run_window_size_sync)
 
 
+def ensure_simplified_viewer_module_path() -> None:
+    """Ensure SimplifiedViewer search path is registered with the module factory."""
+    candidates = [
+        os.environ.get("SLICER_SIMPLIFIED_VIEWER_PATH", "").strip(),
+        "/opt/slicer-modules/SimplifiedViewer",
+        "/home/slicer/data/SimplifiedViewer",
+    ]
+    module_dir = next(
+        (path for path in candidates if path and os.path.isfile(os.path.join(path, "SimplifiedViewer.py"))),
+        "",
+    )
+    if not module_dir:
+        log("[slicer_session] SimplifiedViewer.py not found on known module paths")
+        return
+
+    # Module factory searchPaths must include the folder that contains SimplifiedViewer.py.
+    log(f"[slicer_session] Ensuring module search path: {module_dir}")
+
+    try:
+        from qt import QSettings
+        settings = QSettings()
+        existing = settings.value("Modules/AdditionalPaths") or []
+        if isinstance(existing, str):
+            existing = [existing] if existing else []
+        paths = [str(path) for path in existing]
+        if module_dir not in paths:
+            paths.append(module_dir)
+            settings.setValue("Modules/AdditionalPaths", paths)
+            log(f"[slicer_session] Added Modules/AdditionalPaths entry: {module_dir}")
+    except Exception as exc:
+        log(f"[slicer_session] Could not update Modules/AdditionalPaths: {exc}")
+
+    try:
+        factory = slicer.app.moduleManager().factoryManager()
+        paths = list(getattr(factory, "searchPaths", []) or [])
+        if module_dir not in paths:
+            paths.append(module_dir)
+            factory.searchPaths = paths
+        if hasattr(factory, "loadModules"):
+            factory.loadModules()
+        slicer.app.processEvents()
+    except Exception as exc:
+        log(f"[slicer_session] Module factory refresh failed: {exc}")
+
+
+def module_is_registered(name: str) -> bool:
+    target = name.lower()
+    try:
+        names = [n.lower() for n in slicer.app.moduleManager().modulesNames()]
+        if target in names:
+            return True
+    except Exception:
+        pass
+    return hasattr(slicer.modules, target) or hasattr(slicer.modules, name)
+
+
+def hide_full_slicer_chrome() -> None:
+    """Hide standard Slicer chrome even if SimplifiedViewer widget is unavailable."""
+    try:
+        from qt import QSettings
+        settings = QSettings()
+        settings.setValue("SimplifiedViewer/FullInterfaceVisible", False)
+        settings.setValue("SimplifiedViewer/IdleCloseEnabled", False)
+    except Exception:
+        pass
+
+    slicer.util.setToolbarsVisible(False)
+    slicer.util.setMenuBarsVisible(False)
+    slicer.util.setApplicationLogoVisible(False)
+    slicer.util.setModuleHelpSectionVisible(False)
+    slicer.util.setModulePanelTitleVisible(False)
+    slicer.util.setDataProbeVisible(False)
+    slicer.util.setStatusBarVisible(False)
+    try:
+        slicer.util.setModulePanelVisible(False)
+    except Exception:
+        pass
+
+
+def _qt_rect(obj, *names: str):
+    """Read a Qt geometry property safely under PythonQt (callable vs attribute)."""
+    for name in names:
+        value = getattr(obj, name, None)
+        if value is None:
+            continue
+        try:
+            return value() if callable(value) else value
+        except Exception:
+            continue
+    return None
+
+
+def hide_view_widgets() -> None:
+    """Temporarily hide slice/3D view widgets so OpenGL cannot flash under splash."""
+    global _hidden_view_widgets
+    restore_view_widgets()
+    layout_manager = slicer.app.layoutManager()
+    if not layout_manager:
+        return
+    widgets = []
+    try:
+        for name in ("Red", "Yellow", "Green"):
+            widget = layout_manager.sliceWidget(name)
+            if widget is not None:
+                widgets.append(widget)
+        for index in range(getattr(layout_manager, "threeDViewCount", 0) or 0):
+            widget = layout_manager.threeDWidget(index)
+            if widget is not None:
+                widgets.append(widget)
+    except Exception as exc:
+        log(f"[slicer_session] Could not collect view widgets: {exc}")
+        return
+
+    for widget in widgets:
+        try:
+            if widget.isVisible():
+                widget.hide()
+                _hidden_view_widgets.append(widget)
+        except Exception:
+            pass
+    if _hidden_view_widgets:
+        log(f"[slicer_session] Hid {len(_hidden_view_widgets)} view widget(s) during load")
+
+
+def restore_view_widgets() -> None:
+    global _hidden_view_widgets
+    restored = set()
+    for widget in _hidden_view_widgets:
+        try:
+            widget.show()
+            restored.add(id(widget))
+        except Exception:
+            pass
+    _hidden_view_widgets = []
+
+    # Scene load can recreate view widgets; show current layout widgets too.
+    layout_manager = slicer.app.layoutManager()
+    if not layout_manager:
+        return
+    try:
+        for name in ("Red", "Yellow", "Green"):
+            widget = layout_manager.sliceWidget(name)
+            if widget is not None and id(widget) not in restored:
+                widget.show()
+        for index in range(getattr(layout_manager, "threeDViewCount", 0) or 0):
+            widget = layout_manager.threeDWidget(index)
+            if widget is not None and id(widget) not in restored:
+                widget.show()
+    except Exception:
+        pass
+
+
+def show_load_overlay(message: str = "Loading viewer…") -> None:
+    """Show a splash over the main window and hide GL views during load."""
+    global _load_overlay, _overlay_raise_timer
+    hide_load_overlay()
+    hide_view_widgets()
+    try:
+        from qt import QWidget, QLabel, QVBoxLayout, Qt
+
+        main_window = slicer.util.mainWindow()
+        if not main_window:
+            return
+
+        # Parent to main window so noVNC always shows it; GL views are hidden above.
+        overlay = QWidget(main_window)
+        overlay.setObjectName("slicerWebLoadOverlay")
+        overlay.setAttribute(Qt.WA_StyledBackground, True)
+        overlay.setStyleSheet("background-color: #0c0c14;")
+        rect = _qt_rect(main_window, "rect")
+        if rect is not None:
+            overlay.setGeometry(rect)
+        else:
+            geo = _qt_rect(main_window, "geometry", "frameGeometry")
+            if geo is not None:
+                overlay.resize(geo.width(), geo.height())
+                overlay.move(0, 0)
+
+        layout = QVBoxLayout(overlay)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.addStretch(1)
+        label = QLabel(message)
+        label.setAlignment(Qt.AlignCenter)
+        label.setStyleSheet(
+            "color: #e8e8ef; font-size: 20px; font-weight: 600; background: transparent;"
+        )
+        layout.addWidget(label)
+        hint = QLabel("Please wait while the scene loads.")
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setStyleSheet("color: #9aa0b4; font-size: 14px; background: transparent;")
+        layout.addWidget(hint)
+        layout.addStretch(1)
+
+        overlay.show()
+        overlay.raise_()
+        _load_overlay = overlay
+
+        _overlay_raise_timer = QTimer()
+        _overlay_raise_timer.setInterval(100)
+        _overlay_raise_timer.timeout.connect(_keep_overlay_on_top)
+        _overlay_raise_timer.start()
+
+        slicer.app.processEvents()
+        log("[slicer_session] Load overlay shown")
+    except Exception as exc:
+        log(f"[slicer_session] Could not show load overlay: {exc}")
+        _load_overlay = None
+
+
+def _keep_overlay_on_top() -> None:
+    if _load_overlay is None:
+        return
+    try:
+        main_window = slicer.util.mainWindow()
+        if main_window is not None:
+            rect = _qt_rect(main_window, "rect")
+            if rect is not None:
+                _load_overlay.setGeometry(rect)
+        _load_overlay.show()
+        _load_overlay.raise_()
+    except Exception:
+        pass
+
+
+def hide_load_overlay() -> None:
+    global _load_overlay, _overlay_raise_timer
+    try:
+        if _overlay_raise_timer is not None:
+            _overlay_raise_timer.stop()
+            _overlay_raise_timer.deleteLater()
+            _overlay_raise_timer = None
+        if _load_overlay is not None:
+            _load_overlay.hide()
+            _load_overlay.deleteLater()
+            _load_overlay = None
+            slicer.app.processEvents()
+            log("[slicer_session] Load overlay hidden")
+    except Exception as exc:
+        log(f"[slicer_session] Could not hide load overlay: {exc}")
+        _load_overlay = None
+        _overlay_raise_timer = None
+    restore_view_widgets()
+
+
+def schedule_hide_load_overlay(delay_ms: int = _OVERLAY_HOLD_MS) -> None:
+    """Keep splash up through initial view refreshes before revealing."""
+    QTimer.singleShot(max(0, int(delay_ms)), hide_load_overlay)
+
+
+def find_simplified_viewer_widget():
+    candidates = []
+    try:
+        candidates.append(slicer.util.getModuleWidget("SimplifiedViewer"))
+    except Exception:
+        pass
+
+    widget = getattr(slicer.modules, "SimplifiedViewerWidget", None)
+    if widget is not None:
+        candidates.append(widget)
+
+    module = getattr(slicer.modules, "simplifiedviewer", None)
+    if module:
+        try:
+            widget_repr = module.widgetRepresentation()
+        except Exception:
+            widget_repr = None
+        if widget_repr:
+            candidates.append(widget_repr)
+            if hasattr(widget_repr, "self"):
+                try:
+                    candidates.append(widget_repr.self())
+                except Exception:
+                    pass
+
+    for candidate in candidates:
+        if candidate is not None and hasattr(candidate, "setFull3DSlicerInterfaceVisible"):
+            return candidate
+    return None
+
+
+def apply_simplified_viewer_ui() -> bool:
+    """Switch into Simplified Viewer UI. Returns True if full widget mode worked."""
+    hide_full_slicer_chrome()
+    ensure_simplified_viewer_module_path()
+
+    has_userstatistics = module_is_registered("UserStatistics")
+    has_simplified = module_is_registered("SimplifiedViewer")
+    if not has_simplified:
+        try:
+            factory = slicer.app.moduleManager().factoryManager()
+            if hasattr(factory, "loadModules"):
+                factory.loadModules()
+            slicer.app.processEvents()
+        except Exception:
+            pass
+        has_simplified = module_is_registered("SimplifiedViewer")
+
+    if not has_simplified:
+        sample = []
+        try:
+            names = list(slicer.app.moduleManager().modulesNames())
+            sample = [n for n in names if "simpl" in n.lower() or "userstat" in n.lower()][:12]
+        except Exception:
+            pass
+        log(
+            "[slicer_session] SimplifiedViewer module is not registered; "
+            f"userstatistics={'yes' if has_userstatistics else 'no'}; "
+            f"sample={sample or 'none'}; "
+            "chrome-only simplified mode active"
+        )
+        return False
+
+    slicer.util.selectModule("SimplifiedViewer")
+    slicer.app.processEvents()
+
+    widget = find_simplified_viewer_widget()
+    if widget is None:
+        slicer.app.processEvents()
+        widget = find_simplified_viewer_widget()
+
+    if widget is not None:
+        widget.setFull3DSlicerInterfaceVisible(False)
+        log("[slicer_session] SimplifiedViewer enabled")
+        return True
+
+    log(
+        "[slicer_session] SimplifiedViewer registered but widget API is unavailable; "
+        "chrome-only simplified mode remains active"
+    )
+    return False
+
+
+def maybe_apply_simplified_viewer(use_simplified_viewer: bool) -> None:
+    if not use_simplified_viewer:
+        return
+    try:
+        apply_simplified_viewer_ui()
+    except Exception as exc:
+        log(f"[slicer_session] SimplifiedViewer not available; chrome-only mode kept: {exc}")
+        log(traceback.format_exc())
+
+
 def load_succeeded(
     ok: bool,
     path: str,
@@ -258,7 +605,7 @@ def load_succeeded(
     return data_after > 0 and (data_after > data_before or data_after >= 1)
 
 
-def load_staged_file(path: str) -> bool:
+def load_staged_file(path: str, defer_view_refresh: bool = False) -> bool:
     if not os.path.isfile(path):
         log(f"[slicer_session] Staged file missing: {path}")
         return False
@@ -302,7 +649,7 @@ def load_staged_file(path: str) -> bool:
         f"data={data_before}->{data_after} layout={layout_id}"
     )
 
-    if loaded:
+    if loaded and not defer_view_refresh:
         schedule_view_refresh()
     return loaded
 
@@ -312,6 +659,25 @@ def clear_request() -> None:
         os.remove(REQUEST_FILE)
     except OSError as exc:
         log(f"[slicer_session] Could not remove request file: {exc}")
+
+
+def set_busy(message: str = "loading") -> None:
+    try:
+        with open(BUSY_FILE, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "busy": True,
+                "message": message,
+                "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }))
+    except OSError as exc:
+        log(f"[slicer_session] Could not write busy file: {exc}")
+
+
+def clear_busy() -> None:
+    try:
+        os.remove(BUSY_FILE)
+    except OSError:
+        pass
 
 
 def poll_open_requests() -> None:
@@ -325,6 +691,7 @@ def poll_open_requests() -> None:
         return
 
     path = payload["containerPath"]
+    use_simplified_viewer = payload.get("useSimplifiedViewer") is True
     requested_at = (payload.get("requestedAt") or "").strip()
     key = request_key(payload)
     if not should_process_request(payload):
@@ -339,11 +706,21 @@ def poll_open_requests() -> None:
 
     dedupe_key = key or requested_at or path
     _busy = True
+    overlay_shown = False
+    keep_busy_for_overlay = False
+    set_busy("opening")
     try:
         log(
             f"[slicer_session] Open request: {path} "
-            f"(fileId={payload.get('fileId', '')}, requestedAt={requested_at})"
+            f"(fileId={payload.get('fileId', '')}, requestedAt={requested_at}, "
+            f"useSimplifiedViewer={use_simplified_viewer})"
         )
+
+        if use_simplified_viewer:
+            show_load_overlay("Opening simplified viewer…")
+            overlay_shown = True
+            maybe_apply_simplified_viewer(True)
+
         slicer.mrmlScene.Clear(0)
         slicer.app.processEvents()
         if not wait_file_readable(path):
@@ -355,7 +732,15 @@ def poll_open_requests() -> None:
                 _failed_attempts.pop(dedupe_key, None)
             return
 
-        if load_staged_file(path):
+        if load_staged_file(path, defer_view_refresh=use_simplified_viewer):
+            if use_simplified_viewer:
+                maybe_apply_simplified_viewer(True)
+                schedule_view_refresh()
+                slicer.app.processEvents()
+                schedule_hide_load_overlay(_OVERLAY_HOLD_MS)
+                overlay_shown = False
+                keep_busy_for_overlay = True
+                QTimer.singleShot(_OVERLAY_HOLD_MS + 50, clear_busy)
             _last_completed_key = key
             _failed_attempts.pop(dedupe_key, None)
             clear_request()
@@ -370,11 +755,16 @@ def poll_open_requests() -> None:
             clear_request()
             _failed_attempts.pop(dedupe_key, None)
     finally:
+        if overlay_shown:
+            hide_load_overlay()
+        if not keep_busy_for_overlay:
+            clear_busy()
         _busy = False
 
 
 def start_polling() -> None:
     global _poll_timer
+    clear_busy()
     _poll_timer = QTimer()
     _poll_timer.timeout.connect(poll_open_requests)
     _poll_timer.start(POLL_MS)

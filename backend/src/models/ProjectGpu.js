@@ -1,6 +1,11 @@
 import db from '../db/database.js';
 import { formatGpuError, GPU_ERROR_SOURCES } from '../gpu/errors.js';
 import { decryptCredentials, encryptCredentials, maskSecret } from '../gpu/credentials.js';
+import {
+    DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS,
+    mergeLocalSlicerViewerOptions,
+    readLocalSlicerViewerOptions
+} from '../gpu/localSlicerViewerOptions.js';
 
 const STATUSES = new Set(['idle', 'provisioning', 'running', 'stopping', 'error']);
 
@@ -113,7 +118,7 @@ const ProjectGpu = {
                 defaultProviderId: 'local',
                 hasApiKey: false,
                 apiKeyMasked: '',
-                useFullSlicer: false,
+                ...DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS,
                 updatedAt: null
             };
         }
@@ -126,7 +131,7 @@ const ProjectGpu = {
                 defaultProviderId: row.default_provider_id || row.provider_id || 'local',
                 hasApiKey: false,
                 apiKeyMasked: '',
-                useFullSlicer: false,
+                ...DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS,
                 credentialsUnreadable: true,
                 updatedAt: row.updated_at
             };
@@ -134,19 +139,19 @@ const ProjectGpu = {
 
         const activeId = row.provider_id || 'local';
         const activeCreds = getProviderCreds(store, activeId);
-        const localPrefs = getProviderCreds(store, 'local');
+        const localPrefs = readLocalSlicerViewerOptions(getProviderCreds(store, 'local'));
         return {
             projectId: row.project_id,
             providerId: activeId,
             defaultProviderId: row.default_provider_id || activeId || 'local',
             hasApiKey: activeId !== 'local' ? !!activeCreds.apiKey : false,
             apiKeyMasked: maskSecret(activeCreds.apiKey),
-            useFullSlicer: localPrefs.useFullSlicer === true,
+            ...localPrefs,
             updatedAt: row.updated_at
         };
     },
 
-    setLocalOptions({ projectId, useFullSlicer, updatedByUserId }) {
+    setLocalOptions({ projectId, useFullSlicer, useSimplifiedViewer, updatedByUserId }) {
         const row = readSettingsRow(projectId);
         const { store, unreadable } = this.getCredentialStore(projectId);
         if (unreadable) {
@@ -155,10 +160,16 @@ const ProjectGpu = {
             );
         }
 
-        store.providers.local = {
-            ...getProviderCreds(store, 'local'),
-            useFullSlicer: useFullSlicer === true
-        };
+        const existingLocal = getProviderCreds(store, 'local');
+        const patch = {};
+        if (useFullSlicer !== undefined) {
+            patch.useFullSlicer = useFullSlicer === true;
+        }
+        if (useSimplifiedViewer !== undefined) {
+            patch.useSimplifiedViewer = useSimplifiedViewer === true;
+        }
+
+        store.providers.local = mergeLocalSlicerViewerOptions(existingLocal, patch);
 
         const activeId = row?.provider_id || 'local';
         const defaultId = row?.default_provider_id || activeId || 'local';

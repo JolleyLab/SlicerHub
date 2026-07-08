@@ -55,8 +55,20 @@ export async function setProjectGpuDefaultProvider(projectId, defaultProviderId)
     return saveProjectGpuSettings(projectId, { defaultProviderId });
 }
 
+export async function setProjectGpuLocalSlicerViewerOptions(projectId, options = {}) {
+    const payload = {};
+    if (options.useFullSlicer !== undefined) {
+        payload.useFullSlicer = !!options.useFullSlicer;
+    }
+    if (options.useSimplifiedViewer !== undefined) {
+        payload.useSimplifiedViewer = !!options.useSimplifiedViewer;
+    }
+    return saveProjectGpuSettings(projectId, payload);
+}
+
+/** @deprecated Prefer setProjectGpuLocalSlicerViewerOptions */
 export async function setProjectGpuUseFullSlicer(projectId, useFullSlicer) {
-    return saveProjectGpuSettings(projectId, { useFullSlicer: !!useFullSlicer });
+    return setProjectGpuLocalSlicerViewerOptions(projectId, { useFullSlicer: !!useFullSlicer });
 }
 
 export async function openFullSlicerViewer(projectId, fileId) {

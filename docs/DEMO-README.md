@@ -9,6 +9,12 @@ docker compose --profile slicer-gui up -d --force-recreate slicer-gui
 # App / My Projects: http://<host>:8000/slicer-gui/vnc.html (via nginx, no host ports)
 ```
 
+Optional Simplified Viewer support for Full Slicer:
+- **Image build** (server/Vast): set `SLICER_HEART_VIEWER_REPO` (+ optional `SLICER_HEART_VIEWER_REF`), then `docker compose --profile slicer-gui build --no-cache slicer-gui`
+- **Local dev mount** (no rebuild): set `SLICER_HEART_VIEWER_LOCAL_PATH` to your `SimplifiedViewer` folder, then:
+  `docker compose -f docker-compose.yml -f docker-compose.slicer-gui-dev.yml --profile slicer-gui up -d --force-recreate slicer-gui`
+- In My Projects, enable **Use Full Slicer** + **Use Simplified Viewer**
+
 Can run alongside legacy `slicer-app-1` on host `:6080` — `slicer-gui` does not publish 6080/5901 on the host.
 Manual legacy viewer (if still running): `http://<host>:6080/vnc.html`
 

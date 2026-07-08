@@ -149,7 +149,11 @@ services:
   # Start: docker compose --profile slicer-gui up -d slicer-gui
   # Browser: http://<host>:8000/slicer-gui/vnc.html (via nginx on trame-net; no host ports required)
   slicer-gui:
-    build: ./slicer-gui-gpu
+    build:
+      context: ./slicer-gui-gpu
+      args:
+        SLICER_HEART_VIEWER_REPO: ${SLICER_HEART_VIEWER_REPO:-}
+        SLICER_HEART_VIEWER_REF: ${SLICER_HEART_VIEWER_REF:-}
     image: ${SLICER_GUI_IMAGE:-slicer-web-slicer-gui:local}
     container_name: slicer-gui
     profiles:
@@ -162,6 +166,7 @@ services:
       VNC_ALLOW_NO_PASSWORD: ${VNC_ALLOW_NO_PASSWORD:-true}
       DISPLAY_WIDTH: ${SLICER_GUI_DISPLAY_WIDTH:-1920}
       DISPLAY_HEIGHT: ${SLICER_GUI_DISPLAY_HEIGHT:-1080}
+      SLICER_SIMPLIFIED_VIEWER_PATH: ${SLICER_SIMPLIFIED_VIEWER_PATH:-/opt/slicer-modules/SimplifiedViewer}
       CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     # No host ports — nginx proxies to slicer-gui:6080 on trame-net (avoids 5901/6080 conflicts)
     volumes:

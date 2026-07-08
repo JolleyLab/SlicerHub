@@ -27,6 +27,26 @@ Project/data files placed on the host under `data/slicer-gui/` appear in Slicer 
 
 When **Use Full Slicer** is enabled in My Projects, the app copies the file there and writes `.open-request.json`. The running Slicer instance polls for that file and loads it via the same `ioManager` path as **File → Add Data** / **Load Scene** (no process restart).
 
+## Optional: Simplified Viewer module
+
+To enable **Use Simplified Viewer** without modifying the upstream `SlicerHeartViewer` repository:
+
+- Set private build args in `.env` (or your deployment environment):
+  - `SLICER_HEART_VIEWER_REPO` (private clone URL)
+  - `SLICER_HEART_VIEWER_REF` (tag or commit SHA; pinning recommended)
+- Recreate the container:
+
+```bash
+docker compose --profile slicer-gui build slicer-gui
+docker compose --profile slicer-gui up -d --force-recreate slicer-gui
+```
+
+At build time, `SimplifiedViewer` is copied into `/opt/slicer-modules/SimplifiedViewer` when `SLICER_HEART_VIEWER_REPO` is configured.
+
+The image also installs the **Sandbox** extension (provides `UserStatistics`, required by SimplifiedViewer). On first container start with a fresh home volume, launch will install Sandbox once if missing.
+
+At runtime, launch checks `${SLICER_SIMPLIFIED_VIEWER_PATH}` (default: `/opt/slicer-modules/SimplifiedViewer`) and falls back to `/home/slicer/data/SimplifiedViewer` for local/manual testing.
+
 ## Requirements
 
 - NVIDIA GPU + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
