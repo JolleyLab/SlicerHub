@@ -12,8 +12,7 @@ import {
     getTrameContextForProject,
     syncProjectFile,
     touchProjectBillingActivity,
-    assertProjectGpuReadyForFileOpen,
-    evaluateRemoteBillingStop
+    assertProjectGpuReadyForFileOpen
 } from "../gpu/orchestrator.js";
 import { waitForPrestageIdle } from "../gpu/prestage.js";
 import {
@@ -22,6 +21,15 @@ import {
     getUserTrameContext,
     setUserTrameContext
 } from "../gpu/sessionContext.js";
+import {
+    registerViewerSession,
+    touchViewerSession,
+    releaseViewerSession,
+    forceStopViewerSession,
+    createSessionToken,
+    getSessionTtlSeconds,
+    SESSION_KINDS
+} from "../sessions/index.js";
 
 // Simple HTTP request helper
 function fileRowToApiSnapshot(row) {
@@ -193,11 +201,23 @@ export default async function containerRoutes(app) {
                 startMs: Date.now() - startedAt
             });
 
+            const sessionToken = createSessionToken();
+            registerViewerSession(SESSION_KINDS.TRAME, userId, {
+                sessionToken,
+                metadata: {
+                    sessionId: sessionData.sessionId,
+                    trameServiceUrl,
+                    projectId: trameContext?.projectId ?? null
+                }
+            });
+
             res.json({
                 sessionId: sessionData.sessionId,
                 frontendUrl,
                 gpuSync: trameContext ? 'remote' : 'local',
-                viewerReady
+                viewerReady,
+                sessionToken,
+                sessionTtlSeconds: getSessionTtlSeconds(SESSION_KINDS.TRAME)
             });
         } catch (err) {
             console.error("Error starting trame session:", err);
@@ -208,61 +228,29 @@ export default async function containerRoutes(app) {
     app.post("/api/containers/stop", authenticateToken, async (req, res) => {
         const userId = req.user.id.toString();
         const bodyProjectId = Number(req.body?.projectId) || null;
+        const sessionToken = String(req.body?.sessionToken || '').trim();
 
         try {
-            const urls = [];
-            if (Number.isInteger(bodyProjectId) && bodyProjectId > 0) {
-                const projectCtx = getTrameContextForProject(bodyProjectId);
-                if (projectCtx?.trameServiceUrl) {
-                    urls.push(projectCtx.trameServiceUrl);
+            if (sessionToken) {
+                const result = await releaseViewerSession(SESSION_KINDS.TRAME, userId, sessionToken);
+                if (bodyProjectId) {
+                    setUserTrameContext(userId, null);
                 }
-            } else {
-                const ctx = getUserTrameContext(userId);
-                const localUrl = resolveLocalTrameServiceUrl();
-                if (ctx?.trameServiceUrl) urls.push(ctx.trameServiceUrl);
-                if (!urls.includes(localUrl)) urls.push(localUrl);
+                return res.json({
+                    success: true,
+                    stopped: result.stopped,
+                    projectId: bodyProjectId,
+                    reason: result.reason || null,
+                    message: result.stopped ? `Session for ${userId} stopped` : 'Stale viewer session'
+                });
             }
 
-            let stopped = false;
-            for (const trameServiceUrl of urls) {
-                try {
-                    const sessions = await httpRequest(`${trameServiceUrl}/api/sessions`);
-                    const userSession = sessions.sessions?.find((s) => s.userId === userId);
-                    if (!userSession) continue;
-                    await httpRequest(
-                        `${trameServiceUrl}/api/sessions/${userSession.sessionId}/stop`,
-                        { method: 'POST' }
-                    );
-                    stopped = true;
-                    break;
-                } catch (err) {
-                    console.warn(`Stop session skipped for ${trameServiceUrl}:`, err.message);
-                }
-            }
-
-            const ctx = getUserTrameContext(userId);
-            if (!bodyProjectId || ctx?.projectId === bodyProjectId) {
-                setUserTrameContext(userId, null);
-            }
-
-            if (stopped && Number.isInteger(bodyProjectId) && bodyProjectId > 0) {
-                try {
-                    const billing = await evaluateRemoteBillingStop(bodyProjectId, { viewerActive: false });
-                    if (billing.stopped) {
-                        console.log(
-                            `GPU billing stopped for project ${bodyProjectId} after viewer session end (${billing.reason})`
-                        );
-                    }
-                } catch (err) {
-                    console.warn(`Billing evaluation after session stop (project ${bodyProjectId}):`, err.message);
-                }
-            }
-
+            await forceStopViewerSession(SESSION_KINDS.TRAME, userId);
             res.json({
                 success: true,
-                stopped,
+                stopped: true,
                 projectId: bodyProjectId,
-                message: stopped ? `Session for ${userId} stopped` : 'No active session'
+                message: `Session for ${userId} stopped`
             });
         } catch (err) {
             console.error("Error stopping trame session:", err);
@@ -392,12 +380,18 @@ export default async function containerRoutes(app) {
         }
     });
 
-    // Heartbeat — extends sliding lease only when userActive (real viewer interaction).
+    // Heartbeat — extends browser tab lease; Trame service lease when userActive.
     app.post("/api/containers/heartbeat", authenticateToken, async (req, res) => {
         const userId = req.user.id.toString();
         const userActive = req.body?.userActive === true;
+        const sessionToken = String(req.body?.sessionToken || '').trim();
 
         try {
+            let browserLease = null;
+            if (sessionToken) {
+                browserLease = touchViewerSession(SESSION_KINDS.TRAME, userId, sessionToken);
+            }
+
             const trameServiceUrl = resolveTrameServiceUrl(userId);
             const sessions = await httpRequest(`${trameServiceUrl}/api/sessions`);
             const userSession = sessions.sessions?.find((s) => s.userId === userId);
@@ -424,10 +418,14 @@ export default async function containerRoutes(app) {
                 success: true,
                 status: "running",
                 sessionId: userSession.sessionId,
-                leaseExpiresAt: hb.leaseExpiresAt ?? null,
-                sessionTtlSeconds: hb.sessionTtlSeconds ?? sessions.sessionTtlSeconds ?? null,
+                leaseExpiresAt: browserLease
+                    ? new Date(browserLease.leaseExpiresAt).toISOString()
+                    : (hb.leaseExpiresAt ?? null),
+                sessionTtlSeconds: browserLease
+                    ? getSessionTtlSeconds(SESSION_KINDS.TRAME)
+                    : (hb.sessionTtlSeconds ?? sessions.sessionTtlSeconds ?? null),
                 maxSessionWallSeconds: hb.maxSessionWallSeconds ?? sessions.maxSessionWallSeconds ?? null,
-                leaseExtended: userActive && hb.leaseExtended !== false
+                leaseExtended: !!browserLease || (userActive && hb.leaseExtended !== false)
             });
         } catch (err) {
             console.error("Error extending trame session lease:", err);

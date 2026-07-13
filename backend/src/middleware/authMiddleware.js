@@ -4,6 +4,15 @@ import db from '../db/database.js';
 import config from '../config/index.js';
 import { UnauthorizedError, ForbiddenError } from '../utils/errors.js';
 
+function scheduleLocalViewerCleanup(userId, reason) {
+    if (!userId) return;
+    import('../sessions/cleanup.js')
+        .then(({ cleanupLocalViewerSessionsForUser }) => cleanupLocalViewerSessionsForUser(userId))
+        .catch((err) => {
+            console.warn(`Local viewer cleanup (${reason}) for user ${userId}:`, err.message);
+        });
+}
+
 const { secret: JWT_SECRET, expiresIn: JWT_EXPIRES_IN } = config.jwt;
 const SESSION_IDLE_MINUTES = config.security.sessionIdleMinutes;
 
@@ -53,6 +62,7 @@ export function authenticateToken(req, res, next) {
             .get(decoded.jti);
 
         if (!session) {
+            scheduleLocalViewerCleanup(decoded.userId, 'invalid-session');
             throw new UnauthorizedError('Invalid or expired session');
         }
 
@@ -61,6 +71,7 @@ export function authenticateToken(req, res, next) {
         const idleLimitMs = SESSION_IDLE_MINUTES * 60 * 1000;
         if (!lastActivityMs || (Date.now() - lastActivityMs) > idleLimitMs) {
             db.prepare('DELETE FROM sessions WHERE token_jti = ?').run(decoded.jti);
+            scheduleLocalViewerCleanup(decoded.userId, 'idle-timeout');
             throw new UnauthorizedError('Session expired due to inactivity');
         }
 
@@ -81,6 +92,13 @@ export function authenticateToken(req, res, next) {
         if (error.isOperational) {
             next(error);
         } else if (error.name === 'TokenExpiredError') {
+            const authHeader = req.headers['authorization'];
+            const rawToken = authHeader && authHeader.split(' ')[1] || req.cookies?.token;
+            const decoded = decodeToken(rawToken);
+            if (decoded?.jti) {
+                deleteSession(decoded.jti);
+            }
+            scheduleLocalViewerCleanup(decoded?.userId, 'token-expired');
             next(new UnauthorizedError('Token expired'));
         } else if (error.name === 'JsonWebTokenError') {
             next(new UnauthorizedError('Session expired — please sign in again'));

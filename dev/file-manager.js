@@ -15,6 +15,7 @@ import {
     resetViewerActivity
 } from './utils/viewerActivity.js';
 import { sendTrameContainerHeartbeat } from './utils/trameHeartbeat.js';
+import { stopViewerSession } from './utils/viewerSessionLifecycle.js';
 
 export class FileManager extends LitElement {
     static get styles() {
@@ -580,6 +581,7 @@ export class FileManager extends LitElement {
         this.currentFileName = '';
         this.currentStoredName = '';
         this.heartbeatInterval = null;
+        this.viewerSessionToken = null;
         this.hasUnsavedChanges = false;
         this.iframeActivityCleanup = null;
         this.saveIndicatorMessage = '';
@@ -635,12 +637,11 @@ export class FileManager extends LitElement {
         // Add event listener for tab/window close
         this.handleBeforeUnload = () => {
             if (this.showIframe) {
-                // Use fetch with keepalive to ensure cleanup happens
-                fetch(`${API_URL}/api/containers/stop`, {
-                    method: 'POST',
-                    credentials: 'include',
+                stopViewerSession({
+                    stopUrl: `${API_URL}/api/containers/stop`,
+                    sessionToken: this.viewerSessionToken,
                     keepalive: true
-                }).catch(() => { }); // Ignore errors
+                });
             }
         };
         window.addEventListener('beforeunload', this.handleBeforeUnload);
@@ -1008,20 +1009,11 @@ export class FileManager extends LitElement {
     }
 
     async cleanupContainer() {
-        try {
-            const response = await fetch(`${API_URL}/api/containers/stop`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                credentials: 'include'
-            });
-            if (response.ok) {
-                console.log("Cleaned up existing container");
-            }
-        } catch (err) {
-            // Ignore errors - container might not exist
-        }
+        await stopViewerSession({
+            stopUrl: `${API_URL}/api/containers/stop`,
+            sessionToken: this.viewerSessionToken
+        });
+        this.viewerSessionToken = null;
     }
 
     get viewerLoadingMessage() {
@@ -1062,6 +1054,7 @@ export class FileManager extends LitElement {
 
             if (response.ok) {
                 const data = await response.json();
+                this.viewerSessionToken = data.sessionToken || null;
                 const url = resolveTramePageUrl(data.frontendUrl);
                 console.log('Trame container started, URL:', url);
 
@@ -1371,6 +1364,7 @@ export class FileManager extends LitElement {
         this.stopHeartbeat();
         const ping = () => {
             sendTrameContainerHeartbeat({
+                sessionToken: this.viewerSessionToken,
                 onIdleTimeout: () => this.handleViewerInactivityTimeout()
             }).catch((err) => console.log('Heartbeat failed:', err.message));
         };

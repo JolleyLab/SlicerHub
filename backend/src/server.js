@@ -13,6 +13,13 @@ import projectRoutes from "./routes/projects.js";
 import projectGpuRoutes from "./routes/projectGpu.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { startBillingWatchdog } from "./gpu/billingWatchdog.js";
+import {
+    startViewerSessionWatchdog,
+    pruneExpiredViewerSessions,
+    stopAllPerUserSlicerGuiContainers,
+    stopAllPerUserTrameContainers
+} from "./sessions/index.js";
+import { clearSessions } from "./sessions/leaseRegistry.js";
 import { warnIfGpuCredentialsKeyMissing } from "./gpu/credentials.js";
 import { repairGpuCredentialsFromSeed } from "./gpu/repairCredentials.js";
 import ProjectGpu from "./models/ProjectGpu.js";
@@ -102,6 +109,19 @@ app.listen(config.server.port, config.server.host, async () => {
         console.warn('GPU credential repair on startup failed:', err.message);
     }
     startBillingWatchdog();
+    startViewerSessionWatchdog();
+    try {
+        clearSessions();
+        await stopAllPerUserSlicerGuiContainers();
+        await stopAllPerUserTrameContainers();
+    } catch (err) {
+        console.warn('Viewer session startup cleanup failed:', err.message);
+    }
+    try {
+        await pruneExpiredViewerSessions();
+    } catch (err) {
+        console.warn('Viewer session startup prune failed:', err.message);
+    }
     try {
         await restoreGpuViewerProxies(ProjectGpu.listRunningRemote());
     } catch (err) {

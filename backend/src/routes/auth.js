@@ -164,10 +164,10 @@ export default function authRoutes(app) {
             }
             if (decoded?.userId) {
                 try {
-                    const { stopContainer } = await import('../docker/containerManager.js');
-                    await stopContainer(String(decoded.userId));
+                    const { cleanupLocalViewerSessionsForUser } = await import('../sessions/cleanup.js');
+                    await cleanupLocalViewerSessionsForUser(decoded.userId);
                 } catch (err) {
-                    console.log('Container cleanup during logout:', err.message);
+                    console.log('Local viewer cleanup during logout:', err.message);
                 }
             }
         }
@@ -230,6 +230,13 @@ export default function authRoutes(app) {
      */
     app.post('/api/auth/logout-all', authenticateToken, asyncHandler(async (req, res) => {
         deleteAllUserSessions(req.user.id);
+        try {
+            const { cleanupLocalViewerSessionsForUser } = await import('../sessions/cleanup.js');
+            await cleanupLocalViewerSessionsForUser(req.user.id);
+        } catch (err) {
+            console.log('Local viewer cleanup during logout-all:', err.message);
+        }
+        clearAuthCookie(res);
         res.json({ message: 'All sessions terminated' });
     }));
 }

@@ -61,3 +61,7 @@ __pycache__/
 
 # Docker volumes (if any local development volumes)
 volumes/
+
+# Local planning docs (not shared in repo)
+docs/directus-integration-scope.md
+docs/directus-meeting-brief.md

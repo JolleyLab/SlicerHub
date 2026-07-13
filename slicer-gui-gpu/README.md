@@ -23,9 +23,12 @@ VNC authentication is **off by default** (`VNC_ALLOW_NO_PASSWORD=true`). Set `VN
 | Direct (localhost debug) | `http://127.0.0.1:6080/` |
 | VNC client | Not exposed on the host; use the browser URL above |
 
-Project/data files placed on the host under `data/slicer-gui/` appear in Slicer at `/home/slicer/data`.
+Per-user My Projects sessions (local): the backend starts `slicer-gui-{userId}` and mounts
+`data/slicer-gui/users/{userId}/` at `/home/slicer/data`. Staging writes `.open-request.json`
+there; `slicer_session.py` polls and loads the file (no process restart).
 
-When **Use Full Slicer** is enabled in My Projects, the app copies the file there and writes `.open-request.json`. The running Slicer instance polls for that file and loads it via the same `ioManager` path as **File → Add Data** / **Load Scene** (no process restart).
+Optional shared debug container (`compose --profile slicer-gui up slicer-gui`) still uses
+`data/slicer-gui/` directly.
 
 ## Optional: Simplified Viewer module
 

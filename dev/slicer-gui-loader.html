@@ -19,7 +19,6 @@
       width: 100%;
       height: 100%;
       background: #0c0c14;
-      /* Keep VNC painting, but hide it until ready to avoid flash of prior scene */
       opacity: 0;
       pointer-events: none;
     }
@@ -75,89 +74,9 @@
     <p id="subtitle">Please wait while the scene loads.</p>
   </div>
   <iframe id="viewer" title="Full Slicer viewer" allow="fullscreen"></iframe>
-  <script>
-    (function () {
-      const params = new URLSearchParams(window.location.search);
-      const projectId = params.get('projectId') || '';
-      const fileName = params.get('fileName') || '';
-      const simplified = params.get('simplified') === '1';
-      const vncPath = params.get('vnc') || '/slicer-gui/vnc.html?autoconnect=true&resize=scale';
-
-      const splash = document.getElementById('splash');
-      const title = document.getElementById('title');
-      const subtitle = document.getElementById('subtitle');
-      const viewer = document.getElementById('viewer');
-
-      if (fileName) {
-        title.textContent = simplified
-          ? 'Opening simplified viewer…'
-          : 'Opening Full Slicer…';
-        subtitle.textContent = 'Loading ' + fileName;
-      } else if (simplified) {
-        title.textContent = 'Opening simplified viewer…';
-      }
-
-      // Start VNC behind the splash immediately so connection warms up.
-      viewer.src = vncPath;
-
-      const startedAt = Date.now();
-      const maxWaitMs = 90000;
-      const minSplashMs = 900;
-      let sawBusy = false;
-      let revealed = false;
-
-      function reveal() {
-        if (revealed) return;
-        revealed = true;
-        viewer.classList.add('visible');
-        splash.classList.add('hidden');
-      }
-
-      async function checkStatus() {
-        if (!projectId) {
-          // Fallback: timed reveal if status API is unavailable.
-          if (Date.now() - startedAt > 3500) reveal();
-          return;
-        }
-        try {
-          const response = await fetch(
-            '/api/projects/' + encodeURIComponent(projectId) + '/gpu/full-slicer-status',
-            { credentials: 'include', cache: 'no-store' }
-          );
-          if (!response.ok) {
-            if (Date.now() - startedAt > 5000) reveal();
-            return;
-          }
-          const data = await response.json();
-          if (data.busy) {
-            sawBusy = true;
-            return;
-          }
-          // Reveal only after we observed busy and it cleared, or after timeout.
-          const waitedLongEnough = Date.now() - startedAt >= minSplashMs;
-          if ((sawBusy || Date.now() - startedAt > 4000) && waitedLongEnough) {
-            reveal();
-          }
-        } catch (_) {
-          if (Date.now() - startedAt > 5000) reveal();
-        }
-      }
-
-      const poll = setInterval(async () => {
-        if (revealed) {
-          clearInterval(poll);
-          return;
-        }
-        if (Date.now() - startedAt > maxWaitMs) {
-          reveal();
-          clearInterval(poll);
-          return;
-        }
-        await checkStatus();
-      }, 400);
-
-      checkStatus();
-    })();
-  </script>
+  <script type="module" src="./slicer-gui-loader.js"></script>
+  <noscript>
+    <p style="color:#e8e8ef;text-align:center;padding:24px">JavaScript is required to open the viewer.</p>
+  </noscript>
 </body>
 </html>

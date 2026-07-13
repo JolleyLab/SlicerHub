@@ -56,7 +56,8 @@ def request_key(payload: dict) -> str:
     file_id = payload.get("fileId", "")
     requested_at = (payload.get("requestedAt") or "").strip()
     path = (payload.get("containerPath") or "").strip()
-    return f"{file_id}:{requested_at}:{path}"
+    simplified = "1" if payload.get("useSimplifiedViewer") is True else "0"
+    return f"{file_id}:{requested_at}:{path}:{simplified}"
 
 
 def should_process_request(payload: dict) -> bool:
@@ -579,13 +580,54 @@ def apply_simplified_viewer_ui() -> bool:
     return False
 
 
-def maybe_apply_simplified_viewer(use_simplified_viewer: bool) -> None:
-    if not use_simplified_viewer:
-        return
+def restore_full_slicer_ui() -> None:
+    """Restore standard Slicer chrome when Simplified Viewer is turned off."""
     try:
-        apply_simplified_viewer_ui()
+        from qt import QSettings
+        settings = QSettings()
+        settings.setValue("SimplifiedViewer/FullInterfaceVisible", True)
+    except Exception:
+        pass
+
+    widget = find_simplified_viewer_widget()
+    if widget is not None:
+        try:
+            widget.setFull3DSlicerInterfaceVisible(True)
+        except Exception:
+            pass
+
+    slicer.util.setToolbarsVisible(True)
+    slicer.util.setMenuBarsVisible(True)
+    slicer.util.setApplicationLogoVisible(True)
+    slicer.util.setModuleHelpSectionVisible(True)
+    slicer.util.setModulePanelTitleVisible(True)
+    slicer.util.setDataProbeVisible(True)
+    slicer.util.setStatusBarVisible(True)
+    try:
+        slicer.util.setModulePanelVisible(True)
+    except Exception:
+        pass
+
+    try:
+        if module_is_registered("Volumes"):
+            slicer.util.selectModule("Volumes")
+        elif module_is_registered("Welcome"):
+            slicer.util.selectModule("Welcome")
+    except Exception:
+        pass
+    slicer.app.processEvents()
+    log("[slicer_session] Full Slicer UI restored")
+
+
+def maybe_apply_simplified_viewer(use_simplified_viewer: bool) -> None:
+    try:
+        if use_simplified_viewer:
+            apply_simplified_viewer_ui()
+        else:
+            restore_full_slicer_ui()
     except Exception as exc:
-        log(f"[slicer_session] SimplifiedViewer not available; chrome-only mode kept: {exc}")
+        mode = "SimplifiedViewer" if use_simplified_viewer else "Full Slicer"
+        log(f"[slicer_session] Could not apply {mode} UI: {exc}")
         log(traceback.format_exc())
 
 
@@ -719,7 +761,10 @@ def poll_open_requests() -> None:
         if use_simplified_viewer:
             show_load_overlay("Opening simplified viewer…")
             overlay_shown = True
-            maybe_apply_simplified_viewer(True)
+        else:
+            show_load_overlay("Opening Full Slicer…")
+            overlay_shown = True
+        maybe_apply_simplified_viewer(use_simplified_viewer)
 
         slicer.mrmlScene.Clear(0)
         slicer.app.processEvents()

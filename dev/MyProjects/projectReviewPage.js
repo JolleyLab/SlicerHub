@@ -36,6 +36,7 @@ import {
     isViewerUserActive
 } from '../utils/viewerActivity.js';
 import { sendTrameContainerHeartbeat } from '../utils/trameHeartbeat.js';
+import { stopViewerSession } from '../utils/viewerSessionLifecycle.js';
 
 const GPU_PROVIDER_CONSOLE_URLS = {
     vast: 'https://cloud.vast.ai/instances/'
@@ -730,6 +731,7 @@ export class ProjectReviewPage extends LitElement {
         this._lastErrorAlertKey = '';
         this._errorAlertKind = null;
         this._trameHeartbeatInterval = null;
+        this._viewerSessionToken = null;
         this._gpuPollInterval = null;
         this._gpuBillingHeartbeatInterval = null;
     }
@@ -758,9 +760,21 @@ export class ProjectReviewPage extends LitElement {
         if (this.projectId) {
             cancelViewerStopOnLeave(this.projectId);
         }
+        this._handleBeforeUnload = () => {
+            if (!this.showIframe || !this._viewerSessionToken) return;
+            stopViewerSession({
+                stopUrl: `${API_URL}/api/containers/stop`,
+                sessionToken: this._viewerSessionToken,
+                body: this.projectId ? { projectId: this.projectId } : {},
+                keepalive: true
+            });
+        };
+        window.addEventListener('beforeunload', this._handleBeforeUnload);
     }
 
     disconnectedCallback() {
+        window.removeEventListener('beforeunload', this._handleBeforeUnload);
+        this._handleBeforeUnload = null;
         this.stopTrameHeartbeat();
         this.stopGpuBillingHeartbeat();
         this.stopGpuPolling();
@@ -1129,7 +1143,33 @@ export class ProjectReviewPage extends LitElement {
     async handleLaunchFullSlicer(file) {
         this.launchingFileId = file.id;
         this.currentFileName = file.originalName;
+
+        // Open synchronously on click so the browser does not treat this as a blocked pop-up.
+        const tabName = 'slicer-gui-viewer';
+        const popup = window.open('about:blank', tabName);
+        if (!popup) {
+            this.launchingFileId = null;
+            this.currentFileName = '';
+            this.showErrorAlert('Pop-up blocked. Allow pop-ups for this site and try again.', {
+                title: 'Unable to open file',
+                force: true
+            });
+            return;
+        }
+
         try {
+            popup.document.open();
+            popup.document.write(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8" />
+<style>
+  html,body{margin:0;height:100%;background:#0c0c14;color:#e8e8ef;
+  font-family:system-ui,sans-serif;display:flex;align-items:center;
+  justify-content:center;text-align:center;padding:24px}
+</style></head>
+<body><div><p>Starting Full Slicer…</p><p style="color:#9aa0b4;font-size:0.9rem">
+First launch can take 1–2 minutes.</p></div></body></html>`);
+            popup.document.close();
+
             const data = await openFullSlicerViewer(this.projectId, file.id);
 
             const loader = new URL(
@@ -1137,25 +1177,34 @@ export class ProjectReviewPage extends LitElement {
                 window.location.href
             );
             loader.searchParams.set('projectId', String(this.projectId));
+            loader.searchParams.set('fileId', String(file.id));
             loader.searchParams.set('fileName', data.fileName || file.originalName || '');
             if (data.useSimplifiedViewer || this.useLocalSimplifiedViewer) {
                 loader.searchParams.set('simplified', '1');
             }
-            loader.searchParams.set(
-                'vnc',
-                '/slicer-gui/vnc.html?autoconnect=true&resize=scale'
-            );
-
-            // One shared Slicer session — reuse the same tab instead of opening many.
-            const opened = window.open(loader.href, 'slicer-gui-viewer');
-            if (!opened) {
-                throw new Error('Pop-up blocked. Allow pop-ups for this site and try again.');
+            const vncPath = data.vncPath
+                || data.slicerGuiUrl
+                || '/slicer-gui/vnc.html?autoconnect=true&resize=scale';
+            // Prefer path-only for same-origin iframe/tab embedding.
+            let vncParam = vncPath;
+            try {
+                vncParam = new URL(vncPath, window.location.href).pathname
+                    + new URL(vncPath, window.location.href).search;
+            } catch (_) {
+                /* keep as-is */
             }
-            opened.focus();
-            opened.opener = null;
+            loader.searchParams.set('vnc', vncParam);
+            if (data.sessionToken) {
+                loader.searchParams.set('sessionToken', data.sessionToken);
+            }
+
+            popup.location.href = loader.href;
+            popup.focus();
+            popup.opener = null;
 
             this.showToast(`Loading ${data.fileName} in Full Slicer — the viewer will update in a few seconds.`);
         } catch (error) {
+            popup.close();
             this.showErrorAlert(error.message || 'Unable to open Full Slicer.', {
                 title: 'Unable to open file',
                 force: true
@@ -1878,6 +1927,7 @@ export class ProjectReviewPage extends LitElement {
                 throw new Error(this.parseApiErrorMessage(data, 'Failed to launch file'));
             }
 
+            this._viewerSessionToken = data.sessionToken || null;
             const url = resolveTramePageUrl(data.frontendUrl);
             if (!url) {
                 throw new Error('Trame did not return a viewer URL.');
@@ -1975,6 +2025,7 @@ export class ProjectReviewPage extends LitElement {
         this.stopTrameHeartbeat();
         const ping = () => {
             sendTrameContainerHeartbeat({
+                sessionToken: this._viewerSessionToken,
                 onIdleTimeout: () => this.handleViewerInactivityTimeout()
             }).catch(() => {});
         };
@@ -1990,17 +2041,12 @@ export class ProjectReviewPage extends LitElement {
     }
 
     async cleanupContainerSession(projectId = null) {
-        try {
-            const payload = projectId ? { projectId } : {};
-            await fetch(`${API_URL}/api/containers/stop`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify(payload)
-            });
-        } catch (_) {
-            // best effort
-        }
+        await stopViewerSession({
+            stopUrl: `${API_URL}/api/containers/stop`,
+            sessionToken: this._viewerSessionToken,
+            body: projectId ? { projectId } : {}
+        });
+        this._viewerSessionToken = null;
     }
 
     async closeIframe() {
