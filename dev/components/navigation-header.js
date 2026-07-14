@@ -137,10 +137,25 @@ export class NavigationHeader extends LitElement {
         this.homeLabel = 'Home';
     }
 
+    handleHomeClick(event) {
+        // App is an SPA — avoid navigating to a non-existent /file-manager route.
+        event.preventDefault();
+        this.dispatchEvent(new CustomEvent('menu-selection-change', {
+            detail: { selectedKey: 'my-files' },
+            bubbles: true,
+            composed: true
+        }));
+    }
+
     render() {
         return html`
             <header class="nav-shell">
-                <a class="home-link" href=${this.homeHref} aria-label="Go to home page">
+                <a
+                    class="home-link"
+                    href=${this.homeHref}
+                    aria-label="Go to home page"
+                    @click=${this.handleHomeClick}
+                >
                     <span class="home-icon" aria-hidden="true">
                         <svg viewBox="0 0 24 24" role="img" focusable="false" aria-hidden="true">
                             <path

@@ -360,8 +360,8 @@ export default function projectGpuRoutes(app) {
         requireProjectAccess(projectId, req.user.id);
 
         const settings = ProjectGpu.getSettings(projectId);
-        if (settings.providerId !== 'local' || settings.useFullSlicer !== true) {
-            throw new ValidationError('Full Slicer viewer is not enabled for this project');
+        if (settings.providerId !== 'local') {
+            throw new ValidationError('Full Slicer viewer is only available when Local GPU is active');
         }
 
         const fileId = Number(req.body?.fileId);
@@ -382,12 +382,15 @@ export default function projectGpuRoutes(app) {
             throw new ValidationError('File not found or inaccessible');
         }
 
+        const useSimplifiedViewer = req.body?.useSimplifiedViewer === true
+            || settings.useSimplifiedViewer === true;
+
         const launcherUserId = String(req.user.id);
         let session;
         try {
             session = await ensureSlicerGuiSession({
                 userId: launcherUserId,
-                useSimplifiedViewer: settings.useSimplifiedViewer === true
+                useSimplifiedViewer
             });
         } catch (err) {
             throw new ValidationError(
@@ -398,7 +401,7 @@ export default function projectGpuRoutes(app) {
         const staged = await stageProjectFileForSlicerGui({
             file,
             launcherUserId,
-            useSimplifiedViewer: settings.useSimplifiedViewer === true
+            useSimplifiedViewer
         });
         File.touchLastViewed(file.id);
 
@@ -426,8 +429,8 @@ export default function projectGpuRoutes(app) {
         requireProjectAccess(projectId, req.user.id);
 
         const settings = ProjectGpu.getSettings(projectId);
-        if (settings.providerId !== 'local' || settings.useFullSlicer !== true) {
-            throw new ValidationError('Full Slicer viewer is not enabled for this project');
+        if (settings.providerId !== 'local') {
+            throw new ValidationError('Full Slicer viewer is only available when Local GPU is active');
         }
 
         const sessionToken = String(req.body?.sessionToken || '').trim();
@@ -455,16 +458,19 @@ export default function projectGpuRoutes(app) {
         requireProjectAccess(projectId, req.user.id);
 
         const settings = ProjectGpu.getSettings(projectId);
-        if (settings.providerId !== 'local' || settings.useFullSlicer !== true) {
-            throw new ValidationError('Full Slicer viewer is not enabled for this project');
+        if (settings.providerId !== 'local') {
+            throw new ValidationError('Full Slicer viewer is only available when Local GPU is active');
         }
+
+        const useSimplifiedViewer = req.body?.useSimplifiedViewer === true
+            || settings.useSimplifiedViewer === true;
 
         const launcherUserId = String(req.user.id);
         let session;
         try {
             session = await ensureSlicerGuiSession({
                 userId: launcherUserId,
-                useSimplifiedViewer: settings.useSimplifiedViewer === true
+                useSimplifiedViewer
             });
         } catch (err) {
             throw new ValidationError(
@@ -488,7 +494,7 @@ export default function projectGpuRoutes(app) {
                 staged = await stageProjectFileForSlicerGui({
                     file,
                     launcherUserId,
-                    useSimplifiedViewer: settings.useSimplifiedViewer === true
+                    useSimplifiedViewer
                 });
             }
         }

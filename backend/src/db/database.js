@@ -343,6 +343,13 @@ const migrations = [
             UPDATE project_gpu_settings
             SET default_provider_id = provider_id;
         `
+    },
+    {
+        id: '012_user_preferences_json',
+        up: `
+            ALTER TABLE users
+            ADD COLUMN preferences_json TEXT;
+        `
     }
 ];
 

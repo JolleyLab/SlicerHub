@@ -6,7 +6,7 @@ import {
 /**
  * Reusable Local Full Slicer preference checkboxes.
  * Emits `options-change` with { useFullSlicer, useSimplifiedViewer }.
- * Intended for project GPU panel now and user/project settings later.
+ * Used by user Settings; My Projects reads the saved user preference.
  */
 export class LocalSlicerViewerOptions extends LitElement {
     static get styles() {

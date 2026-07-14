@@ -71,12 +71,16 @@ export async function setProjectGpuUseFullSlicer(projectId, useFullSlicer) {
     return setProjectGpuLocalSlicerViewerOptions(projectId, { useFullSlicer: !!useFullSlicer });
 }
 
-export async function openFullSlicerViewer(projectId, fileId) {
+export async function openFullSlicerViewer(projectId, fileId, options = {}) {
+    const body = { fileId };
+    if (options.useSimplifiedViewer !== undefined) {
+        body.useSimplifiedViewer = !!options.useSimplifiedViewer;
+    }
     const response = await fetch(`${API_URL}/api/projects/${projectId}/gpu/open-full-slicer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ fileId })
+        body: JSON.stringify(body)
     });
     return parseResponse(response);
 }

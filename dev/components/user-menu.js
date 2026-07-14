@@ -99,75 +99,6 @@ export class UserMenu extends LitElement {
                 width: 90%;
                 border-top: 1px solid var(--color-text-secondary);
             }
-
-            .theme-toggle-row {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                padding: 10px 12px;
-                color: var(--color-text-primary);
-                font-weight: 300;
-            }
-
-            .theme-toggle-control {
-                display: flex;
-                align-items: center;
-                gap: 8px;
-            }
-
-            .theme-icon {
-                font-size: 14px;
-                line-height: 1;
-                opacity: 0.45;
-                transition: opacity 0.2s ease, transform 0.2s ease;
-            }
-
-            .theme-icon.active {
-                opacity: 1;
-                transform: scale(1.08);
-            }
-
-            .switch {
-                position: relative;
-                display: inline-block;
-                width: 44px;
-                height: 24px;
-            }
-
-            .switch input {
-                opacity: 0;
-                width: 0;
-                height: 0;
-            }
-
-            .slider {
-                position: absolute;
-                cursor: pointer;
-                inset: 0;
-                background-color: var(--color-border);
-                border-radius: 999px;
-                transition: background-color 0.2s ease;
-            }
-
-            .slider::before {
-                content: '';
-                position: absolute;
-                width: 18px;
-                height: 18px;
-                left: 3px;
-                top: 3px;
-                border-radius: 50%;
-                background-color: #fff;
-                transition: transform 0.2s ease;
-            }
-
-            .switch input:checked + .slider {
-                background-color: var(--color-primary);
-            }
-
-            .switch input:checked + .slider::before {
-                transform: translateX(20px);
-            }
         `;
     }
 
@@ -197,6 +128,14 @@ export class UserMenu extends LitElement {
         this.open = false;
     }
 
+    requestSettings() {
+        this.dispatchEvent(new CustomEvent('settings-request', {
+            bubbles: true,
+            composed: true
+        }));
+        this.closeMenu();
+    }
+
     requestLogout() {
         this.dispatchEvent(new CustomEvent('logout-request', {
             bubbles: true,
@@ -205,19 +144,7 @@ export class UserMenu extends LitElement {
         this.closeMenu();
     }
 
-    //rhisey this should be cleaned up but right now it's useful for testing
-    toggleTheme() {
-        const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
-        const nextTheme = currentTheme === 'dark' ? 'light' : 'dark';
-        document.documentElement.setAttribute('data-theme', nextTheme);
-        localStorage.setItem('ui-theme', nextTheme);
-        initializeTheme();
-        this.requestUpdate();
-    }
-
     render() {
-        const isDarkTheme = document.documentElement.getAttribute('data-theme') === 'dark';
-
         return html`
             <button class="user-menu-button" @click=${this.toggleMenu}>
                 ${this.#getUNFirstLetter()}
@@ -226,17 +153,7 @@ export class UserMenu extends LitElement {
                 <div class="menu">
                     <div class="menu-title">Signed in as ${this.username}</div>
                     <hr>
-                    <div class="theme-toggle-row">
-                        <span>Theme</span>
-                        <div class="theme-toggle-control">
-                            <span class="theme-icon ${isDarkTheme ? '' : 'active'}" title="Light mode">☀</span>
-                            <label class="switch" aria-label="Toggle theme">
-                                <input type="checkbox" .checked=${isDarkTheme} @change=${this.toggleTheme}>
-                                <span class="slider"></span>
-                            </label>
-                            <span class="theme-icon ${isDarkTheme ? 'active' : ''}" title="Dark mode">🌙</span>
-                        </div>
-                    </div>
+                    <button class="menu-item" @click=${this.requestSettings}>Settings</button>
                     <button class="menu-item" @click=${this.requestLogout}>Logout</button>
                 </div>
             ` : ''}

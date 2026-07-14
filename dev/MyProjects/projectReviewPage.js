@@ -14,7 +14,6 @@ import {
     configureProjectGpuProvider,
     setActiveProjectGpuProvider,
     setProjectGpuDefaultProvider,
-    setProjectGpuLocalSlicerViewerOptions,
     openFullSlicerViewer,
     startProjectGpuBilling,
     stopProjectGpuBilling,
@@ -22,8 +21,8 @@ import {
     sendProjectGpuHeartbeat,
     prestageProjectGpu
 } from '../services/projectGpu.js';
-import '../components/local-slicer-viewer-options.js';
 import { resolveTramePageUrl } from '../utils/trameViewerUrl.js';
+import { getCachedLocalSlicerViewerOptions } from '../utils/userPreferences.js';
 import {
     scheduleViewerStopOnLeave,
     cancelViewerStopOnLeave
@@ -1108,38 +1107,6 @@ export class ProjectReviewPage extends LitElement {
         }
     }
 
-    async handleLocalSlicerViewerOptionsChange(event) {
-        if (!this.canManageGpu || this.savedGpuProviderId !== 'local') return;
-
-        const next = event?.detail || {};
-        const previous = {
-            useFullSlicer: this.gpuSettings?.useFullSlicer === true,
-            useSimplifiedViewer: this.gpuSettings?.useSimplifiedViewer === true
-        };
-        this.gpuSaving = true;
-        try {
-            const data = await setProjectGpuLocalSlicerViewerOptions(this.projectId, next);
-            this.applyGpuSettings(data.settings);
-            if (!next.useFullSlicer) {
-                this.showToast('Trame viewer enabled for Local.');
-            } else if (next.useSimplifiedViewer) {
-                this.showToast('Full Slicer with Simplified Viewer enabled.');
-            } else {
-                this.showToast('Full Slicer viewer enabled.');
-            }
-        } catch (error) {
-            // Force the reusable control back to saved settings.
-            this.gpuSettings = { ...this.gpuSettings, ...previous };
-            this.requestUpdate();
-            this.showErrorAlert(error.message || 'Unable to update local viewer option.', {
-                title: 'GPU settings',
-                force: true
-            });
-        } finally {
-            this.gpuSaving = false;
-        }
-    }
-
     async handleLaunchFullSlicer(file) {
         this.launchingFileId = file.id;
         this.currentFileName = file.originalName;
@@ -1170,7 +1137,9 @@ export class ProjectReviewPage extends LitElement {
 First launch can take 1–2 minutes.</p></div></body></html>`);
             popup.document.close();
 
-            const data = await openFullSlicerViewer(this.projectId, file.id);
+            const data = await openFullSlicerViewer(this.projectId, file.id, {
+                useSimplifiedViewer: this.useLocalSimplifiedViewer
+            });
 
             const loader = new URL(
                 resolveTramePageUrl('/slicer-gui-loader.html'),
@@ -1633,11 +1602,13 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
     }
 
     get useLocalFullSlicer() {
-        return this.savedGpuProviderId === 'local' && this.gpuSettings?.useFullSlicer === true;
+        return this.savedGpuProviderId === 'local'
+            && getCachedLocalSlicerViewerOptions().useFullSlicer === true;
     }
 
     get useLocalSimplifiedViewer() {
-        return this.useLocalFullSlicer && this.gpuSettings?.useSimplifiedViewer === true;
+        return this.useLocalFullSlicer
+            && getCachedLocalSlicerViewerOptions().useSimplifiedViewer === true;
     }
 
     get selectedGpuProvider() {
@@ -1661,9 +1632,19 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
         return labels[status] || status;
     }
 
+    get localViewerFriendlyLabel() {
+        if (!this.useLocalFullSlicer) {
+            return 'standard viewer';
+        }
+        if (this.useLocalSimplifiedViewer) {
+            return 'simplified viewer';
+        }
+        return 'full Slicer';
+    }
+
     get gpuFriendlySummary() {
         if (this.savedGpuProviderId === 'local') {
-            return 'Local viewer';
+            return 'Local';
         }
         const status = this.gpuInstance?.status || 'idle';
         if (!this.canManageGpu && status === 'idle') {
@@ -1788,7 +1769,7 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
         const provider = this.configuredProviders.find((p) => p.id === this.savedGpuProviderId);
         const label = provider?.label || (this.savedGpuProviderId === 'local' ? 'Local' : this.savedGpuProviderId);
         if (this.savedGpuProviderId === 'local') {
-            return this.useLocalFullSlicer ? `${label} · Full Slicer` : label;
+            return `${label} · ${this.localViewerFriendlyLabel}`;
         }
         return `${label} · ${this.gpuFriendlySummary}`;
     }
@@ -2279,7 +2260,7 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
                                     ` : ''}
                                     ${this.canManageGpu ? html`
                                         <div class="gpu-field">
-                                            <label for="gpu-provider">Active provider</label>
+                                            <label for="gpu-provider">Using now</label>
                                             <select
                                                 id="gpu-provider"
                                                 .value=${this.gpuActiveProviderId}
@@ -2297,7 +2278,7 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
                                             </select>
                                         </div>
                                         <div class="gpu-field">
-                                            <label for="gpu-default-provider">Default provider</label>
+                                            <label for="gpu-default-provider">Usually use</label>
                                             <select
                                                 id="gpu-default-provider"
                                                 .value=${this.gpuSettings?.defaultProviderId || 'local'}
@@ -2313,19 +2294,7 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
                                                     </option>
                                                 `)}
                                             </select>
-                                            <div class="gpu-hint">Which provider is pre-selected; use Active provider above for this session.</div>
                                         </div>
-                                        ${this.savedGpuProviderId === 'local' ? html`
-                                            <div class="gpu-local-option">
-                                                <local-slicer-viewer-options
-                                                    .useFullSlicer=${this.gpuSettings?.useFullSlicer === true}
-                                                    .useSimplifiedViewer=${this.gpuSettings?.useSimplifiedViewer === true}
-                                                    .canEdit=${this.canManageGpu}
-                                                    .disabled=${this.gpuSaving}
-                                                    @options-change=${(e) => this.handleLocalSlicerViewerOptionsChange(e)}
-                                                ></local-slicer-viewer-options>
-                                            </div>
-                                        ` : ''}
                                         ${this.isGpuProviderConfigured(this.gpuActiveProviderId)
                                             && this.gpuActiveProviderId !== 'local' ? html`
                                             <button
@@ -2338,21 +2307,18 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
                                             </button>
                                         ` : ''}
                                         ${this.gpuSaving ? html`
-                                            <div class="gpu-hint">Updating GPU settings…</div>
+                                            <div class="gpu-hint">Updating…</div>
                                         ` : ''}
                                         ${this.configuredProviders.length === 1 ? html`
-                                            <div class="gpu-hint">Add a remote provider to enable cloud GPU billing.</div>
+                                            <div class="gpu-hint">Add a cloud GPU option to run larger files remotely.</div>
                                         ` : ''}
                                     ` : html`
                                         <div class="gpu-hint">
-                                            Active: ${(this.configuredProviders.find((p) => p.id === this.activeGpuProviderId) || { label: 'Local' }).label}
+                                            Using ${(this.configuredProviders.find((p) => p.id === this.activeGpuProviderId) || { label: 'Local' }).label}
                                         </div>
                                     `}
                                     ${this.showGpuInfoButton ? html`
                                         <div class="gpu-status-row">
-                                            <div class="gpu-status">
-                                                <strong>${this.gpuFriendlySummary}</strong>
-                                            </div>
                                             <button
                                                 class="gpu-info-button"
                                                 type="button"
@@ -2380,11 +2346,7 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
                                                 `)}
                                             </div>
                                         ` : ''}
-                                    ` : html`
-                                        <div class="gpu-status">
-                                            <strong>${this.gpuFriendlySummary}</strong>
-                                        </div>
-                                    `}
+                                    ` : ''}
                                 </div>
                             </details>
                             ${this.canManageGpu && this.savedGpuProviderId !== 'local' ? html`

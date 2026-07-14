@@ -102,7 +102,8 @@ export default function authRoutes(app) {
                 id: user.id,
                 username: user.username,
                 email: user.email,
-                role: user.role
+                role: user.role,
+                preferences: user.preferences
             }
         });
     }));
@@ -145,7 +146,8 @@ export default function authRoutes(app) {
                 id: user.id,
                 username: user.username,
                 email: user.email,
-                role: user.role
+                role: user.role,
+                preferences: user.preferences
             }
         });
     }));
@@ -187,6 +189,44 @@ export default function authRoutes(app) {
         }
 
         res.json({ user });
+    }));
+
+    /**
+     * Update current user preferences (theme, local viewer options).
+     */
+    app.put('/api/auth/preferences', authenticateToken, asyncHandler(async (req, res) => {
+        const before = User.getPreferences(req.user.id);
+        if (!before) {
+            throw new NotFoundError('User not found');
+        }
+
+        const patch = {};
+        if (req.body?.theme !== undefined) {
+            patch.theme = req.body.theme;
+        }
+        if (req.body?.useFullSlicer !== undefined) {
+            patch.useFullSlicer = req.body.useFullSlicer === true;
+        }
+        if (req.body?.useSimplifiedViewer !== undefined) {
+            patch.useSimplifiedViewer = req.body.useSimplifiedViewer === true;
+        }
+
+        const preferences = User.updatePreferences(req.user.id, patch);
+        if (!preferences) {
+            throw new NotFoundError('User not found');
+        }
+
+        const { viewerModeChanged } = await import('../gpu/userPreferences.js');
+        if (viewerModeChanged(before, preferences)) {
+            try {
+                const { stopSlicerGuiSession } = await import('../slicerGui/sessionManager.js');
+                await stopSlicerGuiSession({ userId: String(req.user.id) });
+            } catch (err) {
+                console.warn('Full Slicer recycle after preference change:', err.message);
+            }
+        }
+
+        res.json({ preferences });
     }));
 
     /**

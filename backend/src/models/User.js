@@ -2,8 +2,27 @@ import bcrypt from 'bcrypt';
 import db from '../db/database.js';
 import config from '../config/index.js';
 import { ConflictError } from '../utils/errors.js';
+import {
+    mergeUserPreferences,
+    parseUserPreferencesJson
+} from '../gpu/userPreferences.js';
 
 const SALT_ROUNDS = config.security.bcryptRounds;
+
+function mapUserRow(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        username: row.username,
+        email: row.email,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        last_login: row.last_login,
+        is_active: row.is_active,
+        role: row.role,
+        preferences: parseUserPreferencesJson(row.preferences_json)
+    };
+}
 
 class User {
     /**
@@ -50,11 +69,11 @@ class User {
      */
     static findById(id) {
         const user = db.prepare(`
-            SELECT id, username, email, created_at, updated_at, last_login, is_active, role
+            SELECT id, username, email, created_at, updated_at, last_login, is_active, role, preferences_json
             FROM users WHERE id = ?
         `).get(id);
 
-        return user || null;
+        return mapUserRow(user);
     }
 
     /**
@@ -62,11 +81,11 @@ class User {
      */
     static findByUsername(username) {
         const user = db.prepare(`
-            SELECT id, username, email, created_at, updated_at, last_login, is_active, role
+            SELECT id, username, email, created_at, updated_at, last_login, is_active, role, preferences_json
             FROM users WHERE username = ?
         `).get(username);
 
-        return user || null;
+        return mapUserRow(user);
     }
 
     /**
@@ -74,11 +93,11 @@ class User {
      */
     static findByEmail(email) {
         const user = db.prepare(`
-            SELECT id, username, email, created_at, updated_at, last_login, is_active, role
+            SELECT id, username, email, created_at, updated_at, last_login, is_active, role, preferences_json
             FROM users WHERE email = ?
         `).get(email);
 
-        return user || null;
+        return mapUserRow(user);
     }
 
     /**
@@ -86,7 +105,7 @@ class User {
      */
     static async verifyPassword(username, password) {
         const user = db.prepare(`
-            SELECT id, username, email, password_hash, is_active, role
+            SELECT id, username, email, password_hash, is_active, role, preferences_json
             FROM users WHERE username = ?
         `).get(username);
 
@@ -109,8 +128,31 @@ class User {
             .run(user.id);
 
         // Return user without password hash
-        const { password_hash, ...userWithoutPassword } = user;
-        return userWithoutPassword;
+        const { password_hash, preferences_json, ...rest } = user;
+        return {
+            ...rest,
+            preferences: parseUserPreferencesJson(preferences_json)
+        };
+    }
+
+    static getPreferences(userId) {
+        const row = db.prepare('SELECT preferences_json FROM users WHERE id = ?').get(userId);
+        if (!row) return null;
+        return parseUserPreferencesJson(row.preferences_json);
+    }
+
+    static updatePreferences(userId, patch = {}) {
+        const current = this.getPreferences(userId);
+        if (!current) {
+            return null;
+        }
+        const next = mergeUserPreferences(current, patch);
+        db.prepare(`
+            UPDATE users
+            SET preferences_json = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `).run(JSON.stringify(next), userId);
+        return next;
     }
 
     /**
@@ -171,10 +213,10 @@ class User {
      */
     static getAll() {
         return db.prepare(`
-            SELECT id, username, email, created_at, updated_at, last_login, is_active, role
+            SELECT id, username, email, created_at, updated_at, last_login, is_active, role, preferences_json
             FROM users
             ORDER BY created_at DESC
-        `).all();
+        `).all().map(mapUserRow);
     }
 }
 

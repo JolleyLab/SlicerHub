@@ -1,7 +1,9 @@
 /**
  * Shared helpers for Local + Full Slicer viewer preferences.
- * Keep option names/defaults here so project pages and future user/project
- * settings UIs can reuse the same contract.
+ * Keep option names/defaults here so project pages and user settings UIs
+ * can reuse the same contract.
+ *
+ * Account persistence lives in utils/userPreferences.js (server-backed).
  */
 
 export const LOCAL_SLICER_VIEWER_OPTION_KEYS = Object.freeze({

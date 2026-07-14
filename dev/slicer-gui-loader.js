@@ -64,7 +64,10 @@ async function reconnectSession() {
         credentials: 'include',
         cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(fileId ? { fileId: Number(fileId) } : {})
+        body: JSON.stringify({
+            ...(fileId ? { fileId: Number(fileId) } : {}),
+            useSimplifiedViewer: simplified
+        })
     });
     if (!response.ok) {
         return false;

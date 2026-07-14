@@ -8,6 +8,7 @@ import './components/status-card.js';
 import './MyProjects/myProjectsEmptyState.js';
 import './MyProjects/createProjectForm.js';
 import './MyProjects/projectReviewPage.js';
+import './user-settings-page.js';
 import { resolveTramePageUrl } from './utils/trameViewerUrl.js';
 import {
   installViewerActivityListeners,
@@ -15,6 +16,10 @@ import {
   resetViewerActivity
 } from './utils/viewerActivity.js';
 import { sendTrameContainerHeartbeat } from './utils/trameHeartbeat.js';
+import {
+  hydrateUserPreferencesFromUser,
+  clearCachedUserPreferences
+} from './utils/userPreferences.js';
 
 export class TrameApp extends LitElement {
   static get styles() {
@@ -168,6 +173,7 @@ export class TrameApp extends LitElement {
         this.user = data.user;
         this.isAuthenticated = true;
         this.name = this.user.username;
+        await hydrateUserPreferencesFromUser(this.user);
         this.startInactivityTimer();
         return;
       }
@@ -201,6 +207,7 @@ export class TrameApp extends LitElement {
     this.user = user;
     this.isAuthenticated = true;
     this.name = user.username;
+    hydrateUserPreferencesFromUser(user);
     this.startInactivityTimer();
   }
 
@@ -209,6 +216,7 @@ export class TrameApp extends LitElement {
     this.user = user;
     this.isAuthenticated = true;
     this.name = user.username;
+    hydrateUserPreferencesFromUser(user);
     this.startInactivityTimer();
   }
 
@@ -222,6 +230,10 @@ export class TrameApp extends LitElement {
 
   openCreateProjectFlow() {
     this.currentView = APP_VIEWS.CREATE_PROJECT;
+  }
+
+  openSettingsFlow() {
+    this.currentView = APP_VIEWS.SETTINGS;
   }
 
   openProjectReviewFlow(e) {
@@ -305,6 +317,7 @@ export class TrameApp extends LitElement {
     this.user = null;
     this.isAuthenticated = false;
     this.showLogin = true;
+    clearCachedUserPreferences();
 
     // Stop inactivity timer
     this.stopInactivityTimer();
@@ -480,6 +493,7 @@ export class TrameApp extends LitElement {
         <file-manager
           .username=${this.user?.username || 'Guest'}
           @menu-selection-change=${this.handleProjectsMenuSelection}
+          @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
         ></file-manager>
       ` : ''}
@@ -489,6 +503,7 @@ export class TrameApp extends LitElement {
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @create-project-request=${this.openCreateProjectFlow}
           @project-selected=${this.openProjectReviewFlow}
+          @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
         ></my-projects-landing-page>
       ` : ''}
@@ -496,6 +511,7 @@ export class TrameApp extends LitElement {
         <create-project-form
           .username=${this.user?.username || 'Guest'}
           @menu-selection-change=${this.handleProjectsMenuSelection}
+          @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
         ></create-project-form>
       ` : ''}
@@ -504,8 +520,17 @@ export class TrameApp extends LitElement {
           .username=${this.user?.username || 'Guest'}
           .projectId=${this.selectedProjectId}
           @menu-selection-change=${this.handleProjectsMenuSelection}
+          @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
         ></project-review-page>
+      ` : ''}
+      ${this.currentView === APP_VIEWS.SETTINGS ? html`
+        <user-settings-page
+          .username=${this.user?.username || 'Guest'}
+          @menu-selection-change=${this.handleProjectsMenuSelection}
+          @settings-request=${this.openSettingsFlow}
+          @logout-request=${this.handleLogout}
+        ></user-settings-page>
       ` : ''}
     `;
   }
