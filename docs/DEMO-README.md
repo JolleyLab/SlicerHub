@@ -5,8 +5,9 @@ docker compose up -d
 Optional full 3D Slicer GUI (local GPU, My Projects **Use Full Slicer**):
 
 ```bash
-# Build the image once (required). Per-user sessions are started on demand by the backend.
-docker compose --profile slicer-gui build slicer-gui
+# Build base + thin adapter once (required). Per-user sessions start on demand.
+docker compose --profile slicer-gui build slicer-gui-base slicer-gui
+# or: ./slicer-gui-gpu/build.ps1
 
 # Optional shared debug container only:
 docker compose --profile slicer-gui up -d --force-recreate slicer-gui
@@ -17,12 +18,12 @@ Local multi-user (My Projects):
 - Browser path: `/slicer-gui/user-{userId}/vnc.html` (via nginx)
 - Staging dir: `data/slicer-gui/users/{userId}/`
 - Requires `HOST_WORKSPACE_ROOT` (set in `.env` for Windows Docker Desktop)
-- Image must exist as `SLICER_GUI_IMAGE` (default `slicer-web-slicer-gui:local`)
+- Runtime image: `SLICER_GUI_IMAGE` (default `slicer-web-slicer-gui:local`, derived FROM `SLICER_GUI_BASE_IMAGE`)
 - Viewer tab sends heartbeats; closing the tab stops the container. Orphaned sessions expire after `VIEWER_SESSION_TTL_SECONDS` (default 120s). Trame and Full Slicer share the same backend session lease/watchdog (`backend/src/sessions/`).
 - Logout or auth idle expiry cleans up that user's **local** Trame + Full Slicer containers (Vast billing is unchanged).
 
 Optional Simplified Viewer support for Full Slicer:
-- **Image build** (server/Vast): set `SLICER_HEART_VIEWER_REPO` (+ optional `SLICER_HEART_VIEWER_REF`), then `docker compose --profile slicer-gui build --no-cache slicer-gui`
+- **Adapter image build** (server/Vast): set `SLICER_HEART_VIEWER_REPO` (+ optional `SLICER_HEART_VIEWER_REF`), then `docker compose --profile slicer-gui build slicer-gui`
 - **Local dev mount** (no rebuild): set `SLICER_HEART_VIEWER_LOCAL_PATH` to your `SimplifiedViewer` folder (backend mounts it into each session container)
 - For the shared debug container only, also use `docker-compose.slicer-gui-dev.yml`
 - In My Projects, enable **Use Full Slicer** + **Use Simplified Viewer**

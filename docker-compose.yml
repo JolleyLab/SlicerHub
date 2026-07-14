@@ -104,6 +104,8 @@ services:
       - SLICER_GUI_READY_TIMEOUT_MS=${SLICER_GUI_READY_TIMEOUT_MS:-180000}
       - SLICER_GUI_REUSE_READY_TIMEOUT_MS=${SLICER_GUI_REUSE_READY_TIMEOUT_MS:-15000}
       - SLICER_GUI_SESSION_TTL_SECONDS=${SLICER_GUI_SESSION_TTL_SECONDS:-240}
+      # Soft-close warm seat idle window (Full Slicer keep-alive after Close).
+      - SLICER_GUI_WARM_IDLE_SECONDS=${SLICER_GUI_WARM_IDLE_SECONDS:-1800}
       - VIEWER_SESSION_TTL_SECONDS=${VIEWER_SESSION_TTL_SECONDS:-120}
       - VIEWER_SESSION_WATCHDOG_INTERVAL_MS=${VIEWER_SESSION_WATCHDOG_INTERVAL_MS:-30000}
       - SLICER_GUI_WATCHDOG_INTERVAL_MS=${SLICER_GUI_WATCHDOG_INTERVAL_MS:-30000}
@@ -158,15 +160,32 @@ services:
     depends_on:
       - nginx
 
-  # Optional 3D Slicer GUI image used by per-user My Projects Full Slicer sessions.
-  # Build: docker compose --profile slicer-gui build slicer-gui
+  # Optional 3D Slicer GUI images used by per-user My Projects Full Slicer sessions.
+  # Build: docker compose --profile slicer-gui build slicer-gui-base slicer-gui
+  #   (or ./slicer-gui-gpu/build.ps1 / build.sh)
+  # Adapter FROM base: set SLICER_GUI_BASE_IMAGE to a Hub tag later and rebuild slicer-gui only.
   # Optional shared debug instance: docker compose --profile slicer-gui up -d slicer-gui
   # Runtime sessions (no profile needed after image build): slicer-gui-{userId}
   #   → http://<host>:8000/slicer-gui/user-{userId}/vnc.html
+  slicer-gui-base:
+    build:
+      context: ./slicer-gui-gpu
+      dockerfile: Dockerfile.base
+    image: ${SLICER_GUI_BASE_IMAGE:-slicer-web-slicer-gui-base:local}
+    profiles:
+      - slicer-gui
+    # Image-only target for compose build; do not use as a long-running service.
+    entrypoint: ["/bin/true"]
+    restart: "no"
+    networks:
+      - trame-net
+
   slicer-gui:
     build:
       context: ./slicer-gui-gpu
+      dockerfile: Dockerfile
       args:
+        SLICER_GUI_BASE_IMAGE: ${SLICER_GUI_BASE_IMAGE:-slicer-web-slicer-gui-base:local}
         SLICER_HEART_VIEWER_REPO: ${SLICER_HEART_VIEWER_REPO:-}
         SLICER_HEART_VIEWER_REF: ${SLICER_HEART_VIEWER_REF:-}
     image: ${SLICER_GUI_IMAGE:-slicer-web-slicer-gui:local}

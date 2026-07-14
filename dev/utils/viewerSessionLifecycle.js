@@ -32,6 +32,7 @@ export function attachViewerSessionLifecycle({
     heartbeatIntervalMs = DEFAULT_HEARTBEAT_MS,
     heartbeatBody,
     releaseOnUnload = true,
+    releaseMode = null,
     onHeartbeatFailed
 }) {
     if (!sessionToken || !heartbeatUrl || !stopUrl) {
@@ -47,6 +48,14 @@ export function attachViewerSessionLifecycle({
             return heartbeatBody(token);
         }
         return { sessionToken: token };
+    };
+
+    const buildStopBody = (token) => {
+        const base = buildBody(token);
+        if (releaseMode) {
+            return { ...base, mode: releaseMode };
+        }
+        return base;
     };
 
     const release = () => {
@@ -66,7 +75,7 @@ export function attachViewerSessionLifecycle({
             credentials: 'include',
             keepalive: true,
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(buildBody(sessionToken))
+            body: JSON.stringify(buildStopBody(sessionToken))
         }).catch(() => {});
     };
 
@@ -131,7 +140,7 @@ export function attachViewerSessionLifecycle({
         });
     }
 
-    return { release, stopHeartbeat, cancelPendingRelease };
+    return { release, stopHeartbeat };
 }
 
 export async function stopViewerSession({

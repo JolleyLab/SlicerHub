@@ -4,12 +4,45 @@ Full desktop 3D Slicer in Docker with NVIDIA GPU acceleration and browser access
 
 Based on [lassoan/SlicerCloudContainers/slicer-gui-gpu](https://github.com/lassoan/SlicerCloudContainers/tree/main/slicer-gui-gpu).
 
+## Image layers (base + adapter)
+
+We split the image so we can stop owning the heavy desktop stack when upstream publishes to Hub/GHCR.
+
+| Image | Dockerfile | Owns |
+|---|---|---|
+| `slicer-web-slicer-gui-base:local` | `Dockerfile.base` | CUDA, Slicer, noVNC, VirtualGL, `start.sh` — **replace with Hub tag later** |
+| `slicer-web-slicer-gui:local` | `Dockerfile` | Open-request poller (`slicer_session.py`), `launch-slicer.sh`, optional SimplifiedViewer/Sandbox |
+
+Backend runtime uses **`SLICER_GUI_IMAGE`** (the adapter). Set **`SLICER_GUI_BASE_IMAGE`** when deriving from a published base.
+
+```bash
+# Build both (from this directory or via helper)
+./build.sh          # Linux/macOS
+./build.ps1         # Windows PowerShell
+
+# Or via compose (builds base then adapter)
+docker compose --profile slicer-gui build slicer-gui-base slicer-gui
+```
+
+**Future switch (no app code change):**
+
+```bash
+# .env
+SLICER_GUI_BASE_IMAGE=ghcr.io/example/slicer-gui-gpu:5.10
+SLICER_GUI_BUILD_BASE=false   # skip local Dockerfile.base
+SLICER_GUI_IMAGE=slicer-web-slicer-gui:local
+
+./build.ps1   # only builds the thin adapter FROM the Hub base
+```
+
+Soft ask for upstream (optional): publish a versioned image and ideally honor `SLICER_STARTUP_SCRIPT` / keep calling `/usr/local/bin/launch-slicer.sh` so we can keep overlaying one file.
+
 ## Compose profile
 
 This service is **optional** and does not start with the default stack:
 
 ```bash
-docker compose --profile slicer-gui build slicer-gui
+docker compose --profile slicer-gui build slicer-gui-base slicer-gui
 docker compose --profile slicer-gui up -d slicer-gui
 ```
 
@@ -32,28 +65,30 @@ Optional shared debug container (`compose --profile slicer-gui up slicer-gui`) s
 
 ## Optional: Simplified Viewer module
 
-To enable **Use Simplified Viewer** without modifying the upstream `SlicerHeartViewer` repository:
+To enable **Use Simplified Viewer** without modifying the upstream desktop image:
 
 - Set private build args in `.env` (or your deployment environment):
   - `SLICER_HEART_VIEWER_REPO` (private clone URL)
   - `SLICER_HEART_VIEWER_REF` (tag or commit SHA; pinning recommended)
-- Recreate the container:
+- Rebuild the **adapter** (base unchanged):
 
 ```bash
 docker compose --profile slicer-gui build slicer-gui
-docker compose --profile slicer-gui up -d --force-recreate slicer-gui
+# or: ./build.ps1
 ```
 
 At build time, `SimplifiedViewer` is copied into `/opt/slicer-modules/SimplifiedViewer` when `SLICER_HEART_VIEWER_REPO` is configured.
 
-The image also installs the **Sandbox** extension (provides `UserStatistics`, required by SimplifiedViewer). On first container start with a fresh home volume, launch will install Sandbox once if missing.
+The adapter also installs the **Sandbox** extension (provides `UserStatistics`, required by SimplifiedViewer). On first container start with a fresh home volume, launch will install Sandbox once if missing.
 
 At runtime, launch checks `${SLICER_SIMPLIFIED_VIEWER_PATH}` (default: `/opt/slicer-modules/SimplifiedViewer`) and falls back to `/home/slicer/data/SimplifiedViewer` for local/manual testing.
+
+Local script iteration without rebuilding the adapter: set `HOST_WORKSPACE_ROOT` (backend bind-mounts `slicer_session.py` / `launch-slicer.sh`) or use `docker-compose.slicer-gui-dev.yml` for the shared debug container.
 
 ## Requirements
 
 - NVIDIA GPU + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-- ~15 GB disk for the image build
+- ~15 GB disk for the **base** image build
 - NVIDIA Container Toolkit (see below)
 
 ## Verify GPU inside the container

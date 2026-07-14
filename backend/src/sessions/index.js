@@ -4,7 +4,9 @@ export {
     touchViewerSession,
     releaseViewerSession,
     forceStopViewerSession,
-    createSessionToken
+    createSessionToken,
+    getWarmIdleTtlSeconds,
+    VIEWER_RELEASE_MODES
 } from './lifecycle.js';
 export { getSessionTtlSeconds } from './config.js';
 export { startViewerSessionWatchdog, pruneExpiredViewerSessions } from './watchdog.js';

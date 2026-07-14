@@ -22,6 +22,19 @@ export function slicerGuiContainerName(userId) {
 }
 
 /**
+ * Map a host path to the form Docker Desktop on Windows accepts for binds
+ * (e.g. C:/Users/... → /c/Users/...).
+ */
+export function toDockerBindPath(hostPath) {
+    let normalized = String(hostPath || '').replace(/\\/g, '/');
+    if (/^[A-Za-z]:\//.test(normalized)) {
+        const drive = normalized[0].toLowerCase();
+        normalized = `/${drive}${normalized.slice(2)}`;
+    }
+    return normalized;
+}
+
+/**
  * Map a path visible inside the backend container to a host path for `docker run -v`.
  * data/slicer-gui is mounted at /app/data/slicer-gui in compose.
  */
@@ -32,13 +45,7 @@ export function hostBindPathForSlicerGuiDir(nativeDir) {
     const idx = native.toLowerCase().lastIndexOf(marker.toLowerCase());
     if (hostRoot && idx >= 0) {
         const rel = native.slice(idx + 1); // data/slicer-gui/...
-        let hostPath = `${hostRoot.replace(/\/$/, '')}/${rel}`;
-        // Docker Desktop on Windows often wants /c/Users/... form for binds from Linux VMs
-        if (/^[A-Za-z]:\//.test(hostPath)) {
-            const drive = hostPath[0].toLowerCase();
-            hostPath = `/${drive}${hostPath.slice(2)}`;
-        }
-        return hostPath;
+        return toDockerBindPath(`${hostRoot.replace(/\/$/, '')}/${rel}`);
     }
     return native;
 }
@@ -66,3 +73,73 @@ export function requestFilePath(userId) {
 export function busyFilePath(userId) {
     return path.join(slicerGuiUserDir(userId), '.slicer-busy');
 }
+
+export function lastLoadedFilePath(userId) {
+    return path.join(slicerGuiUserDir(userId), '.last-loaded.json');
+}
+
+export function slicerReadyFilePath(userId) {
+    return path.join(slicerGuiUserDir(userId), '.slicer-ready');
+}
+
+export function clearSlicerReadyFile(userId) {
+    try {
+        fs.unlinkSync(slicerReadyFilePath(userId));
+    } catch {
+        /* ignore */
+    }
+}
+
+export function readSlicerReadyFile(userId) {
+    try {
+        const raw = fs.readFileSync(slicerReadyFilePath(userId), 'utf8');
+        const parsed = JSON.parse(raw);
+        return parsed?.ready === true;
+    } catch {
+        return false;
+    }
+}
+
+export function readLastLoadedFile(userId) {
+    try {
+        const raw = fs.readFileSync(lastLoadedFilePath(userId), 'utf8');
+        const parsed = JSON.parse(raw);
+        const fileId = Number(parsed?.fileId);
+        if (!Number.isInteger(fileId) || fileId <= 0) return null;
+        return {
+            fileId,
+            fileName: parsed.fileName || null,
+            useSimplifiedViewer: parsed.useSimplifiedViewer === true,
+            // Older markers without sceneLoaded are treated as loaded (soft-close era).
+            sceneLoaded: parsed.sceneLoaded !== false
+        };
+    } catch {
+        return null;
+    }
+}
+
+export function writeLastLoadedFile(userId, {
+    fileId,
+    fileName = null,
+    useSimplifiedViewer = false,
+    sceneLoaded = true
+} = {}) {
+    ensureSlicerGuiUserDir(userId);
+    const payload = {
+        fileId: Number(fileId),
+        fileName,
+        useSimplifiedViewer: useSimplifiedViewer === true,
+        sceneLoaded: sceneLoaded === true,
+        updatedAt: new Date().toISOString()
+    };
+    fs.writeFileSync(lastLoadedFilePath(userId), JSON.stringify(payload));
+}
+
+export function clearLastLoadedFile(userId) {
+    try {
+        fs.unlinkSync(lastLoadedFilePath(userId));
+    } catch {
+        /* ignore */
+    }
+}
+

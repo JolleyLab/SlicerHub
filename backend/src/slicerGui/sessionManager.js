@@ -3,18 +3,28 @@ import http from 'http';
 import {
     ensureSlicerGuiUserDir,
     hostBindPathForSlicerGuiDir,
+    toDockerBindPath,
     slicerGuiContainerName,
-    safeSlicerGuiUserId
+    safeSlicerGuiUserId,
+    readLastLoadedFile,
+    clearLastLoadedFile,
+    clearSlicerReadyFile,
+    readSlicerReadyFile
 } from './paths.js';
+import { clearSlicerGuiPendingOpen } from './stageFile.js';
 import {
     beginSession,
     createSessionToken,
     clearSession,
-    endSession,
+    getSession,
     touchSession
 } from '../sessions/leaseRegistry.js';
 import { SESSION_KINDS } from '../sessions/kinds.js';
-import { stopSlicerGuiContainer, listPerUserSlicerGuiContainers as listSlicerGuiContainers } from '../sessions/providers/slicerGui.js';
+import {
+    releaseViewerSession,
+    VIEWER_RELEASE_MODES
+} from '../sessions/lifecycle.js';
+import { stopSlicerGuiContainer } from '../sessions/providers/slicerGui.js';
 
 const SLICER_GUI = SESSION_KINDS.SLICER_GUI;
 
@@ -27,39 +37,43 @@ const IMAGE = process.env.SLICER_GUI_IMAGE || 'slicer-web-slicer-gui:local';
 const READY_TIMEOUT_MS = Number(process.env.SLICER_GUI_READY_TIMEOUT_MS || 180000);
 const REUSE_READY_TIMEOUT_MS = Number(process.env.SLICER_GUI_REUSE_READY_TIMEOUT_MS || 15000);
 
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function probeNoVnc(containerName, timeoutMs = 2000) {
+    return new Promise((resolve, reject) => {
+        const req = http.get(
+            {
+                host: containerName,
+                port: 6080,
+                path: '/vnc.html',
+                timeout: timeoutMs
+            },
+            (res) => {
+                res.resume();
+                if (res.statusCode && res.statusCode < 500) {
+                    resolve();
+                } else {
+                    reject(new Error(`HTTP ${res.statusCode}`));
+                }
+            }
+        );
+        req.on('error', reject);
+        req.on('timeout', () => {
+            req.destroy();
+            reject(new Error('timeout'));
+        });
+    });
+}
+
 async function isNoVncReady(containerName, timeoutMs = 2000) {
     try {
-        await new Promise((resolve, reject) => {
-            const req = http.get(
-                {
-                    host: containerName,
-                    port: 6080,
-                    path: '/vnc.html',
-                    timeout: timeoutMs
-                },
-                (res) => {
-                    res.resume();
-                    if (res.statusCode && res.statusCode < 500) {
-                        resolve();
-                    } else {
-                        reject(new Error(`HTTP ${res.statusCode}`));
-                    }
-                }
-            );
-            req.on('error', reject);
-            req.on('timeout', () => {
-                req.destroy();
-                reject(new Error('timeout'));
-            });
-        });
+        await probeNoVnc(containerName, timeoutMs);
         return true;
     } catch {
         return false;
     }
-}
-
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function waitForNoVnc(containerName, timeoutMs = READY_TIMEOUT_MS, { touchLease } = {}) {
@@ -70,29 +84,7 @@ async function waitForNoVnc(containerName, timeoutMs = READY_TIMEOUT_MS, { touch
             touchLease();
         }
         try {
-            await new Promise((resolve, reject) => {
-                const req = http.get(
-                    {
-                        host: containerName,
-                        port: 6080,
-                        path: '/vnc.html',
-                        timeout: 2000
-                    },
-                    (res) => {
-                        res.resume();
-                        if (res.statusCode && res.statusCode < 500) {
-                            resolve();
-                        } else {
-                            reject(new Error(`HTTP ${res.statusCode}`));
-                        }
-                    }
-                );
-                req.on('error', reject);
-                req.on('timeout', () => {
-                    req.destroy();
-                    reject(new Error('timeout'));
-                });
-            });
+            await probeNoVnc(containerName, 2000);
             return;
         } catch (err) {
             lastError = err.message || String(err);
@@ -100,6 +92,20 @@ async function waitForNoVnc(containerName, timeoutMs = READY_TIMEOUT_MS, { touch
         }
     }
     throw new Error(`Full Slicer session not ready (${containerName}): ${lastError}`);
+}
+
+async function waitForSlicerSessionReady(userId, timeoutMs = READY_TIMEOUT_MS, { touchLease } = {}) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (touchLease) {
+            touchLease();
+        }
+        if (readSlicerReadyFile(userId)) {
+            return;
+        }
+        await sleep(400);
+    }
+    throw new Error(`Full Slicer UI not ready yet (user ${userId})`);
 }
 
 async function removeIfExists(containerName) {
@@ -113,17 +119,18 @@ async function removeIfExists(containerName) {
     }
 }
 
-export { listSlicerGuiContainers as listPerUserSlicerGuiContainers };
-
-export async function stopAllPerUserSlicerGuiSessions() {
-    const { stopAllPerUserSlicerGuiContainers } = await import('../sessions/providers/slicerGui.js');
-    return stopAllPerUserSlicerGuiContainers();
+function resolveSceneLoaded(priorMeta, persisted) {
+    if (persisted?.sceneLoaded === true || priorMeta.sceneLoaded === true) {
+        return true;
+    }
+    if (priorMeta.sceneLoaded === false || persisted?.sceneLoaded === false) {
+        return false;
+    }
+    // Legacy marker without sceneLoaded — readLastLoadedFile already treats as true.
+    return persisted != null && persisted.fileId != null;
 }
 
-/**
- * Ensure a per-user local Full Slicer container is running.
- * Local-only Phase A: one container per userId on trame-net.
- */
+/** Ensure a per-user local Full Slicer container is running on trame-net. */
 export async function ensureSlicerGuiSession({
     userId,
     sessionToken = null,
@@ -133,6 +140,7 @@ export async function ensureSlicerGuiSession({
     const containerName = slicerGuiContainerName(safeUserId);
     const dataDir = ensureSlicerGuiUserDir(safeUserId);
     const token = sessionToken || createSessionToken();
+    clearSlicerGuiPendingOpen(safeUserId);
 
     try {
         const existing = docker.getContainer(containerName);
@@ -151,38 +159,64 @@ export async function ensureSlicerGuiSession({
             }
             if (vncReady) {
                 const existingLease = getSession(SLICER_GUI, safeUserId);
-                const existingMode = existingLease?.metadata?.useSimplifiedViewer;
-                const desiredMode = useSimplifiedViewer === null
+                const existingMode = existingLease?.metadata?.useSimplifiedViewer === true;
+                const desiredMode = useSimplifiedViewer == null
                     ? null
                     : useSimplifiedViewer === true;
                 if (desiredMode !== null && existingMode !== desiredMode) {
                     console.log(
                         `Full Slicer mode changed for ${containerName} `
-                        + `(from ${existingMode === true ? 'simplified' : 'full'} `
+                        + `(from ${existingMode ? 'simplified' : 'full'} `
                         + `to ${desiredMode ? 'simplified' : 'full'}) — recreating`
                     );
                     clearSession(SLICER_GUI, safeUserId);
                     await existing.remove({ force: true });
                     vncReady = false;
-                }
-            }
-            if (vncReady) {
-                console.log(`Reusing Full Slicer session ${containerName}`);
-                const lease = beginSession(SLICER_GUI, safeUserId, {
-                    sessionToken: token,
-                    metadata: {
-                        containerName,
-                        useSimplifiedViewer: useSimplifiedViewer === true
+                } else if (!readSlicerReadyFile(safeUserId)) {
+                    // VNC can answer before Slicer UI/poller is up.
+                    try {
+                        await waitForSlicerSessionReady(safeUserId, READY_TIMEOUT_MS, {
+                            touchLease: () => touchSession(SLICER_GUI, safeUserId, token)
+                        });
+                    } catch {
+                        console.log(
+                            `Full Slicer ${containerName} VNC is up but Slicer UI is not ready — recreating`
+                        );
+                        clearSession(SLICER_GUI, safeUserId);
+                        clearSlicerReadyFile(safeUserId);
+                        await existing.remove({ force: true });
+                        vncReady = false;
                     }
-                });
-                return {
-                    containerName,
-                    containerId: info.Id,
-                    userId: safeUserId,
-                    dataDir,
-                    sessionToken: lease.sessionToken,
-                    reused: true
-                };
+                }
+                if (vncReady) {
+                    console.log(`Reusing Full Slicer session ${containerName}`);
+                    const priorMeta = existingLease?.metadata || {};
+                    const persisted = readLastLoadedFile(safeUserId);
+                    const lastLoadedFileId = priorMeta.lastLoadedFileId
+                        ?? persisted?.fileId
+                        ?? null;
+                    const sceneLoaded = resolveSceneLoaded(priorMeta, persisted);
+                    const lease = beginSession(SLICER_GUI, safeUserId, {
+                        sessionToken: token,
+                        metadata: {
+                            ...priorMeta,
+                            containerName,
+                            useSimplifiedViewer: useSimplifiedViewer === true,
+                            lastLoadedFileId,
+                            sceneLoaded
+                        }
+                    });
+                    return {
+                        containerName,
+                        containerId: info.Id,
+                        userId: safeUserId,
+                        dataDir,
+                        sessionToken: lease.sessionToken,
+                        reused: true,
+                        lastLoadedFileId,
+                        sceneLoaded
+                    };
+                }
             }
             console.log(`Full Slicer ${containerName} is running but VNC is not ready — recreating`);
             await existing.remove({ force: true });
@@ -196,6 +230,8 @@ export async function ensureSlicerGuiSession({
         }
     }
 
+    clearSlicerReadyFile(safeUserId);
+
     const hostDataDir = hostBindPathForSlicerGuiDir(dataDir);
     const binds = [
         `${hostDataDir}:/home/slicer/data`,
@@ -203,19 +239,9 @@ export async function ensureSlicerGuiSession({
     ];
 
     const hostWorkspace = (process.env.HOST_WORKSPACE_ROOT || '').trim().replace(/\\/g, '/');
-    const toDockerBind = (p) => {
-        let hostPath = String(p || '').replace(/\\/g, '/');
-        if (/^[A-Za-z]:\//.test(hostPath)) {
-            const drive = hostPath[0].toLowerCase();
-            hostPath = `/${drive}${hostPath.slice(2)}`;
-        }
-        return hostPath;
-    };
-
-    // Local/dev: mount SimplifiedViewer + session scripts from the host when configured.
     const simplifiedLocal = (process.env.SLICER_HEART_VIEWER_LOCAL_PATH || '').trim();
     if (simplifiedLocal) {
-        binds.push(`${toDockerBind(simplifiedLocal)}:/opt/slicer-modules/SimplifiedViewer:ro`);
+        binds.push(`${toDockerBindPath(simplifiedLocal)}:/opt/slicer-modules/SimplifiedViewer:ro`);
     }
     if (hostWorkspace) {
         const scripts = [
@@ -224,7 +250,7 @@ export async function ensureSlicerGuiSession({
             ['slicer-gui-gpu/install-slicer-extensions.py', '/usr/local/bin/install-slicer-extensions.py']
         ];
         for (const [rel, dest] of scripts) {
-            binds.push(`${toDockerBind(`${hostWorkspace.replace(/\/$/, '')}/${rel}`)}:${dest}:ro`);
+            binds.push(`${toDockerBindPath(`${hostWorkspace.replace(/\/$/, '')}/${rel}`)}:${dest}:ro`);
         }
     }
 
@@ -279,13 +305,17 @@ export async function ensureSlicerGuiSession({
         throw err;
     }
 
+    clearLastLoadedFile(safeUserId);
+
     // Register lease before noVNC is ready so the watchdog does not treat this as orphaned.
     const lease = beginSession(SLICER_GUI, safeUserId, {
         sessionToken: token,
         metadata: {
             containerName,
             starting: true,
-            useSimplifiedViewer: useSimplifiedViewer === true
+            useSimplifiedViewer: useSimplifiedViewer === true,
+            sceneLoaded: false,
+            lastLoadedFileId: null
         }
     });
 
@@ -293,8 +323,12 @@ export async function ensureSlicerGuiSession({
         await waitForNoVnc(containerName, READY_TIMEOUT_MS, {
             touchLease: () => touchSession(SLICER_GUI, safeUserId, token)
         });
+        await waitForSlicerSessionReady(safeUserId, READY_TIMEOUT_MS, {
+            touchLease: () => touchSession(SLICER_GUI, safeUserId, token)
+        });
     } catch (err) {
         clearSession(SLICER_GUI, safeUserId);
+        clearSlicerReadyFile(safeUserId);
         await removeIfExists(containerName);
         throw err;
     }
@@ -306,7 +340,9 @@ export async function ensureSlicerGuiSession({
         userId: safeUserId,
         dataDir,
         sessionToken: lease.sessionToken,
-        reused: false
+        reused: false,
+        sceneLoaded: false,
+        lastLoadedFileId: null
     };
 }
 
@@ -314,19 +350,35 @@ export function touchSlicerGuiSessionHeartbeat({ userId, sessionToken }) {
     return touchSession(SLICER_GUI, userId, sessionToken);
 }
 
-export async function releaseSlicerGuiSession({ userId, sessionToken }) {
+/**
+ * Release a Full Slicer seat.
+ * @param {'soft'|'hard'} [mode='hard'] soft keeps the container warm for fast reopen.
+ */
+export async function releaseSlicerGuiSession({
+    userId,
+    sessionToken,
+    mode = VIEWER_RELEASE_MODES.HARD
+}) {
     const safeUserId = safeSlicerGuiUserId(userId);
-    if (!endSession(SLICER_GUI, safeUserId, sessionToken)) {
-        return { stopped: false, reason: 'stale-session' };
+    const result = await releaseViewerSession(SLICER_GUI, safeUserId, sessionToken, { mode });
+    if (result.parked || result.stopped) {
+        clearSlicerGuiPendingOpen(safeUserId);
     }
-    await stopSlicerGuiContainer({ sessionKey: safeUserId });
-    return { stopped: true, containerName: slicerGuiContainerName(safeUserId) };
+    if (result.stopped) {
+        clearLastLoadedFile(safeUserId);
+    }
+    return {
+        ...result,
+        containerName: slicerGuiContainerName(safeUserId)
+    };
 }
 
 export async function stopSlicerGuiSession({ userId }) {
     const safeUserId = safeSlicerGuiUserId(userId);
     const containerName = slicerGuiContainerName(safeUserId);
     clearSession(SLICER_GUI, safeUserId);
+    clearSlicerGuiPendingOpen(safeUserId);
+    clearLastLoadedFile(safeUserId);
     await stopSlicerGuiContainer({ sessionKey: safeUserId });
-    return { stopped: true, containerName };
+    return { stopped: true, parked: false, containerName };
 }

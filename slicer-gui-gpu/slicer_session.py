@@ -3,18 +3,35 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import subprocess
+import tempfile
 import time
 import traceback
+import zipfile
 
 import slicer
 from qt import QTimer
 
 REQUEST_FILE = "/home/slicer/data/.open-request.json"
 BUSY_FILE = "/home/slicer/data/.slicer-busy"
+READY_FILE = "/home/slicer/data/.slicer-ready"
+LAST_LOADED_FILE = "/home/slicer/data/.last-loaded.json"
+LOAD_RESULT_FILE = "/home/slicer/data/.load-result.json"
 LOG_FILE = "/home/slicer/data/slicer-session.log"
-POLL_MS = 1000
+POLL_MS = 250
 MAX_LOAD_ATTEMPTS = 30
+# Failures that will not recover by retrying the same request.
+PERMANENT_LOAD_MARKERS = (
+    "CreateNodeByClass",
+    "Failed to load node from file",
+)
+# Optional MRML view nodes saved into scenes when extensions were present.
+STRIP_MRML_TAGS = (
+    "VirtualRealityView",
+    "ChartView",
+)
 _OVERLAY_HOLD_MS = 1800
 _busy = False
 _failed_attempts: dict[str, int] = {}
@@ -24,6 +41,10 @@ _poll_timer = None
 _load_overlay = None
 _overlay_raise_timer = None
 _hidden_view_widgets: list = []
+_viewer_mode_simplified: bool | None = None
+_ready_timer = None
+_ready_announced = False
+_last_load_error = ""
 
 
 def log(message: str) -> None:
@@ -620,11 +641,15 @@ def restore_full_slicer_ui() -> None:
 
 
 def maybe_apply_simplified_viewer(use_simplified_viewer: bool) -> None:
+    global _viewer_mode_simplified
     try:
+        if _viewer_mode_simplified is use_simplified_viewer:
+            return
         if use_simplified_viewer:
             apply_simplified_viewer_ui()
         else:
             restore_full_slicer_ui()
+        _viewer_mode_simplified = use_simplified_viewer
     except Exception as exc:
         mode = "SimplifiedViewer" if use_simplified_viewer else "Full Slicer"
         log(f"[slicer_session] Could not apply {mode} UI: {exc}")
@@ -647,24 +672,148 @@ def load_succeeded(
     return data_after > 0 and (data_after > data_before or data_after >= 1)
 
 
+def is_permanent_load_error(message: str) -> bool:
+    text = str(message or "")
+    return any(marker in text for marker in PERMANENT_LOAD_MARKERS)
+
+
+def strip_unsupported_mrml_nodes(mrml_text: str) -> tuple[str, list[str]]:
+    removed: list[str] = []
+    cleaned = mrml_text
+    for tag in STRIP_MRML_TAGS:
+        pattern = re.compile(
+            rf"<{tag}\b[^>]*/>|<{tag}\b[^>]*>.*?</{tag}>",
+            re.IGNORECASE | re.DOTALL,
+        )
+        cleaned, count = pattern.subn("", cleaned)
+        if count:
+            removed.append(f"{tag}x{count}")
+    return cleaned, removed
+
+
+def build_cleaned_mrb(path: str) -> str | None:
+    """Copy MRB with unsupported optional view nodes removed from the MRML XML."""
+    try:
+        tmp_dir = tempfile.mkdtemp(prefix="slicer-mrb-")
+        cleaned_path = os.path.join(tmp_dir, os.path.basename(path))
+        with zipfile.ZipFile(path, "r") as src_zip:
+            with zipfile.ZipFile(cleaned_path, "w", compression=zipfile.ZIP_DEFLATED) as dst_zip:
+                stripped_any = False
+                for info in src_zip.infolist():
+                    data = src_zip.read(info.filename)
+                    lower = info.filename.lower()
+                    if lower.endswith(".mrml"):
+                        text = data.decode("utf-8", errors="replace")
+                        cleaned, removed = strip_unsupported_mrml_nodes(text)
+                        if removed:
+                            stripped_any = True
+                            log(f"[slicer_session] Stripped unsupported MRML nodes: {', '.join(removed)}")
+                            data = cleaned.encode("utf-8")
+                    dst_zip.writestr(info, data)
+        if not stripped_any:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            return None
+        return cleaned_path
+    except Exception as exc:
+        log(f"[slicer_session] Could not build cleaned MRB: {exc}")
+        return None
+
+
+def write_load_result(success: bool, payload: dict | None = None, error: str = "") -> None:
+    try:
+        with open(LOAD_RESULT_FILE, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "success": success is True,
+                "fileId": payload.get("fileId") if payload else None,
+                "path": (payload or {}).get("containerPath"),
+                "error": error or None,
+                "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }))
+    except OSError as exc:
+        log(f"[slicer_session] Could not write load result: {exc}")
+
+
+def persist_scene_loaded(payload: dict) -> None:
+    """Mark scene loaded only after a confirmed Slicer load (for warm reopen skip)."""
+    try:
+        with open(LAST_LOADED_FILE, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "fileId": payload.get("fileId"),
+                "fileName": payload.get("fileName") or payload.get("stagedName"),
+                "useSimplifiedViewer": payload.get("useSimplifiedViewer") is True,
+                "sceneLoaded": True,
+                "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }))
+    except OSError as exc:
+        log(f"[slicer_session] Could not persist last-loaded marker: {exc}")
+
+
+def load_mrb_scene(path: str) -> bool:
+    global _last_load_error
+    _last_load_error = ""
+    cleaned_path = None
+    try:
+        log(f"[slicer_session] loadScene: {path}")
+        slicer.mrmlScene.Clear(0)
+        slicer.app.processEvents()
+        try:
+            ok = bool(slicer.util.loadScene(path))
+        except Exception as exc:
+            _last_load_error = str(exc)
+            log(f"[slicer_session] loadScene exception: {exc}")
+            ok = False
+
+        if ok:
+            return True
+
+        if is_permanent_load_error(_last_load_error) or not _last_load_error:
+            cleaned_path = build_cleaned_mrb(path)
+            if cleaned_path:
+                log(f"[slicer_session] Retry loadScene with cleaned MRB: {cleaned_path}")
+                slicer.mrmlScene.Clear(0)
+                slicer.app.processEvents()
+                try:
+                    ok = bool(slicer.util.loadScene(cleaned_path))
+                    if ok:
+                        _last_load_error = ""
+                        return True
+                except Exception as exc:
+                    _last_load_error = str(exc)
+                    log(f"[slicer_session] Cleaned MRB load exception: {exc}")
+
+        log("[slicer_session] loadScene failed, trying ioManager.loadFile")
+        try:
+            ok = bool(slicer.app.ioManager().loadFile(path, True))
+            if ok:
+                _last_load_error = ""
+            return ok
+        except Exception as exc:
+            _last_load_error = str(exc)
+            log(f"[slicer_session] ioManager exception: {exc}")
+            return False
+    finally:
+        if cleaned_path:
+            try:
+                shutil.rmtree(os.path.dirname(cleaned_path), ignore_errors=True)
+            except Exception:
+                pass
+
+
 def load_staged_file(path: str, defer_view_refresh: bool = False) -> bool:
+    global _last_load_error
     if not os.path.isfile(path):
         log(f"[slicer_session] Staged file missing: {path}")
+        _last_load_error = "staged file missing"
         return False
 
     nodes_before = slicer.mrmlScene.GetNumberOfNodes()
     data_before = count_data_nodes()
     lower = path.lower()
+    ok = False
 
     try:
         if lower.endswith(".mrb"):
-            log(f"[slicer_session] loadScene: {path}")
-            slicer.mrmlScene.Clear(0)
-            slicer.app.processEvents()
-            ok = bool(slicer.util.loadScene(path))
-            if not ok:
-                log("[slicer_session] loadScene failed, trying ioManager.loadFile")
-                ok = bool(slicer.app.ioManager().loadFile(path, True))
+            ok = load_mrb_scene(path)
         else:
             log(f"[slicer_session] Add Data via ioManager: {path}")
             ok = bool(slicer.app.ioManager().loadFile(path, False))
@@ -672,6 +821,7 @@ def load_staged_file(path: str, defer_view_refresh: bool = False) -> bool:
                 log("[slicer_session] ioManager failed, trying loadVolume")
                 ok = slicer.util.loadVolume(path) is not None
     except Exception as exc:
+        _last_load_error = str(exc)
         log(f"[slicer_session] Load exception: {exc}")
         log(traceback.format_exc())
         return False
@@ -722,6 +872,37 @@ def clear_busy() -> None:
         pass
 
 
+def clear_ready() -> None:
+    try:
+        os.remove(READY_FILE)
+    except OSError:
+        pass
+
+
+def mark_ready() -> None:
+    global _ready_announced
+    try:
+        with open(READY_FILE, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "ready": True,
+                "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }))
+        if not _ready_announced:
+            log("[slicer_session] Ready for open requests")
+            _ready_announced = True
+    except OSError as exc:
+        log(f"[slicer_session] Could not write ready file: {exc}")
+
+
+def maintain_ready_marker() -> None:
+    """Publish readiness only once the main window UI can accept loads."""
+    if ui_ready():
+        mark_ready()
+        QTimer.singleShot(2000, maintain_ready_marker)
+    else:
+        QTimer.singleShot(500, maintain_ready_marker)
+
+
 def poll_open_requests() -> None:
     global _busy, _last_completed_key, _ui_wait_logged
     if _busy:
@@ -758,16 +939,14 @@ def poll_open_requests() -> None:
             f"useSimplifiedViewer={use_simplified_viewer})"
         )
 
-        if use_simplified_viewer:
-            show_load_overlay("Opening simplified viewer…")
-            overlay_shown = True
-        else:
-            show_load_overlay("Opening Full Slicer…")
-            overlay_shown = True
+        show_load_overlay(
+            "Opening simplified viewer…" if use_simplified_viewer else "Opening Full Slicer…"
+        )
+        overlay_shown = True
+
+        # Apply chrome mode once per transition (skipping repeated Full restores saves time).
         maybe_apply_simplified_viewer(use_simplified_viewer)
 
-        slicer.mrmlScene.Clear(0)
-        slicer.app.processEvents()
         if not wait_file_readable(path):
             log(f"[slicer_session] Timed out waiting for {path}")
             attempts = _failed_attempts.get(dedupe_key, 0) + 1
@@ -777,6 +956,7 @@ def poll_open_requests() -> None:
                 _failed_attempts.pop(dedupe_key, None)
             return
 
+        # load_staged_file clears the MRML scene once for .mrb — avoid a second Clear here.
         if load_staged_file(path, defer_view_refresh=use_simplified_viewer):
             if use_simplified_viewer:
                 maybe_apply_simplified_viewer(True)
@@ -788,17 +968,26 @@ def poll_open_requests() -> None:
                 QTimer.singleShot(_OVERLAY_HOLD_MS + 50, clear_busy)
             _last_completed_key = key
             _failed_attempts.pop(dedupe_key, None)
+            persist_scene_loaded(payload)
+            write_load_result(True, payload)
             clear_request()
             log(f"[slicer_session] Done: {path}")
-            QTimer.singleShot(250, poll_open_requests)
+            QTimer.singleShot(100, poll_open_requests)
             return
 
         attempts = _failed_attempts.get(dedupe_key, 0) + 1
         _failed_attempts[dedupe_key] = attempts
-        log(f"[slicer_session] Load failed (attempt {attempts}/{MAX_LOAD_ATTEMPTS}): {path}")
-        if attempts >= MAX_LOAD_ATTEMPTS:
+        permanent = is_permanent_load_error(_last_load_error)
+        log(
+            f"[slicer_session] Load failed (attempt {attempts}/{MAX_LOAD_ATTEMPTS})"
+            + (" [permanent]" if permanent else "")
+            + f": {path}"
+        )
+        if permanent or attempts >= MAX_LOAD_ATTEMPTS:
+            write_load_result(False, payload, error=_last_load_error or "load failed")
             clear_request()
             _failed_attempts.pop(dedupe_key, None)
+            log(f"[slicer_session] Giving up on open request: {path}")
     finally:
         if overlay_shown:
             hide_load_overlay()
@@ -810,11 +999,13 @@ def poll_open_requests() -> None:
 def start_polling() -> None:
     global _poll_timer
     clear_busy()
+    clear_ready()
     _poll_timer = QTimer()
     _poll_timer.timeout.connect(poll_open_requests)
     _poll_timer.start(POLL_MS)
     log(f"[slicer_session] Polling {REQUEST_FILE} every {POLL_MS}ms")
-    QTimer.singleShot(3000, poll_open_requests)
+    QTimer.singleShot(500, maintain_ready_marker)
+    QTimer.singleShot(500, poll_open_requests)
 
 
 start_polling()

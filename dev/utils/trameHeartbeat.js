@@ -5,9 +5,15 @@ import {
     getLastViewerActivityAt
 } from './viewerActivity.js';
 
+/**
+ * Ping a viewer session lease. Optionally close on client-side idle timeout.
+ * Works for Trame and Full Slicer (pass heartbeatUrl from getViewerSessionEndpoints).
+ */
 export async function sendTrameContainerHeartbeat({
     sessionToken,
-    onIdleTimeout
+    onIdleTimeout,
+    heartbeatUrl = `${API_URL}/api/containers/heartbeat`,
+    includeUserActive = true
 } = {}) {
     const lastAt = getLastViewerActivityAt();
     if (lastAt > 0 && !isViewerUserActive() && (Date.now() - lastAt) >= getViewerIdleMs()) {
@@ -15,14 +21,15 @@ export async function sendTrameContainerHeartbeat({
         return { idleTimedOut: true };
     }
 
-    const body = {
-        userActive: isViewerUserActive()
-    };
+    const body = {};
+    if (includeUserActive) {
+        body.userActive = isViewerUserActive();
+    }
     if (sessionToken) {
         body.sessionToken = sessionToken;
     }
 
-    const response = await fetch(`${API_URL}/api/containers/heartbeat`, {
+    const response = await fetch(heartbeatUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -35,5 +42,9 @@ export async function sendTrameContainerHeartbeat({
         throw err;
     }
 
-    return response.json();
+    try {
+        return await response.json();
+    } catch {
+        return { ok: true };
+    }
 }

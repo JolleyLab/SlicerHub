@@ -15,6 +15,7 @@ import {
     setActiveProjectGpuProvider,
     setProjectGpuDefaultProvider,
     openFullSlicerViewer,
+    prepareFullSlicerViewer,
     startProjectGpuBilling,
     stopProjectGpuBilling,
     acknowledgeProjectGpuError,
@@ -22,7 +23,10 @@ import {
     prestageProjectGpu
 } from '../services/projectGpu.js';
 import { resolveTramePageUrl } from '../utils/trameViewerUrl.js';
-import { getCachedLocalSlicerViewerOptions } from '../utils/userPreferences.js';
+import {
+    getCachedLocalSlicerViewerOptions,
+    fetchUserPreferences
+} from '../utils/userPreferences.js';
 import {
     scheduleViewerStopOnLeave,
     cancelViewerStopOnLeave
@@ -36,6 +40,15 @@ import {
 } from '../utils/viewerActivity.js';
 import { sendTrameContainerHeartbeat } from '../utils/trameHeartbeat.js';
 import { stopViewerSession } from '../utils/viewerSessionLifecycle.js';
+import {
+    VIEWER_KINDS,
+    VIEWER_RELEASE_MODES,
+    defaultReleaseModeForClose,
+    getViewerSessionEndpoints,
+    buildViewerStopBody,
+    buildSlicerGuiLoaderUrl,
+    viewerDisplayName
+} from '../utils/viewerLaunch.js';
 
 const GPU_PROVIDER_CONSOLE_URLS = {
     vast: 'https://cloud.vast.ai/instances/'
@@ -147,6 +160,31 @@ export class ProjectReviewPage extends LitElement {
 
             .close-iframe-btn:hover {
                 background: #d32f2f;
+            }
+
+            .iframe-header-actions {
+                display: flex;
+                gap: 10px;
+                align-items: center;
+            }
+
+            .open-window-btn {
+                background: #555;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+            }
+
+            .open-window-btn:hover:not(:disabled) {
+                background: #666;
+            }
+
+            .open-window-btn:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
             }
 
             .iframe-container {
@@ -647,6 +685,8 @@ export class ProjectReviewPage extends LitElement {
             loadingProjectFiles: { type: Boolean },
             showIframe: { type: Boolean },
             iframeUrl: { type: String },
+            viewerKind: { type: String },
+            viewerSimplified: { type: Boolean },
             viewerLoading: { type: Boolean },
             viewerLoadingDetail: { type: String },
             launchingFileId: { type: Number },
@@ -697,6 +737,8 @@ export class ProjectReviewPage extends LitElement {
         this.loadingProjectFiles = false;
         this.showIframe = false;
         this.iframeUrl = '';
+        this.viewerKind = VIEWER_KINDS.TRAME;
+        this.viewerSimplified = false;
         this.viewerLoading = false;
         this.viewerLoadingDetail = '';
         this.launchingFileId = null;
@@ -726,6 +768,7 @@ export class ProjectReviewPage extends LitElement {
         this.gpuPanelOpen = false;
         this._prestageHoverTimer = null;
         this._autoPrestageDone = false;
+        this._fullSlicerWarmPromise = null;
         this.toastTimeout = null;
         this._lastErrorAlertKey = '';
         this._errorAlertKind = null;
@@ -761,10 +804,21 @@ export class ProjectReviewPage extends LitElement {
         }
         this._handleBeforeUnload = () => {
             if (!this.showIframe || !this._viewerSessionToken) return;
+            const kind = this.viewerKind || VIEWER_KINDS.TRAME;
+            const { stopUrl } = getViewerSessionEndpoints({
+                kind,
+                projectId: this.projectId
+            });
             stopViewerSession({
-                stopUrl: `${API_URL}/api/containers/stop`,
+                stopUrl,
                 sessionToken: this._viewerSessionToken,
-                body: this.projectId ? { projectId: this.projectId } : {},
+                body: buildViewerStopBody({
+                    kind,
+                    sessionToken: this._viewerSessionToken,
+                    projectId: this.projectId,
+                    // Soft-park Full Slicer so refresh/reopen can reuse the warm seat.
+                    mode: defaultReleaseModeForClose(kind)
+                }),
                 keepalive: true
             });
         };
@@ -779,9 +833,15 @@ export class ProjectReviewPage extends LitElement {
         this.stopGpuPolling();
         const hadViewer = this.showIframe || (this.iframeUrl && this.iframeUrl !== 'about:blank');
         const projectId = this.projectId;
+        const viewerKind = this.viewerKind || VIEWER_KINDS.TRAME;
+        const sessionToken = this._viewerSessionToken;
         if (hadViewer && projectId) {
             scheduleViewerStopOnLeave(projectId, () => {
-                this.cleanupContainerSession(projectId);
+                this.cleanupContainerSession(projectId, {
+                    kind: viewerKind,
+                    sessionToken,
+                    mode: defaultReleaseModeForClose(viewerKind)
+                });
             });
         }
         this.showIframe = false;
@@ -976,6 +1036,7 @@ export class ProjectReviewPage extends LitElement {
             this.collaborators = this.sortCollaborators(collaborators.map((entry) => ({ ...entry })));
             this.originalCollaborators = this.sortCollaborators(collaborators.map((entry) => ({ ...entry })));
             await Promise.all([this.loadProjectFiles(), this.loadProjectGpu()]);
+            this.maybeWarmLocalFullSlicer();
         } catch (error) {
             this.showErrorAlert(error.message || 'Unable to load project.', {
                 title: 'Unable to load project',
@@ -1108,79 +1169,99 @@ export class ProjectReviewPage extends LitElement {
     }
 
     async handleLaunchFullSlicer(file) {
-        this.launchingFileId = file.id;
-        this.currentFileName = file.originalName;
-
-        // Open synchronously on click so the browser does not treat this as a blocked pop-up.
-        const tabName = 'slicer-gui-viewer';
-        const popup = window.open('about:blank', tabName);
-        if (!popup) {
-            this.launchingFileId = null;
-            this.currentFileName = '';
-            this.showErrorAlert('Pop-up blocked. Allow pop-ups for this site and try again.', {
-                title: 'Unable to open file',
-                force: true
-            });
-            return;
+        if (this.projectId) {
+            cancelViewerStopOnLeave(this.projectId);
+        }
+        // Keep the warm seat attached when switching files — soft-park between
+        // opens races the new stage request and can leave the loader waiting forever.
+        const switchingInPlace = this.showIframe
+            && this.viewerKind === VIEWER_KINDS.SLICER_GUI
+            && !!this._viewerSessionToken;
+        if (this.showIframe && !switchingInPlace) {
+            await this.closeIframe();
+        } else if (switchingInPlace) {
+            this.stopTrameHeartbeat();
+            if (this._viewerIframeActivityCleanup) {
+                this._viewerIframeActivityCleanup();
+                this._viewerIframeActivityCleanup = null;
+            }
         }
 
         try {
-            popup.document.open();
-            popup.document.write(`<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8" />
-<style>
-  html,body{margin:0;height:100%;background:#0c0c14;color:#e8e8ef;
-  font-family:system-ui,sans-serif;display:flex;align-items:center;
-  justify-content:center;text-align:center;padding:24px}
-</style></head>
-<body><div><p>Starting Full Slicer…</p><p style="color:#9aa0b4;font-size:0.9rem">
-First launch can take 1–2 minutes.</p></div></body></html>`);
-            popup.document.close();
+            await fetchUserPreferences();
+        } catch (_) {
+            /* use cached prefs if refresh fails */
+        }
 
+        const simplified = this.useLocalSimplifiedViewer;
+        const label = viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified });
+        this.currentFileName = file.originalName;
+        this.launchingFileId = file.id;
+        this.viewerKind = VIEWER_KINDS.SLICER_GUI;
+        this.viewerSimplified = simplified;
+        this.viewerLoading = true;
+        this.viewerLoadingDetail = switchingInPlace
+            ? `Switching to ${file.originalName}…`
+            : `Starting ${label} for ${file.originalName}…`;
+        this.showIframe = true;
+        this.iframeUrl = 'about:blank';
+
+        try {
+            this.stopTrameHeartbeat();
             const data = await openFullSlicerViewer(this.projectId, file.id, {
-                useSimplifiedViewer: this.useLocalSimplifiedViewer
+                useSimplifiedViewer: simplified
             });
 
-            const loader = new URL(
-                resolveTramePageUrl('/slicer-gui-loader.html'),
-                window.location.href
-            );
-            loader.searchParams.set('projectId', String(this.projectId));
-            loader.searchParams.set('fileId', String(file.id));
-            loader.searchParams.set('fileName', data.fileName || file.originalName || '');
-            if (data.useSimplifiedViewer || this.useLocalSimplifiedViewer) {
-                loader.searchParams.set('simplified', '1');
-            }
-            const vncPath = data.vncPath
-                || data.slicerGuiUrl
-                || '/slicer-gui/vnc.html?autoconnect=true&resize=scale';
-            // Prefer path-only for same-origin iframe/tab embedding.
-            let vncParam = vncPath;
-            try {
-                vncParam = new URL(vncPath, window.location.href).pathname
-                    + new URL(vncPath, window.location.href).search;
-            } catch (_) {
-                /* keep as-is */
-            }
-            loader.searchParams.set('vnc', vncParam);
-            if (data.sessionToken) {
-                loader.searchParams.set('sessionToken', data.sessionToken);
+            this._viewerSessionToken = data.sessionToken || null;
+            this.viewerSimplified = data.useSimplifiedViewer === true;
+            this.currentFileName = data.fileName || file.originalName;
+
+            if (this.viewerSimplified !== simplified) {
+                console.warn(
+                    'Full Slicer mode mismatch: client requested simplified='
+                    + simplified
+                    + ' but server returned '
+                    + this.viewerSimplified
+                );
             }
 
-            popup.location.href = loader.href;
-            popup.focus();
-            popup.opener = null;
+            // Quick splash only when the warm seat already has this scene in memory.
+            // Prepared-empty seats still need a real load (busy wait), not a reconnect skip.
+            const quickReconnect = data.sessionReused === true && data.sceneReloaded === false;
+            const url = buildSlicerGuiLoaderUrl({
+                projectId: this.projectId,
+                fileId: file.id,
+                fileName: this.currentFileName,
+                vncPath: data.vncPath || data.slicerGuiUrl || '',
+                sessionToken: this._viewerSessionToken,
+                simplified: this.viewerSimplified,
+                embed: true,
+                quick: quickReconnect
+            });
 
-            this.showToast(`Loading ${data.fileName} in Full Slicer — the viewer will update in a few seconds.`);
+            this.viewerLoadingDetail = quickReconnect
+                ? `Reconnecting to ${this.currentFileName}…`
+                : (data.sessionReused
+                    ? `Loading ${this.currentFileName}…`
+                    : `Loading ${this.currentFileName}… First launch can take 1–2 minutes.`);
+            this.iframeUrl = url;
+            markViewerActivity();
+            this.showToast(`Launched ${this.currentFileName} in ${viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified: this.viewerSimplified })}`);
+            this.startTrameHeartbeat();
         } catch (error) {
-            popup.close();
+            this.showIframe = false;
+            this.iframeUrl = '';
+            this.viewerKind = VIEWER_KINDS.TRAME;
+            this.viewerSimplified = false;
+            this.currentFileName = '';
+            this.viewerLoading = false;
+            this.viewerLoadingDetail = '';
+            this.launchingFileId = null;
+            this._viewerSessionToken = null;
             this.showErrorAlert(error.message || 'Unable to open Full Slicer.', {
                 title: 'Unable to open file',
                 force: true
             });
-        } finally {
-            this.launchingFileId = null;
-            this.currentFileName = '';
         }
     }
 
@@ -1360,6 +1441,37 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
             })
             .catch(() => {
                 this._autoPrestageDone = false;
+            });
+    }
+
+    /**
+     * Background-warm the local Full Slicer seat so the first Open skips cold boot.
+     * Safe to call repeatedly; no-ops when not using local Full Slicer or when a viewer is open.
+     */
+    maybeWarmLocalFullSlicer() {
+        if (!this.projectId || this.showIframe || !this.useLocalFullSlicer) {
+            return;
+        }
+        if (this._fullSlicerWarmPromise) {
+            return;
+        }
+        const simplified = this.useLocalSimplifiedViewer;
+        this._fullSlicerWarmPromise = prepareFullSlicerViewer(this.projectId, {
+            useSimplifiedViewer: simplified
+        })
+            .then((data) => {
+                if (data?.ready === true) {
+                    console.log('Full Slicer seat warmed', {
+                        sessionReused: data.sessionReused,
+                        warmIdleSeconds: data.warmIdleSeconds
+                    });
+                }
+            })
+            .catch((err) => {
+                console.warn('Full Slicer warm prepare failed:', err.message);
+            })
+            .finally(() => {
+                this._fullSlicerWarmPromise = null;
             });
     }
 
@@ -1878,6 +1990,8 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
         }
         this.currentFileName = file.originalName;
         this.launchingFileId = file.id;
+        this.viewerKind = VIEWER_KINDS.TRAME;
+        this.viewerSimplified = false;
         this.viewerLoading = true;
         this.viewerLoadingDetail = `Starting viewer for ${file.originalName}…`;
         this.showIframe = true;
@@ -1922,6 +2036,8 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
         } catch (error) {
             this.showIframe = false;
             this.iframeUrl = '';
+            this.viewerKind = VIEWER_KINDS.TRAME;
+            this.viewerSimplified = false;
             this.currentFileName = '';
             this.viewerLoading = false;
             this.viewerLoadingDetail = '';
@@ -1931,6 +2047,12 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
                 force: true
             });
         }
+    }
+
+    get viewerChromeLabel() {
+        return viewerDisplayName(this.viewerKind || VIEWER_KINDS.TRAME, {
+            simplified: this.viewerSimplified
+        });
     }
 
     get viewerLoadingMessage() {
@@ -1984,7 +2106,8 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
     async handleViewerInactivityTimeout() {
         if (!this.showIframe) return;
         this.showToast('Viewer closed after inactivity');
-        await this.closeIframe();
+        // Walk-away with an open viewer: tear down the seat (do not leave warm forever).
+        await this.closeIframe({ releaseMode: VIEWER_RELEASE_MODES.HARD });
         if (
             this.savedGpuProviderId !== 'local'
             && this.canManageGpu
@@ -2004,14 +2127,21 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
 
     startTrameHeartbeat() {
         this.stopTrameHeartbeat();
+        const kind = this.viewerKind || VIEWER_KINDS.TRAME;
+        const { heartbeatUrl } = getViewerSessionEndpoints({
+            kind,
+            projectId: this.projectId
+        });
         const ping = () => {
             sendTrameContainerHeartbeat({
                 sessionToken: this._viewerSessionToken,
+                heartbeatUrl,
+                includeUserActive: kind === VIEWER_KINDS.TRAME,
                 onIdleTimeout: () => this.handleViewerInactivityTimeout()
             }).catch(() => {});
         };
         ping();
-        this._trameHeartbeatInterval = setInterval(ping, 60000);
+        this._trameHeartbeatInterval = setInterval(ping, kind === VIEWER_KINDS.SLICER_GUI ? 30000 : 60000);
     }
 
     stopTrameHeartbeat() {
@@ -2021,16 +2151,38 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
         }
     }
 
-    async cleanupContainerSession(projectId = null) {
-        await stopViewerSession({
-            stopUrl: `${API_URL}/api/containers/stop`,
-            sessionToken: this._viewerSessionToken,
-            body: projectId ? { projectId } : {}
+    async cleanupContainerSession(projectId = null, overrides = {}) {
+        const kind = overrides.kind || this.viewerKind || VIEWER_KINDS.TRAME;
+        const token = overrides.sessionToken !== undefined
+            ? overrides.sessionToken
+            : this._viewerSessionToken;
+        const mode = overrides.mode || defaultReleaseModeForClose(kind);
+        if (overrides.sessionToken === undefined) {
+            this._viewerSessionToken = null;
+        } else if (token && token === this._viewerSessionToken) {
+            this._viewerSessionToken = null;
+        }
+        const { stopUrl } = getViewerSessionEndpoints({
+            kind,
+            projectId: projectId || this.projectId
         });
-        this._viewerSessionToken = null;
+        await stopViewerSession({
+            stopUrl,
+            sessionToken: token,
+            body: buildViewerStopBody({
+                kind,
+                sessionToken: token,
+                projectId: projectId || this.projectId,
+                mode
+            })
+        });
     }
 
-    async closeIframe() {
+    /**
+     * Close overlay UI and stop heartbeats without releasing the session
+     * (used when handing Full Slicer off to a standalone window).
+     */
+    detachViewerOverlay() {
         this.stopTrameHeartbeat();
         resetViewerActivity();
         if (this._viewerIframeActivityCleanup) {
@@ -2046,7 +2198,69 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
         this.viewerLoading = false;
         this.viewerLoadingDetail = '';
         this.launchingFileId = null;
-        await this.cleanupContainerSession(this.projectId);
+        this._viewerSessionToken = null;
+        this.viewerKind = VIEWER_KINDS.TRAME;
+        this.viewerSimplified = false;
+    }
+
+    openViewerInNewWindow() {
+        if (!this.iframeUrl || this.iframeUrl === 'about:blank') return;
+
+        let targetUrl = this.iframeUrl;
+        const handoffSlicerGui = this.viewerKind === VIEWER_KINDS.SLICER_GUI;
+        if (handoffSlicerGui) {
+            try {
+                const parsed = new URL(this.iframeUrl, window.location.href);
+                parsed.searchParams.delete('embed');
+                targetUrl = parsed.href;
+            } catch (_) {
+                /* keep as-is */
+            }
+        }
+
+        const width = Math.min(1400, window.screen.width * 0.9);
+        const height = Math.min(900, window.screen.height * 0.9);
+        const left = (window.screen.width - width) / 2;
+        const top = (window.screen.height - height) / 2;
+        const popup = window.open(
+            targetUrl,
+            'slicer-viewer',
+            `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
+        );
+        if (!popup) {
+            this.showErrorAlert('Pop-up blocked. Allow pop-ups for this site and try again.', {
+                title: 'Unable to open window',
+                force: true
+            });
+            return;
+        }
+        if (handoffSlicerGui) {
+            // Standalone loader owns heartbeat/soft-release once embed is removed.
+            this.detachViewerOverlay();
+        }
+    }
+
+    async closeIframe({ releaseMode = null } = {}) {
+        const kind = this.viewerKind || VIEWER_KINDS.TRAME;
+        const mode = releaseMode || defaultReleaseModeForClose(kind);
+        this.stopTrameHeartbeat();
+        resetViewerActivity();
+        if (this._viewerIframeActivityCleanup) {
+            this._viewerIframeActivityCleanup();
+            this._viewerIframeActivityCleanup = null;
+        }
+        if (this.projectId) {
+            cancelViewerStopOnLeave(this.projectId);
+        }
+        this.showIframe = false;
+        this.iframeUrl = '';
+        this.currentFileName = '';
+        this.viewerLoading = false;
+        this.viewerLoadingDetail = '';
+        this.launchingFileId = null;
+        await this.cleanupContainerSession(this.projectId, { kind, mode });
+        this.viewerKind = VIEWER_KINDS.TRAME;
+        this.viewerSimplified = false;
         if (this.savedGpuProviderId !== 'local' && this.gpuInstance?.status === 'running') {
             sendProjectGpuHeartbeat(this.projectId, { viewerActive: false }).catch(() => {});
         }
@@ -2552,10 +2766,20 @@ First launch can take 1–2 minutes.</p></div></body></html>`);
             ${this.showIframe ? html`
                 <div class="iframe-overlay">
                     <div class="iframe-header">
-                        <div class="iframe-title">Trame: ${this.currentFileName}</div>
-                        <button class="close-iframe-btn" @click=${() => this.closeIframe()}>
-                            Close Trame
-                        </button>
+                        <div class="iframe-title">${this.viewerChromeLabel}: ${this.currentFileName}</div>
+                        <div class="iframe-header-actions">
+                            <button
+                                class="open-window-btn"
+                                type="button"
+                                ?disabled=${this.iframeUrl === 'about:blank'}
+                                @click=${() => this.openViewerInNewWindow()}
+                            >
+                                Open in New Window
+                            </button>
+                            <button class="close-iframe-btn" type="button" @click=${() => this.closeIframe()}>
+                                Close ${this.viewerChromeLabel}
+                            </button>
+                        </div>
                     </div>
                     <div class="iframe-container">
                         ${this.iframeUrl !== 'about:blank' ? html`

@@ -2,7 +2,38 @@ import fs from 'fs';
 import path from 'path';
 import storage from '../storage/index.js';
 import { ValidationError } from '../utils/errors.js';
-import { ensureSlicerGuiUserDir } from './paths.js';
+import {
+    ensureSlicerGuiUserDir,
+    requestFilePath,
+    busyFilePath
+} from './paths.js';
+
+function unlinkQuiet(filePath) {
+    try {
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+    } catch {
+        /* best effort */
+    }
+}
+
+function chmodQuiet(filePath, mode) {
+    try {
+        fs.chmodSync(filePath, mode);
+    } catch {
+        /* best effort */
+    }
+}
+
+/** Clear open/busy markers so a prior launch cannot race a new session. */
+export function clearSlicerGuiPendingOpen(userId) {
+    const destDir = ensureSlicerGuiUserDir(userId);
+    unlinkQuiet(requestFilePath(userId));
+    unlinkQuiet(busyFilePath(userId));
+    unlinkQuiet(path.join(destDir, '.open-request.json.tmp'));
+    return destDir;
+}
 
 /**
  * Stage a project file into a per-user Full Slicer data directory and
@@ -33,23 +64,30 @@ export async function stageProjectFileForSlicerGui({
     }
 
     const srcPath = storage.resolvePath(sourceKey);
-    fs.copyFileSync(srcPath, destPath);
+    let copied = false;
     try {
-        fs.chmodSync(destPath, 0o666);
+        const srcStat = fs.statSync(srcPath);
+        if (fs.existsSync(destPath) && fs.statSync(destPath).size === srcStat.size) {
+            console.log('Reusing staged Full Slicer file on disk', {
+                userId: launcherUserId,
+                destPath,
+                bytes: srcStat.size
+            });
+        } else {
+            fs.copyFileSync(srcPath, destPath);
+            copied = true;
+        }
     } catch {
-        /* best effort */
+        fs.copyFileSync(srcPath, destPath);
+        copied = true;
     }
-    try {
-        const fd = fs.openSync(destPath, 'r');
-        fs.fsyncSync(fd);
-        fs.closeSync(fd);
-    } catch {
-        /* fsync optional */
+    if (copied) {
+        chmodQuiet(destPath, 0o666);
     }
 
     const containerPath = `/home/slicer/data/${stagedName}`;
-    const requestFile = path.join(destDir, '.open-request.json');
-    const busyFile = path.join(destDir, '.slicer-busy');
+    const requestFile = requestFilePath(launcherUserId);
+    const busyFile = busyFilePath(launcherUserId);
     const requestPayload = {
         fileId: file.id,
         fileName: safeName,
@@ -65,19 +103,11 @@ export async function stageProjectFileForSlicerGui({
         fileId: file.id,
         updatedAt: new Date().toISOString()
     }, null, 2));
-    try {
-        fs.chmodSync(busyFile, 0o666);
-    } catch {
-        /* best effort */
-    }
+    chmodQuiet(busyFile, 0o666);
 
     fs.writeFileSync(`${requestFile}.tmp`, JSON.stringify(requestPayload, null, 2));
     fs.renameSync(`${requestFile}.tmp`, requestFile);
-    try {
-        fs.chmodSync(requestFile, 0o666);
-    } catch {
-        /* best effort */
-    }
+    chmodQuiet(requestFile, 0o666);
 
     console.log('Staged full-slicer file', {
         userId: launcherUserId,
@@ -98,9 +128,9 @@ export async function stageProjectFileForSlicerGui({
 }
 
 export function readSlicerGuiBusyStatus(userId) {
-    const destDir = ensureSlicerGuiUserDir(userId);
-    const busyFile = path.join(destDir, '.slicer-busy');
-    const requestFile = path.join(destDir, '.open-request.json');
+    ensureSlicerGuiUserDir(userId);
+    const busyFile = busyFilePath(userId);
+    const requestFile = requestFilePath(userId);
     let busy = false;
     let message = '';
     let updatedAt = null;

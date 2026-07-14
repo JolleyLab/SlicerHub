@@ -133,6 +133,17 @@ export async function hydrateUserPreferencesFromUser(user) {
     return applyUserPreferences(preferences);
 }
 
+/**
+ * Refresh preferences from /api/auth/me (source of truth for account settings).
+ */
+export async function fetchUserPreferences() {
+    const response = await fetch(`${API_URL}/api/auth/me`, {
+        credentials: 'include'
+    });
+    const data = await parseResponse(response);
+    return applyUserPreferences(data.user?.preferences || {});
+}
+
 export async function saveUserPreferences(patch = {}) {
     const response = await fetch(`${API_URL}/api/auth/preferences`, {
         method: 'PUT',

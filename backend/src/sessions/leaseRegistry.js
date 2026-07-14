@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { getSessionTtlMs } from './config.js';
+import { getSessionTtlMs, getWarmIdleTtlMs } from './config.js';
 
 /** @type {Map<string, { sessionToken: string, lastHeartbeatAt: number, leaseExpiresAt: number, startedAt: number, metadata: Record<string, unknown> }>} */
 const sessions = new Map();
@@ -23,7 +23,11 @@ export function beginSession(kind, sessionKey, {
         lastHeartbeatAt: now,
         leaseExpiresAt: now + ttlMs,
         startedAt: now,
-        metadata
+        metadata: {
+            ...metadata,
+            parked: false,
+            viewerAttached: true
+        }
     };
     sessions.set(makeKey(kind, sessionKey), entry);
     return entry;
@@ -37,6 +41,33 @@ export function touchSession(kind, sessionKey, sessionToken) {
     const now = Date.now();
     entry.lastHeartbeatAt = now;
     entry.leaseExpiresAt = now + getSessionTtlMs(kind);
+    entry.metadata = {
+        ...entry.metadata,
+        parked: false,
+        viewerAttached: true
+    };
+    return entry;
+}
+
+/**
+ * Soft-release: keep runtime, drop attached-UI requirement, park until warm-idle TTL.
+ * Watchdog hard-stops when the parked lease expires.
+ */
+export function parkSession(kind, sessionKey, sessionToken, { idleTtlMs = null } = {}) {
+    const entry = sessions.get(makeKey(kind, sessionKey));
+    if (!entry || entry.sessionToken !== sessionToken) {
+        return null;
+    }
+    const now = Date.now();
+    const parkMs = idleTtlMs != null ? idleTtlMs : getWarmIdleTtlMs(kind);
+    entry.lastHeartbeatAt = now;
+    entry.leaseExpiresAt = now + parkMs;
+    entry.metadata = {
+        ...entry.metadata,
+        parked: true,
+        viewerAttached: false,
+        parkedAt: now
+    };
     return entry;
 }
 
@@ -56,6 +87,16 @@ export function clearSession(kind, sessionKey) {
 
 export function getSession(kind, sessionKey) {
     return sessions.get(makeKey(kind, sessionKey)) || null;
+}
+
+export function patchSessionMetadata(kind, sessionKey, patch = {}) {
+    const entry = sessions.get(makeKey(kind, sessionKey));
+    if (!entry) return null;
+    entry.metadata = {
+        ...entry.metadata,
+        ...patch
+    };
+    return entry;
 }
 
 export function clearSessions(kind = null) {
@@ -85,14 +126,4 @@ export function listExpiredSessions(kind = null, now = Date.now()) {
         }
     }
     return expired;
-}
-
-export function listActiveSessions(kind = null) {
-    const active = [];
-    for (const [key, entry] of sessions.entries()) {
-        const [entryKind, sessionKey] = key.split(':', 2);
-        if (kind && entryKind !== kind) continue;
-        active.push({ kind: entryKind, sessionKey, ...entry });
-    }
-    return active;
 }

@@ -1,9 +1,16 @@
 import { attachViewerSessionLifecycle } from './utils/viewerSessionLifecycle.js';
+import {
+    VIEWER_KINDS,
+    VIEWER_RELEASE_MODES,
+    getViewerSessionEndpoints
+} from './utils/viewerLaunch.js';
 
 const params = new URLSearchParams(window.location.search);
 let projectId = params.get('projectId') || '';
 let fileName = params.get('fileName') || '';
 const simplified = params.get('simplified') === '1';
+const embedded = params.get('embed') === '1';
+const quick = params.get('quick') === '1';
 let sessionToken = params.get('sessionToken') || '';
 const fileId = params.get('fileId') || '';
 let vncPath = params.get('vnc') || '/slicer-gui/vnc.html?autoconnect=true&resize=scale';
@@ -13,12 +20,26 @@ const title = document.getElementById('title');
 const subtitle = document.getElementById('subtitle');
 const viewer = document.getElementById('viewer');
 
+function sessionEndpoints() {
+    if (!projectId) return null;
+    return getViewerSessionEndpoints({
+        kind: VIEWER_KINDS.SLICER_GUI,
+        projectId,
+        apiUrl: ''
+    });
+}
+
 function setSplashMessage(heading, detail) {
     title.textContent = heading;
     subtitle.textContent = detail || '';
 }
 
-if (fileName) {
+if (quick) {
+    setSplashMessage(
+        simplified ? 'Reconnecting…' : 'Reconnecting to Full Slicer…',
+        fileName ? fileName : 'Restoring your session'
+    );
+} else if (fileName) {
     setSplashMessage(
         simplified ? 'Opening simplified viewer…' : 'Opening Full Slicer…',
         'Loading ' + fileName
@@ -28,8 +49,8 @@ if (fileName) {
 }
 
 const startedAt = Date.now();
-const maxWaitMs = 90000;
-const minSplashMs = 900;
+const maxWaitMs = quick ? 15000 : 90000;
+const minSplashMs = quick ? 150 : 900;
 let sawBusy = false;
 let revealed = false;
 let lifecycle = null;
@@ -41,12 +62,10 @@ function reveal() {
     splash.classList.add('hidden');
 }
 
-function apiBase() {
-    return '/api/projects/' + encodeURIComponent(projectId) + '/gpu';
-}
-
 async function heartbeatSession(token) {
-    const response = await fetch(apiBase() + '/full-slicer-heartbeat', {
+    const endpoints = sessionEndpoints();
+    if (!endpoints) return false;
+    const response = await fetch(endpoints.heartbeatUrl, {
         method: 'POST',
         credentials: 'include',
         cache: 'no-store',
@@ -57,9 +76,10 @@ async function heartbeatSession(token) {
 }
 
 async function reconnectSession() {
-    if (!projectId) return false;
+    const endpoints = sessionEndpoints();
+    if (!endpoints) return false;
     setSplashMessage('Reconnecting…', 'Restoring your Full Slicer session');
-    const response = await fetch(apiBase() + '/reconnect-full-slicer', {
+    const response = await fetch(endpoints.reconnectUrl, {
         method: 'POST',
         credentials: 'include',
         cache: 'no-store',
@@ -103,15 +123,18 @@ async function ensureViewerSession() {
 }
 
 function startLifecycle() {
-    if (!projectId || !sessionToken) {
+    // When embedded in the app iframe, the parent page owns heartbeat/stop.
+    const endpoints = sessionEndpoints();
+    if (embedded || !endpoints || !sessionToken) {
         return;
     }
     lifecycle?.stopHeartbeat?.();
     lifecycle = attachViewerSessionLifecycle({
         sessionToken,
-        heartbeatUrl: apiBase() + '/full-slicer-heartbeat',
-        stopUrl: apiBase() + '/stop-full-slicer',
+        heartbeatUrl: endpoints.heartbeatUrl,
+        stopUrl: endpoints.stopUrl,
         releaseOnUnload: true,
+        releaseMode: VIEWER_RELEASE_MODES.SOFT,
         onHeartbeatFailed: async () => {
             const ok = await reconnectSession();
             if (ok) {
@@ -121,17 +144,60 @@ function startLifecycle() {
     });
 }
 
+function notifyParentActivity() {
+    if (!embedded || window.parent === window) return;
+    try {
+        window.parent.postMessage({ type: 'slicer-viewer-activity' }, window.location.origin);
+    } catch {
+        /* ignore */
+    }
+}
+
+function installEmbedActivityBridge() {
+    if (!embedded) return;
+    const onActivity = () => notifyParentActivity();
+    ['pointerdown', 'keydown', 'wheel', 'touchstart', 'mousemove'].forEach((eventName) => {
+        window.addEventListener(eventName, onActivity, { passive: true, capture: true });
+    });
+    viewer.addEventListener('load', () => {
+        try {
+            const doc = viewer.contentDocument;
+            if (!doc) return;
+            ['pointerdown', 'keydown', 'wheel', 'touchstart', 'mousemove'].forEach((eventName) => {
+                doc.addEventListener(eventName, onActivity, { passive: true, capture: true });
+            });
+        } catch {
+            /* cross-origin VNC path */
+        }
+        notifyParentActivity();
+    });
+}
+
 function loadViewer() {
     viewer.src = vncPath;
+    if (quick) {
+        viewer.addEventListener('load', () => {
+            if (Date.now() - startedAt >= minSplashMs) {
+                reveal();
+            } else {
+                setTimeout(reveal, Math.max(0, minSplashMs - (Date.now() - startedAt)));
+            }
+        }, { once: true });
+    }
 }
 
 async function checkStatus() {
-    if (!projectId) {
+    if (quick) {
+        if (Date.now() - startedAt > 2500) reveal();
+        return;
+    }
+    const endpoints = sessionEndpoints();
+    if (!endpoints) {
         if (Date.now() - startedAt > 3500) reveal();
         return;
     }
     try {
-        const response = await fetch(apiBase() + '/full-slicer-status', {
+        const response = await fetch(endpoints.statusUrl, {
             credentials: 'include',
             cache: 'no-store'
         });
@@ -162,6 +228,7 @@ async function init() {
         );
         return;
     }
+    installEmbedActivityBridge();
     startLifecycle();
     loadViewer();
 

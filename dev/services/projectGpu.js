@@ -55,28 +55,25 @@ export async function setProjectGpuDefaultProvider(projectId, defaultProviderId)
     return saveProjectGpuSettings(projectId, { defaultProviderId });
 }
 
-export async function setProjectGpuLocalSlicerViewerOptions(projectId, options = {}) {
-    const payload = {};
-    if (options.useFullSlicer !== undefined) {
-        payload.useFullSlicer = !!options.useFullSlicer;
-    }
-    if (options.useSimplifiedViewer !== undefined) {
-        payload.useSimplifiedViewer = !!options.useSimplifiedViewer;
-    }
-    return saveProjectGpuSettings(projectId, payload);
-}
-
-/** @deprecated Prefer setProjectGpuLocalSlicerViewerOptions */
-export async function setProjectGpuUseFullSlicer(projectId, useFullSlicer) {
-    return setProjectGpuLocalSlicerViewerOptions(projectId, { useFullSlicer: !!useFullSlicer });
-}
-
 export async function openFullSlicerViewer(projectId, fileId, options = {}) {
-    const body = { fileId };
-    if (options.useSimplifiedViewer !== undefined) {
-        body.useSimplifiedViewer = !!options.useSimplifiedViewer;
-    }
+    const body = {
+        fileId,
+        useSimplifiedViewer: options.useSimplifiedViewer === true
+    };
     const response = await fetch(`${API_URL}/api/projects/${projectId}/gpu/open-full-slicer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(body)
+    });
+    return parseResponse(response);
+}
+
+export async function prepareFullSlicerViewer(projectId, options = {}) {
+    const body = {
+        useSimplifiedViewer: options.useSimplifiedViewer === true
+    };
+    const response = await fetch(`${API_URL}/api/projects/${projectId}/gpu/prepare-full-slicer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

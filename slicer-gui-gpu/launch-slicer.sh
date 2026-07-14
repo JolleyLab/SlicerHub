@@ -25,6 +25,9 @@ stop_running_slicer() {
 
 stop_running_slicer
 
+# Drop stale ready marker so the backend cannot reuse a previous session's claim.
+rm -f /home/slicer/data/.slicer-ready 2>/dev/null || true
+
 ensure_sandbox_extension() {
   # SimplifiedViewer depends on UserStatistics from Sandbox.
   # Extensions install under /opt/Slicer/slicer.org (shared) and require a restart to load.

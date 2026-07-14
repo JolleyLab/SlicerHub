@@ -1,6 +1,7 @@
 import Project from '../models/Project.js';
 import ProjectGpu from '../models/ProjectGpu.js';
 import File from '../models/File.js';
+import User from '../models/User.js';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { ValidationError } from '../utils/errors.js';
@@ -20,9 +21,69 @@ import {
     releaseSlicerGuiSession,
     stopSlicerGuiSession
 } from '../slicerGui/sessionManager.js';
-import { getSessionTtlSeconds, SESSION_KINDS } from '../sessions/index.js';
+import {
+    getSessionTtlSeconds,
+    SESSION_KINDS,
+    getWarmIdleTtlSeconds,
+    VIEWER_RELEASE_MODES
+} from '../sessions/index.js';
+import { normalizeViewerReleaseMode } from '../sessions/config.js';
+import { patchSessionMetadata } from '../sessions/leaseRegistry.js';
 import { stageProjectFileForSlicerGui, readSlicerGuiBusyStatus } from '../slicerGui/stageFile.js';
-import { buildSlicerGuiViewerPath } from '../slicerGui/paths.js';
+import {
+    buildSlicerGuiViewerPath,
+    writeLastLoadedFile,
+    clearLastLoadedFile
+} from '../slicerGui/paths.js';
+
+/**
+ * Prefer an explicit launch flag, then account prefs.
+ * Legacy project GPU viewer flags are ignored (they caused stale Simplified mode).
+ */
+function resolveUseSimplifiedViewer({ body, userId }) {
+    if (body?.useSimplifiedViewer !== undefined) {
+        return body.useSimplifiedViewer === true;
+    }
+    const accountPrefs = User.getPreferences(userId);
+    return accountPrefs?.useSimplifiedViewer === true;
+}
+
+function requireLocalGpu(projectId, unavailableMessage) {
+    const settings = ProjectGpu.getSettings(projectId);
+    if (settings.providerId !== 'local') {
+        throw new ValidationError(unavailableMessage);
+    }
+    return settings;
+}
+
+async function ensureLocalFullSlicerSeat(req, { failureMessage }) {
+    const useSimplifiedViewer = resolveUseSimplifiedViewer({
+        body: req.body,
+        userId: req.user.id
+    });
+    const launcherUserId = String(req.user.id);
+    try {
+        const session = await ensureSlicerGuiSession({
+            userId: launcherUserId,
+            useSimplifiedViewer
+        });
+        return { launcherUserId, useSimplifiedViewer, session };
+    } catch (err) {
+        throw new ValidationError(
+            err.message || failureMessage
+        );
+    }
+}
+
+function canAccessProjectFile(file, { projectId, userId }) {
+    if (!file) return false;
+    const projectRole = Project.findForUser({ projectId, userId })?.userRole;
+    return file.project_id === projectId
+        || file.user_id === userId
+        || projectRole === 'admin'
+        || projectRole === 'collaborator'
+        || projectRole === 'observer';
+}
 
 function buildConfiguredProviders(projectId) {
     const settings = ProjectGpu.getSettings(projectId);
@@ -358,11 +419,7 @@ export default function projectGpuRoutes(app) {
     app.post('/api/projects/:projectId/gpu/open-full-slicer', authenticateToken, asyncHandler(async (req, res) => {
         const projectId = parseProjectId(req.params.projectId);
         requireProjectAccess(projectId, req.user.id);
-
-        const settings = ProjectGpu.getSettings(projectId);
-        if (settings.providerId !== 'local') {
-            throw new ValidationError('Full Slicer viewer is only available when Local GPU is active');
-        }
+        requireLocalGpu(projectId, 'Full Slicer viewer is only available when Local GPU is active');
 
         const fileId = Number(req.body?.fileId);
         if (!Number.isInteger(fileId) || fileId <= 0) {
@@ -370,39 +427,50 @@ export default function projectGpuRoutes(app) {
         }
 
         const file = File.findById(fileId);
-        const projectRole = Project.findForUser({ projectId, userId: req.user.id })?.userRole;
-        const canAccess = !!file && (
-            file.project_id === projectId
-            || file.user_id === req.user.id
-            || projectRole === 'admin'
-            || projectRole === 'collaborator'
-            || projectRole === 'observer'
-        );
-        if (!canAccess) {
+        if (!canAccessProjectFile(file, { projectId, userId: req.user.id })) {
             throw new ValidationError('File not found or inaccessible');
         }
 
-        const useSimplifiedViewer = req.body?.useSimplifiedViewer === true
-            || settings.useSimplifiedViewer === true;
+        const { launcherUserId, useSimplifiedViewer, session } = await ensureLocalFullSlicerSeat(req, {
+            failureMessage: 'Unable to start local Full Slicer session. Is the slicer-gui image built?'
+        });
 
-        const launcherUserId = String(req.user.id);
-        let session;
-        try {
-            session = await ensureSlicerGuiSession({
+        // Only skip restage when this seat actually had the scene loaded
+        // (soft-close reopen). Empty prepare warm must never skip.
+        const sameFileAlreadyLoaded = session.reused === true
+            && session.sceneLoaded === true
+            && Number(session.lastLoadedFileId) === fileId;
+        let staged;
+        let sceneReloaded = true;
+        if (sameFileAlreadyLoaded) {
+            sceneReloaded = false;
+            staged = {
+                fileName: file.original_name,
+                useSimplifiedViewer,
+                skipped: true
+            };
+            console.log('Skipping Full Slicer restage (warm seat already has file)', {
                 userId: launcherUserId,
+                fileId
+            });
+        } else {
+            staged = await stageProjectFileForSlicerGui({
+                file,
+                launcherUserId,
                 useSimplifiedViewer
             });
-        } catch (err) {
-            throw new ValidationError(
-                err.message || 'Unable to start local Full Slicer session. Is the slicer-gui image built?'
-            );
+            patchSessionMetadata(SESSION_KINDS.SLICER_GUI, launcherUserId, {
+                lastLoadedFileId: file.id,
+                lastLoadedFileName: staged.fileName,
+                sceneLoaded: false
+            });
+            writeLastLoadedFile(launcherUserId, {
+                fileId: file.id,
+                fileName: staged.fileName,
+                useSimplifiedViewer,
+                sceneLoaded: false
+            });
         }
-
-        const staged = await stageProjectFileForSlicerGui({
-            file,
-            launcherUserId,
-            useSimplifiedViewer
-        });
         File.touchLastViewed(file.id);
 
         const viewerPath = buildSlicerGuiViewerPath(launcherUserId);
@@ -417,21 +485,19 @@ export default function projectGpuRoutes(app) {
             sessionToken: session.sessionToken,
             userId: launcherUserId,
             fileName: staged.fileName,
-            containerPath: staged.containerPath,
-            useSimplifiedViewer: staged.useSimplifiedViewer === true,
+            containerPath: staged.containerPath || null,
+            useSimplifiedViewer: staged.useSimplifiedViewer === true || useSimplifiedViewer === true,
             sessionReused: session.reused === true,
-            sessionTtlSeconds: getSessionTtlSeconds(SESSION_KINDS.SLICER_GUI)
+            sceneReloaded,
+            sessionTtlSeconds: getSessionTtlSeconds(SESSION_KINDS.SLICER_GUI),
+            warmIdleSeconds: getWarmIdleTtlSeconds(SESSION_KINDS.SLICER_GUI)
         });
     }));
 
     app.post('/api/projects/:projectId/gpu/full-slicer-heartbeat', authenticateToken, asyncHandler(async (req, res) => {
         const projectId = parseProjectId(req.params.projectId);
         requireProjectAccess(projectId, req.user.id);
-
-        const settings = ProjectGpu.getSettings(projectId);
-        if (settings.providerId !== 'local') {
-            throw new ValidationError('Full Slicer viewer is only available when Local GPU is active');
-        }
+        requireLocalGpu(projectId, 'Full Slicer viewer is only available when Local GPU is active');
 
         const sessionToken = String(req.body?.sessionToken || '').trim();
         if (!sessionToken) {
@@ -456,41 +522,17 @@ export default function projectGpuRoutes(app) {
     app.post('/api/projects/:projectId/gpu/reconnect-full-slicer', authenticateToken, asyncHandler(async (req, res) => {
         const projectId = parseProjectId(req.params.projectId);
         requireProjectAccess(projectId, req.user.id);
+        requireLocalGpu(projectId, 'Full Slicer viewer is only available when Local GPU is active');
 
-        const settings = ProjectGpu.getSettings(projectId);
-        if (settings.providerId !== 'local') {
-            throw new ValidationError('Full Slicer viewer is only available when Local GPU is active');
-        }
-
-        const useSimplifiedViewer = req.body?.useSimplifiedViewer === true
-            || settings.useSimplifiedViewer === true;
-
-        const launcherUserId = String(req.user.id);
-        let session;
-        try {
-            session = await ensureSlicerGuiSession({
-                userId: launcherUserId,
-                useSimplifiedViewer
-            });
-        } catch (err) {
-            throw new ValidationError(
-                err.message || 'Unable to reconnect local Full Slicer session. Is the slicer-gui image built?'
-            );
-        }
+        const { launcherUserId, useSimplifiedViewer, session } = await ensureLocalFullSlicerSeat(req, {
+            failureMessage: 'Unable to reconnect local Full Slicer session. Is the slicer-gui image built?'
+        });
 
         const fileId = Number(req.body?.fileId);
         let staged = null;
         if (Number.isInteger(fileId) && fileId > 0) {
             const file = File.findById(fileId);
-            const projectRole = Project.findForUser({ projectId, userId: req.user.id })?.userRole;
-            const canAccess = !!file && (
-                file.project_id === projectId
-                || file.user_id === req.user.id
-                || projectRole === 'admin'
-                || projectRole === 'collaborator'
-                || projectRole === 'observer'
-            );
-            if (canAccess) {
+            if (canAccessProjectFile(file, { projectId, userId: req.user.id })) {
                 staged = await stageProjectFileForSlicerGui({
                     file,
                     launcherUserId,
@@ -505,8 +547,48 @@ export default function projectGpuRoutes(app) {
             sessionToken: session.sessionToken,
             userId: launcherUserId,
             fileName: staged?.fileName || null,
+            useSimplifiedViewer,
             sessionReused: session.reused === true,
-            sessionTtlSeconds: getSessionTtlSeconds(SESSION_KINDS.SLICER_GUI)
+            sessionTtlSeconds: getSessionTtlSeconds(SESSION_KINDS.SLICER_GUI),
+            warmIdleSeconds: getWarmIdleTtlSeconds(SESSION_KINDS.SLICER_GUI)
+        });
+    }));
+
+    /** Background warm seat: start Full Slicer (no file) and park it. */
+    app.post('/api/projects/:projectId/gpu/prepare-full-slicer', authenticateToken, asyncHandler(async (req, res) => {
+        const projectId = parseProjectId(req.params.projectId);
+        requireProjectAccess(projectId, req.user.id);
+        requireLocalGpu(projectId, 'Full Slicer prepare is only available when Local GPU is active');
+
+        const { launcherUserId, useSimplifiedViewer, session } = await ensureLocalFullSlicerSeat(req, {
+            failureMessage: 'Unable to prepare local Full Slicer session. Is the slicer-gui image built?'
+        });
+
+        // Empty warm seat must not inherit a stale last-loaded claim from disk.
+        const keepScene = session.reused === true && session.sceneLoaded === true;
+        if (!keepScene) {
+            clearLastLoadedFile(launcherUserId);
+            patchSessionMetadata(SESSION_KINDS.SLICER_GUI, launcherUserId, {
+                lastLoadedFileId: null,
+                lastLoadedFileName: null,
+                sceneLoaded: false
+            });
+        }
+
+        const parked = await releaseSlicerGuiSession({
+            userId: launcherUserId,
+            sessionToken: session.sessionToken,
+            mode: VIEWER_RELEASE_MODES.SOFT
+        });
+
+        res.json({
+            ready: true,
+            sessionReused: session.reused === true,
+            sceneLoaded: keepScene,
+            useSimplifiedViewer,
+            warmIdleSeconds: getWarmIdleTtlSeconds(SESSION_KINDS.SLICER_GUI),
+            leaseExpiresAt: parked.leaseExpiresAt || null,
+            containerName: parked.containerName || session.containerName
         });
     }));
 
@@ -519,9 +601,11 @@ export default function projectGpuRoutes(app) {
             throw new ValidationError('sessionToken is required');
         }
 
+        const mode = normalizeViewerReleaseMode(req.body?.mode, { supportsSoft: true });
         const result = await releaseSlicerGuiSession({
             userId: String(req.user.id),
-            sessionToken
+            sessionToken,
+            mode
         });
 
         res.json({
@@ -535,10 +619,7 @@ export default function projectGpuRoutes(app) {
         requireProjectAccess(projectId, req.user.id);
 
         const status = readSlicerGuiBusyStatus(String(req.user.id));
-        res.json({
-            ...status,
-            useSimplifiedViewer: ProjectGpu.getSettings(projectId).useSimplifiedViewer === true
-        });
+        res.json(status);
     }));
 
     app.post('/api/projects/:projectId/gpu/prestage', authenticateToken, asyncHandler(async (req, res) => {
