@@ -13,7 +13,6 @@ import {
     listGpuProviders,
     configureProjectGpuProvider,
     setActiveProjectGpuProvider,
-    setProjectGpuDefaultProvider,
     openFullSlicerViewer,
     prepareFullSlicerViewer,
     startProjectGpuBilling,
@@ -124,79 +123,87 @@ export class ProjectReviewPage extends LitElement {
 
             .iframe-overlay {
                 position: fixed;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: rgba(0, 0, 0, 0.8);
+                inset: 0;
                 z-index: 1000;
                 display: flex;
                 flex-direction: column;
+                gap: 12px;
+                padding: 16px;
+                box-sizing: border-box;
+                background: var(--color-background);
+                color: var(--color-text-primary);
+                font-family: var(--font-family-base);
+                font-feature-settings: var(--font-feature-defaults);
             }
 
             .iframe-header {
-                background: #333;
-                color: white;
-                padding: 15px 20px;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
+                gap: 16px;
+                flex-shrink: 0;
+                padding: 12px 16px;
+                border: 1px solid var(--color-border);
+                border-radius: 12px;
+                background: var(--color-primary);
+                color: var(--color-background);
+                box-shadow: 0 6px 18px var(--color-shadow, rgba(0, 0, 0, 0.08));
             }
 
             .iframe-title {
-                font-size: 16px;
-                font-weight: 500;
-            }
-
-            .close-iframe-btn {
-                background: #f44336;
-                color: white;
-                border: none;
-                padding: 8px 20px;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 14px;
-            }
-
-            .close-iframe-btn:hover {
-                background: #d32f2f;
+                min-width: 0;
+                font-size: 1rem;
+                font-weight: 600;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
             }
 
             .iframe-header-actions {
                 display: flex;
+                flex-shrink: 0;
                 gap: 10px;
                 align-items: center;
             }
 
-            .open-window-btn {
-                background: #555;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 14px;
+            .iframe-header .secondary-button {
+                background: var(--color-secondary);
+                color: var(--color-background);
+                border-color: var(--color-border);
             }
 
-            .open-window-btn:hover:not(:disabled) {
-                background: #666;
+            .iframe-header .secondary-button:hover:not(:disabled) {
+                background: var(--color-accent);
+                color: var(--color-text-primary);
             }
 
-            .open-window-btn:disabled {
-                opacity: 0.5;
-                cursor: not-allowed;
+            .iframe-header .primary-button {
+                background: var(--color-background);
+                color: var(--color-primary);
+                border-color: var(--color-border);
+            }
+
+            .iframe-header .primary-button:hover:not(:disabled) {
+                background: var(--color-accent);
+                color: var(--color-text-primary);
             }
 
             .iframe-container {
                 flex: 1;
                 display: flex;
                 position: relative;
+                min-height: 0;
+                overflow: hidden;
+                border: 1px solid var(--color-border);
+                border-radius: 12px;
+                background: var(--color-surface, var(--color-background));
+                box-shadow: 0 6px 18px var(--color-shadow, rgba(0, 0, 0, 0.08));
             }
 
             .trame-iframe {
                 flex: 1;
                 border: none;
-                background: white;
+                background: var(--color-surface, var(--color-background));
                 width: 100%;
                 height: 100%;
             }
@@ -206,7 +213,7 @@ export class ProjectReviewPage extends LitElement {
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                background: white;
+                background: var(--color-surface, var(--color-background));
                 text-align: center;
             }
 
@@ -483,6 +490,22 @@ export class ProjectReviewPage extends LitElement {
                 font: inherit;
                 background: var(--color-background);
                 color: var(--color-text-primary);
+                box-sizing: border-box;
+                width: 100%;
+                max-width: 100%;
+            }
+
+            .gpu-field select {
+                appearance: none;
+                -webkit-appearance: none;
+                -moz-appearance: none;
+                min-height: 38px;
+                padding: 8px 36px 8px 10px;
+                line-height: 1.2;
+                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23666' d='M1.41 0.59 6 5.17 10.59 0.59 12 2l-6 6-6-6z'/%3E%3C/svg%3E");
+                background-repeat: no-repeat;
+                background-position: right 12px center;
+                background-size: 12px 8px;
             }
 
             .gpu-field textarea {
@@ -704,7 +727,7 @@ export class ProjectReviewPage extends LitElement {
             gpuSaving: { type: Boolean },
             gpuDialogProviderId: { type: String },
             gpuDialogApiKey: { type: String },
-            gpuDialogUseAsDefault: { type: Boolean },
+            gpuDialogUseNow: { type: Boolean },
             gpuDialogSaving: { type: Boolean },
             gpuBillingBusy: { type: Boolean },
             gpuBillingLease: { type: Object },
@@ -756,7 +779,7 @@ export class ProjectReviewPage extends LitElement {
         this.gpuSaving = false;
         this.gpuDialogProviderId = 'vast';
         this.gpuDialogApiKey = '';
-        this.gpuDialogUseAsDefault = true;
+        this.gpuDialogUseNow = true;
         this.gpuDialogSaving = false;
         this.gpuBillingBusy = false;
         this.gpuBillingLease = null;
@@ -1283,11 +1306,12 @@ export class ProjectReviewPage extends LitElement {
         return 'Paste API key';
     }
 
-    updateGpuDialogDefaultCheckbox() {
+    updateGpuDialogUseNowCheckbox() {
         const providerId = this.gpuDialogProviderId;
         const isNew = !this.isGpuProviderConfigured(providerId);
-        const isCurrentDefault = (this.gpuSettings?.defaultProviderId || 'local') === providerId;
-        this.gpuDialogUseAsDefault = isNew || isCurrentDefault;
+        const isActive = (this.gpuActiveProviderId || 'local') === providerId;
+        // New providers default to Use now; reconfigure keeps checked only if already active.
+        this.gpuDialogUseNow = isNew || isActive;
     }
 
     openGpuProviderDialog(providerId = null) {
@@ -1300,7 +1324,7 @@ export class ProjectReviewPage extends LitElement {
             || options[0]?.id
             || 'vast';
         this.gpuDialogApiKey = '';
-        this.updateGpuDialogDefaultCheckbox();
+        this.updateGpuDialogUseNowCheckbox();
         this.renderRoot?.querySelector('#gpu-provider-dialog')?.openDialog();
     }
 
@@ -1310,28 +1334,6 @@ export class ProjectReviewPage extends LitElement {
             : 'Add GPU Provider';
     }
 
-    async handleDefaultProviderChange(event) {
-        const defaultProviderId = event.target.value;
-        const current = this.gpuSettings?.defaultProviderId || 'local';
-        if (defaultProviderId === current || this.gpuSaving) return;
-
-        this.gpuSaving = true;
-        try {
-            const data = await setProjectGpuDefaultProvider(this.projectId, defaultProviderId);
-            this.applyGpuSettings(data.settings);
-            this.syncConfiguredProvidersFromSettings(data.settings);
-            this.showToast('Default GPU provider updated.');
-        } catch (error) {
-            this.showErrorAlert(error.message || 'Unable to set default GPU provider.', {
-                title: 'GPU settings',
-                force: true
-            });
-            this.requestUpdate();
-        } finally {
-            this.gpuSaving = false;
-        }
-    }
-
     closeGpuProviderDialog() {
         this.renderRoot?.querySelector('#gpu-provider-dialog')?.closeDialog();
     }
@@ -1339,11 +1341,11 @@ export class ProjectReviewPage extends LitElement {
     handleGpuDialogProviderChange(event) {
         this.gpuDialogProviderId = event.target.value;
         this.gpuDialogApiKey = '';
-        this.updateGpuDialogDefaultCheckbox();
+        this.updateGpuDialogUseNowCheckbox();
     }
 
-    handleGpuDialogUseAsDefaultChange(event) {
-        this.gpuDialogUseAsDefault = event.target.checked;
+    handleGpuDialogUseNowChange(event) {
+        this.gpuDialogUseNow = event.target.checked;
     }
 
     handleGpuDialogApiKeyInput(event) {
@@ -1367,7 +1369,7 @@ export class ProjectReviewPage extends LitElement {
         try {
             const payload = {
                 providerId,
-                setAsDefault: this.gpuDialogUseAsDefault
+                useNow: this.gpuDialogUseNow
             };
             if (this.gpuDialogApiKey.trim()) {
                 payload.apiKey = this.gpuDialogApiKey.trim();
@@ -1378,7 +1380,11 @@ export class ProjectReviewPage extends LitElement {
             this.ensureConfiguredProviderListed(providerId);
             this.gpuDialogApiKey = '';
             this.closeGpuProviderDialog();
-            this.showToast('GPU provider saved.');
+            this.showToast(
+                this.gpuDialogUseNow
+                    ? 'GPU provider saved and selected for Using now.'
+                    : 'GPU provider saved.'
+            );
         } catch (error) {
             this.showErrorAlert(error.message || 'Unable to save GPU provider.', {
                 title: 'GPU provider',
@@ -1746,12 +1752,12 @@ export class ProjectReviewPage extends LitElement {
 
     get localViewerFriendlyLabel() {
         if (!this.useLocalFullSlicer) {
-            return 'standard viewer';
+            return 'Standard Viewer';
         }
         if (this.useLocalSimplifiedViewer) {
-            return 'simplified viewer';
+            return 'Simplified Viewer';
         }
-        return 'full Slicer';
+        return 'Full Slicer';
     }
 
     get gpuFriendlySummary() {
@@ -2474,7 +2480,7 @@ export class ProjectReviewPage extends LitElement {
                                     ` : ''}
                                     ${this.canManageGpu ? html`
                                         <div class="gpu-field">
-                                            <label for="gpu-provider">Using now</label>
+                                            <label for="gpu-provider">GPU Provider to use:</label>
                                             <select
                                                 id="gpu-provider"
                                                 .value=${this.gpuActiveProviderId}
@@ -2485,24 +2491,6 @@ export class ProjectReviewPage extends LitElement {
                                                     <option
                                                         value=${provider.id}
                                                         ?selected=${this.gpuActiveProviderId === provider.id}
-                                                    >
-                                                        ${provider.label}
-                                                    </option>
-                                                `)}
-                                            </select>
-                                        </div>
-                                        <div class="gpu-field">
-                                            <label for="gpu-default-provider">Usually use</label>
-                                            <select
-                                                id="gpu-default-provider"
-                                                .value=${this.gpuSettings?.defaultProviderId || 'local'}
-                                                ?disabled=${this.gpuSaving}
-                                                @change=${(e) => this.handleDefaultProviderChange(e)}
-                                            >
-                                                ${this.configuredProviders.map((provider) => html`
-                                                    <option
-                                                        value=${provider.id}
-                                                        ?selected=${(this.gpuSettings?.defaultProviderId || 'local') === provider.id}
                                                     >
                                                         ${provider.label}
                                                     </option>
@@ -2738,10 +2726,10 @@ export class ProjectReviewPage extends LitElement {
                     <label class="gpu-dialog-checkbox">
                         <input
                             type="checkbox"
-                            .checked=${this.gpuDialogUseAsDefault}
-                            @change=${(e) => this.handleGpuDialogUseAsDefaultChange(e)}
+                            .checked=${this.gpuDialogUseNow}
+                            @change=${(e) => this.handleGpuDialogUseNowChange(e)}
                         />
-                        Use as default
+                        Use now
                     </label>
                     <div class="gpu-dialog-actions">
                         <button
@@ -2769,14 +2757,18 @@ export class ProjectReviewPage extends LitElement {
                         <div class="iframe-title">${this.viewerChromeLabel}: ${this.currentFileName}</div>
                         <div class="iframe-header-actions">
                             <button
-                                class="open-window-btn"
+                                class="secondary-button"
                                 type="button"
                                 ?disabled=${this.iframeUrl === 'about:blank'}
                                 @click=${() => this.openViewerInNewWindow()}
                             >
                                 Open in New Window
                             </button>
-                            <button class="close-iframe-btn" type="button" @click=${() => this.closeIframe()}>
+                            <button
+                                class="primary-button"
+                                type="button"
+                                @click=${() => this.closeIframe()}
+                            >
                                 Close ${this.viewerChromeLabel}
                             </button>
                         </div>

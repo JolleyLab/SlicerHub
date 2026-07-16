@@ -1,6 +1,11 @@
 import { LitElement, html, css } from 'lit-element';
 import { API_URL } from './config.js';
-import { APP_VIEWS, DEFAULT_APP_VIEW } from './components/app-views.js';
+import {
+  APP_VIEWS,
+  DEFAULT_APP_VIEW,
+  readAppViewFromUrl,
+  writeAppViewToUrl
+} from './components/app-views.js';
 import './login-form.js';
 import './register-form.js';
 import './file-manager.js';
@@ -154,11 +159,49 @@ export class TrameApp extends LitElement {
     this.shareReplayAttempts = 0;
     this.shareReplayInFlight = false;
     this._trameHeartbeatInterval = null;
+    this._onPopState = () => this.restoreViewFromUrl();
 
-    // Check for existing session
+    // Restore view from URL before session check so refresh lands on the same page.
     if (!this.shareToken) {
+      this.restoreViewFromUrl({ writeBack: false });
       this.checkExistingSession();
     }
+
+    window.addEventListener('popstate', this._onPopState);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback?.();
+    if (this._onPopState) {
+      window.removeEventListener('popstate', this._onPopState);
+    }
+  }
+
+  restoreViewFromUrl({ writeBack = true } = {}) {
+    if (this.shareToken) return;
+    const { currentView, selectedProjectId } = readAppViewFromUrl();
+    if (currentView === APP_VIEWS.PROJECT_REVIEW && selectedProjectId) {
+      this.currentView = APP_VIEWS.PROJECT_REVIEW;
+      this.selectedProjectId = selectedProjectId;
+    } else if (currentView && currentView !== APP_VIEWS.PROJECT_REVIEW) {
+      this.currentView = currentView;
+      this.selectedProjectId = null;
+    } else {
+      this.currentView = DEFAULT_APP_VIEW;
+      this.selectedProjectId = null;
+    }
+    if (writeBack) {
+      this.syncViewToUrl();
+    }
+  }
+
+  syncViewToUrl({ replace = true } = {}) {
+    if (this.shareToken) return;
+    writeAppViewToUrl({
+      currentView: this.currentView,
+      selectedProjectId: this.selectedProjectId,
+      replace
+    });
   }
 
 
@@ -229,26 +272,37 @@ export class TrameApp extends LitElement {
   }
 
   openCreateProjectFlow() {
+    this.selectedProjectId = null;
     this.currentView = APP_VIEWS.CREATE_PROJECT;
+    this.syncViewToUrl();
   }
 
   openSettingsFlow() {
+    this.selectedProjectId = null;
     this.currentView = APP_VIEWS.SETTINGS;
+    this.syncViewToUrl();
   }
 
   openProjectReviewFlow(e) {
-    this.selectedProjectId = Number(e.detail?.projectId);
+    const projectId = Number(e.detail?.projectId);
+    if (!Number.isInteger(projectId) || projectId <= 0) return;
+    this.selectedProjectId = projectId;
     this.currentView = APP_VIEWS.PROJECT_REVIEW;
+    this.syncViewToUrl({ replace: false });
   }
 
   handleProjectsMenuSelection(e) {
     const selectedKey = e.detail?.selectedKey;
     if (selectedKey === 'my-files') {
+      this.selectedProjectId = null;
       this.currentView = APP_VIEWS.FILES;
+      this.syncViewToUrl();
       return;
     }
     if (selectedKey === 'my-projects') {
+      this.selectedProjectId = null;
       this.currentView = APP_VIEWS.PROJECTS;
+      this.syncViewToUrl();
     }
   }
 

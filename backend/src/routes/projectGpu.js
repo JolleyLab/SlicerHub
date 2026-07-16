@@ -329,7 +329,7 @@ export default function projectGpuRoutes(app) {
                     projectId,
                     providerId: configureProvider,
                     credentials,
-                    setAsDefault: req.body?.setAsDefault === true,
+                    useNow: req.body?.useNow === true || req.body?.setAsDefault === true,
                     updatedByUserId: req.user.id
                 });
             } catch (err) {

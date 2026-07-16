@@ -202,7 +202,7 @@ const ProjectGpu = {
         return creds;
     },
 
-    configureProvider({ projectId, providerId, credentials, setAsDefault, updatedByUserId }) {
+    configureProvider({ projectId, providerId, credentials, setAsDefault, useNow, updatedByUserId }) {
         const row = readSettingsRow(projectId);
         const { store, unreadable } = this.getCredentialStore(projectId);
         if (unreadable && !credentials?.apiKey) {
@@ -230,13 +230,16 @@ const ProjectGpu = {
             updatedByUserId
         });
 
-        if (setAsDefault) {
-            this.setDefaultProvider({ projectId, providerId, updatedByUserId });
+        const switchToNow = useNow === true || setAsDefault === true;
+        if (switchToNow) {
             const instance = this.getInstance(projectId);
             const status = instance?.status || 'idle';
-            if (['idle', 'error'].includes(status)) {
-                this.setActiveProvider({ projectId, providerId, updatedByUserId });
+            if (!['idle', 'error'].includes(status)) {
+                throw new Error(
+                    'GPU is busy with the current provider. Stop billing before switching Using now.'
+                );
             }
+            this.setActiveProvider({ projectId, providerId, updatedByUserId });
         }
     },
 

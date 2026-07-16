@@ -40,19 +40,15 @@ export async function saveProjectGpuSettings(projectId, settings) {
     return parseResponse(response);
 }
 
-export async function configureProjectGpuProvider(projectId, { providerId, apiKey, setAsDefault }) {
+export async function configureProjectGpuProvider(projectId, { providerId, apiKey, useNow }) {
     const payload = { configureProvider: providerId };
     if (apiKey) payload.apiKey = apiKey;
-    if (setAsDefault) payload.setAsDefault = true;
+    if (useNow) payload.useNow = true;
     return saveProjectGpuSettings(projectId, payload);
 }
 
 export async function setActiveProjectGpuProvider(projectId, providerId) {
     return saveProjectGpuSettings(projectId, { providerId });
-}
-
-export async function setProjectGpuDefaultProvider(projectId, defaultProviderId) {
-    return saveProjectGpuSettings(projectId, { defaultProviderId });
 }
 
 export async function openFullSlicerViewer(projectId, fileId, options = {}) {
