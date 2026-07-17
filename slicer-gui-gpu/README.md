@@ -83,7 +83,11 @@ The adapter also installs the **Sandbox** extension (provides `UserStatistics`, 
 
 At runtime, launch checks `${SLICER_SIMPLIFIED_VIEWER_PATH}` (default: `/opt/slicer-modules/SimplifiedViewer`) and falls back to `/home/slicer/data/SimplifiedViewer` for local/manual testing.
 
-Local script iteration without rebuilding the adapter: set `HOST_WORKSPACE_ROOT` (backend bind-mounts `slicer_session.py` / `launch-slicer.sh`) or use `docker-compose.slicer-gui-dev.yml` for the shared debug container.
+Local script iteration without rebuilding the adapter: set `HOST_WORKSPACE_ROOT` and
+`SLICER_GUI_MOUNT_DEV_SCRIPTS=true` (backend bind-mounts `slicer_session.py` /
+`launch-slicer.sh`), or use `docker-compose.slicer-gui-dev.yml` for the shared debug
+container. Leave `SLICER_GUI_MOUNT_DEV_SCRIPTS` off on Linux/production hosts — git
+checks out those scripts as non-executable, which makes per-user seats exit 126.
 
 ## Requirements
 

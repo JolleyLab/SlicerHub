@@ -76,12 +76,43 @@ async function isNoVncReady(containerName, timeoutMs = 2000) {
     }
 }
 
+async function getContainerExitInfo(containerName) {
+    try {
+        const info = await docker.getContainer(containerName).inspect();
+        if (info.State?.Running) {
+            return null;
+        }
+        return {
+            exitCode: info.State?.ExitCode,
+            error: info.State?.Error || '',
+            oomKilled: info.State?.OOMKilled === true
+        };
+    } catch {
+        return { exitCode: null, error: 'container missing', oomKilled: false };
+    }
+}
+
 async function waitForNoVnc(containerName, timeoutMs = READY_TIMEOUT_MS, { touchLease } = {}) {
     const deadline = Date.now() + timeoutMs;
     let lastError = '';
     while (Date.now() < deadline) {
         if (touchLease) {
             touchLease();
+        }
+        const exited = await getContainerExitInfo(containerName);
+        if (exited) {
+            const detail = [
+                exited.exitCode != null ? `exit ${exited.exitCode}` : null,
+                exited.oomKilled ? 'OOM' : null,
+                exited.error || null
+            ].filter(Boolean).join(', ');
+            throw new Error(
+                `Full Slicer container stopped before ready (${containerName}`
+                + `${detail ? `: ${detail}` : ''}). `
+                + 'Check `docker logs` for that container. Exit 126 usually means a '
+                + 'non-executable host bind of launch-slicer.sh — unset '
+                + 'SLICER_GUI_MOUNT_DEV_SCRIPTS (default off) or rebuild the image.'
+            );
         }
         try {
             await probeNoVnc(containerName, 2000);
@@ -243,7 +274,12 @@ export async function ensureSlicerGuiSession({
     if (simplifiedLocal) {
         binds.push(`${toDockerBindPath(simplifiedLocal)}:/opt/slicer-modules/SimplifiedViewer:ro`);
     }
-    if (hostWorkspace) {
+    // Opt-in only: host script binds overwrite image +x bits. On Linux that yields
+    // exit 126 and a Cloudflare 524 while we wait for a dead seat.
+    const mountDevScripts = /^(1|true|yes)$/i.test(
+        String(process.env.SLICER_GUI_MOUNT_DEV_SCRIPTS || '').trim()
+    );
+    if (hostWorkspace && mountDevScripts) {
         const scripts = [
             ['slicer-gui-gpu/launch-slicer.sh', '/usr/local/bin/launch-slicer.sh'],
             ['slicer-gui-gpu/slicer_session.py', '/usr/local/bin/slicer_session.py'],

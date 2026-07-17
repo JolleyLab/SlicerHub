@@ -101,6 +101,9 @@ services:
       - HOST_WORKSPACE_ROOT=${HOST_WORKSPACE_ROOT:-${PWD}}
       - SLICER_GUI_IMAGE=${SLICER_GUI_IMAGE:-slicer-web-slicer-gui:local}
       - SLICER_GUI_NETWORK=${SLICER_GUI_NETWORK:-trame-net}
+      # Dev only: bind-mount host launch-slicer.sh / slicer_session.py into seats.
+      # Leave off in production — Linux host scripts are often non-executable (exit 126).
+      - SLICER_GUI_MOUNT_DEV_SCRIPTS=${SLICER_GUI_MOUNT_DEV_SCRIPTS:-false}
       - SLICER_GUI_READY_TIMEOUT_MS=${SLICER_GUI_READY_TIMEOUT_MS:-180000}
       - SLICER_GUI_REUSE_READY_TIMEOUT_MS=${SLICER_GUI_REUSE_READY_TIMEOUT_MS:-15000}
       - SLICER_GUI_SESSION_TTL_SECONDS=${SLICER_GUI_SESSION_TTL_SECONDS:-240}
