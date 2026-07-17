@@ -11,9 +11,19 @@ async function parseResponse(response) {
         const message = data.error?.message || data.message || data.error || 'Request failed';
         const err = new Error(typeof message === 'string' ? message : 'Request failed');
         err.status = response.status;
+        err.code = data.error?.code || null;
+        err.impact = data.impact || null;
+        err.payload = data;
         throw err;
     }
     return data;
+}
+
+export async function listOwnedGpuBillingSessions() {
+    const response = await fetch(`${API_URL}/api/gpu/owned-billing-sessions`, {
+        credentials: 'include'
+    });
+    return parseResponse(response);
 }
 
 export async function listGpuProviders() {
@@ -86,8 +96,18 @@ export async function startProjectGpuBilling(projectId) {
     return parseResponse(response);
 }
 
-export async function stopProjectGpuBilling(projectId) {
+export async function stopProjectGpuBilling(projectId, { acknowledgeImpact = false } = {}) {
     const response = await fetch(`${API_URL}/api/projects/${projectId}/gpu/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ acknowledgeImpact: !!acknowledgeImpact, force: !!acknowledgeImpact })
+    });
+    return parseResponse(response);
+}
+
+export async function transferProjectGpuBilling(projectId) {
+    const response = await fetch(`${API_URL}/api/projects/${projectId}/gpu/transfer-billing`, {
         method: 'POST',
         credentials: 'include'
     });

@@ -70,7 +70,9 @@ export class AppDialog extends LitElement {
     static get properties() {
         return {
             title: { type: String },
-            showDefaultCloseButton: { type: Boolean }
+            showDefaultCloseButton: { type: Boolean },
+            /** When false, Escape and backdrop click do not close the dialog. */
+            lightDismiss: { type: Boolean }
         };
     }
 
@@ -79,10 +81,33 @@ export class AppDialog extends LitElement {
         initializeTheme();
         this.title = '';
         this.showDefaultCloseButton = true;
+        this.lightDismiss = true;
+        this._onDialogCancel = (event) => {
+            if (!this.lightDismiss) {
+                event.preventDefault();
+            }
+        };
     }
 
     get nativeDialog() {
         return this.renderRoot?.querySelector('dialog');
+    }
+
+    firstUpdated() {
+        this.nativeDialog?.addEventListener('cancel', this._onDialogCancel);
+    }
+
+    disconnectedCallback() {
+        this.nativeDialog?.removeEventListener('cancel', this._onDialogCancel);
+        super.disconnectedCallback();
+    }
+
+    updated(changed) {
+        if (changed.has('lightDismiss') && this.nativeDialog) {
+            // Re-assert cancel handler after re-render.
+            this.nativeDialog.removeEventListener('cancel', this._onDialogCancel);
+            this.nativeDialog.addEventListener('cancel', this._onDialogCancel);
+        }
     }
 
     openDialog() {

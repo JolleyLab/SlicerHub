@@ -94,6 +94,7 @@ function rowToInstance(row) {
         destroyedAt: row.destroyed_at,
         billingLastActivityAt: row.billing_last_activity_at,
         createdByUserId: row.created_by_user_id,
+        billingOwnerUserId: row.billing_owner_user_id ?? row.created_by_user_id ?? null,
         updatedAt: row.updated_at
     };
 }
@@ -346,9 +347,19 @@ const ProjectGpu = {
             SET provider_id = ?, status = 'provisioning', error_message = NULL,
                 provision_started_at = CURRENT_TIMESTAMP, provision_finished_at = NULL,
                 destroyed_at = NULL, updated_at = CURRENT_TIMESTAMP,
-                created_by_user_id = COALESCE(created_by_user_id, ?)
+                created_by_user_id = COALESCE(created_by_user_id, ?),
+                billing_owner_user_id = ?
             WHERE project_id = ?
-        `).run(providerId, createdByUserId, projectId);
+        `).run(providerId, createdByUserId, createdByUserId, projectId);
+    },
+
+    setBillingOwner(projectId, userId) {
+        db.prepare(`
+            UPDATE project_gpu_instances
+            SET billing_owner_user_id = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE project_id = ?
+        `).run(userId, projectId);
     },
 
     setProvisioningInstanceId(projectId, instanceId) {
@@ -452,6 +463,7 @@ const ProjectGpu = {
                 metadata_json = NULL,
                 error_message = NULL,
                 billing_last_activity_at = NULL,
+                billing_owner_user_id = NULL,
                 destroyed_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE project_id = ?
@@ -495,6 +507,7 @@ const ProjectGpu = {
                 viewer_public_base_url = NULL,
                 metadata_json = NULL,
                 billing_last_activity_at = NULL,
+                billing_owner_user_id = NULL,
                 destroyed_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE project_id = ?

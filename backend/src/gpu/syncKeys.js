@@ -1,5 +1,9 @@
 import path from 'path';
 
+/**
+ * Per-user working copy on the GPU (session opens this path).
+ * Collaborators get a shared-* name under their own user id so saves stay isolated.
+ */
 export function resolveSyncTarget(file, launcherUserId) {
     let userId = String(file.user_id);
     let fileName = path.basename(file.file_path);
@@ -16,9 +20,45 @@ export function resolveSyncTarget(file, launcherUserId) {
     };
 }
 
-export function isFileStaged(file, syncedFiles, launcherUserId) {
+/**
+ * Immutable project-scoped cache object on the GPU.
+ * Uploaded once per billing instance; cloned into each user's working copy.
+ * Reserved user id so it never collides with real accounts.
+ */
+export function resolveProjectCacheTarget(file, projectId) {
+    const id = Number(projectId);
+    if (!Number.isInteger(id) || id <= 0) {
+        throw new Error('projectId is required for GPU cache sync');
+    }
+    const fileName = `f${file.id}-${path.basename(file.file_path)}`;
+    const userId = `_cache_p${id}`;
+    return {
+        cacheKey: `${userId}/${fileName}`,
+        userId,
+        fileName
+    };
+}
+
+/** Flat staging name used by Vast Full Slicer bridge (/home/slicer/data). */
+export function resolveFullSlicerStagedName(file) {
+    return `${file.id}-${path.basename(file.original_name || file.file_path)}`;
+}
+
+export function isFileStaged(file, syncedFiles, launcherUserId, { vastFullSlicer = false } = {}) {
     if (!syncedFiles || !file) return false;
-    const { cacheKey } = resolveSyncTarget(file, launcherUserId);
+    const cacheKey = vastFullSlicer
+        ? resolveFullSlicerStagedName(file)
+        : resolveSyncTarget(file, launcherUserId).cacheKey;
+    const entry = syncedFiles[cacheKey];
+    if (!entry) return false;
+    const expectedBytes = Number(file.file_size) || 0;
+    return !expectedBytes || entry.bytes === expectedBytes;
+}
+
+/** True when the project cache object is present for this file. */
+export function isFileCachedOnGpu(file, syncedFiles, projectId) {
+    if (!syncedFiles || !file || !projectId) return false;
+    const { cacheKey } = resolveProjectCacheTarget(file, projectId);
     const entry = syncedFiles[cacheKey];
     if (!entry) return false;
     const expectedBytes = Number(file.file_size) || 0;

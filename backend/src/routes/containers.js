@@ -14,7 +14,9 @@ import {
     touchProjectBillingActivity,
     assertProjectGpuReadyForFileOpen
 } from "../gpu/orchestrator.js";
-import { waitForPrestageIdle } from "../gpu/prestage.js";
+import { waitForPrestageIdle, isPrestageActive } from "../gpu/prestage.js";
+import { isVastFullSlicerMode } from "../gpu/remoteFullSlicer.js";
+import { ConflictError } from "../utils/errors.js";
 import {
     resolveTrameServiceUrl,
     resolveLocalTrameServiceUrl,
@@ -30,6 +32,7 @@ import {
     getSessionTtlSeconds,
     SESSION_KINDS
 } from "../sessions/index.js";
+import { getSession } from "../sessions/leaseRegistry.js";
 
 // Simple HTTP request helper
 function fileRowToApiSnapshot(row) {
@@ -114,11 +117,22 @@ export default async function containerRoutes(app) {
                     if (projectId) {
                         const gpuSettings = ProjectGpu.getSettings(projectId);
                         if (gpuSettings.providerId !== 'local') {
+                            if (isVastFullSlicerMode()) {
+                                throw new ConflictError(
+                                    'This project uses Vast Full Slicer. Open the file with the Full Slicer viewer (not Trame).'
+                                );
+                            }
+                            console.log(
+                                `GPU open start project ${projectId} file ${fileId} user ${req.user.id}`
+                            );
                             assertProjectGpuReadyForFileOpen({
                                 projectId,
                                 userId: req.user.id
                             });
                             trameContext = getTrameContextForProject(projectId);
+                            if (isPrestageActive(projectId)) {
+                                console.log(`GPU open waiting for prestage project ${projectId}`);
+                            }
                             await waitForPrestageIdle(projectId);
                             const syncStarted = Date.now();
                             await syncProjectFile({
@@ -385,23 +399,44 @@ export default async function containerRoutes(app) {
         const userId = req.user.id.toString();
         const userActive = req.body?.userActive === true;
         const sessionToken = String(req.body?.sessionToken || '').trim();
+        const bodyProjectId = Number(req.body?.projectId) || null;
 
         try {
             let browserLease = null;
             if (sessionToken) {
                 browserLease = touchViewerSession(SESSION_KINDS.TRAME, userId, sessionToken);
             }
+            // Lease may still exist even if touch failed token check — prefer registry metadata.
+            const leaseEntry = getSession(SESSION_KINDS.TRAME, userId);
+            const meta = browserLease?.metadata || leaseEntry?.metadata || {};
 
-            const trameServiceUrl = resolveTrameServiceUrl(userId);
-            const sessions = await httpRequest(`${trameServiceUrl}/api/sessions`);
-            const userSession = sessions.sessions?.find((s) => s.userId === userId);
+            let trameServiceUrl = meta.trameServiceUrl || null;
+            let remoteSessionId = meta.sessionId || null;
+            let projectId = Number(meta.projectId) || bodyProjectId || null;
 
-            if (!userSession) {
-                return res.status(404).json({ error: "No active session found" });
+            if (!trameServiceUrl && projectId) {
+                const projectCtx = getTrameContextForProject(projectId);
+                if (projectCtx?.trameServiceUrl) {
+                    trameServiceUrl = projectCtx.trameServiceUrl;
+                    setUserTrameContext(userId, projectCtx);
+                }
+            }
+            if (!trameServiceUrl) {
+                trameServiceUrl = resolveTrameServiceUrl(userId);
+            }
+
+            // Prefer direct session id from lease (survives lost in-memory userContexts).
+            if (!remoteSessionId) {
+                const sessions = await httpRequest(`${trameServiceUrl}/api/sessions`);
+                const userSession = sessions.sessions?.find((s) => String(s.userId) === userId);
+                if (!userSession) {
+                    return res.status(404).json({ error: "No active session found" });
+                }
+                remoteSessionId = userSession.sessionId;
             }
 
             const hb = await httpRequest(
-                `${trameServiceUrl}/api/sessions/${userSession.sessionId}/heartbeat`,
+                `${trameServiceUrl}/api/sessions/${remoteSessionId}/heartbeat`,
                 {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -409,22 +444,26 @@ export default async function containerRoutes(app) {
                 }
             );
 
-            const trameCtx = getUserTrameContext(userId);
-            if (userActive && trameCtx?.projectId) {
-                touchProjectBillingActivity(trameCtx.projectId);
+            if (userActive && projectId) {
+                touchProjectBillingActivity(projectId);
+            } else if (userActive) {
+                const trameCtx = getUserTrameContext(userId);
+                if (trameCtx?.projectId) {
+                    touchProjectBillingActivity(trameCtx.projectId);
+                }
             }
 
             return res.json({
                 success: true,
                 status: "running",
-                sessionId: userSession.sessionId,
+                sessionId: remoteSessionId,
                 leaseExpiresAt: browserLease
                     ? new Date(browserLease.leaseExpiresAt).toISOString()
                     : (hb.leaseExpiresAt ?? null),
                 sessionTtlSeconds: browserLease
                     ? getSessionTtlSeconds(SESSION_KINDS.TRAME)
-                    : (hb.sessionTtlSeconds ?? sessions.sessionTtlSeconds ?? null),
-                maxSessionWallSeconds: hb.maxSessionWallSeconds ?? sessions.maxSessionWallSeconds ?? null,
+                    : (hb.sessionTtlSeconds ?? null),
+                maxSessionWallSeconds: hb.maxSessionWallSeconds ?? null,
                 leaseExtended: !!browserLease || (userActive && hb.leaseExtended !== false)
             });
         } catch (err) {

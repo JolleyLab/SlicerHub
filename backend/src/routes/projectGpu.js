@@ -9,7 +9,18 @@ import { buildViewerFrontendUrl } from '../utils/viewerUrl.js';
 import { listProviders, getProvider } from '../gpu/registry.js';
 import { startBilling, stopBilling, touchProjectBillingActivity, acknowledgeGpuError, evaluateRemoteBillingStop, reportRemoteProvisionFailure } from '../gpu/orchestrator.js';
 import { computeBillingLease } from '../gpu/billingPolicy.js';
-import { prestageProjectFiles, isPrestageActive } from '../gpu/prestage.js';
+import {
+    buildBillingOwnerPublic,
+    canStartRemoteBilling,
+    canStopRemoteBilling,
+    cascadeTransferOwnership,
+    getBillingOwnerUserId,
+    listActiveBillingUsers,
+    listOwnedRunningBillingSessions,
+    suppressBillingUserPresenceAfterHandoff,
+    touchBillingUserPresence
+} from '../gpu/billingOwnership.js';
+import { enqueuePrestage, isPrestageActive } from '../gpu/prestage.js';
 import { reconcileProjectGpu } from '../gpu/reconcile.js';
 import { isFileStaged } from '../gpu/syncKeys.js';
 import { maskSecret } from '../gpu/credentials.js';
@@ -35,6 +46,13 @@ import {
     writeLastLoadedFile,
     clearLastLoadedFile
 } from '../slicerGui/paths.js';
+import {
+    isVastFullSlicerMode,
+    openFileOnRemoteFullSlicer,
+    issueRemoteFullSlicerSession,
+    validateRemoteFullSlicerSession,
+    remoteFullSlicerViewerPath
+} from '../gpu/remoteFullSlicer.js';
 
 /**
  * Prefer an explicit launch flag, then account prefs.
@@ -54,6 +72,24 @@ function requireLocalGpu(projectId, unavailableMessage) {
         throw new ValidationError(unavailableMessage);
     }
     return settings;
+}
+
+/** Local Full Slicer, or Vast when VAST_GPU_MODE=full-slicer and billing is running. */
+function requireFullSlicerAvailable(projectId) {
+    const settings = ProjectGpu.getSettings(projectId);
+    if (settings.providerId === 'local') {
+        return { mode: 'local', settings };
+    }
+    if (settings.providerId === 'vast' && isVastFullSlicerMode()) {
+        const instance = ProjectGpu.getInstance(projectId);
+        if (!ProjectGpu.isRemoteRunning(instance)) {
+            throw new ValidationError('Start GPU billing before opening Full Slicer on Vast');
+        }
+        return { mode: 'remote-full-slicer', settings, instance };
+    }
+    throw new ValidationError(
+        'Full Slicer is only available on Local GPU, or Vast with VAST_GPU_MODE=full-slicer'
+    );
 }
 
 async function ensureLocalFullSlicerSeat(req, { failureMessage }) {
@@ -174,6 +210,7 @@ function publicInstance(instance) {
     if (!instance) return instance;
     const metadata = { ...(instance.metadata || {}) };
     delete metadata.syncToken;
+    delete metadata.billingPresence;
     const syncedFiles = metadata.syncedFiles || {};
     const stagedFiles = Object.entries(syncedFiles).map(([key, info]) => ({
         key,
@@ -190,9 +227,36 @@ function publicInstance(instance) {
     };
 }
 
+function requireBillingStarter(projectId, userId) {
+    const project = requireProjectAccess(projectId, userId);
+    const settings = ProjectGpu.getSettings(projectId);
+    if (!canStartRemoteBilling(project, settings)) {
+        throw new ValidationError(
+            'Only project admins or collaborators can start billing when remote credentials are configured'
+        );
+    }
+    return { project, settings };
+}
+
+function requireBillingStopper(projectId, userId) {
+    const project = requireProjectAccess(projectId, userId);
+    const instance = ProjectGpu.getInstance(projectId);
+    if (!canStopRemoteBilling(project, instance, userId)) {
+        throw new ValidationError(
+            'Only the billing owner or a project admin can stop billing'
+        );
+    }
+    return { project, instance };
+}
+
 export default function projectGpuRoutes(app) {
     app.get('/api/gpu/providers', authenticateToken, asyncHandler(async (_req, res) => {
         res.json({ providers: listProviders() });
+    }));
+
+    /** Projects where the current user owns running remote GPU billing (logout reminder). */
+    app.get('/api/gpu/owned-billing-sessions', authenticateToken, asyncHandler(async (req, res) => {
+        res.json({ sessions: listOwnedRunningBillingSessions(req.user.id) });
     }));
 
     app.get('/api/projects/:projectId/gpu', authenticateToken, asyncHandler(async (req, res) => {
@@ -240,16 +304,24 @@ export default function projectGpuRoutes(app) {
         };
         const syncedFiles = instance?.metadata?.syncedFiles || {};
         const stagedFileIds = File.findByProjectId(projectId)
-            .filter((file) => isFileStaged(file, syncedFiles, req.user.id))
+            .filter((file) => isFileStaged(file, syncedFiles, req.user.id, {
+                vastFullSlicer: settings.providerId === 'vast' && isVastFullSlicerMode()
+            }))
             .map((file) => file.id);
 
         res.json({
             settings: publicGpuSettings(projectId),
             instance: publicInst,
             billingLease: computeBillingLease(instance),
+            billingOwnership: buildBillingOwnerPublic(projectId, req.user.id),
             canManage: project.userRole === 'admin',
+            canStartBilling: canStartRemoteBilling(project, settings),
+            canStopBilling: canStopRemoteBilling(project, instance, req.user.id),
             prestageActive: isPrestageActive(projectId),
             stagedFileIds,
+            vastGpuMode: settings.providerId === 'vast'
+                ? (isVastFullSlicerMode() ? 'full-slicer' : 'trame')
+                : null,
             reconcileChanged: reconcile.changed,
             reconcileReason: reconcile.reason || null,
             remoteActivity: reconcile.remoteActivity || null,
@@ -268,6 +340,9 @@ export default function projectGpuRoutes(app) {
             });
         }
 
+        const viewerActive = req.body?.viewerActive === true;
+        touchBillingUserPresence(projectId, req.user.id, { viewerActive });
+
         const reconcile = await reconcileProjectGpu(projectId, { force: true });
         const current = reconcile.instance || ProjectGpu.getInstance(projectId);
         if (!ProjectGpu.isRemoteRunning(current)) {
@@ -277,11 +352,11 @@ export default function projectGpuRoutes(app) {
                 billingStopped: true,
                 reason: reconcile.reason || current?.errorMessage || null,
                 instance: publicInstance(current),
-                remoteActivity: reconcile.remoteActivity || null
+                remoteActivity: reconcile.remoteActivity || null,
+                billingOwnership: buildBillingOwnerPublic(projectId, req.user.id)
             });
         }
 
-        const viewerActive = req.body?.viewerActive === true;
         if (viewerActive) {
             touchProjectBillingActivity(projectId);
         } else {
@@ -294,7 +369,20 @@ export default function projectGpuRoutes(app) {
                     reason: stopResult.reason,
                     status: stoppedInstance?.status || 'idle',
                     instance: publicInstance(stoppedInstance),
-                    remoteActivity: stopResult.remoteActivity || null
+                    remoteActivity: stopResult.remoteActivity || null,
+                    billingOwnership: buildBillingOwnerPublic(projectId, req.user.id)
+                });
+            }
+            if (stopResult.transferred) {
+                return res.json({
+                    success: true,
+                    status: 'running',
+                    ownershipTransferred: true,
+                    billingOwner: stopResult.owner || null,
+                    billingLease: computeBillingLease(ProjectGpu.getInstance(projectId)),
+                    remoteActivity: stopResult.remoteActivity || null,
+                    billingOwnership: buildBillingOwnerPublic(projectId, req.user.id),
+                    billingExtended: false
                 });
             }
         }
@@ -306,6 +394,7 @@ export default function projectGpuRoutes(app) {
             status: 'running',
             billingLease: lease,
             remoteActivity: reconcile.remoteActivity || null,
+            billingOwnership: buildBillingOwnerPublic(projectId, req.user.id),
             billingExtended: viewerActive
         });
     }));
@@ -391,20 +480,85 @@ export default function projectGpuRoutes(app) {
 
     app.post('/api/projects/:projectId/gpu/start', authenticateToken, asyncHandler(async (req, res) => {
         const projectId = parseProjectId(req.params.projectId);
-        requireProjectAdmin(projectId, req.user.id);
+        requireBillingStarter(projectId, req.user.id);
 
         const result = await startBilling({ projectId, userId: req.user.id });
         const instance = ProjectGpu.getInstance(projectId);
-        res.json({ ...result, instance: publicInstance(instance) });
+        res.json({
+            ...result,
+            instance: publicInstance(instance),
+            billingOwnership: buildBillingOwnerPublic(projectId, req.user.id)
+        });
     }));
 
     app.post('/api/projects/:projectId/gpu/stop', authenticateToken, asyncHandler(async (req, res) => {
         const projectId = parseProjectId(req.params.projectId);
-        requireProjectAdmin(projectId, req.user.id);
+        requireBillingStopper(projectId, req.user.id);
 
-        const result = await stopBilling({ projectId });
+        const force = req.body?.force === true || req.body?.acknowledgeImpact === true;
+        const ownerId = getBillingOwnerUserId(ProjectGpu.getInstance(projectId));
+        const othersActive = listActiveBillingUsers(projectId, {
+            excludeUserIds: ownerId ? [ownerId] : []
+        }).filter((u) => u.userId !== req.user.id);
+
+        if (othersActive.length > 0 && !force) {
+            return res.status(409).json({
+                error: {
+                    message: 'Stopping billing will disconnect other active users. Transfer ownership or confirm stop.',
+                    code: 'billing_stop_impact'
+                },
+                impact: {
+                    activeUsers: othersActive,
+                    transferTarget: othersActive[0] || null
+                },
+                billingOwnership: buildBillingOwnerPublic(projectId, req.user.id)
+            });
+        }
+
+        const result = await stopBilling({ projectId, reason: 'user_stop' });
         const instance = ProjectGpu.getInstance(projectId);
-        res.json({ ...result, instance: publicInstance(instance) });
+        res.json({
+            ...result,
+            instance: publicInstance(instance),
+            billingOwnership: buildBillingOwnerPublic(projectId, req.user.id)
+        });
+    }));
+
+    app.post('/api/projects/:projectId/gpu/transfer-billing', authenticateToken, asyncHandler(async (req, res) => {
+        const projectId = parseProjectId(req.params.projectId);
+        requireBillingStopper(projectId, req.user.id);
+
+        const instance = ProjectGpu.getInstance(projectId);
+        if (!ProjectGpu.isRemoteRunning(instance)) {
+            throw new ValidationError('No active remote GPU billing to transfer');
+        }
+
+        const result = cascadeTransferOwnership(projectId, {
+            excludeUserIds: [req.user.id]
+        });
+
+        if (!result.transferred) {
+            const stopResult = await stopBilling({ projectId, reason: 'transfer_exhausted' });
+            return res.json({
+                transferred: false,
+                stopped: true,
+                reason: 'No other active users to transfer to; billing stopped.',
+                ...stopResult,
+                instance: publicInstance(ProjectGpu.getInstance(projectId)),
+                billingOwnership: buildBillingOwnerPublic(projectId, req.user.id)
+            });
+        }
+
+        // Transferor is idle for transfer purposes until they open a viewer again.
+        suppressBillingUserPresenceAfterHandoff(projectId, req.user.id);
+
+        res.json({
+            transferred: true,
+            stopped: false,
+            owner: result.owner,
+            instance: publicInstance(ProjectGpu.getInstance(projectId)),
+            billingOwnership: buildBillingOwnerPublic(projectId, req.user.id)
+        });
     }));
 
     app.post('/api/projects/:projectId/gpu/acknowledge-error', authenticateToken, asyncHandler(async (req, res) => {
@@ -419,7 +573,7 @@ export default function projectGpuRoutes(app) {
     app.post('/api/projects/:projectId/gpu/open-full-slicer', authenticateToken, asyncHandler(async (req, res) => {
         const projectId = parseProjectId(req.params.projectId);
         requireProjectAccess(projectId, req.user.id);
-        requireLocalGpu(projectId, 'Full Slicer viewer is only available when Local GPU is active');
+        const availability = requireFullSlicerAvailable(projectId);
 
         const fileId = Number(req.body?.fileId);
         if (!Number.isInteger(fileId) || fileId <= 0) {
@@ -429,6 +583,49 @@ export default function projectGpuRoutes(app) {
         const file = File.findById(fileId);
         if (!canAccessProjectFile(file, { projectId, userId: req.user.id })) {
             throw new ValidationError('File not found or inaccessible');
+        }
+
+        // --- Vast Full Slicer spike (single seat on the rented instance) ---
+        if (availability.mode === 'remote-full-slicer') {
+            const useSimplifiedViewer = resolveUseSimplifiedViewer({
+                body: req.body,
+                userId: req.user.id
+            });
+            const launcherUserId = String(req.user.id);
+            const staged = await openFileOnRemoteFullSlicer(availability.instance, {
+                file,
+                launcherUserId,
+                useSimplifiedViewer
+            });
+            File.touchLastViewed(file.id);
+            touchProjectBillingActivity(projectId);
+            touchBillingUserPresence(projectId, req.user.id, { viewerActive: true });
+
+            const sessionToken = issueRemoteFullSlicerSession({
+                projectId,
+                userId: launcherUserId,
+                fileId: file.id
+            });
+            const viewerPath = remoteFullSlicerViewerPath();
+            const frontendUrl = buildViewerFrontendUrl(req, launcherUserId, null, null);
+            const origin = frontendUrl ? new URL(frontendUrl).origin : `${req.protocol}://${req.get('host')}`;
+            const slicerGuiUrl = `${origin}${viewerPath}`;
+
+            return res.json({
+                slicerGuiUrl,
+                vncPath: viewerPath,
+                sessionId: `vast-full-slicer-${projectId}`,
+                sessionToken,
+                userId: launcherUserId,
+                fileName: staged.fileName,
+                containerPath: staged.containerPath || null,
+                useSimplifiedViewer: staged.useSimplifiedViewer === true,
+                sessionReused: false,
+                sceneReloaded: true,
+                remoteFullSlicer: true,
+                sessionTtlSeconds: getSessionTtlSeconds(SESSION_KINDS.SLICER_GUI),
+                warmIdleSeconds: getWarmIdleTtlSeconds(SESSION_KINDS.SLICER_GUI)
+            });
         }
 
         const { launcherUserId, useSimplifiedViewer, session } = await ensureLocalFullSlicerSeat(req, {
@@ -497,12 +694,33 @@ export default function projectGpuRoutes(app) {
     app.post('/api/projects/:projectId/gpu/full-slicer-heartbeat', authenticateToken, asyncHandler(async (req, res) => {
         const projectId = parseProjectId(req.params.projectId);
         requireProjectAccess(projectId, req.user.id);
-        requireLocalGpu(projectId, 'Full Slicer viewer is only available when Local GPU is active');
 
         const sessionToken = String(req.body?.sessionToken || '').trim();
         if (!sessionToken) {
             throw new ValidationError('sessionToken is required');
         }
+
+        const settings = ProjectGpu.getSettings(projectId);
+        if (settings.providerId === 'vast' && isVastFullSlicerMode()) {
+            if (!validateRemoteFullSlicerSession({
+                projectId,
+                userId: req.user.id,
+                sessionToken
+            })) {
+                return res.status(404).json({
+                    error: { message: 'Full Slicer session not found or expired' }
+                });
+            }
+            touchProjectBillingActivity(projectId);
+            touchBillingUserPresence(projectId, req.user.id, { viewerActive: true });
+            return res.json({
+                success: true,
+                remoteFullSlicer: true,
+                sessionTtlSeconds: getSessionTtlSeconds(SESSION_KINDS.SLICER_GUI)
+            });
+        }
+
+        requireLocalGpu(projectId, 'Full Slicer viewer is only available when Local GPU is active');
 
         const userId = String(req.user.id);
         const lease = touchSlicerGuiSessionHeartbeat({ userId, sessionToken });
@@ -630,7 +848,8 @@ export default function projectGpuRoutes(app) {
             ? req.body.fileIds.map((id) => Number(id)).filter((id) => id > 0)
             : null;
 
-        const result = await prestageProjectFiles({
+        // Share the project prestage mutex so open/hover/auto cannot race-upload.
+        const result = await enqueuePrestage({
             projectId,
             userId: req.user.id,
             fileIds: fileIds?.length ? fileIds : null
@@ -641,7 +860,9 @@ export default function projectGpuRoutes(app) {
             ...result,
             instance: publicInstance(instance),
             stagedFileIds: File.findByProjectId(projectId)
-                .filter((file) => isFileStaged(file, instance?.metadata?.syncedFiles || {}, req.user.id))
+                .filter((file) => isFileStaged(file, instance?.metadata?.syncedFiles || {}, req.user.id, {
+                    vastFullSlicer: isVastFullSlicerMode()
+                }))
                 .map((file) => file.id)
         });
     }));

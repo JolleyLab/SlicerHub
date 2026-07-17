@@ -11,6 +11,7 @@ import {
     isProvisioningInstanceStatus,
     isOfferUnavailableError,
     isVastHostBootError,
+    isPingGroupRangeHostError,
     parseEnvDict,
     searchOffers,
     showInstance,
@@ -70,12 +71,14 @@ function buildOfferSearchQuery(serverConfig, { includeGpuName = true } = {}) {
     }
 
     const query = {
-        limit: 20,
+        limit: 40,
         verified: { eq: true },
         rentable: { eq: true },
         rented: { eq: false },
         disk_space: { gte: serverConfig.minDiskGb },
-        order: [['dph_total', 'asc']]
+        // Prefer stable hosts; cheapest-only pools often hit Docker/sysctl boot failures
+        // (e.g. net.ipv4.ping_group_range) on flaky consumer machines.
+        order: [['reliability', 'desc'], ['dph_total', 'asc']]
     };
 
     const offerType = (process.env.VAST_OFFER_TYPE || '').trim();
@@ -86,6 +89,11 @@ function buildOfferSearchQuery(serverConfig, { includeGpuName = true } = {}) {
     const minCuda = parseFloat(process.env.VAST_MIN_CUDA || '0');
     if (Number.isFinite(minCuda) && minCuda > 0) {
         query.cuda_max_good = { gte: minCuda };
+    }
+
+    const minReliability = parseFloat(process.env.VAST_MIN_RELIABILITY || '0.98');
+    if (Number.isFinite(minReliability) && minReliability > 0) {
+        query.reliability = { gte: minReliability };
     }
 
     if (includeGpuName) {
@@ -106,8 +114,24 @@ function offerIdFrom(offer) {
     return id != null ? Number(id) : null;
 }
 
-function listOfferCandidates(offers, maxDph) {
+function offerMachineId(offer) {
+    const id = offer?.machine_id ?? offer?.machineId;
+    return id != null ? Number(id) : null;
+}
+
+function offerReliability(offer) {
+    const raw = offer?.reliability ?? offer?.reliability2 ?? offer?.score;
+    const n = parseFloat(raw);
+    return Number.isFinite(n) ? n : 0;
+}
+
+function listOfferCandidates(offers, maxDph, { skipMachineIds = null } = {}) {
+    const skip = skipMachineIds instanceof Set ? skipMachineIds : null;
     const sorted = [...offers].sort((a, b) => {
+        // Reliability first (desc), then price (asc) — avoid always picking the flakiest cheap host.
+        const ra = offerReliability(a);
+        const rb = offerReliability(b);
+        if (rb !== ra) return rb - ra;
         const da = parseFloat(a.dph_total || a.dph || '0');
         const db = parseFloat(b.dph_total || b.dph || '0');
         return da - db;
@@ -117,13 +141,23 @@ function listOfferCandidates(offers, maxDph) {
     for (const offer of sorted) {
         const dph = parseFloat(offer.dph_total || offer.dph || '0');
         if (maxDph > 0 && dph > maxDph) continue;
+        const machineId = offerMachineId(offer);
+        if (skip && machineId != null && skip.has(machineId)) continue;
         const id = offerIdFrom(offer);
-        if (id) candidates.push({ id, offer, dph });
+        if (id) {
+            candidates.push({
+                id,
+                offer,
+                dph,
+                machineId,
+                reliability: offerReliability(offer)
+            });
+        }
     }
     return candidates;
 }
 
-async function listOffers(apiKey, serverConfig) {
+async function listOffers(apiKey, serverConfig, { skipMachineIds = null } = {}) {
     if (serverConfig.offerId) {
         return [{ id: serverConfig.offerId, offer: { id: serverConfig.offerId }, dph: 0 }];
     }
@@ -132,6 +166,14 @@ async function listOffers(apiKey, serverConfig) {
         ['default', buildOfferSearchQuery(serverConfig, { includeGpuName: true })],
         ['relaxed', buildOfferSearchQuery(serverConfig, { includeGpuName: false })]
     ];
+
+    // If reliability floor yields nothing, retry once without it (still sorted by reliability).
+    const minReliability = parseFloat(process.env.VAST_MIN_RELIABILITY || '0.98');
+    if (Number.isFinite(minReliability) && minReliability > 0) {
+        const noRel = buildOfferSearchQuery(serverConfig, { includeGpuName: true });
+        delete noRel.reliability;
+        attempts.push(['no-reliability-floor', noRel]);
+    }
 
     const seen = new Set();
     const candidates = [];
@@ -146,14 +188,14 @@ async function listOffers(apiKey, serverConfig) {
             }
         }
 
-        for (const pick of listOfferCandidates(offers, serverConfig.maxDph)) {
+        for (const pick of listOfferCandidates(offers, serverConfig.maxDph, { skipMachineIds })) {
             if (seen.has(pick.id)) continue;
             seen.add(pick.id);
             candidates.push({ ...pick, searchLabel: label });
         }
 
         if (candidates.length) break;
-        console.warn(`Vast search "${label}" returned ${offers.length} offer(s), none within VAST_MAX_DPH`);
+        console.warn(`Vast search "${label}" returned ${offers.length} offer(s), none usable within VAST_MAX_DPH`);
     }
 
     if (!candidates.length) {
@@ -232,16 +274,23 @@ async function provisionOnOffer(apiKey, offerId, serverConfig, syncToken, projec
 
 async function acceptOfferWithRetry(apiKey, serverConfig, syncToken, projectId, signal) {
     let lastErr = null;
+    /** Skip machines that already failed OCI/Docker boot this provision (e.g. ping_group_range). */
+    const badMachineIds = new Set();
 
     for (let round = 1; round <= 3; round++) {
-        const candidates = await listOffers(apiKey, serverConfig);
-        console.log(`Vast offer round ${round}: trying ${candidates.length} candidate(s)`);
+        const candidates = await listOffers(apiKey, serverConfig, { skipMachineIds: badMachineIds });
+        console.log(
+            `Vast offer round ${round}: trying ${candidates.length} candidate(s)`
+            + (badMachineIds.size ? ` (skipping ${badMachineIds.size} failed machine(s))` : '')
+        );
 
         for (const candidate of candidates) {
             try {
                 console.log(
                     `Vast create attempt: offer id=${candidate.id} `
-                    + `$${candidate.dph.toFixed(3)}/hr ${candidate.offer.gpu_name || ''}`.trim()
+                    + `$${candidate.dph.toFixed(3)}/hr `
+                    + `rel=${(candidate.reliability ?? 0).toFixed(3)} `
+                    + `${candidate.offer.gpu_name || ''}`.trim()
                 );
                 return await provisionOnOffer(
                     apiKey,
@@ -258,8 +307,15 @@ async function acceptOfferWithRetry(apiKey, serverConfig, syncToken, projectId, 
                     continue;
                 }
                 if (isVastHostBootError(err)) {
+                    const machineId = candidate.machineId ?? offerMachineId(candidate.offer);
+                    if (machineId != null) badMachineIds.add(machineId);
+                    const hint = isPingGroupRangeHostError(err.message)
+                        ? ' (host Docker/sysctl ping_group_range — bad machine class, not our image)'
+                        : '';
                     console.warn(
-                        `Vast host boot failed on offer ${candidate.id} (${err.message || err}); trying next host`
+                        `Vast host boot failed on offer ${candidate.id}`
+                        + (machineId != null ? ` machine=${machineId}` : '')
+                        + `${hint}: ${err.message || err}; trying next host`
                     );
                     continue;
                 }
@@ -274,12 +330,13 @@ async function acceptOfferWithRetry(apiKey, serverConfig, syncToken, projectId, 
             );
         }
 
-        console.warn(`Vast offer round ${round} exhausted (${candidates.length} stale); re-searching...`);
+        console.warn(`Vast offer round ${round} exhausted (${candidates.length} tried); re-searching...`);
     }
 
     throw lastErr || new Error(
         'All matching Vast hosts failed to start the GPU container. '
-        + 'Try Start Billing again, or set VAST_RUNTYPE=ssh_direct in .env if args mode fails.'
+        + 'Often caused by flaky hosts (Docker ping_group_range). Try Start Billing again, '
+        + 'raise VAST_MIN_RELIABILITY, or set VAST_OFFER_ID to a known-good machine.'
     );
 }
 

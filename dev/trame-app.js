@@ -25,6 +25,12 @@ import {
   hydrateUserPreferencesFromUser,
   clearCachedUserPreferences
 } from './utils/userPreferences.js';
+import './components/app-dialog.js';
+import {
+  listOwnedGpuBillingSessions,
+  stopProjectGpuBilling,
+  transferProjectGpuBilling
+} from './services/projectGpu.js';
 
 export class TrameApp extends LitElement {
   static get styles() {
@@ -105,6 +111,92 @@ export class TrameApp extends LitElement {
         justify-content: center;
         background: #f5f5f5;
       }
+
+      .logout-billing-dialog {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        min-width: min(420px, 85vw);
+        max-width: 520px;
+      }
+
+      .logout-billing-dialog p {
+        margin: 0;
+        line-height: 1.45;
+        color: var(--color-text-primary, #333);
+      }
+
+      .logout-billing-auto-hint {
+        font-size: 13px;
+        color: var(--color-text-secondary, #666);
+      }
+
+      .logout-billing-sessions {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 240px;
+        overflow: auto;
+      }
+
+      .logout-billing-session {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 12px;
+        border: 1px solid var(--color-border, #ddd);
+        border-radius: 10px;
+        background: var(--color-surface, var(--color-background, #fafafa));
+      }
+
+      .logout-billing-session-name {
+        font-weight: 600;
+        color: var(--color-text-primary, #222);
+      }
+
+      .logout-billing-session-meta {
+        font-size: 12px;
+        color: var(--color-text-secondary, #666);
+      }
+
+      .logout-billing-actions {
+        display: flex;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      .secondary-button,
+      .primary-button {
+        border: 1px solid var(--color-border, #ddd);
+        border-radius: 10px;
+        min-height: 40px;
+        padding: 8px 14px;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .secondary-button {
+        background: transparent;
+        color: var(--color-text-primary, #333);
+      }
+
+      .primary-button {
+        background: var(--color-primary, #1976d2);
+        color: var(--color-background, #fff);
+      }
+
+      .primary-button:disabled,
+      .secondary-button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
     `;
   }
 
@@ -128,7 +220,12 @@ export class TrameApp extends LitElement {
       shareErrorStatus: { type: Number },
       shareIframeUrl: { type: String },
       shareFileName: { type: String },
-      shareReplayStatus: { type: String }
+      shareReplayStatus: { type: String },
+      logoutBillingBusy: { type: Boolean },
+      logoutBillingMode: { type: String },
+      logoutTransferSession: { type: Object },
+      logoutSoleSessions: { type: Array },
+      logoutBillingAutoSeconds: { type: Number }
     };
   }
 
@@ -158,6 +255,15 @@ export class TrameApp extends LitElement {
     this.shareReplayPollTimer = null;
     this.shareReplayAttempts = 0;
     this.shareReplayInFlight = false;
+    this.logoutBillingBusy = false;
+    this.logoutBillingMode = '';
+    this.logoutTransferSession = null;
+    this.logoutSoleSessions = [];
+    this.logoutBillingAutoSeconds = 0;
+    this._logoutQueueWithOthers = [];
+    this._logoutQueueSole = [];
+    this._logoutBillingAutoTimer = null;
+    this._logoutBillingAutoInterval = null;
     this._trameHeartbeatInterval = null;
     this._onPopState = () => this.restoreViewFromUrl();
 
@@ -317,7 +423,8 @@ export class TrameApp extends LitElement {
       this.stopInactivityTimer();
       this.inactivityTimeout = setTimeout(() => {
         console.log('User inactive for 30 minutes, logging out...');
-        this.handleLogout();
+        // Skip billing dialog — user is already gone; idle auto-stop still applies.
+        this.performLogout();
       }, INACTIVITY_TIMEOUT);
     };
 
@@ -347,7 +454,252 @@ export class TrameApp extends LitElement {
     }
   }
 
+  /**
+   * Explicit logout (menu button). If the user owns remote GPU billing, remind them
+   * to transfer or stop before signing out.
+   */
   async handleLogout() {
+    if (this.logoutBillingBusy || this.logoutBillingMode) return;
+
+    try {
+      const data = await listOwnedGpuBillingSessions();
+      const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
+      if (!sessions.length) {
+        await this.performLogout();
+        return;
+      }
+
+      this._logoutQueueWithOthers = sessions.filter((s) => s.othersActive);
+      this._logoutQueueSole = sessions.filter((s) => !s.othersActive);
+      this.advanceLogoutBillingFlow();
+    } catch (err) {
+      console.warn('Owned billing check on logout failed:', err?.message || err);
+      await this.performLogout();
+    }
+  }
+
+  advanceLogoutBillingFlow() {
+    if (this._logoutQueueWithOthers.length > 0) {
+      this.logoutTransferSession = this._logoutQueueWithOthers[0];
+      this.logoutSoleSessions = [];
+      this.logoutBillingMode = 'transfer';
+      this.openLogoutBillingDialog();
+      return;
+    }
+    if (this._logoutQueueSole.length > 0) {
+      this.logoutTransferSession = null;
+      this.logoutSoleSessions = [...this._logoutQueueSole];
+      this.logoutBillingMode = 'sole';
+      this.openLogoutBillingDialog();
+      return;
+    }
+    this.clearLogoutBillingState();
+    this.performLogout();
+  }
+
+  openLogoutBillingDialog() {
+    this.startLogoutBillingAutoTimer();
+    requestAnimationFrame(() => {
+      this.renderRoot?.querySelector('#logout-billing-dialog')?.openDialog?.();
+    });
+  }
+
+  closeLogoutBillingDialog() {
+    this.clearLogoutBillingAutoTimer();
+    this.renderRoot?.querySelector('#logout-billing-dialog')?.closeDialog?.();
+  }
+
+  clearLogoutBillingState() {
+    this.clearLogoutBillingAutoTimer();
+    this.logoutBillingBusy = false;
+    this.logoutBillingMode = '';
+    this.logoutTransferSession = null;
+    this.logoutSoleSessions = [];
+    this.logoutBillingAutoSeconds = 0;
+    this._logoutQueueWithOthers = [];
+    this._logoutQueueSole = [];
+  }
+
+  /** 2 minutes — if the user walks away after clicking log out, auto transfer or stop. */
+  static get LOGOUT_BILLING_AUTO_MS() {
+    return 2 * 60 * 1000;
+  }
+
+  clearLogoutBillingAutoTimer() {
+    if (this._logoutBillingAutoTimer) {
+      clearTimeout(this._logoutBillingAutoTimer);
+      this._logoutBillingAutoTimer = null;
+    }
+    if (this._logoutBillingAutoInterval) {
+      clearInterval(this._logoutBillingAutoInterval);
+      this._logoutBillingAutoInterval = null;
+    }
+    this.logoutBillingAutoSeconds = 0;
+  }
+
+  startLogoutBillingAutoTimer() {
+    this.clearLogoutBillingAutoTimer();
+    const totalMs = this.constructor.LOGOUT_BILLING_AUTO_MS;
+    const deadline = Date.now() + totalMs;
+    this.logoutBillingAutoSeconds = Math.ceil(totalMs / 1000);
+
+    this._logoutBillingAutoInterval = setInterval(() => {
+      const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      this.logoutBillingAutoSeconds = left;
+      if (left <= 0) {
+        clearInterval(this._logoutBillingAutoInterval);
+        this._logoutBillingAutoInterval = null;
+      }
+    }, 1000);
+
+    this._logoutBillingAutoTimer = setTimeout(() => {
+      this._logoutBillingAutoTimer = null;
+      this.handleLogoutBillingAutoDefault();
+    }, totalMs);
+  }
+
+  get logoutBillingAutoHint() {
+    const secs = this.logoutBillingAutoSeconds;
+    if (!secs || this.logoutBillingBusy) return '';
+    const action = this.logoutBillingMode === 'transfer'
+      ? (this.logoutTransferSession?.transferTarget ? 'transfer ownership' : 'stop billing')
+      : 'stop billing and log out';
+    const time = secs >= 60
+      ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
+      : `${secs}s`;
+    return `If you walk away, we’ll ${action} automatically in ${time}.`;
+  }
+
+  async handleLogoutBillingAutoDefault() {
+    if (this.logoutBillingBusy || !this.logoutBillingMode) return;
+    this.clearLogoutBillingAutoTimer();
+    if (this.logoutBillingMode === 'transfer') {
+      if (this.logoutTransferSession?.transferTarget) {
+        await this.handleLogoutTransfer();
+      } else {
+        await this.handleLogoutStopAnyway();
+      }
+      return;
+    }
+    if (this.logoutBillingMode === 'sole') {
+      await this.handleLogoutStopAllSole();
+    }
+  }
+
+  cancelLogoutBilling() {
+    this.closeLogoutBillingDialog();
+    this.clearLogoutBillingState();
+  }
+
+  get logoutTransferImpactNames() {
+    const users = this.logoutTransferSession?.activeUsers || [];
+    return users.map((u) => u.username || `User ${u.userId}`).join(', ');
+  }
+
+  get logoutTransferLabel() {
+    const target = this.logoutTransferSession?.transferTarget;
+    if (!target) return 'Transfer ownership';
+    return `Transfer to ${target.username || `User ${target.userId}`}`;
+  }
+
+  async handleLogoutTransfer() {
+    const session = this.logoutTransferSession;
+    if (!session?.projectId || this.logoutBillingBusy) return;
+    this.clearLogoutBillingAutoTimer();
+    this.logoutBillingBusy = true;
+    try {
+      await transferProjectGpuBilling(session.projectId);
+      this._logoutQueueWithOthers = this._logoutQueueWithOthers.filter(
+        (s) => s.projectId !== session.projectId
+      );
+      this.closeLogoutBillingDialog();
+      this.logoutBillingBusy = false;
+      this.advanceLogoutBillingFlow();
+    } catch (err) {
+      console.error('Logout transfer failed:', err);
+      this.logoutBillingBusy = false;
+      this.startLogoutBillingAutoTimer();
+      window.alert(err.message || 'Unable to transfer GPU billing.');
+    }
+  }
+
+  async handleLogoutStopAnyway() {
+    const session = this.logoutTransferSession;
+    if (!session?.projectId || this.logoutBillingBusy) return;
+    this.clearLogoutBillingAutoTimer();
+    this.logoutBillingBusy = true;
+    try {
+      await stopProjectGpuBilling(session.projectId, { acknowledgeImpact: true });
+      this._logoutQueueWithOthers = this._logoutQueueWithOthers.filter(
+        (s) => s.projectId !== session.projectId
+      );
+      this.closeLogoutBillingDialog();
+      this.logoutBillingBusy = false;
+      this.advanceLogoutBillingFlow();
+    } catch (err) {
+      console.error('Logout stop billing failed:', err);
+      this.logoutBillingBusy = false;
+      this.startLogoutBillingAutoTimer();
+      window.alert(err.message || 'Unable to stop GPU billing.');
+    }
+  }
+
+  async handleLogoutStopProject(projectId) {
+    if (!projectId || this.logoutBillingBusy) return;
+    this.clearLogoutBillingAutoTimer();
+    this.logoutBillingBusy = true;
+    try {
+      await stopProjectGpuBilling(projectId, { acknowledgeImpact: true });
+      this._logoutQueueSole = this._logoutQueueSole.filter((s) => s.projectId !== projectId);
+      this.logoutSoleSessions = [...this._logoutQueueSole];
+      if (!this.logoutSoleSessions.length) {
+        this.closeLogoutBillingDialog();
+        this.logoutBillingBusy = false;
+        this.advanceLogoutBillingFlow();
+        return;
+      }
+      this.startLogoutBillingAutoTimer();
+    } catch (err) {
+      console.error('Logout stop project failed:', err);
+      this.startLogoutBillingAutoTimer();
+      window.alert(err.message || 'Unable to stop GPU billing.');
+    } finally {
+      this.logoutBillingBusy = false;
+    }
+  }
+
+  async handleLogoutStopAllSole() {
+    if (this.logoutBillingBusy || !this.logoutSoleSessions.length) return;
+    this.clearLogoutBillingAutoTimer();
+    this.logoutBillingBusy = true;
+    const remaining = [];
+    for (const session of this._logoutQueueSole) {
+      try {
+        await stopProjectGpuBilling(session.projectId, { acknowledgeImpact: true });
+      } catch (err) {
+        console.error('Logout stop-all failed for project', session.projectId, err);
+        remaining.push(session);
+      }
+    }
+    this._logoutQueueSole = remaining;
+    this.logoutSoleSessions = [...remaining];
+    this.logoutBillingBusy = false;
+    if (remaining.length) {
+      this.startLogoutBillingAutoTimer();
+      window.alert('Some GPU sessions could not be stopped. You can retry or log out anyway.');
+      return;
+    }
+    this.closeLogoutBillingDialog();
+    this.advanceLogoutBillingFlow();
+  }
+
+  handleLogoutLeaveBillingRunning() {
+    this.closeLogoutBillingDialog();
+    this.clearLogoutBillingState();
+    this.performLogout();
+  }
+
+  async performLogout() {
     try {
       // Stop any running containers before logout
       await fetch(`${API_URL}/api/containers/stop`, {
@@ -372,6 +724,7 @@ export class TrameApp extends LitElement {
     this.isAuthenticated = false;
     this.showLogin = true;
     clearCachedUserPreferences();
+    this.clearLogoutBillingState();
 
     // Stop inactivity timer
     this.stopInactivityTimer();
@@ -586,6 +939,113 @@ export class TrameApp extends LitElement {
           @logout-request=${this.handleLogout}
         ></user-settings-page>
       ` : ''}
+
+      <app-dialog
+        id="logout-billing-dialog"
+        title=${this.logoutBillingMode === 'transfer'
+          ? 'GPU billing is still active'
+          : 'Stop GPU billing before logout?'}
+        .lightDismiss=${false}
+      >
+        ${this.logoutBillingMode === 'transfer' && this.logoutTransferSession ? html`
+          <div class="logout-billing-dialog">
+            <p>
+              You own GPU billing on
+              <strong>${this.logoutTransferSession.projectName}</strong>.
+              Other users are still active
+              (${this.logoutTransferImpactNames || 'collaborators'}).
+              Transfer ownership or stop billing before you log out.
+            </p>
+            ${this.logoutBillingAutoHint ? html`
+              <p class="logout-billing-auto-hint">${this.logoutBillingAutoHint}</p>
+            ` : ''}
+            <div class="logout-billing-actions">
+              <button
+                class="secondary-button"
+                type="button"
+                ?disabled=${this.logoutBillingBusy}
+                @click=${() => this.cancelLogoutBilling()}
+              >
+                Cancel
+              </button>
+              <button
+                class="secondary-button"
+                type="button"
+                ?disabled=${this.logoutBillingBusy || !this.logoutTransferSession?.transferTarget}
+                @click=${() => this.handleLogoutTransfer()}
+              >
+                ${this.logoutTransferLabel}
+              </button>
+              <button
+                class="primary-button"
+                type="button"
+                ?disabled=${this.logoutBillingBusy}
+                @click=${() => this.handleLogoutStopAnyway()}
+              >
+                ${this.logoutBillingBusy ? 'Working…' : 'Stop anyway'}
+              </button>
+            </div>
+          </div>
+        ` : ''}
+        ${this.logoutBillingMode === 'sole' ? html`
+          <div class="logout-billing-dialog">
+            <p>
+              You still own GPU billing on
+              ${this.logoutSoleSessions.length === 1 ? 'this project' : 'these projects'}.
+              Stop billing so the project isn’t charged after you leave, or log out and leave billing running.
+            </p>
+            ${this.logoutBillingAutoHint ? html`
+              <p class="logout-billing-auto-hint">${this.logoutBillingAutoHint}</p>
+            ` : ''}
+            <ul class="logout-billing-sessions">
+              ${this.logoutSoleSessions.map((session) => html`
+                <li class="logout-billing-session">
+                  <div>
+                    <div class="logout-billing-session-name">${session.projectName}</div>
+                    <div class="logout-billing-session-meta">
+                      ${session.providerId || 'remote'} · billing active
+                    </div>
+                  </div>
+                  <button
+                    class="secondary-button"
+                    type="button"
+                    ?disabled=${this.logoutBillingBusy}
+                    @click=${() => this.handleLogoutStopProject(session.projectId)}
+                  >
+                    Stop billing
+                  </button>
+                </li>
+              `)}
+            </ul>
+            <div class="logout-billing-actions">
+              <button
+                class="secondary-button"
+                type="button"
+                ?disabled=${this.logoutBillingBusy}
+                @click=${() => this.cancelLogoutBilling()}
+              >
+                Cancel
+              </button>
+              <button
+                class="secondary-button"
+                type="button"
+                ?disabled=${this.logoutBillingBusy}
+                @click=${() => this.handleLogoutLeaveBillingRunning()}
+              >
+                Log out without stopping
+              </button>
+              <button
+                class="primary-button"
+                type="button"
+                ?disabled=${this.logoutBillingBusy || !this.logoutSoleSessions.length}
+                @click=${() => this.handleLogoutStopAllSole()}
+              >
+                ${this.logoutBillingBusy ? 'Working…' : 'Stop all & log out'}
+              </button>
+            </div>
+          </div>
+        ` : ''}
+      </app-dialog>
     `;
   }
 

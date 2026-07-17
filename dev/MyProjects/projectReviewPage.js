@@ -17,6 +17,7 @@ import {
     prepareFullSlicerViewer,
     startProjectGpuBilling,
     stopProjectGpuBilling,
+    transferProjectGpuBilling,
     acknowledgeProjectGpuError,
     sendProjectGpuHeartbeat,
     prestageProjectGpu
@@ -724,6 +725,11 @@ export class ProjectReviewPage extends LitElement {
             gpuActiveProviderId: { type: String },
             gpuInstance: { type: Object },
             canManageGpu: { type: Boolean },
+            canStartBilling: { type: Boolean },
+            canStopBilling: { type: Boolean },
+            billingOwnership: { type: Object },
+            stopBillingImpact: { type: Object },
+            ownerBillingPromptStep: { type: String },
             gpuSaving: { type: Boolean },
             gpuDialogProviderId: { type: String },
             gpuDialogApiKey: { type: String },
@@ -733,6 +739,7 @@ export class ProjectReviewPage extends LitElement {
             gpuBillingLease: { type: Object },
             stagedFileIds: { type: Array },
             gpuPrestageActive: { type: Boolean },
+            vastGpuMode: { type: String },
             remoteActivity: { type: Object },
             remoteProvision: { type: Object },
             gpuDetailsOpen: { type: Boolean },
@@ -776,6 +783,12 @@ export class ProjectReviewPage extends LitElement {
         this.gpuActiveProviderId = 'local';
         this.gpuInstance = null;
         this.canManageGpu = false;
+        this.canStartBilling = false;
+        this.canStopBilling = false;
+        this.billingOwnership = null;
+        this.stopBillingImpact = null;
+        this.ownerBillingPromptStep = '';
+        this._billingReceivedViaTransfer = false;
         this.gpuSaving = false;
         this.gpuDialogProviderId = 'vast';
         this.gpuDialogApiKey = '';
@@ -785,6 +798,7 @@ export class ProjectReviewPage extends LitElement {
         this.gpuBillingLease = null;
         this.stagedFileIds = [];
         this.gpuPrestageActive = false;
+        this.vastGpuMode = null;
         this.remoteActivity = null;
         this.remoteProvision = null;
         this.gpuDetailsOpen = false;
@@ -1217,7 +1231,9 @@ export class ProjectReviewPage extends LitElement {
         }
 
         const simplified = this.useLocalSimplifiedViewer;
-        const label = viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified });
+        const label = this.savedGpuProviderId === 'vast'
+            ? 'Full Slicer (Vast)'
+            : viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified });
         this.currentFileName = file.originalName;
         this.launchingFileId = file.id;
         this.viewerKind = VIEWER_KINDS.SLICER_GUI;
@@ -1225,7 +1241,9 @@ export class ProjectReviewPage extends LitElement {
         this.viewerLoading = true;
         this.viewerLoadingDetail = switchingInPlace
             ? `Switching to ${file.originalName}…`
-            : `Starting ${label} for ${file.originalName}…`;
+            : (this.savedGpuProviderId === 'vast'
+                ? `Copying ${file.originalName} to Vast Full Slicer…`
+                : `Starting ${label} for ${file.originalName}…`);
         this.showIframe = true;
         this.iframeUrl = 'about:blank';
 
@@ -1602,6 +1620,7 @@ export class ProjectReviewPage extends LitElement {
             cancelViewerStopOnLeave(this.projectId);
         }
         const prevStatus = this.gpuInstance?.status;
+        const prevProviderId = this.gpuSettings ? this.savedGpuProviderId : null;
         try {
             const providerData = await listGpuProviders();
             this.gpuProviders = providerData.providers || [];
@@ -1611,6 +1630,7 @@ export class ProjectReviewPage extends LitElement {
             this.gpuBillingLease = data.billingLease || null;
             this.stagedFileIds = data.stagedFileIds || [];
             this.gpuPrestageActive = !!data.prestageActive;
+            this.vastGpuMode = data.vastGpuMode || null;
             this.remoteActivity = data.remoteActivity || null;
             this.remoteProvision = data.remoteProvision || null;
             if (data.billingLease?.viewerLeaveGraceMinutes) {
@@ -1620,9 +1640,23 @@ export class ProjectReviewPage extends LitElement {
                 setViewerIdleMs(data.billingLease.viewerSessionTtlMinutes * 60 * 1000);
             }
             this.canManageGpu = !!data.canManage;
+            this.canStartBilling = !!data.canStartBilling;
+            this.canStopBilling = !!data.canStopBilling;
+            this.applyBillingOwnership(data.billingOwnership, { announce: true });
             this.syncConfiguredProvidersFromSettings(data.settings);
 
             this.syncGpuProviderSelect();
+
+            const nextProviderId = this.savedGpuProviderId;
+            if (
+                prevProviderId
+                && nextProviderId
+                && prevProviderId !== nextProviderId
+            ) {
+                const label = (this.configuredProviders.find((p) => p.id === nextProviderId) || {}).label
+                    || nextProviderId;
+                this.showToast(`GPU provider is now ${label}.`);
+            }
 
             const gpuErr = this.pickGpuStatusError(data, prevStatus);
             if (gpuErr) {
@@ -1650,11 +1684,20 @@ export class ProjectReviewPage extends LitElement {
 
     maybeStartGpuPolling() {
         this.stopGpuPolling();
-        const status = this.gpuInstance?.status;
-        if (!['provisioning', 'stopping', 'running'].includes(status)) return;
+        if (!this.projectId) return;
+
+        const providerId = this.savedGpuProviderId || 'local';
+        const status = this.gpuInstance?.status || 'idle';
+        // Always poll on the project page so collaborator provider/billing changes show up
+        // without a hard refresh (including Local → Vast).
+        const intervalMs = ['provisioning', 'stopping'].includes(status)
+            ? 5000
+            : (providerId !== 'local' && status === 'running')
+                ? 20000
+                : 12000;
         this._gpuPollInterval = setInterval(() => {
             this.loadProjectGpu().catch(() => {});
-        }, status === 'running' ? 20000 : 5000);
+        }, intervalMs);
     }
 
     stopGpuBillingHeartbeat() {
@@ -1675,13 +1718,20 @@ export class ProjectReviewPage extends LitElement {
             const viewerActive = viewerOpen && isViewerUserActive();
             sendProjectGpuHeartbeat(this.projectId, { viewerActive })
                 .then((data) => {
+                    if (data.billingOwnership) {
+                        this.applyBillingOwnership(data.billingOwnership);
+                    }
+                    if (data.ownershipTransferred && data.billingOwnership?.youOwnBilling) {
+                        this._billingReceivedViaTransfer = true;
+                        this.showToast('You now own GPU billing on this project.');
+                    }
                     if (data.billingStopped) {
                         this.gpuInstance = data.instance || this.gpuInstance;
                         this.gpuBillingLease = null;
+                        this.canStopBilling = false;
                         this.showErrorAlert(
-                            data.reason || data.instance?.errorMessage
-                                || 'GPU instance is no longer available.',
-                            { title: 'GPU stopped' }
+                            this.formatGpuSessionEndedMessage(data.reason || data.instance?.errorMessage),
+                            { title: 'GPU session ended', force: true }
                         );
                         this.stopGpuBillingHeartbeat();
                         this.stopGpuPolling();
@@ -1722,6 +1772,15 @@ export class ProjectReviewPage extends LitElement {
     get useLocalFullSlicer() {
         return this.savedGpuProviderId === 'local'
             && getCachedLocalSlicerViewerOptions().useFullSlicer === true;
+    }
+
+    /**
+     * Full desktop Slicer: local when pref is on, or Vast when server mode is full-slicer.
+     * Soft-warm prepare stays local-only (useLocalFullSlicer).
+     */
+    get useFullSlicerViewer() {
+        if (this.useLocalFullSlicer) return true;
+        return this.savedGpuProviderId === 'vast' && this.vastGpuMode === 'full-slicer';
     }
 
     get useLocalSimplifiedViewer() {
@@ -1765,8 +1824,8 @@ export class ProjectReviewPage extends LitElement {
             return 'Local';
         }
         const status = this.gpuInstance?.status || 'idle';
-        if (!this.canManageGpu && status === 'idle') {
-            return 'GPU not running — ask project admin';
+        if (!this.canStartBilling && status === 'idle') {
+            return 'GPU not running — ask admin or collaborator';
         }
         if (status === 'provisioning') {
             if (this.remoteProvision?.failure) {
@@ -1869,16 +1928,27 @@ export class ProjectReviewPage extends LitElement {
                     + 'Other browser tabs can stay open for side-by-side compare.'
             });
         }
-        if (this.canManageGpu) {
+        if (this.canStartBilling) {
             entries.push({
                 label: 'Note',
                 value: 'Start billing before opening files. Scenes copy to the GPU when opened.'
             });
+        } else if (this.canManageGpu) {
+            entries.push({
+                label: 'Note',
+                value: 'Add remote credentials, then start billing before opening files.'
+            });
         } else {
             entries.push({
                 label: 'Note',
-                value: 'Project admin manages GPU billing.'
+                value: 'A project admin or collaborator manages GPU billing.'
             });
+        }
+        if (this.billingOwnership?.billingOwner?.username && this.gpuInstance?.status === 'running') {
+            const ownerLabel = this.billingOwnership.youOwnBilling
+                ? 'You'
+                : this.billingOwnership.billingOwner.username;
+            entries.push({ label: 'Billing owner', value: ownerLabel });
         }
         return entries;
     }
@@ -1925,33 +1995,208 @@ export class ProjectReviewPage extends LitElement {
     }
 
     get canStartGpuBilling() {
-        return this.canManageGpu
+        return this.canStartGpuBillingNow({ ignoreBusy: false });
+    }
+
+    canStartGpuBillingNow({ ignoreBusy = false } = {}) {
+        return this.canStartBilling
             && this.savedGpuProviderId !== 'local'
             && this.isGpuProviderConfigured(this.savedGpuProviderId)
             && ['idle', 'error'].includes(this.gpuInstance?.status || 'idle')
-            && !this.gpuBillingBusy
+            && (ignoreBusy || !this.gpuBillingBusy)
             && !this.gpuSaving;
     }
 
     get canStopGpuBilling() {
         const inst = this.gpuInstance;
-        if (!this.canManageGpu || this.gpuBillingBusy) return false;
+        if (!this.canStopBilling || this.gpuBillingBusy) return false;
         if (inst?.status === 'provisioning') return true;
         if (inst?.status === 'stopping') return true;
         if (inst?.status === 'error' && inst?.instanceId) return true;
         return inst?.status === 'running' && !!inst?.instanceId;
     }
 
+    get showGpuBillingActions() {
+        return this.savedGpuProviderId !== 'local'
+            && (this.canStartBilling || this.canStopBilling);
+    }
+
+    applyBillingOwnership(ownership, { announce = false } = {}) {
+        const prev = this.billingOwnership;
+        const prevOwned = prev?.youOwnBilling === true;
+        const hadSnapshot = prev != null;
+        this.billingOwnership = ownership || null;
+        const becameOwner = !prevOwned && ownership?.youOwnBilling === true;
+        // Only mark transfer when ownership flips during a session — not first paint as starter/owner.
+        if (becameOwner && hadSnapshot && this.gpuInstance?.status === 'running') {
+            this._billingReceivedViaTransfer = true;
+        }
+        if (!ownership?.youOwnBilling) {
+            this._billingReceivedViaTransfer = false;
+        }
+        if (
+            announce
+            && hadSnapshot
+            && becameOwner
+            && this.gpuInstance?.status === 'running'
+        ) {
+            this.showToast('You now own GPU billing on this project.');
+        }
+    }
+
+    get otherActiveBillingUsers() {
+        const selfId = this.billingOwnership?.billingOwner?.userId;
+        const users = this.billingOwnership?.activeUsers || [];
+        return users.filter((u) => u.userId !== selfId);
+    }
+
+    shouldPromptTransferredOwnerOnViewerClose() {
+        if (this.savedGpuProviderId === 'local') return false;
+        if (this.gpuInstance?.status !== 'running') return false;
+        if (!this.billingOwnership?.youOwnBilling) return false;
+        if (!this._billingReceivedViaTransfer) return false;
+        if (!this.canStopBilling) return false;
+        return this.otherActiveBillingUsers.length === 0;
+    }
+
+    openOwnerBillingPrompt() {
+        this.ownerBillingPromptStep = 'ask';
+        this._ownerPromptClosingProgrammatically = false;
+        requestAnimationFrame(() => {
+            const dialog = this.renderRoot?.querySelector('#gpu-owner-billing-prompt');
+            if (!dialog) return;
+            dialog.lightDismiss = true;
+            dialog.showDefaultCloseButton = true;
+            dialog.title = 'You own this GPU session';
+            dialog.openDialog();
+            const native = dialog.nativeDialog;
+            if (native && !native._ownerPromptCloseBound) {
+                native.addEventListener('close', () => this.handleOwnerBillingPromptNativeClose());
+                native._ownerPromptCloseBound = true;
+            }
+        });
+    }
+
+    handleOwnerBillingPromptNativeClose() {
+        if (this._ownerPromptClosingProgrammatically) {
+            this._ownerPromptClosingProgrammatically = false;
+            return;
+        }
+        // Dismissed ask (X / backdrop) → friendly reminder that requires acknowledgement.
+        if (this.ownerBillingPromptStep === 'ask') {
+            this.ownerBillingPromptStep = 'remind';
+            requestAnimationFrame(() => {
+                const dialog = this.renderRoot?.querySelector('#gpu-owner-billing-prompt');
+                if (!dialog) return;
+                dialog.lightDismiss = false;
+                dialog.showDefaultCloseButton = true;
+                dialog.title = 'Remember to stop billing';
+                dialog.openDialog();
+            });
+            return;
+        }
+        this.ownerBillingPromptStep = '';
+    }
+
+    closeOwnerBillingPrompt() {
+        this._ownerPromptClosingProgrammatically = true;
+        this.renderRoot?.querySelector('#gpu-owner-billing-prompt')?.closeDialog?.();
+        this.ownerBillingPromptStep = '';
+    }
+
+    handleOwnerBillingPromptKeepRunning() {
+        this._ownerPromptClosingProgrammatically = true;
+        const dialog = this.renderRoot?.querySelector('#gpu-owner-billing-prompt');
+        dialog?.closeDialog?.();
+        this.ownerBillingPromptStep = 'remind';
+        requestAnimationFrame(() => {
+            this._ownerPromptClosingProgrammatically = false;
+            if (!dialog) return;
+            dialog.lightDismiss = false;
+            dialog.showDefaultCloseButton = true;
+            dialog.title = 'Remember to stop billing';
+            dialog.openDialog();
+        });
+    }
+
+    acknowledgeOwnerBillingReminder() {
+        this.closeOwnerBillingPrompt();
+    }
+
+    async handleOwnerBillingPromptStop() {
+        if (!this.canStopGpuBilling) {
+            this.closeOwnerBillingPrompt();
+            return;
+        }
+        this.gpuBillingBusy = true;
+        try {
+            const data = await stopProjectGpuBilling(this.projectId, { acknowledgeImpact: true });
+            this.gpuInstance = data.instance;
+            if (data.billingOwnership) {
+                this.applyBillingOwnership(data.billingOwnership);
+            }
+            this._billingReceivedViaTransfer = false;
+            this.closeOwnerBillingPrompt();
+            this.showToast('Stopping GPU billing…');
+            this.maybeStartGpuPolling();
+        } catch (error) {
+            this.showErrorAlert(error.message || 'Unable to stop GPU billing.', {
+                title: 'GPU billing',
+                force: true
+            });
+        } finally {
+            this.gpuBillingBusy = false;
+        }
+    }
+
+    formatGpuSessionEndedMessage(reason) {
+        const detail = reason ? ` (${reason})` : '';
+        return `Your GPU session ended${detail}. Billing may have been stopped by another user, idle timeout, or transfer exhaustion.`;
+    }
+
+    get stopBillingImpactNames() {
+        const users = this.stopBillingImpact?.activeUsers || [];
+        return users.map((u) => u.username || `User ${u.userId}`).join(', ');
+    }
+
+    get stopBillingTransferLabel() {
+        const target = this.stopBillingImpact?.transferTarget
+            || this.billingOwnership?.transferTarget;
+        if (!target) return 'Transfer ownership';
+        return `Transfer to ${target.username || `User ${target.userId}`}`;
+    }
+
     async handleStartGpuBilling() {
         if (!this.canStartGpuBilling) return;
         this.gpuBillingBusy = true;
         try {
+            // Refresh first so we don't race a collaborator who already started.
+            await this.loadProjectGpu();
+            // Ignore busy flag here — we set it for this in-flight start.
+            if (!this.canStartGpuBillingNow({ ignoreBusy: true })) {
+                this.showToast(
+                    this.gpuInstance?.status === 'provisioning' || this.gpuInstance?.status === 'running'
+                        ? 'GPU billing was already started by someone on this project.'
+                        : 'GPU billing is not available to start right now.'
+                );
+                return;
+            }
             const data = await startProjectGpuBilling(this.projectId);
             this.gpuInstance = data.instance;
+            if (data.billingOwnership) {
+                this.applyBillingOwnership(data.billingOwnership);
+            }
+            this.canStopBilling = true;
+            this._billingReceivedViaTransfer = false;
             this.clearErrorAlertDedupe();
             this.showToast('GPU provisioning started.');
             this.maybeStartGpuPolling();
         } catch (error) {
+            if (error.status === 409) {
+                await this.loadProjectGpu().catch(() => {});
+                this.showToast(error.message || 'GPU billing was already started on this project.');
+                return;
+            }
             this.showErrorAlert(error.message || 'Unable to start GPU billing.', {
                 title: 'GPU billing',
                 force: true
@@ -1967,6 +2212,44 @@ export class ProjectReviewPage extends LitElement {
         try {
             const data = await stopProjectGpuBilling(this.projectId);
             this.gpuInstance = data.instance;
+            if (data.billingOwnership) {
+                this.applyBillingOwnership(data.billingOwnership);
+            }
+            this.showToast('Stopping GPU billing…');
+            this.maybeStartGpuPolling();
+        } catch (error) {
+            if (error.status === 409 && error.code === 'billing_stop_impact') {
+                this.stopBillingImpact = error.impact || error.payload?.impact || null;
+                if (error.payload?.billingOwnership) {
+                    this.applyBillingOwnership(error.payload.billingOwnership);
+                }
+                this.renderRoot?.querySelector('#gpu-stop-billing-dialog')?.openDialog();
+                return;
+            }
+            this.showErrorAlert(error.message || 'Unable to stop GPU billing.', {
+                title: 'GPU billing',
+                force: true
+            });
+        } finally {
+            this.gpuBillingBusy = false;
+        }
+    }
+
+    closeStopBillingDialog() {
+        this.renderRoot?.querySelector('#gpu-stop-billing-dialog')?.closeDialog?.();
+        this.stopBillingImpact = null;
+    }
+
+    async handleConfirmStopBillingAnyway() {
+        if (!this.canStopGpuBilling) return;
+        this.gpuBillingBusy = true;
+        try {
+            const data = await stopProjectGpuBilling(this.projectId, { acknowledgeImpact: true });
+            this.gpuInstance = data.instance;
+            if (data.billingOwnership) {
+                this.applyBillingOwnership(data.billingOwnership);
+            }
+            this.closeStopBillingDialog();
             this.showToast('Stopping GPU billing…');
             this.maybeStartGpuPolling();
         } catch (error) {
@@ -1979,14 +2262,72 @@ export class ProjectReviewPage extends LitElement {
         }
     }
 
+    async handleTransferGpuBilling() {
+        if (!this.canStopGpuBilling) return;
+        this.gpuBillingBusy = true;
+        try {
+            const data = await transferProjectGpuBilling(this.projectId);
+            this.gpuInstance = data.instance;
+            if (data.billingOwnership) {
+                this.applyBillingOwnership(data.billingOwnership);
+            }
+            this.closeStopBillingDialog();
+            if (data.transferred) {
+                const name = data.owner?.username || 'another user';
+                this.showToast(`GPU billing transferred to ${name}.`);
+            } else if (data.stopped) {
+                this.showToast('No active users to transfer to — stopping billing.');
+                this.maybeStartGpuPolling();
+            }
+        } catch (error) {
+            this.showErrorAlert(error.message || 'Unable to transfer GPU billing.', {
+                title: 'GPU billing',
+                force: true
+            });
+        } finally {
+            this.gpuBillingBusy = false;
+        }
+    }
+
     async handleLaunchFile(file) {
+        // Immediate feedback — remote open can wait on prestage/sync with no network logs in DevTools.
+        this.launchingFileId = file.id;
+        this.viewerLoading = true;
+        this.viewerLoadingDetail = 'Checking GPU status…';
+        this.viewerKind = VIEWER_KINDS.TRAME;
+        this.viewerSimplified = false;
+        this.currentFileName = file.originalName;
+        this.showIframe = true;
+        this.iframeUrl = 'about:blank';
+
+        try {
+            // Skip a full reload when we already know remote billing is running.
+            if (!(this.usesRemoteGpuProvider() && this.isRemoteGpuRunning())) {
+                await this.loadProjectGpu();
+            }
+        } catch (_) {
+            // launch checks below still apply with last-known state
+        }
+
         const gpuBlock = this.getRemoteGpuLaunchBlockMessage();
         if (gpuBlock) {
+            this.showIframe = false;
+            this.iframeUrl = '';
+            this.viewerLoading = false;
+            this.viewerLoadingDetail = '';
+            this.launchingFileId = null;
+            this.currentFileName = '';
             this.showErrorAlert(gpuBlock, { title: 'GPU not ready', force: true });
             return;
         }
 
-        if (this.useLocalFullSlicer) {
+        if (this.useFullSlicerViewer) {
+            // Full Slicer path manages its own overlay state.
+            this.showIframe = false;
+            this.iframeUrl = '';
+            this.viewerLoading = false;
+            this.viewerLoadingDetail = '';
+            this.launchingFileId = null;
             await this.handleLaunchFullSlicer(file);
             return;
         }
@@ -1994,27 +2335,20 @@ export class ProjectReviewPage extends LitElement {
         if (this.projectId) {
             cancelViewerStopOnLeave(this.projectId);
         }
-        this.currentFileName = file.originalName;
-        this.launchingFileId = file.id;
-        this.viewerKind = VIEWER_KINDS.TRAME;
-        this.viewerSimplified = false;
-        this.viewerLoading = true;
         this.viewerLoadingDetail = `Starting viewer for ${file.originalName}…`;
-        this.showIframe = true;
-        this.iframeUrl = 'about:blank';
 
         try {
             this.stopTrameHeartbeat();
-            this.viewerLoadingDetail = `Preparing session for ${file.originalName}…`;
-
-            if (this.isRemoteGpuRunning() && !this.isFileStagedOnGpu(file)) {
-                try {
-                    const prestageData = await prestageProjectGpu(this.projectId, { fileIds: [file.id] });
-                    this.stagedFileIds = prestageData.stagedFileIds || this.stagedFileIds;
-                } catch (_) {
-                    // containers/start will sync if prestage failed
-                }
+            if (this.isRemoteGpuRunning()) {
+                this.viewerLoadingDetail = this.isFileStagedOnGpu(file)
+                    ? `Opening ${file.originalName} on GPU…`
+                    : `Copying ${file.originalName} to GPU (large scenes can take a few minutes)…`;
+            } else {
+                this.viewerLoadingDetail = `Preparing session for ${file.originalName}…`;
             }
+
+            // Sync lives in /containers/start (waits on shared prestage job, then syncs).
+            // Do not await a separate prestage here — that doubled work and delayed open.
 
             const response = await fetch(`${API_URL}/api/containers/start`, {
                 method: 'POST',
@@ -2113,16 +2447,19 @@ export class ProjectReviewPage extends LitElement {
         if (!this.showIframe) return;
         this.showToast('Viewer closed after inactivity');
         // Walk-away with an open viewer: tear down the seat (do not leave warm forever).
-        await this.closeIframe({ releaseMode: VIEWER_RELEASE_MODES.HARD });
+        await this.closeIframe({ releaseMode: VIEWER_RELEASE_MODES.HARD, skipOwnerBillingPrompt: true });
         if (
             this.savedGpuProviderId !== 'local'
-            && this.canManageGpu
+            && this.canStopBilling
             && this.gpuInstance?.status === 'running'
         ) {
             try {
-                const data = await stopProjectGpuBilling(this.projectId);
+                const data = await stopProjectGpuBilling(this.projectId, { acknowledgeImpact: true });
                 this.gpuInstance = data.instance;
                 this.gpuBillingLease = null;
+                if (data.billingOwnership) {
+                    this.applyBillingOwnership(data.billingOwnership);
+                }
                 this.showToast('GPU billing stopped after inactivity');
                 this.maybeStartGpuPolling();
             } catch (error) {
@@ -2141,6 +2478,7 @@ export class ProjectReviewPage extends LitElement {
         const ping = () => {
             sendTrameContainerHeartbeat({
                 sessionToken: this._viewerSessionToken,
+                projectId: this.projectId,
                 heartbeatUrl,
                 includeUserActive: kind === VIEWER_KINDS.TRAME,
                 onIdleTimeout: () => this.handleViewerInactivityTimeout()
@@ -2246,9 +2584,11 @@ export class ProjectReviewPage extends LitElement {
         }
     }
 
-    async closeIframe({ releaseMode = null } = {}) {
+    async closeIframe({ releaseMode = null, skipOwnerBillingPrompt = false } = {}) {
         const kind = this.viewerKind || VIEWER_KINDS.TRAME;
         const mode = releaseMode || defaultReleaseModeForClose(kind);
+        const promptAfterClose = !skipOwnerBillingPrompt
+            && this.shouldPromptTransferredOwnerOnViewerClose();
         this.stopTrameHeartbeat();
         resetViewerActivity();
         if (this._viewerIframeActivityCleanup) {
@@ -2269,6 +2609,9 @@ export class ProjectReviewPage extends LitElement {
         this.viewerSimplified = false;
         if (this.savedGpuProviderId !== 'local' && this.gpuInstance?.status === 'running') {
             sendProjectGpuHeartbeat(this.projectId, { viewerActive: false }).catch(() => {});
+        }
+        if (promptAfterClose) {
+            this.openOwnerBillingPrompt();
         }
     }
 
@@ -2551,7 +2894,7 @@ export class ProjectReviewPage extends LitElement {
                                     ` : ''}
                                 </div>
                             </details>
-                            ${this.canManageGpu && this.savedGpuProviderId !== 'local' ? html`
+                            ${this.showGpuBillingActions ? html`
                                 <div class="gpu-panel-billing-actions">
                                     <button
                                         class="primary-button"
@@ -2749,6 +3092,86 @@ export class ProjectReviewPage extends LitElement {
                             ${this.gpuDialogSaving ? 'Saving…' : 'Save'}
                         </button>
                     </div>
+                </div>
+            </app-dialog>
+            <app-dialog id="gpu-stop-billing-dialog" title="Stop GPU billing?">
+                <div class="gpu-dialog-form">
+                    <p class="error-alert-message">
+                        Stopping billing will impact
+                        ${this.stopBillingImpactNames || 'other active users'}
+                        and end their GPU sessions.
+                    </p>
+                    <div class="dialog-actions" style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; flex-wrap: wrap;">
+                        <button
+                            class="secondary-button"
+                            type="button"
+                            ?disabled=${this.gpuBillingBusy}
+                            @click=${() => this.closeStopBillingDialog()}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            class="secondary-button"
+                            type="button"
+                            ?disabled=${this.gpuBillingBusy || !(this.stopBillingImpact?.transferTarget || this.billingOwnership?.transferTarget)}
+                            @click=${() => this.handleTransferGpuBilling()}
+                        >
+                            ${this.stopBillingTransferLabel}
+                        </button>
+                        <button
+                            class="primary-button"
+                            type="button"
+                            ?disabled=${this.gpuBillingBusy}
+                            @click=${() => this.handleConfirmStopBillingAnyway()}
+                        >
+                            ${this.gpuBillingBusy ? 'Working…' : 'Stop anyway'}
+                        </button>
+                    </div>
+                </div>
+            </app-dialog>
+            <app-dialog
+                id="gpu-owner-billing-prompt"
+                title=${this.ownerBillingPromptStep === 'remind' ? 'Remember to stop billing' : 'You own this GPU session'}
+                .lightDismiss=${this.ownerBillingPromptStep !== 'remind'}
+            >
+                <div class="gpu-dialog-form">
+                    ${this.ownerBillingPromptStep === 'remind' ? html`
+                        <p class="error-alert-message">
+                            Okay. Remember to stop billing when you’re done so the project isn’t charged longer than needed.
+                        </p>
+                        <div class="dialog-actions" style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;">
+                            <button
+                                class="primary-button"
+                                type="button"
+                                @click=${() => this.acknowledgeOwnerBillingReminder()}
+                            >
+                                Okay
+                            </button>
+                        </div>
+                    ` : html`
+                        <p class="error-alert-message">
+                            Billing ownership was transferred to you, and nobody else is actively using this GPU right now.
+                            Are you done for now — should we stop billing?
+                        </p>
+                        <div class="dialog-actions" style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; flex-wrap: wrap;">
+                            <button
+                                class="secondary-button"
+                                type="button"
+                                ?disabled=${this.gpuBillingBusy}
+                                @click=${() => this.handleOwnerBillingPromptKeepRunning()}
+                            >
+                                Not yet
+                            </button>
+                            <button
+                                class="primary-button"
+                                type="button"
+                                ?disabled=${this.gpuBillingBusy}
+                                @click=${() => this.handleOwnerBillingPromptStop()}
+                            >
+                                ${this.gpuBillingBusy ? 'Stopping…' : 'Yes, stop billing'}
+                            </button>
+                        </div>
+                    `}
                 </div>
             </app-dialog>
             ${this.showIframe ? html`

@@ -19,7 +19,7 @@ Projects can select a GPU provider in **Project → GPU Provider** (admins only)
    docker push YOUR_DOCKERHUB/slicer-vast-gpu:latest
    ```
 
-2. **Server env** (`docker-compose.yml`): `VAST_GPU_IMAGE`, optional `VAST_GPU_NAME`, `VAST_MIN_DISK_GB`, `VAST_MIN_CUDA`, `VAST_MAX_DPH`, `VAST_SEARCH_JSON` (full JSON filter override), `VAST_RUNTYPE` (default `args` — avoids Vast SSH shim failures on custom images), `GPU_BILLING_IDLE_MINUTES`.
+2. **Server env** (`docker-compose.yml`): `VAST_GPU_IMAGE`, optional `VAST_GPU_NAME`, `VAST_MIN_DISK_GB`, `VAST_MIN_CUDA`, `VAST_MAX_DPH`, `VAST_MIN_RELIABILITY` (default `0.98` — avoids flaky hosts that fail with Docker `ping_group_range`), `VAST_SEARCH_JSON` (full JSON filter override), `VAST_RUNTYPE` (default `args` — avoids Vast SSH shim failures on custom images), `GPU_BILLING_IDLE_MINUTES`.
 3. **Per project (UI)**: Vast API key only.
 4. **Start billing** — provisions GPU; server injects a per-instance sync token into the instance on-start.
 5. **Open a file** — backend streams the scene to trame over HTTPS (see [storage.md](storage.md)).

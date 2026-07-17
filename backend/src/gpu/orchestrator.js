@@ -2,14 +2,16 @@ import ProjectGpu from '../models/ProjectGpu.js';
 import Project from '../models/Project.js';
 import storage from '../storage/index.js';
 import { getProvider } from './registry.js';
-import { resolveSyncTarget } from './syncKeys.js';
+import { resolveSyncTarget, resolveFullSlicerStagedName } from './syncKeys.js';
 import { writeGpuViewerProxy, removeGpuViewerProxy, restoreGpuViewerProxies } from './gpuViewerProxy.js';
 import { prestageProjectFilesBackground } from './prestage.js';
+import { isVastFullSlicerMode } from './remoteFullSlicer.js';
 import { isBillingCancelledError, isInvalidApiKeyError } from './providers/vast/client.js';
 import { ConflictError } from '../utils/errors.js';
 import { formatGpuError, GPU_ERROR_SOURCES } from './errors.js';
 import { shouldAutoStopBilling, shouldStopBillingWithoutViewer } from './billingPolicy.js';
 import { probeRemoteTrameActivity } from './remoteActivity.js';
+import { evaluateOwnerIdleHandoff } from './billingOwnership.js';
 
 /** @type {Map<number, { type: 'provision'|'destroy', abort: AbortController, promise: Promise<void> }>} */
 const activeJobs = new Map();
@@ -21,7 +23,8 @@ export function touchProjectBillingActivity(projectId) {
 
 /**
  * Stop remote GPU billing when viewer is gone and idle/wall limits are exceeded.
- * @returns {Promise<{ stopped: boolean, reason?: string, remoteActivity?: object }>}
+ * If the owner is idle but others are still active, transfer ownership instead of stopping.
+ * @returns {Promise<{ stopped: boolean, reason?: string, transferred?: boolean, owner?: object, remoteActivity?: object }>}
  */
 export async function evaluateRemoteBillingStop(projectId, { viewerActive, nowMs = Date.now() } = {}) {
     const instance = ProjectGpu.getInstance(projectId);
@@ -32,6 +35,24 @@ export async function evaluateRemoteBillingStop(projectId, { viewerActive, nowMs
     let remoteActivity = null;
     if (instance.trameServiceUrl) {
         remoteActivity = await probeRemoteTrameActivity(instance.trameServiceUrl);
+    }
+
+    // Wall cap always wins — do not transfer past hard max runtime.
+    const wallReason = shouldAutoStopBilling(instance, nowMs);
+    if (wallReason === 'wall_cap') {
+        await stopBilling({ projectId, reason: wallReason });
+        return { stopped: true, reason: wallReason, remoteActivity };
+    }
+
+    const handoff = evaluateOwnerIdleHandoff(projectId, { nowMs });
+    if (handoff.transferred) {
+        console.log(`GPU billing ownership transferred for project ${projectId} → user ${handoff.owner?.userId}`);
+        return {
+            stopped: false,
+            transferred: true,
+            owner: handoff.owner || null,
+            remoteActivity
+        };
     }
 
     const clientSaysNoViewer = viewerActive === false;
@@ -165,11 +186,24 @@ export async function startBilling({ projectId, userId }) {
     if (instance?.status === 'provisioning') {
         throw new ConflictError('GPU is already provisioning');
     }
+    if (instance?.status === 'stopping') {
+        throw new ConflictError('GPU billing is stopping — try again shortly');
+    }
 
     const credentials = ProjectGpu.getCredentials(projectId);
-    ProjectGpu.setProvisioning({ projectId, providerId: settings.providerId, createdByUserId: userId });
 
+    // Claim before any await so a concurrent Start gets ConflictError (one instance per project).
     const abort = new AbortController();
+    const claim = { type: 'provision', abort, promise: null };
+    activeJobs.set(projectId, claim);
+
+    try {
+        ProjectGpu.setProvisioning({ projectId, providerId: settings.providerId, createdByUserId: userId });
+    } catch (err) {
+        activeJobs.delete(projectId);
+        throw err;
+    }
+
     const jobPromise = (async () => {
         try {
             const result = await provider.provision({
@@ -218,7 +252,7 @@ export async function startBilling({ projectId, userId }) {
         }
     })();
 
-    activeJobs.set(projectId, { type: 'provision', abort, promise: jobPromise });
+    claim.promise = jobPromise;
     return { status: 'provisioning' };
 }
 
@@ -243,17 +277,32 @@ export async function stopBilling({ projectId, reason } = {}) {
         try {
             if (existing?.type === 'provision') {
                 try {
-                    await existing.promise;
+                    // Don't hang forever if Vast is slow/rate-limited after abort.
+                    await Promise.race([
+                        existing.promise.catch(() => {}),
+                        new Promise((resolve) => setTimeout(resolve, 20_000))
+                    ]);
                 } catch {
                     // cancelled or failed — continue to destroy
                 }
             }
             const hadRemote = Boolean(ProjectGpu.getInstance(projectId)?.instanceId);
             if (hadRemote) {
-                await destroyRemoteGpuInstance(projectId, { reason: reason || 'manual_stop' });
-                console.log(
-                    `GPU instance destroyed for project ${projectId}${reason ? ` (${reason})` : ''}`
-                );
+                try {
+                    await destroyRemoteGpuInstance(projectId, { reason: reason || 'manual_stop' });
+                    console.log(
+                        `GPU instance destroyed for project ${projectId}${reason ? ` (${reason})` : ''}`
+                    );
+                } catch (err) {
+                    // Already gone on Vast console — still clear local billing state.
+                    if (!/no longer exists|not found|404/i.test(String(err.message || err))) {
+                        throw err;
+                    }
+                    console.warn(
+                        `GPU destroy skipped for project ${projectId} (already gone):`,
+                        err.message || err
+                    );
+                }
             }
             ProjectGpu.setIdle(projectId);
             await removeGpuViewerProxy();
@@ -300,14 +349,30 @@ export async function syncProjectFile({ projectId, file, launcherUserId }) {
 
     const provider = getProvider(settings.providerId);
     const storageKey = storage.normalizeKey(file.file_path);
-    const { cacheKey, userId, fileName } = resolveSyncTarget(file, launcherUserId);
+    const fullSlicer = settings.providerId === 'vast' && isVastFullSlicerMode();
+    const resolved = fullSlicer
+        ? {
+            cacheKey: resolveFullSlicerStagedName(file),
+            userId: String(launcherUserId),
+            fileName: resolveFullSlicerStagedName(file)
+        }
+        : resolveSyncTarget(file, launcherUserId);
+    const { cacheKey: workKey, userId, fileName } = resolved;
     let syncKey = storageKey;
 
-    if (file.user_id !== launcherUserId) {
+    if (!fullSlicer && file.user_id !== launcherUserId) {
         const stagedKey = await storage.ensureStagedCopy({
             sourceKey: storageKey,
             userId,
             fileName
+        });
+        syncKey = stagedKey;
+    } else if (fullSlicer && file.user_id !== launcherUserId) {
+        const safeName = file.original_name || file.file_path;
+        const stagedKey = await storage.ensureStagedCopy({
+            sourceKey: storageKey,
+            userId: launcherUserId,
+            fileName: `shared-${file.id}-${String(safeName).split(/[/\\]/).pop()}`
         });
         syncKey = stagedKey;
     }
@@ -317,9 +382,10 @@ export async function syncProjectFile({ projectId, file, launcherUserId }) {
     }
 
     const { size: localBytes } = await storage.stat(syncKey);
-    const cached = instance.metadata?.syncedFiles?.[cacheKey];
-    if (cached?.bytes === localBytes) {
-        console.log(`GPU sync skipped (cached): ${cacheKey} (${localBytes} bytes)`);
+    const synced = instance.metadata?.syncedFiles || {};
+    const workCached = synced[workKey];
+    if (workCached?.bytes === localBytes) {
+        console.log(`GPU sync skipped (cached): ${workKey} (${localBytes} bytes)`);
         return { status: 'skipped', bytes: localBytes };
     }
 
@@ -328,16 +394,21 @@ export async function syncProjectFile({ projectId, file, launcherUserId }) {
         userId,
         storageKey: syncKey,
         fileName,
-        localBytes
+        localBytes,
+        projectId,
+        file
     });
 
-    ProjectGpu.patchMetadata(projectId, (meta) => ({
-        ...meta,
-        syncedFiles: {
-            ...(meta.syncedFiles || {}),
-            [cacheKey]: { bytes: localBytes, syncedAt: new Date().toISOString() }
+    const at = new Date().toISOString();
+    ProjectGpu.patchMetadata(projectId, (meta) => {
+        const next = { ...(meta.syncedFiles || {}) };
+        const cacheKey = result?.cacheKey;
+        if (cacheKey) {
+            next[cacheKey] = { bytes: localBytes, syncedAt: at, kind: 'cache' };
         }
-    }));
+        next[workKey] = { bytes: localBytes, syncedAt: at, kind: 'work' };
+        return { ...meta, syncedFiles: next };
+    });
 
     return result;
 }
@@ -354,7 +425,7 @@ export function assertProjectGpuReadyForFileOpen({ projectId, userId }) {
     if (ProjectGpu.isRemoteRunning(instance)) return;
 
     const project = Project.findForUser({ projectId, userId });
-    const isAdmin = project?.userRole === 'admin';
+    const canOperateBilling = project?.userRole === 'admin' || project?.userRole === 'collaborator';
     const status = instance?.status || 'idle';
 
     let message;
@@ -364,9 +435,9 @@ export function assertProjectGpuReadyForFileOpen({ projectId, userId }) {
         message = 'GPU is shutting down. Try again in a moment.';
     } else if (status === 'error') {
         message = instance?.errorMessage
-            || 'GPU billing is unavailable. Start billing again or contact the project admin.';
-    } else if (!isAdmin) {
-        message = 'GPU billing is not running. Ask the project admin to start billing before opening files.';
+            || 'GPU billing is unavailable. Start billing again or contact a project admin.';
+    } else if (!canOperateBilling) {
+        message = 'GPU billing is not running. Ask a project admin or collaborator to start billing before opening files.';
     } else {
         message = 'Start GPU billing on this project before opening files.';
     }

@@ -2,6 +2,7 @@ import File from '../models/File.js';
 import ProjectGpu from '../models/ProjectGpu.js';
 import { syncProjectFile } from './orchestrator.js';
 
+/** projectId → in-flight promise (latest link in the chain) */
 const activePrestageJobs = new Map();
 
 function prestageLimits() {
@@ -132,12 +133,18 @@ export async function prestageProjectFiles({ projectId, userId, fileIds = null }
     };
 }
 
-export function prestageProjectFilesBackground({ projectId, userId, fileIds = null }) {
-    if (activePrestageJobs.has(projectId)) {
-        return activePrestageJobs.get(projectId);
-    }
+/**
+ * Serialize all prestages for a project (API, hover, auto, billing) so open can wait
+ * on one job and concurrent requests cannot race-upload the same scene.
+ * Later requests chain after the current job rather than being dropped.
+ */
+export function enqueuePrestage({ projectId, userId, fileIds = null }) {
+    const prev = activePrestageJobs.get(projectId) || Promise.resolve();
+    const ids = Array.isArray(fileIds) && fileIds.length ? fileIds : null;
 
-    const job = prestageProjectFiles({ projectId, userId, fileIds })
+    const job = prev
+        .catch(() => {})
+        .then(() => prestageProjectFiles({ projectId, userId, fileIds: ids }))
         .then((result) => {
             console.log(`GPU prestage finished for project ${projectId}:`, {
                 synced: result.synced,
@@ -151,9 +158,16 @@ export function prestageProjectFilesBackground({ projectId, userId, fileIds = nu
             throw err;
         })
         .finally(() => {
-            activePrestageJobs.delete(projectId);
+            if (activePrestageJobs.get(projectId) === job) {
+                activePrestageJobs.delete(projectId);
+            }
         });
 
     activePrestageJobs.set(projectId, job);
     return job;
+}
+
+/** @deprecated Prefer enqueuePrestage — kept as alias for billing auto-prestage. */
+export function prestageProjectFilesBackground(opts) {
+    return enqueuePrestage(opts);
 }

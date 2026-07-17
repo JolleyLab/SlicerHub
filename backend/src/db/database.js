@@ -350,6 +350,16 @@ const migrations = [
             ALTER TABLE users
             ADD COLUMN preferences_json TEXT;
         `
+    },
+    {
+        id: '013_project_gpu_billing_owner',
+        up: `
+            ALTER TABLE project_gpu_instances
+            ADD COLUMN billing_owner_user_id INTEGER;
+            UPDATE project_gpu_instances
+            SET billing_owner_user_id = created_by_user_id
+            WHERE billing_owner_user_id IS NULL AND created_by_user_id IS NOT NULL;
+        `
     }
 ];
 

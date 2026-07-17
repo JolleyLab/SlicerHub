@@ -121,9 +121,14 @@ export function getVastBootFailure(info) {
 
 /** OCI/Docker fatal errors only — do not treat arbitrary Vast log text as failure. */
 export function isFatalVastContainerError(msg) {
-    return /failed to create shim task|kaalia_docker_shim|oci runtime create failed|failed to create task for container|did not terminate successfully|exit status \d+/i.test(
+    return /failed to create shim task|kaalia_docker_shim|oci runtime create failed|failed to create task for container|ping_group_range|did not terminate successfully|exit status \d+/i.test(
         String(msg || '')
     );
+}
+
+/** True when the host cannot start containers (bad kernel/sysctl/Docker), not an app image bug. */
+export function isPingGroupRangeHostError(msg) {
+    return /ping_group_range/i.test(String(msg || ''));
 }
 
 export function getVastRemoteStatus(info) {

@@ -11,6 +11,7 @@ import {
  */
 export async function sendTrameContainerHeartbeat({
     sessionToken,
+    projectId = null,
     onIdleTimeout,
     heartbeatUrl = `${API_URL}/api/containers/heartbeat`,
     includeUserActive = true
@@ -27,6 +28,9 @@ export async function sendTrameContainerHeartbeat({
     }
     if (sessionToken) {
         body.sessionToken = sessionToken;
+    }
+    if (projectId != null && Number(projectId) > 0) {
+        body.projectId = Number(projectId);
     }
 
     const response = await fetch(heartbeatUrl, {
