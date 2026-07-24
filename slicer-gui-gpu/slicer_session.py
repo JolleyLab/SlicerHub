@@ -84,12 +84,34 @@ def request_key(payload: dict) -> str:
 def should_process_request(payload: dict) -> bool:
     global _last_completed_key
     key = request_key(payload)
-    if key != _last_completed_key:
-        return True
-    if os.path.isfile(REQUEST_FILE):
-        log(f"[slicer_session] Request file still present, retrying: {key}")
-        return True
-    return False
+    if key == _last_completed_key:
+        # Never re-process a completed request. Stale files (Windows bind mounts,
+        # failed unlink) must be dropped or the seat reload-loops forever.
+        if os.path.isfile(REQUEST_FILE):
+            log(f"[slicer_session] Clearing stale completed request: {key}")
+            clear_request()
+        return False
+    return True
+
+
+def claim_open_request() -> tuple:
+    """
+    Read and immediately remove the open-request file.
+
+    The poller calls processEvents during loads; if the request file remains on
+    disk, a re-entrant poll restarts the same MRB forever (progress flicker).
+    Claiming first makes re-entrant polls see an empty queue.
+    """
+    global _last_completed_key
+    payload = read_request()
+    if not payload:
+        return None, ""
+    key = request_key(payload)
+    if key == _last_completed_key:
+        clear_request()
+        return None, key
+    clear_request()
+    return payload, key
 
 
 def wait_file_readable(path: str, timeout_s: float = 90.0) -> bool:
@@ -853,6 +875,22 @@ def clear_request() -> None:
         log(f"[slicer_session] Could not remove request file: {exc}")
 
 
+def rewrite_open_request(payload: dict) -> None:
+    """Put a claimed request back on disk for a limited retry."""
+    try:
+        tmp = f"{REQUEST_FILE}.tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=2))
+        os.replace(tmp, REQUEST_FILE)
+        try:
+            os.chmod(REQUEST_FILE, 0o666)
+        except OSError:
+            pass
+        log("[slicer_session] Re-queued open request for retry")
+    except OSError as exc:
+        log(f"[slicer_session] Could not re-queue open request: {exc}")
+
+
 def set_busy(message: str = "loading") -> None:
     try:
         with open(BUSY_FILE, "w", encoding="utf-8") as handle:
@@ -904,20 +942,12 @@ def maintain_ready_marker() -> None:
 
 
 def poll_open_requests() -> None:
-    global _busy, _last_completed_key, _ui_wait_logged
+    global _busy, _last_completed_key, _ui_wait_logged, _load_overlay, _overlay_raise_timer
     if _busy:
         return
 
-    payload = read_request()
-    if not payload:
+    if not os.path.isfile(REQUEST_FILE):
         _ui_wait_logged = False
-        return
-
-    path = payload["containerPath"]
-    use_simplified_viewer = payload.get("useSimplifiedViewer") is True
-    requested_at = (payload.get("requestedAt") or "").strip()
-    key = request_key(payload)
-    if not should_process_request(payload):
         return
 
     if not ui_ready():
@@ -927,7 +957,16 @@ def poll_open_requests() -> None:
         return
     _ui_wait_logged = False
 
+    # Claim (delete) before any Qt/Slicer work so re-entrant polls cannot loop.
+    payload, key = claim_open_request()
+    if not payload:
+        return
+
+    path = payload["containerPath"]
+    use_simplified_viewer = payload.get("useSimplifiedViewer") is True
+    requested_at = (payload.get("requestedAt") or "").strip()
     dedupe_key = key or requested_at or path
+
     _busy = True
     overlay_shown = False
     keep_busy_for_overlay = False
@@ -951,28 +990,45 @@ def poll_open_requests() -> None:
             log(f"[slicer_session] Timed out waiting for {path}")
             attempts = _failed_attempts.get(dedupe_key, 0) + 1
             _failed_attempts[dedupe_key] = attempts
-            if attempts >= MAX_LOAD_ATTEMPTS:
-                clear_request()
+            if attempts < MAX_LOAD_ATTEMPTS:
+                rewrite_open_request(payload)
+            else:
                 _failed_attempts.pop(dedupe_key, None)
             return
 
-        # load_staged_file clears the MRML scene once for .mrb — avoid a second Clear here.
-        if load_staged_file(path, defer_view_refresh=use_simplified_viewer):
-            if use_simplified_viewer:
-                maybe_apply_simplified_viewer(True)
+        # Always defer view refresh until after we mark complete — refresh calls
+        # processEvents and must not run while a request could be re-claimed.
+        try:
+            loaded = load_staged_file(path, defer_view_refresh=True)
+        except Exception as exc:
+            log(f"[slicer_session] load_staged_file crashed: {exc}")
+            log(traceback.format_exc())
+            loaded = False
+
+        if loaded:
+            _last_completed_key = key
+            _failed_attempts.pop(dedupe_key, None)
+            try:
+                persist_scene_loaded(payload)
+            except Exception as exc:
+                log(f"[slicer_session] persist_scene_loaded failed: {exc}")
+            try:
+                write_load_result(True, payload)
+            except Exception as exc:
+                log(f"[slicer_session] write_load_result failed: {exc}")
+            log(f"[slicer_session] Done: {path}")
+
+            try:
+                if use_simplified_viewer:
+                    maybe_apply_simplified_viewer(True)
                 schedule_view_refresh()
-                slicer.app.processEvents()
                 schedule_hide_load_overlay(_OVERLAY_HOLD_MS)
                 overlay_shown = False
                 keep_busy_for_overlay = True
                 QTimer.singleShot(_OVERLAY_HOLD_MS + 50, clear_busy)
-            _last_completed_key = key
-            _failed_attempts.pop(dedupe_key, None)
-            persist_scene_loaded(payload)
-            write_load_result(True, payload)
-            clear_request()
-            log(f"[slicer_session] Done: {path}")
-            QTimer.singleShot(100, poll_open_requests)
+            except Exception as exc:
+                log(f"[slicer_session] Post-load UI adjust failed (scene kept): {exc}")
+
             return
 
         attempts = _failed_attempts.get(dedupe_key, 0) + 1
@@ -984,13 +1040,35 @@ def poll_open_requests() -> None:
             + f": {path}"
         )
         if permanent or attempts >= MAX_LOAD_ATTEMPTS:
-            write_load_result(False, payload, error=_last_load_error or "load failed")
-            clear_request()
+            try:
+                write_load_result(False, payload, error=_last_load_error or "load failed")
+            except Exception:
+                pass
             _failed_attempts.pop(dedupe_key, None)
             log(f"[slicer_session] Giving up on open request: {path}")
+        else:
+            rewrite_open_request(payload)
+    except Exception as exc:
+        log(f"[slicer_session] poll_open_requests crashed: {exc}")
+        log(traceback.format_exc())
     finally:
         if overlay_shown:
-            hide_load_overlay()
+            # Do not call hide_load_overlay() here — it processEvents() and can
+            # re-enter the poller. Tear down splash without pumping the event loop.
+            try:
+                if _overlay_raise_timer is not None:
+                    _overlay_raise_timer.stop()
+                    _overlay_raise_timer.deleteLater()
+                    _overlay_raise_timer = None
+                if _load_overlay is not None:
+                    _load_overlay.hide()
+                    _load_overlay.deleteLater()
+                    _load_overlay = None
+                    log("[slicer_session] Load overlay hidden")
+            except Exception:
+                _load_overlay = None
+                _overlay_raise_timer = None
+            restore_view_widgets()
         if not keep_busy_for_overlay:
             clear_busy()
         _busy = False

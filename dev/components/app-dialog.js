@@ -12,14 +12,16 @@ export class AppDialog extends LitElement {
                 position: relative;
                 width: min(560px, calc(100vw - 32px));
                 border: 1px solid var(--color-border);
-                border-radius: 12px;
-                background: var(--color-background);
+                border-radius: var(--radius-lg);
+                background: var(--color-panel, var(--color-surface, var(--color-background)));
                 color: var(--color-text-primary);
                 padding: 20px;
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
             }
 
             :host-context([data-theme='dark']) .dialog {
-                border-color: var(--color-primary);
+                border-color: color-mix(in srgb, var(--color-border) 75%, var(--color-primary));
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
             }
 
             .dialog::backdrop {
@@ -62,7 +64,11 @@ export class AppDialog extends LitElement {
             .close-button:hover,
             .close-button:focus-visible {
                 background: var(--color-surface, rgba(0, 0, 0, 0.08));
-                outline: none;
+            }
+
+            .close-button:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
             }
         `;
     }

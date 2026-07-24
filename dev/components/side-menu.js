@@ -42,9 +42,9 @@ export class SideMenu extends LitElement {
             .menu-list {
                 display: flex;
                 flex-direction: column;
-                gap: 8px;
+                gap: 10px;
                 margin: 0;
-                padding: 0;
+                padding: 2px;
                 list-style: none;
             }
 
@@ -57,7 +57,7 @@ export class SideMenu extends LitElement {
                 width: 100%;
                 box-sizing: border-box;
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 background: var(--color-background);
                 color: var(--color-text-primary);
                 padding: 10px 12px;
@@ -72,14 +72,19 @@ export class SideMenu extends LitElement {
             .menu-button:focus-visible {
                 background: var(--color-accent);
                 border-color: var(--color-primary);
-                outline: none;
                 transform: translateX(2px);
+            }
+
+            .menu-button:focus-visible {
+                outline: 3px solid var(--color-focus, #0057c2);
+                outline-offset: 2px;
+                box-shadow: var(--focus-ring-shadow, 0 0 0 2px #fff, 0 0 0 5px #0057c2);
             }
 
             .menu-button[aria-current='page'] {
                 background: var(--color-primary);
                 border-color: var(--color-primary);
-                color: var(--color-background);
+                color: var(--color-on-primary);
                 cursor: default;
                 transform: none;
             }
@@ -89,6 +94,27 @@ export class SideMenu extends LitElement {
                 background: var(--color-primary);
                 border-color: var(--color-primary);
                 transform: none;
+            }
+
+            :host-context([data-theme='dark']) .menu-button:hover,
+            :host-context([data-theme='dark']) .menu-button:focus-visible {
+                background: color-mix(in srgb, var(--color-primary) 18%, var(--color-surface));
+                border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+                color: var(--color-text-primary);
+            }
+
+            :host-context([data-theme='dark']) .menu-button[aria-current='page'] {
+                background: var(--color-secondary);
+                border-color: color-mix(in srgb, var(--color-secondary) 70%, var(--color-border));
+                color: var(--color-on-secondary);
+                box-shadow: 0 1px 6px rgba(0, 0, 0, 0.2);
+            }
+
+            :host-context([data-theme='dark']) .menu-button[aria-current='page']:hover,
+            :host-context([data-theme='dark']) .menu-button[aria-current='page']:focus-visible {
+                background: color-mix(in srgb, var(--color-secondary) 82%, #fff);
+                border-color: color-mix(in srgb, var(--color-secondary) 70%, var(--color-border));
+                color: var(--color-on-secondary);
             }
 
             @media (max-width: 640px) {

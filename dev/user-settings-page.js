@@ -23,12 +23,18 @@ export class UserSettingsPage extends LitElement {
 
             .settings-section {
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-lg);
                 padding: 14px 16px;
                 display: flex;
                 flex-direction: column;
                 gap: 10px;
-                background: var(--color-surface, var(--color-background));
+                background: var(--color-panel, var(--color-surface, var(--color-background)));
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+            }
+
+            :host-context([data-theme='dark']) .settings-section {
+                border-color: color-mix(in srgb, var(--color-border) 75%, var(--color-primary));
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
             }
 
             .section-title {
@@ -45,8 +51,9 @@ export class UserSettingsPage extends LitElement {
 
             .save-status {
                 font-size: 0.85rem;
-                color: var(--color-text-secondary);
+                color: var(--color-text-primary);
                 min-height: 1.2em;
+                font-weight: 500;
             }
 
             .save-status[data-state='saving'] {
@@ -59,6 +66,22 @@ export class UserSettingsPage extends LitElement {
 
             .save-status[data-state='error'] {
                 color: #b42318;
+            }
+
+            :host-context([data-theme='dark']) .save-status {
+                color: color-mix(in srgb, var(--color-text-primary) 92%, #fff);
+            }
+
+            :host-context([data-theme='dark']) .save-status[data-state='saving'] {
+                color: color-mix(in srgb, var(--color-text-secondary) 70%, #fff);
+            }
+
+            :host-context([data-theme='dark']) .save-status[data-state='saved'] {
+                color: color-mix(in srgb, #9db7ff 75%, #fff);
+            }
+
+            :host-context([data-theme='dark']) .save-status[data-state='error'] {
+                color: #ff8a80;
             }
         `;
     }
@@ -188,7 +211,7 @@ export class UserSettingsPage extends LitElement {
                 homeHref="/file-manager"
                 homeLabel="Home"
                 pageTitle="Settings"
-                pageDescription="Appearance and Local viewer preferences for your account. Changes save automatically."
+                pageDescription="Appearance and Local Viewer preferences for your account. Changes save automatically."
                 @menu-selection-change=${this.handleMenuSelectionChange}
             >
                 ${this.errorMessage ? html`
@@ -216,9 +239,9 @@ export class UserSettingsPage extends LitElement {
                     </section>
 
                     <section class="settings-section">
-                        <h2 class="section-title">Local viewer</h2>
+                        <h2 class="section-title">Local Viewer</h2>
                         <p class="section-description">
-                            Controls which Local viewer opens from My Projects when the active GPU provider is Local.
+                            Controls which local viewer opens from My Projects when the active GPU provider is Local.
                             Settings follow your account across devices.
                         </p>
                         <local-slicer-viewer-options

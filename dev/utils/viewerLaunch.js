@@ -29,13 +29,25 @@ export function defaultReleaseModeForClose(kind) {
 /**
  * Heartbeat/stop endpoints for a viewer kind.
  * Remote Full Slicer (Vast) can reuse the same shape with different URL builders later.
+ * Directus PoC uses project-less local Full Slicer routes under /api/directus.
  */
 export function getViewerSessionEndpoints({
     kind,
     projectId = null,
+    sessionScope = 'project',
     apiUrl = API_URL
 } = {}) {
     if (kind === VIEWER_KINDS.SLICER_GUI) {
+        if (sessionScope === 'directus') {
+            const base = `${apiUrl}/api/directus`;
+            return {
+                baseUrl: base,
+                heartbeatUrl: `${base}/full-slicer-heartbeat`,
+                stopUrl: `${base}/full-slicer-stop`,
+                reconnectUrl: null,
+                statusUrl: null
+            };
+        }
         if (!projectId) {
             throw new Error('projectId is required for Full Slicer session endpoints');
         }
@@ -129,7 +141,7 @@ export function buildSlicerGuiLoaderUrl({
 
 export function viewerDisplayName(kind, { simplified = false } = {}) {
     if (kind === VIEWER_KINDS.SLICER_GUI) {
-        return simplified ? 'Simplified Viewer' : 'Full Slicer';
+        return simplified ? 'Simplified viewer' : 'Full Slicer';
     }
     return 'Trame';
 }

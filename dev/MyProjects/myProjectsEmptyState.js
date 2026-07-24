@@ -12,26 +12,60 @@ export class MyProjectsLandingPage extends LitElement {
                 margin-top: 16px;
                 display: grid;
                 grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-                gap: 12px;
+                gap: 14px;
+                padding: 2px;
             }
 
             .project-card {
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
-                background: var(--color-surface, var(--color-background));
+                border-radius: var(--radius-lg);
+                background: var(--color-panel, var(--color-surface, var(--color-background)));
                 padding: 12px;
                 display: flex;
                 flex-direction: column;
                 gap: 8px;
                 cursor: pointer;
-                transition: box-shadow 0.2s ease, transform 0.2s ease;
+                transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+                text-align: left;
+                font: inherit;
+                color: inherit;
+                width: 100%;
+                appearance: none;
+                -webkit-appearance: none;
             }
 
-            .project-card:hover,
-            .project-card:focus-visible {
+            .project-card:hover {
                 box-shadow: 0 6px 14px var(--color-shadow, rgba(0, 0, 0, 0.12));
                 transform: translateY(-1px);
-                outline: none;
+                border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+            }
+
+            .project-card:focus-visible {
+                outline: 3px solid var(--color-focus, #0057c2);
+                outline-offset: 2px;
+                border-color: var(--color-focus, #0057c2);
+                box-shadow: var(--focus-ring-shadow, 0 0 0 2px #fff, 0 0 0 5px #0057c2);
+                transform: translateY(-1px);
+            }
+
+            :host-context([data-theme='dark']) .project-card {
+                border-color: color-mix(in srgb, var(--color-border) 75%, var(--color-primary));
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+            }
+
+            :host-context([data-theme='dark']) .project-card:hover {
+                border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+                box-shadow: 0 6px 14px rgba(0, 0, 0, 0.32);
+            }
+
+            :host-context([data-theme='dark']) .project-card:focus-visible {
+                outline: 3px solid var(--color-focus, #9db7ff);
+                outline-offset: 2px;
+                border-color: var(--color-focus, #9db7ff);
+                box-shadow:
+                    0 0 0 3px var(--color-focus, #9db7ff),
+                    0 6px 14px rgba(0, 0, 0, 0.32);
             }
 
             .project-name {
@@ -49,7 +83,7 @@ export class MyProjectsLandingPage extends LitElement {
                 font-size: 0.78rem;
                 color: var(--color-text-secondary);
                 border: 1px solid var(--color-border);
-                border-radius: 999px;
+                border-radius: var(--radius-md);
                 padding: 3px 8px;
                 background: color-mix(in srgb, var(--color-primary) 10%, transparent);
             }
@@ -57,7 +91,7 @@ export class MyProjectsLandingPage extends LitElement {
             .load-more {
                 margin-top: 14px;
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 background: transparent;
                 color: var(--color-text-primary);
                 min-height: 38px;
@@ -198,22 +232,15 @@ export class MyProjectsLandingPage extends LitElement {
                 ${this.projects.length > 0 ? html`
                     <div slot="content" class="project-grid">
                         ${this.projects.map((project) => html`
-                            <div
+                            <button
                                 class="project-card"
-                                role="button"
-                                tabindex="0"
+                                type="button"
                                 @click=${() => this.handleProjectSelected(project)}
-                                @keydown=${(event) => {
-                                    if (event.key === 'Enter' || event.key === ' ') {
-                                        event.preventDefault();
-                                        this.handleProjectSelected(project);
-                                    }
-                                }}
                             >
                                 <div class="project-name">${project.name}</div>
                                 <div class="project-meta">Role: ${this.roleLabel(project.role)}</div>
                                 ${project.isCreator ? html`<div class="creator-badge">Creator</div>` : ''}
-                            </div>
+                            </button>
                         `)}
                     </div>
                     ${this.hasMore ? html`
@@ -224,7 +251,7 @@ export class MyProjectsLandingPage extends LitElement {
                             ?disabled=${this.loadingMore}
                             @click=${() => this.loadMoreProjects()}
                         >
-                            ${this.loadingMore ? 'Loading...' : 'Load More'}
+                            ${this.loadingMore ? 'Loading...' : 'Load more'}
                         </button>
                     ` : ''}
                 ` : ''}

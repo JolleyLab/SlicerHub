@@ -21,9 +21,9 @@ export class NavigationHeader extends LitElement {
                 box-sizing: border-box;
                 padding: 12px 16px;
                 border: 1px solid var(--color-border);
-                border-radius: 12px;
+                border-radius: var(--radius-lg);
                 background: var(--color-primary);
-                color: var(--color-text-primary);
+                color: var(--color-on-primary);
                 box-shadow: 0 6px 18px var(--color-shadow, rgba(0, 0, 0, 0.08));
             }
 
@@ -33,10 +33,10 @@ export class NavigationHeader extends LitElement {
                 gap: 10px;
                 min-width: 0;
                 border: 1px solid var(--color-border);
-                border-radius: 999px;
+                border-radius: var(--radius-md);
                 padding: 8px 14px;
                 background: var(--color-secondary);
-                color: var(--color-background);
+                color: var(--color-on-secondary);
                 text-decoration: none;
                 font-weight: 600;
                 transition: background-color 0.2s ease, transform 0.2s ease;
@@ -46,14 +46,19 @@ export class NavigationHeader extends LitElement {
             .home-link:focus-visible {
                 background: var(--color-accent);
                 color: var(--color-text-primary);
-                outline: none;
                 transform: translateY(-1px);
+            }
+
+            .home-link:focus-visible {
+                outline: 3px solid var(--color-focus, #0057c2);
+                outline-offset: 2px;
+                box-shadow: var(--focus-ring-shadow, 0 0 0 2px #fff, 0 0 0 5px #0057c2);
             }
 
             .home-link:hover .home-icon,
             .home-link:focus-visible .home-icon {
-                background: var(--color-secondary);
-                color: var(--color-text-primary);
+                background: var(--color-primary);
+                color: var(--color-on-primary);
             }
 
             .home-icon {
@@ -62,9 +67,9 @@ export class NavigationHeader extends LitElement {
                 justify-content: center;
                 width: 28px;
                 height: 28px;
-                border-radius: 8px;
+                border-radius: var(--radius-lg);
                 background: var(--color-primary);
-                color: var(--color-background);
+                color: var(--color-on-primary);
                 line-height: 1;
                 flex: 0 0 28px;
             }
@@ -87,12 +92,29 @@ export class NavigationHeader extends LitElement {
                 align-items: center;
             }
 
+            /* Dark: solid secondary chip — clinical, not pastel. */
             :host-context([data-theme='dark']) .home-link {
-                border-color: rgba(0, 0, 0, 0.45);
+                background: var(--color-secondary);
+                color: var(--color-on-secondary);
+                border-color: color-mix(in srgb, var(--color-secondary) 70%, var(--color-border));
+                box-shadow: 0 1px 6px rgba(0, 0, 0, 0.2);
+            }
+
+            :host-context([data-theme='dark']) .home-link:hover,
+            :host-context([data-theme='dark']) .home-link:focus-visible {
+                background: color-mix(in srgb, var(--color-secondary) 82%, #fff);
+                color: var(--color-on-secondary);
             }
 
             :host-context([data-theme='dark']) .home-icon {
-                background: var(--color-secondary);
+                background: color-mix(in srgb, var(--color-primary) 85%, #000);
+                color: var(--color-on-primary);
+            }
+
+            :host-context([data-theme='dark']) .home-link:hover .home-icon,
+            :host-context([data-theme='dark']) .home-link:focus-visible .home-icon {
+                background: var(--color-primary);
+                color: var(--color-on-primary);
             }
 
             @media (max-width: 640px) {

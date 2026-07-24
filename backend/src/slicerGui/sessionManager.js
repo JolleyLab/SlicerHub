@@ -165,7 +165,8 @@ function resolveSceneLoaded(priorMeta, persisted) {
 export async function ensureSlicerGuiSession({
     userId,
     sessionToken = null,
-    useSimplifiedViewer = null
+    useSimplifiedViewer = null,
+    requireSlicerUiReady = true
 }) {
     const safeUserId = safeSlicerGuiUserId(userId);
     const containerName = slicerGuiContainerName(safeUserId);
@@ -210,13 +211,20 @@ export async function ensureSlicerGuiSession({
                             touchLease: () => touchSession(SLICER_GUI, safeUserId, token)
                         });
                     } catch {
-                        console.log(
-                            `Full Slicer ${containerName} VNC is up but Slicer UI is not ready — recreating`
-                        );
-                        clearSession(SLICER_GUI, safeUserId);
-                        clearSlicerReadyFile(safeUserId);
-                        await existing.remove({ force: true });
-                        vncReady = false;
+                        if (!requireSlicerUiReady) {
+                            console.log(
+                                `Full Slicer ${containerName} VNC is up; UI not ready yet — `
+                                + 'continuing (open request will wait for UI)'
+                            );
+                        } else {
+                            console.log(
+                                `Full Slicer ${containerName} VNC is up but Slicer UI is not ready — recreating`
+                            );
+                            clearSession(SLICER_GUI, safeUserId);
+                            clearSlicerReadyFile(safeUserId);
+                            await existing.remove({ force: true });
+                            vncReady = false;
+                        }
                     }
                 }
                 if (vncReady) {
@@ -359,9 +367,24 @@ export async function ensureSlicerGuiSession({
         await waitForNoVnc(containerName, READY_TIMEOUT_MS, {
             touchLease: () => touchSession(SLICER_GUI, safeUserId, token)
         });
-        await waitForSlicerSessionReady(safeUserId, READY_TIMEOUT_MS, {
-            touchLease: () => touchSession(SLICER_GUI, safeUserId, token)
-        });
+        if (requireSlicerUiReady) {
+            await waitForSlicerSessionReady(safeUserId, READY_TIMEOUT_MS, {
+                touchLease: () => touchSession(SLICER_GUI, safeUserId, token)
+            });
+        } else {
+            // PoC / slow software seats: don't fail the HTTP open if UI is still booting.
+            // Stage the open-request; slicer_session will load once ui_ready().
+            try {
+                await waitForSlicerSessionReady(safeUserId, 20000, {
+                    touchLease: () => touchSession(SLICER_GUI, safeUserId, token)
+                });
+            } catch {
+                console.warn(
+                    `Full Slicer UI not ready yet for ${containerName}; `
+                    + 'returning VNC seat and letting open-request wait'
+                );
+            }
+        }
     } catch (err) {
         clearSession(SLICER_GUI, safeUserId);
         clearSlicerReadyFile(safeUserId);

@@ -15,13 +15,23 @@ export class FileListRow extends LitElement {
 
             .file-row {
                 border: 1px dashed var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 padding: 10px 12px;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
                 gap: 12px;
                 flex-wrap: wrap;
+                background: transparent;
+            }
+
+            :host-context([data-theme='dark']) .file-row {
+                border-color: var(--color-border);
+                background: transparent;
+            }
+
+            :host-context([data-theme='dark']) .file-meta {
+                color: var(--color-text-secondary);
             }
 
             .file-main {
@@ -55,18 +65,23 @@ export class FileListRow extends LitElement {
             .file-action-group {
                 display: inline-flex;
                 align-items: center;
-                gap: 8px;
+                gap: 10px;
+                padding: 2px;
             }
 
-            .file-name-button:hover,
+            .file-name-button:hover {
+                background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+            }
+
             .file-name-button:focus-visible {
                 background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-                outline: none;
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
             }
 
             ::slotted(.file-icon-button) {
                 border: none;
-                border-radius: 8px;
+                border-radius: var(--radius-lg);
                 background: transparent;
                 color: var(--color-text-primary);
                 width: 34px;
@@ -78,10 +93,14 @@ export class FileListRow extends LitElement {
                 cursor: pointer;
             }
 
-            ::slotted(.file-icon-button:hover),
+            ::slotted(.file-icon-button:hover) {
+                background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+            }
+
             ::slotted(.file-icon-button:focus-visible) {
                 background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-                outline: none;
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
             }
 
             ::slotted(.file-icon-button:disabled) {

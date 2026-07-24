@@ -14,6 +14,7 @@ import './MyProjects/myProjectsEmptyState.js';
 import './MyProjects/createProjectForm.js';
 import './MyProjects/projectReviewPage.js';
 import './user-settings-page.js';
+import './directus-cases-page.js';
 import { resolveTramePageUrl } from './utils/trameViewerUrl.js';
 import {
   installViewerActivityListeners,
@@ -66,7 +67,7 @@ export class TrameApp extends LitElement {
         background: #f44336;
         color: white;
         border: none;
-        border-radius: 4px;
+        border-radius: var(--radius-sm);
         cursor: pointer;
         font-size: 14px;
       }
@@ -149,8 +150,8 @@ export class TrameApp extends LitElement {
         gap: 12px;
         padding: 10px 12px;
         border: 1px solid var(--color-border, #ddd);
-        border-radius: 10px;
-        background: var(--color-surface, var(--color-background, #fafafa));
+        border-radius: var(--radius-md);
+        background: var(--color-panel, var(--color-surface, var(--color-background, #fafafa)));
       }
 
       .logout-billing-session-name {
@@ -174,7 +175,7 @@ export class TrameApp extends LitElement {
       .secondary-button,
       .primary-button {
         border: 1px solid var(--color-border, #ddd);
-        border-radius: 10px;
+        border-radius: var(--radius-md);
         min-height: 40px;
         padding: 8px 14px;
         font: inherit;
@@ -189,7 +190,7 @@ export class TrameApp extends LitElement {
 
       .primary-button {
         background: var(--color-primary, #1976d2);
-        color: var(--color-background, #fff);
+        color: var(--color-on-primary, #fff);
       }
 
       .primary-button:disabled,
@@ -408,6 +409,12 @@ export class TrameApp extends LitElement {
     if (selectedKey === 'my-projects') {
       this.selectedProjectId = null;
       this.currentView = APP_VIEWS.PROJECTS;
+      this.syncViewToUrl();
+      return;
+    }
+    if (selectedKey === 'cases') {
+      this.selectedProjectId = null;
+      this.currentView = APP_VIEWS.CASES;
       this.syncViewToUrl();
     }
   }
@@ -938,6 +945,14 @@ export class TrameApp extends LitElement {
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
         ></user-settings-page>
+      ` : ''}
+      ${this.currentView === APP_VIEWS.CASES ? html`
+        <directus-cases-page
+          .username=${this.user?.username || 'Guest'}
+          @menu-selection-change=${this.handleProjectsMenuSelection}
+          @settings-request=${this.openSettingsFlow}
+          @logout-request=${this.handleLogout}
+        ></directus-cases-page>
       ` : ''}
 
       <app-dialog

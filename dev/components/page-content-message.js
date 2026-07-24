@@ -24,7 +24,7 @@ export class PageContentMessage extends LitElement {
             .success {
                 margin-top: 16px;
                 padding: 10px 12px;
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 color: #1b5e20;
                 background: color-mix(in srgb, #4caf50 12%, transparent);
                 border: 1px solid color-mix(in srgb, #4caf50 35%, var(--color-border));
@@ -34,7 +34,7 @@ export class PageContentMessage extends LitElement {
                 margin-top: 16px;
                 padding: 12px 14px;
                 border: 1px dashed var(--color-text-secondary);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 color: var(--color-text-secondary);
             }
         `;

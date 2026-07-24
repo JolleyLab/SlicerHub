@@ -5,6 +5,7 @@ import '../components/page-layout-template.js';
 import '../components/add-button.js';
 import '../components/file-list-row.js';
 import '../components/app-dialog.js';
+import '../components/dropdown-select.js';
 import './collaboratorSearch.js';
 import './collaboratorResultRow.js';
 import { getProjectById, updateProjectCollaborators, listProjectFiles } from '../services/projects.js';
@@ -79,7 +80,7 @@ export class ProjectReviewPage extends LitElement {
                 z-index: 1200;
                 background: #2e7d32;
                 color: #fff;
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 padding: 10px 14px;
                 box-shadow: 0 10px 28px var(--color-shadow, rgba(0, 0, 0, 0.2));
                 max-width: min(360px, calc(100vw - 40px));
@@ -97,17 +98,26 @@ export class ProjectReviewPage extends LitElement {
             .collaborators-panel {
                 margin-top: 16px;
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
-                background: var(--color-surface, var(--color-background));
+                border-radius: var(--radius-lg);
+                background: var(--color-panel, var(--color-surface, var(--color-background)));
                 padding: 10px;
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
             }
 
             .files-panel {
                 margin-top: 16px;
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
-                background: var(--color-surface, var(--color-background));
+                border-radius: var(--radius-lg);
+                background: var(--color-panel, var(--color-surface, var(--color-background)));
                 padding: 12px;
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+            }
+
+            :host-context([data-theme='dark']) .collaborators-panel,
+            :host-context([data-theme='dark']) .files-panel,
+            :host-context([data-theme='dark']) .gpu-panel {
+                border-color: color-mix(in srgb, var(--color-border) 75%, var(--color-primary));
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
             }
 
             .file-list {
@@ -145,10 +155,16 @@ export class ProjectReviewPage extends LitElement {
                 flex-shrink: 0;
                 padding: 12px 16px;
                 border: 1px solid var(--color-border);
-                border-radius: 12px;
+                border-radius: var(--radius-lg);
                 background: var(--color-primary);
-                color: var(--color-background);
+                color: var(--color-on-primary);
                 box-shadow: 0 6px 18px var(--color-shadow, rgba(0, 0, 0, 0.08));
+            }
+
+            :host-context([data-theme='dark']) .iframe-header {
+                background: color-mix(in srgb, var(--color-primary) 72%, #000);
+                border-color: color-mix(in srgb, var(--color-border) 75%, var(--color-primary));
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
             }
 
             .iframe-title {
@@ -168,23 +184,45 @@ export class ProjectReviewPage extends LitElement {
             }
 
             .iframe-header .secondary-button {
-                background: var(--color-secondary);
-                color: var(--color-background);
-                border-color: var(--color-border);
+                background: color-mix(in srgb, #c5cce6 55%, #5b7cff);
+                color: var(--color-primary);
+                border-color: color-mix(in srgb, #c5cce6 45%, var(--color-border));
             }
 
             .iframe-header .secondary-button:hover:not(:disabled) {
+                background: color-mix(in srgb, #c5cce6 80%, #6b8cff);
+                color: var(--color-primary);
+            }
+
+            .iframe-header .primary-button {
+                background: color-mix(in srgb, #c5cce6 55%, #5b7cff);
+                color: var(--color-primary);
+                border-color: color-mix(in srgb, #c5cce6 45%, var(--color-border));
+            }
+
+            .iframe-header .primary-button:hover:not(:disabled) {
+                background: color-mix(in srgb, #c5cce6 80%, #6b8cff);
+                color: var(--color-primary);
+            }
+
+            :host-context([data-theme='light']) .iframe-header .secondary-button {
+                background: var(--color-secondary);
+                color: var(--color-on-secondary);
+                border-color: var(--color-border);
+            }
+
+            :host-context([data-theme='light']) .iframe-header .secondary-button:hover:not(:disabled) {
                 background: var(--color-accent);
                 color: var(--color-text-primary);
             }
 
-            .iframe-header .primary-button {
+            :host-context([data-theme='light']) .iframe-header .primary-button {
                 background: var(--color-background);
                 color: var(--color-primary);
                 border-color: var(--color-border);
             }
 
-            .iframe-header .primary-button:hover:not(:disabled) {
+            :host-context([data-theme='light']) .iframe-header .primary-button:hover:not(:disabled) {
                 background: var(--color-accent);
                 color: var(--color-text-primary);
             }
@@ -196,7 +234,7 @@ export class ProjectReviewPage extends LitElement {
                 min-height: 0;
                 overflow: hidden;
                 border: 1px solid var(--color-border);
-                border-radius: 12px;
+                border-radius: var(--radius-lg);
                 background: var(--color-surface, var(--color-background));
                 box-shadow: 0 6px 18px var(--color-shadow, rgba(0, 0, 0, 0.08));
             }
@@ -255,7 +293,7 @@ export class ProjectReviewPage extends LitElement {
 
             .upload-area {
                 border: 2px dashed var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 padding: 22px 16px;
                 text-align: center;
                 background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface, var(--color-background)));
@@ -278,14 +316,14 @@ export class ProjectReviewPage extends LitElement {
 
             .upload-button {
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 min-height: 38px;
                 padding: 8px 14px;
                 font: inherit;
                 font-weight: 600;
                 cursor: pointer;
                 background: var(--color-primary);
-                color: var(--color-background);
+                color: var(--color-on-primary);
             }
 
             .upload-button.secondary {
@@ -324,7 +362,7 @@ export class ProjectReviewPage extends LitElement {
             }
 
             .collaborator-row {
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 padding: 10px 12px;
             }
 
@@ -337,13 +375,14 @@ export class ProjectReviewPage extends LitElement {
                 margin-top: 14px;
                 display: flex;
                 justify-content: flex-end;
-                gap: 10px;
+                gap: 12px;
+                padding: 2px 0;
             }
 
             .secondary-button,
             .primary-button {
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 min-height: 40px;
                 padding: 8px 14px;
                 font: inherit;
@@ -356,9 +395,25 @@ export class ProjectReviewPage extends LitElement {
                 color: var(--color-text-primary);
             }
 
+            .secondary-button:focus-visible,
+            .primary-button:focus-visible {
+                outline: 3px solid var(--color-focus, #0057c2);
+                outline-offset: 2px;
+                box-shadow: var(--focus-ring-shadow, 0 0 0 2px #fff, 0 0 0 5px #0057c2);
+            }
+
             .primary-button {
                 background: var(--color-primary);
-                color: var(--color-background);
+                color: var(--color-on-primary);
+            }
+
+            .primary-button:hover:not(:disabled) {
+                background: color-mix(in srgb, var(--color-primary) 78%, #5b7cff);
+            }
+
+            :host-context([data-theme='light']) .primary-button:hover:not(:disabled) {
+                background: var(--color-accent);
+                color: var(--color-text-primary);
             }
 
             .primary-button:disabled,
@@ -368,22 +423,24 @@ export class ProjectReviewPage extends LitElement {
             }
 
             add-button {
-                margin-top: 12px;
+                margin-top: 16px;
             }
 
             .gpu-panel {
                 margin-top: 16px;
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
-                background: var(--color-surface, var(--color-background));
+                border-radius: var(--radius-lg);
+                background: var(--color-panel, var(--color-surface, var(--color-background)));
                 padding: 4px 10px 10px;
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
             }
 
             .gpu-panel-header {
                 display: flex;
                 align-items: center;
-                gap: 10px;
+                gap: 14px;
                 flex-wrap: wrap;
+                padding: 2px 0;
             }
 
             .gpu-panel-details {
@@ -398,6 +455,7 @@ export class ProjectReviewPage extends LitElement {
                 font-weight: 600;
                 color: var(--color-text-primary);
                 padding: 10px 2px;
+                margin-bottom: 6px;
                 display: flex;
                 align-items: center;
                 gap: 8px;
@@ -429,11 +487,11 @@ export class ProjectReviewPage extends LitElement {
                 width: 20px;
                 height: 20px;
                 border: 1px solid var(--color-border);
-                border-radius: 6px;
+                border-radius: var(--radius-md);
                 font-size: 0.95rem;
                 font-weight: 700;
                 color: var(--color-text-primary);
-                background: var(--color-surface, var(--color-background));
+                background: var(--color-panel, var(--color-surface, var(--color-background)));
                 transition: transform 0.15s ease, background-color 0.15s ease;
                 flex-shrink: 0;
             }
@@ -442,9 +500,15 @@ export class ProjectReviewPage extends LitElement {
                 transform: rotate(90deg);
             }
 
+            .gpu-panel summary:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
+                border-radius: var(--radius-lg);
+            }
+
             .gpu-panel summary:hover .gpu-panel-chevron,
             .gpu-panel summary:focus-visible .gpu-panel-chevron {
-                background: color-mix(in srgb, var(--color-primary) 14%, var(--color-surface, var(--color-background)));
+                background: color-mix(in srgb, var(--color-primary) 14%, var(--color-panel, var(--color-surface, var(--color-background))));
             }
 
             .gpu-panel-billing-actions {
@@ -452,6 +516,7 @@ export class ProjectReviewPage extends LitElement {
                 gap: 8px;
                 flex-shrink: 0;
                 padding: 4px 0;
+                margin-left: 2px;
             }
 
             .gpu-panel-billing-actions .primary-button,
@@ -461,7 +526,7 @@ export class ProjectReviewPage extends LitElement {
             }
 
             .gpu-panel-body {
-                padding: 0 2px 4px;
+                padding: 6px 2px 4px;
             }
 
             .gpu-title {
@@ -482,31 +547,30 @@ export class ProjectReviewPage extends LitElement {
                 color: var(--color-text-secondary);
             }
 
-            .gpu-field select,
             .gpu-field input,
             .gpu-field textarea {
                 border: 1px solid var(--color-border);
-                border-radius: 8px;
+                border-radius: var(--radius-sm);
                 padding: 8px 10px;
                 font: inherit;
-                background: var(--color-background);
+                background: var(--color-panel, var(--color-surface, var(--color-background)));
                 color: var(--color-text-primary);
                 box-sizing: border-box;
                 width: 100%;
                 max-width: 100%;
             }
 
-            .gpu-field select {
-                appearance: none;
-                -webkit-appearance: none;
-                -moz-appearance: none;
-                min-height: 38px;
-                padding: 8px 36px 8px 10px;
-                line-height: 1.2;
-                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23666' d='M1.41 0.59 6 5.17 10.59 0.59 12 2l-6 6-6-6z'/%3E%3C/svg%3E");
-                background-repeat: no-repeat;
-                background-position: right 12px center;
-                background-size: 12px 8px;
+            .gpu-field dropdown-select {
+                width: 100%;
+                max-width: 100%;
+            }
+
+            .gpu-field input:focus-visible,
+            .gpu-field textarea:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
+                border-color: var(--color-focus, var(--color-primary));
+                box-shadow: none;
             }
 
             .gpu-field textarea {
@@ -536,7 +600,7 @@ export class ProjectReviewPage extends LitElement {
 
             .gpu-info-button {
                 border: 1px solid var(--color-border);
-                border-radius: 8px;
+                border-radius: var(--radius-lg);
                 background: transparent;
                 color: var(--color-text-secondary);
                 width: 32px;
@@ -553,7 +617,11 @@ export class ProjectReviewPage extends LitElement {
             .gpu-info-button:focus-visible {
                 background: color-mix(in srgb, var(--color-primary) 12%, transparent);
                 color: var(--color-text-primary);
-                outline: none;
+            }
+
+            .gpu-info-button:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
             }
 
             .gpu-info-button[aria-expanded="true"] {
@@ -570,7 +638,7 @@ export class ProjectReviewPage extends LitElement {
                 font-size: 0.85rem;
                 color: var(--color-text-secondary);
                 border: 1px solid var(--color-border);
-                border-radius: 8px;
+                border-radius: var(--radius-lg);
                 padding: 10px 12px;
                 margin-bottom: 10px;
                 background: color-mix(in srgb, var(--color-border) 25%, transparent);
@@ -609,7 +677,7 @@ export class ProjectReviewPage extends LitElement {
                 justify-content: center;
                 width: 22px;
                 height: 22px;
-                border-radius: 4px;
+                border-radius: var(--radius-sm);
                 color: var(--color-text-secondary);
                 text-decoration: none;
                 flex-shrink: 0;
@@ -636,16 +704,17 @@ export class ProjectReviewPage extends LitElement {
                 margin-top: 6px;
             }
 
-            .gpu-title-row add-button {
-                margin-top: 0;
-            }
-
             .gpu-title-row {
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
-                gap: 8px;
-                margin-bottom: 8px;
+                gap: 12px;
+                margin-bottom: 10px;
+                padding-top: 2px;
+            }
+
+            .gpu-title-row add-button {
+                margin-top: 0;
             }
 
             .gpu-title-row .gpu-title {
@@ -1811,10 +1880,10 @@ export class ProjectReviewPage extends LitElement {
 
     get localViewerFriendlyLabel() {
         if (!this.useLocalFullSlicer) {
-            return 'Standard Viewer';
+            return 'Standard viewer';
         }
         if (this.useLocalSimplifiedViewer) {
-            return 'Simplified Viewer';
+            return 'Simplified viewer';
         }
         return 'Full Slicer';
     }
@@ -2774,7 +2843,7 @@ export class ProjectReviewPage extends LitElement {
                         `}
                         ${this.canEditCollaborators ? html`
                             <add-button
-                                title="Add Collaborators"
+                                title="Add collaborators"
                                 @add-button-click=${() => this.openCollaboratorDialog()}
                             ></add-button>
                         ` : ''}
@@ -2816,29 +2885,26 @@ export class ProjectReviewPage extends LitElement {
                                         <div class="gpu-title-row">
                                             <div class="gpu-title" style="margin-bottom: 0;">Providers</div>
                                             <add-button
-                                                title="Add Provider"
+                                                title="Add provider"
                                                 @add-button-click=${() => this.openGpuProviderDialog()}
                                             ></add-button>
                                         </div>
                                     ` : ''}
                                     ${this.canManageGpu ? html`
                                         <div class="gpu-field">
-                                            <label for="gpu-provider">GPU Provider to use:</label>
-                                            <select
+                                            <label for="gpu-provider">GPU provider to use:</label>
+                                            <dropdown-select
                                                 id="gpu-provider"
+                                                fullwidth
                                                 .value=${this.gpuActiveProviderId}
+                                                .options=${this.configuredProviders.map((provider) => ({
+                                                    value: provider.id,
+                                                    label: provider.label
+                                                }))}
                                                 ?disabled=${this.gpuSaving}
+                                                aria-label="GPU provider to use"
                                                 @change=${(e) => this.handleGpuProviderChange(e)}
-                                            >
-                                                ${this.configuredProviders.map((provider) => html`
-                                                    <option
-                                                        value=${provider.id}
-                                                        ?selected=${this.gpuActiveProviderId === provider.id}
-                                                    >
-                                                        ${provider.label}
-                                                    </option>
-                                                `)}
-                                            </select>
+                                            ></dropdown-select>
                                         </div>
                                         ${this.isGpuProviderConfigured(this.gpuActiveProviderId)
                                             && this.gpuActiveProviderId !== 'local' ? html`
@@ -2902,7 +2968,7 @@ export class ProjectReviewPage extends LitElement {
                                         ?disabled=${!this.canStartGpuBilling}
                                         @click=${() => this.handleStartGpuBilling()}
                                     >
-                                        ${this.gpuBillingBusy && this.gpuInstance?.status !== 'running' ? 'Working…' : 'Start Billing'}
+                                        ${this.gpuBillingBusy && this.gpuInstance?.status !== 'running' ? 'Working…' : 'Start billing'}
                                     </button>
                                     <button
                                         class="secondary-button"
@@ -2910,7 +2976,7 @@ export class ProjectReviewPage extends LitElement {
                                         ?disabled=${!this.canStopGpuBilling}
                                         @click=${() => this.handleStopGpuBilling()}
                                     >
-                                        Stop Billing
+                                        Stop billing
                                     </button>
                                 </div>
                             ` : ''}
@@ -2967,7 +3033,7 @@ export class ProjectReviewPage extends LitElement {
                         ` : ''}
                         ${this.canUploadFiles ? html`
                             <add-button
-                                title="Add Files"
+                                title="Add files"
                                 @add-button-click=${() => this.openFileUploadDialog()}
                             ></add-button>
                         ` : ''}
@@ -3015,7 +3081,7 @@ export class ProjectReviewPage extends LitElement {
                         ?disabled=${this.uploading}
                         @click=${() => this.renderRoot?.querySelector('#project-upload-input')?.click()}
                     >
-                        Choose File
+                        Choose file
                     </button>
                     ${this.selectedFile ? html`
                         <div class="upload-file-info">
@@ -3028,7 +3094,7 @@ export class ProjectReviewPage extends LitElement {
                                 ?disabled=${this.uploading}
                                 @click=${() => this.uploadFileToProject()}
                             >
-                                ${this.uploading ? 'Uploading...' : 'Upload File'}
+                                ${this.uploading ? 'Uploading...' : 'Upload file'}
                             </button>
                             <button
                                 class="upload-button secondary"
@@ -3046,15 +3112,17 @@ export class ProjectReviewPage extends LitElement {
                 <div class="gpu-dialog-form">
                     <div class="gpu-field">
                         <label for="gpu-dialog-provider">Provider</label>
-                        <select
+                        <dropdown-select
                             id="gpu-dialog-provider"
+                            fullwidth
                             .value=${this.gpuDialogProviderId}
+                            .options=${this.gpuDialogProviderOptions.map((provider) => ({
+                                value: provider.id,
+                                label: provider.label
+                            }))}
+                            aria-label="Provider"
                             @change=${(e) => this.handleGpuDialogProviderChange(e)}
-                        >
-                            ${this.gpuDialogProviderOptions.map((provider) => html`
-                                <option value=${provider.id}>${provider.label}</option>
-                            `)}
-                        </select>
+                        ></dropdown-select>
                     </div>
                     <div class="gpu-field">
                         <label for="gpu-dialog-api-key">API key</label>
@@ -3185,7 +3253,7 @@ export class ProjectReviewPage extends LitElement {
                                 ?disabled=${this.iframeUrl === 'about:blank'}
                                 @click=${() => this.openViewerInNewWindow()}
                             >
-                                Open in New Window
+                                Open in new window
                             </button>
                             <button
                                 class="primary-button"

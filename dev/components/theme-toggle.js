@@ -34,14 +34,16 @@ export class ThemeToggle extends LitElement {
             }
 
             .theme-icon {
-                font-size: 14px;
+                font-size: 15px;
                 line-height: 1;
-                opacity: 0.45;
-                transition: opacity 0.2s ease, transform 0.2s ease;
+                opacity: 0.5;
+                color: var(--color-text-secondary);
+                transition: opacity 0.2s ease, transform 0.2s ease, color 0.2s ease;
             }
 
             .theme-icon.active {
                 opacity: 1;
+                color: var(--color-text-primary);
                 transform: scale(1.08);
             }
 
@@ -62,9 +64,11 @@ export class ThemeToggle extends LitElement {
                 position: absolute;
                 cursor: pointer;
                 inset: 0;
-                background-color: var(--color-border);
+                background-color: color-mix(in srgb, var(--color-border) 70%, var(--color-text-secondary));
+                border: 1px solid var(--color-border);
                 border-radius: 999px;
-                transition: background-color 0.2s ease;
+                transition: background-color 0.2s ease, border-color 0.2s ease;
+                box-sizing: border-box;
             }
 
             .slider::before {
@@ -72,19 +76,60 @@ export class ThemeToggle extends LitElement {
                 position: absolute;
                 width: 18px;
                 height: 18px;
-                left: 3px;
-                top: 3px;
+                left: 2px;
+                top: 2px;
                 border-radius: 50%;
                 background-color: #fff;
-                transition: transform 0.2s ease;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+                transition: transform 0.2s ease, background-color 0.2s ease;
             }
 
             .switch input:checked + .slider {
-                background-color: var(--color-primary);
+                background-color: var(--color-secondary);
+                border-color: var(--color-secondary);
             }
 
             .switch input:checked + .slider::before {
                 transform: translateX(20px);
+            }
+
+            .switch input:focus-visible + .slider {
+                outline: 3px solid var(--color-focus, #0057c2);
+                outline-offset: 2px;
+                box-shadow: var(--focus-ring-shadow, 0 0 0 2px #fff, 0 0 0 5px #0057c2);
+            }
+
+            :host-context([data-theme='dark']) .theme-label {
+                color: var(--color-text-primary);
+            }
+
+            :host-context([data-theme='dark']) .theme-icon {
+                opacity: 0.65;
+                color: color-mix(in srgb, var(--color-text-secondary) 55%, #fff);
+            }
+
+            :host-context([data-theme='dark']) .theme-icon.active {
+                opacity: 1;
+                color: var(--color-text-primary);
+            }
+
+            :host-context([data-theme='dark']) .slider {
+                background-color: color-mix(in srgb, var(--color-primary) 28%, var(--color-surface));
+                border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
+            }
+
+            :host-context([data-theme='dark']) .switch input:checked + .slider {
+                background: var(--color-secondary);
+                border-color: color-mix(in srgb, var(--color-secondary) 70%, var(--color-border));
+            }
+
+            :host-context([data-theme='dark']) .slider::before {
+                background-color: var(--color-on-secondary);
+                box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+            }
+
+            :host-context([data-theme='dark']) .switch input:checked + .slider::before {
+                background-color: var(--color-on-secondary);
             }
         `;
     }
@@ -136,7 +181,7 @@ export class ThemeToggle extends LitElement {
             <div class="theme-toggle-row">
                 <span class="theme-label">${this.label}</span>
                 <div class="theme-toggle-control">
-                    <span class="theme-icon ${isDarkTheme ? '' : 'active'}" title="Light mode">☀</span>
+                    <span class="theme-icon ${isDarkTheme ? '' : 'active'}" title="Light mode" aria-hidden="true">☀</span>
                     <label class="switch" aria-label="Toggle theme">
                         <input
                             type="checkbox"
@@ -146,7 +191,7 @@ export class ThemeToggle extends LitElement {
                         >
                         <span class="slider"></span>
                     </label>
-                    <span class="theme-icon ${isDarkTheme ? 'active' : ''}" title="Dark mode">🌙</span>
+                    <span class="theme-icon ${isDarkTheme ? 'active' : ''}" title="Dark mode" aria-hidden="true">🌙</span>
                 </div>
             </div>
         `;

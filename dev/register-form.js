@@ -13,7 +13,7 @@ export class RegisterForm extends LitElement {
 
       .register-container {
         background: #fff;
-        border-radius: 8px;
+        border-radius: var(--radius-lg);
         box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
         padding: 30px;
       }
@@ -39,7 +39,7 @@ export class RegisterForm extends LitElement {
         width: 100%;
         padding: 10px;
         border: 1px solid #ddd;
-        border-radius: 4px;
+        border-radius: var(--radius-sm);
         font-size: 14px;
         box-sizing: border-box;
       }
@@ -55,7 +55,7 @@ export class RegisterForm extends LitElement {
         background: #2196F3;
         color: white;
         border: none;
-        border-radius: 4px;
+        border-radius: var(--radius-sm);
         font-size: 16px;
         cursor: pointer;
         transition: background 0.3s;
@@ -272,7 +272,7 @@ export class RegisterForm extends LitElement {
           </div>
 
           <div class="form-group">
-            <label for="confirmPassword">Confirm Password</label>
+            <label for="confirmPassword">Confirm password</label>
             <input
               id="confirmPassword"
               type="password"
@@ -292,7 +292,7 @@ export class RegisterForm extends LitElement {
         </form>
 
         <div class="switch-link">
-          Already have an account? <a @click=${this.handleLoginClick}>Login here</a>
+          Already have an account? <a @click=${this.handleLoginClick}>Log in here</a>
         </div>
       </div>
     `;

@@ -27,7 +27,7 @@ export class CollaboratorSearch extends LitElement {
                 min-width: 220px;
                 box-sizing: border-box;
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-sm);
                 background: var(--color-surface, var(--color-background));
                 color: var(--color-text-primary);
                 padding: 10px 12px;
@@ -42,10 +42,11 @@ export class CollaboratorSearch extends LitElement {
                 opacity: 0.7;
             }
 
-            .search-input:focus {
-                outline: none;
-                border-color: var(--color-primary);
-                box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 22%, transparent);
+            .search-input:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
+                border-color: var(--color-focus, var(--color-primary));
+                box-shadow: none;
             }
 
             .search-actions {
@@ -55,18 +56,29 @@ export class CollaboratorSearch extends LitElement {
             .search-form-row {
                 display: flex;
                 align-items: center;
-                gap: 10px;
+                gap: 12px;
                 margin-top: 4px;
+                padding: 2px 0;
             }
 
             .search-button {
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 background: var(--color-primary);
-                color: var(--color-background);
+                color: var(--color-on-primary);
                 padding: 8px 12px;
                 font: inherit;
                 cursor: pointer;
+            }
+
+            .search-button:hover:not(:disabled) {
+                background: color-mix(in srgb, var(--color-primary) 78%, #5b7cff);
+            }
+
+            .search-button:focus-visible,
+            .primary-button:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
             }
 
             .search-button:disabled {
@@ -87,7 +99,7 @@ export class CollaboratorSearch extends LitElement {
             .search-result {
                 margin-top: 12px;
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 padding: 10px 12px;
             }
 
@@ -100,20 +112,22 @@ export class CollaboratorSearch extends LitElement {
             .selected-list {
                 display: flex;
                 flex-direction: column;
-                gap: 8px;
+                gap: 10px;
+                padding: 2px 0;
             }
 
             .dialog-actions {
-                margin-top: 16px;
+                margin-top: 14px;
                 display: flex;
                 justify-content: flex-end;
-                gap: 10px;
+                gap: 12px;
+                padding: 2px 0;
             }
 
             .secondary-button,
             .primary-button {
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 min-height: 38px;
                 padding: 8px 14px;
                 font: inherit;
@@ -127,7 +141,11 @@ export class CollaboratorSearch extends LitElement {
 
             .primary-button {
                 background: var(--color-primary);
-                color: var(--color-background);
+                color: var(--color-on-primary);
+            }
+
+            .primary-button:hover:not(:disabled) {
+                background: color-mix(in srgb, var(--color-primary) 78%, #5b7cff);
             }
 
             .primary-button:disabled {
@@ -264,7 +282,7 @@ export class CollaboratorSearch extends LitElement {
 
         return html`
             <div class="search-wrapper">
-                <label class="field-label" for="collaborator-search-input">Search Collaborators</label>
+                <label class="field-label" for="collaborator-search-input">Search collaborators</label>
                 <form @submit=${(event) => this.handleSearchSubmit(event)}>
                     <div class="search-form-row">
                         <input
@@ -277,7 +295,7 @@ export class CollaboratorSearch extends LitElement {
                         />
                         <div class="search-actions">
                             <button class="search-button" type="submit" ?disabled=${this.loading}>
-                                ${this.loading ? 'Searching...' : 'Find User'}
+                                ${this.loading ? 'Searching...' : 'Find user'}
                             </button>
                         </div>
                     </div>

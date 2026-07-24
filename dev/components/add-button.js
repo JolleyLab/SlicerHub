@@ -15,7 +15,7 @@ export class AddButton extends LitElement {
                 align-items: center;
                 gap: 8px;
                 border: 1px solid var(--color-text-secondary);
-                border-radius: 999px;
+                border-radius: var(--radius-md);
                 padding: 5px 10px;
                 background: transparent;
                 color: var(--color-text-primary);
@@ -29,10 +29,22 @@ export class AddButton extends LitElement {
             .add-button:hover,
             .add-button:focus-visible {
                 background: var(--color-secondary);
-                color: var(--color-background);
+                color: var(--color-on-secondary);
                 border-color: var(--color-secondary);
-                outline: none;
                 transform: translateY(-1px);
+            }
+
+            .add-button:focus-visible {
+                outline: 3px solid var(--color-focus, var(--color-primary));
+                outline-offset: 2px;
+                box-shadow: var(--focus-ring-shadow, 0 0 0 3px var(--color-focus, var(--color-primary)));
+            }
+
+            :host-context([data-theme='dark']) .add-button:hover,
+            :host-context([data-theme='dark']) .add-button:focus-visible {
+                background: var(--color-secondary);
+                color: var(--color-on-secondary);
+                border-color: color-mix(in srgb, var(--color-secondary) 70%, var(--color-border));
             }
 
             .add-button:disabled {
@@ -48,14 +60,26 @@ export class AddButton extends LitElement {
                 width: 18px;
                 height: 18px;
                 border-radius: 50%;
-                background: var(--color-text-secondary);
-                color: var(--color-background);
+                background: var(--color-primary);
+                color: var(--color-on-primary);
                 font-size: 14px;
                 line-height: 0;
                 font-weight: 600;
                 flex: 0 0 18px;
                 text-align: center;
                 padding: 0;
+            }
+
+            .add-button:hover .plus-mark,
+            .add-button:focus-visible .plus-mark {
+                background: var(--color-on-secondary);
+                color: var(--color-secondary);
+            }
+
+            :host-context([data-theme='dark']) .add-button:hover .plus-mark,
+            :host-context([data-theme='dark']) .add-button:focus-visible .plus-mark {
+                background: var(--color-on-secondary);
+                color: var(--color-secondary);
             }
 
             .button-title {

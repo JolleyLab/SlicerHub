@@ -1,23 +1,34 @@
 export const UI_COLOR_SCHEMES = {
     light: {
         background: '#ecf4f9',
+        surface: '#ecf4f9',
+        panel: '#ffffff',
         textPrimary: '#040316',
         textSecondary: '#0c0941',
         textContrast: '#040316',
         primary: '#074174',
         secondary: '#167aac',
-        accent: '#5cebd8',
-        border: '#224f6b'
+        accent: '#b8cfe0',
+        onPrimary: '#ecf4f9',
+        onSecondary: '#ecf4f9',
+        border: '#224f6b',
+        focus: '#0057c2'
     },
     dark: {
-        background: '#060e13',
-        textPrimary: '#eae9fc',
-        textSecondary: '#c1bef6',
-        textContrast: '#060e13',
-        primary: '#8bc5f8',
-        secondary: '#53b7e9',
-        accent: '#14a390',
-        border: '#2b3a45'
+        // Same hierarchy as light (shared page base + lifted panels), cooler slate-indigo.
+        background: '#090b14',
+        surface: '#090b14',
+        panel: '#161b2c',
+        textPrimary: '#f0f2f8',
+        textSecondary: '#c2c8d8',
+        textContrast: '#090b14',
+        primary: '#2c3878',
+        secondary: '#3d4d9a',
+        accent: '#5c6bb8',
+        onPrimary: '#f2f4fa',
+        onSecondary: '#f2f4fa',
+        border: '#343e58',
+        focus: '#8fa3d4'
     }
 };
 
@@ -37,6 +48,26 @@ export function applyTheme(theme = 'light') {
     Object.entries(palette).forEach(([key, value]) => {
         root.style.setProperty(`--color-${toKebabCase(key)}`, value);
     });
+
+    // Squared-off clinical radii (soft corners, not pills).
+    root.style.setProperty('--radius-sm', '4px');
+    root.style.setProperty('--radius-md', '6px');
+    root.style.setProperty('--radius-lg', '8px');
+
+    // Strong keyboard focus ring (WCAG-friendly contrast on light and dark chrome).
+    root.style.setProperty('--focus-ring-width', '3px');
+    root.style.setProperty('--focus-ring-offset', '2px');
+    root.style.setProperty(
+        '--focus-ring',
+        '0 0 0 var(--focus-ring-width) var(--color-focus)'
+    );
+    // Light mode: white halo under the ring so it stays visible on pale panels.
+    root.style.setProperty(
+        '--focus-ring-shadow',
+        selectedTheme === 'light'
+            ? '0 0 0 2px #ffffff, 0 0 0 5px var(--color-focus)'
+            : '0 0 0 3px var(--color-focus)'
+    );
 }
 
 export function initializeTheme() {

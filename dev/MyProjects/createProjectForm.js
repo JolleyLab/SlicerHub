@@ -22,13 +22,14 @@ export class CreateProjectForm extends LitElement {
                 margin-top: 18px;
                 display: flex;
                 justify-content: flex-end;
-                gap: 10px;
+                gap: 12px;
+                padding: 2px 0;
             }
 
             .secondary-button,
             .primary-button {
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 min-height: 44px;
                 padding: 10px 18px;
                 font: inherit;
@@ -41,17 +42,29 @@ export class CreateProjectForm extends LitElement {
                 color: var(--color-text-primary);
             }
 
+            .secondary-button:focus-visible,
+            .primary-button:focus-visible {
+                outline: 3px solid var(--color-focus, #0057c2);
+                outline-offset: 2px;
+                box-shadow: var(--focus-ring-shadow, 0 0 0 2px #fff, 0 0 0 5px #0057c2);
+            }
+
             .primary-button {
                 background: var(--color-primary);
-                color: var(--color-background);
+                color: var(--color-on-primary);
             }
 
             .primary-button:hover,
             .primary-button:focus-visible {
+                background: color-mix(in srgb, var(--color-primary) 78%, #5b7cff);
+                color: var(--color-on-primary);
+                transform: translateY(-1px);
+            }
+
+            :host-context([data-theme='light']) .primary-button:hover,
+            :host-context([data-theme='light']) .primary-button:focus-visible {
                 background: var(--color-accent);
                 color: var(--color-text-primary);
-                outline: none;
-                transform: translateY(-1px);
             }
 
             .primary-button:disabled {
@@ -70,7 +83,7 @@ export class CreateProjectForm extends LitElement {
                 max-width: 420px;
                 box-sizing: border-box;
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-sm);
                 background: var(--color-surface, var(--color-background));
                 color: var(--color-text-primary);
                 padding: 10px 12px;
@@ -83,26 +96,33 @@ export class CreateProjectForm extends LitElement {
                 opacity: 0.7;
             }
 
-            .text-input:focus {
-                outline: none;
-                border-color: var(--color-primary);
-                box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 22%, transparent);
+            .text-input:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
+                border-color: var(--color-focus, var(--color-primary));
+                box-shadow: none;
             }
 
             .information-note {
                 margin-top: 16px;
                 padding: 12px 14px;
                 border: 1px dashed var(--color-text-secondary);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 color: var(--color-text-secondary);
             }
 
             .collaborators-panel {
                 margin-top: 16px;
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
-                background: var(--color-surface, var(--color-background));
+                border-radius: var(--radius-lg);
+                background: var(--color-panel, var(--color-surface, var(--color-background)));
                 padding: 4px 10px 10px;
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+            }
+
+            :host-context([data-theme='dark']) .collaborators-panel {
+                border-color: color-mix(in srgb, var(--color-border) 75%, var(--color-primary));
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
             }
 
             .collaborators-panel summary {
@@ -111,6 +131,7 @@ export class CreateProjectForm extends LitElement {
                 font-weight: 600;
                 color: var(--color-text-primary);
                 padding: 10px 2px;
+                margin-bottom: 6px;
                 display: flex;
                 align-items: center;
                 gap: 8px;
@@ -128,11 +149,11 @@ export class CreateProjectForm extends LitElement {
                 width: 20px;
                 height: 20px;
                 border: 1px solid var(--color-border);
-                border-radius: 6px;
+                border-radius: var(--radius-md);
                 font-size: 0.95rem;
                 font-weight: 700;
                 color: var(--color-text-primary);
-                background: var(--color-surface, var(--color-background));
+                background: var(--color-panel, var(--color-surface, var(--color-background)));
                 transition: transform 0.15s ease, background-color 0.15s ease;
             }
 
@@ -142,7 +163,13 @@ export class CreateProjectForm extends LitElement {
 
             .collaborators-panel summary:hover::before,
             .collaborators-panel summary:focus-visible::before {
-                background: color-mix(in srgb, var(--color-primary) 14%, var(--color-surface, var(--color-background)));
+                background: color-mix(in srgb, var(--color-primary) 14%, var(--color-panel, var(--color-surface, var(--color-background))));
+            }
+
+            .collaborators-panel summary:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
+                border-radius: var(--radius-lg);
             }
 
             .collaborators-list {
@@ -151,12 +178,12 @@ export class CreateProjectForm extends LitElement {
                 gap: 8px;
                 max-height: 280px;
                 overflow-y: auto;
-                padding-right: 4px;
+                padding: 6px 4px 4px 2px;
             }
 
             .collaborator-row {
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 padding: 10px 12px;
             }
 
@@ -308,7 +335,7 @@ export class CreateProjectForm extends LitElement {
             >
                 <div slot="content">
                     <div class="form-group">
-                        <label class="field-label" for="project-name">Project Name</label>
+                        <label class="field-label" for="project-name">Project name</label>
                         <input
                             class="text-input"
                             type="text"
@@ -335,7 +362,7 @@ export class CreateProjectForm extends LitElement {
                        You haven't invited any collaborators yet. <br>
                        <add-button
                            slot="content"
-                           title="Add Collaborators"
+                           title="Add collaborators"
                            @add-button-click=${() => this.openCollaboratorDialog()}
                         ></add-button>
                     </div>
@@ -359,7 +386,7 @@ export class CreateProjectForm extends LitElement {
                         </details>
                         <add-button
                             slot="content"
-                            title="Add Collaborators"
+                            title="Add collaborators"
                             @add-button-click=${() => this.openCollaboratorDialog()}
                         ></add-button>
                     </div>

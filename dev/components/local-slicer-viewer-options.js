@@ -13,25 +13,103 @@ export class LocalSlicerViewerOptions extends LitElement {
         return css`
             :host {
                 display: block;
+                font-family: var(--font-family-base);
+                font-feature-settings: var(--font-feature-defaults);
             }
 
             .options {
                 display: flex;
                 flex-direction: column;
-                gap: 8px;
+                gap: 10px;
             }
 
             .checkbox {
                 display: flex;
-                align-items: center;
-                gap: 8px;
+                align-items: flex-start;
+                gap: 10px;
                 font-size: 0.9rem;
-                color: var(--color-text-secondary);
+                font-weight: 500;
+                color: var(--color-text-primary);
                 cursor: pointer;
+                line-height: 1.35;
             }
 
             .checkbox input {
-                margin: 0;
+                appearance: none;
+                -webkit-appearance: none;
+                width: 18px;
+                height: 18px;
+                margin: 1px 0 0;
+                flex: 0 0 18px;
+                box-sizing: border-box;
+                border: 1.5px solid var(--color-border);
+                border-radius: var(--radius-sm, 4px);
+                background: var(--color-surface, var(--color-background));
+                cursor: pointer;
+                position: relative;
+                transition:
+                    background-color 0.15s ease,
+                    border-color 0.15s ease,
+                    box-shadow 0.15s ease;
+            }
+
+            .checkbox input::after {
+                content: '';
+                position: absolute;
+                left: 5px;
+                top: 1px;
+                width: 5px;
+                height: 9px;
+                border: solid var(--color-on-primary, #fff);
+                border-width: 0 2px 2px 0;
+                transform: rotate(45deg) scale(0);
+                transform-origin: center;
+                transition: transform 0.12s ease;
+                opacity: 0;
+            }
+
+            .checkbox input:hover:not(:disabled) {
+                border-color: var(--color-secondary);
+            }
+
+            .checkbox input:checked {
+                background: var(--color-secondary);
+                border-color: var(--color-secondary);
+            }
+
+            .checkbox input:checked::after {
+                opacity: 1;
+                transform: rotate(45deg) scale(1);
+            }
+
+            .checkbox input:focus-visible {
+                outline: 3px solid var(--color-focus, #0057c2);
+                outline-offset: 2px;
+                box-shadow: var(--focus-ring-shadow, 0 0 0 2px #fff, 0 0 0 5px #0057c2);
+            }
+
+            .checkbox input:disabled {
+                opacity: 0.55;
+                cursor: not-allowed;
+            }
+
+            :host-context([data-theme='dark']) .checkbox input {
+                background: color-mix(in srgb, var(--color-primary) 14%, var(--color-surface));
+                border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+            }
+
+            :host-context([data-theme='dark']) .checkbox input:hover:not(:disabled) {
+                border-color: color-mix(in srgb, var(--color-secondary) 50%, var(--color-border));
+                background: color-mix(in srgb, var(--color-primary) 22%, var(--color-surface));
+            }
+
+            :host-context([data-theme='dark']) .checkbox input:checked {
+                background: var(--color-secondary);
+                border-color: color-mix(in srgb, var(--color-secondary) 70%, var(--color-border));
+            }
+
+            :host-context([data-theme='dark']) .checkbox input:checked::after {
+                border-color: var(--color-on-secondary);
             }
 
             .checkbox[aria-disabled='true'] {
@@ -40,15 +118,25 @@ export class LocalSlicerViewerOptions extends LitElement {
             }
 
             .nested {
-                margin-left: 24px;
+                margin-left: 28px;
                 display: flex;
                 flex-direction: column;
                 gap: 6px;
             }
 
+            /* Align under the label text (checkbox 18px + gap 10px). */
+            .nested > .hint {
+                margin-left: 28px;
+            }
+
             .hint {
                 font-size: 0.85rem;
                 color: var(--color-text-secondary);
+                line-height: 1.4;
+            }
+
+            :host-context([data-theme='dark']) .hint {
+                color: color-mix(in srgb, var(--color-text-secondary) 70%, #fff);
             }
 
             .readonly {
@@ -137,17 +225,11 @@ export class LocalSlicerViewerOptions extends LitElement {
                                 ?disabled=${this.disabled}
                                 @change=${(e) => this.handleSimplifiedViewerChange(e)}
                             />
-                            Use Simplified Viewer
+                            Use simplified viewer
                         </label>
                         <div class="hint">
-                            Opens Full Slicer with the Simplified Viewer UI instead of the full Slicer chrome.
+                            Opens Full Slicer with the Simplified Viewer UI instead of full Slicer.
                         </div>
-                    </div>
-                ` : ''}
-                ${this.showComposeHint ? html`
-                    <div class="hint">
-                        Opens the standalone GPU Slicer container in a new browser tab.
-                        Requires <code>docker compose --profile slicer-gui up -d slicer-gui</code>.
                     </div>
                 ` : ''}
             </div>
@@ -158,7 +240,7 @@ export class LocalSlicerViewerOptions extends LitElement {
         const { useFullSlicer, useSimplifiedViewer } = this.normalized;
         let summary = 'Local Trame viewer';
         if (useFullSlicer && useSimplifiedViewer) {
-            summary = 'Full Slicer with Simplified Viewer (read-only) opens in a new tab.';
+            summary = 'Full Slicer with simplified viewer (read-only).';
         } else if (useFullSlicer) {
             summary = 'Full Slicer viewer (read-only) opens in a new tab.';
         }
@@ -168,7 +250,6 @@ export class LocalSlicerViewerOptions extends LitElement {
                 <div class="readonly">${summary}</div>
                 ${this.showComposeHint && useFullSlicer ? html`
                     <div class="hint">
-                        Requires <code>docker compose --profile slicer-gui up -d slicer-gui</code>.
                     </div>
                 ` : ''}
             </div>

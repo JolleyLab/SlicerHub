@@ -17,7 +17,7 @@ export class FileStorageSummary extends LitElement {
                 gap: 12px;
                 padding: 14px 16px;
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 background: color-mix(in srgb, var(--color-primary) 6%, transparent);
                 color: var(--color-text-primary);
                 font-size: 0.95rem;

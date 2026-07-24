@@ -8,6 +8,7 @@ import './components/file-storage-summary.js';
 import './components/file-list-row.js';
 import './components/add-button.js';
 import './components/app-dialog.js';
+import './components/dropdown-select.js';
 import { resolveTramePageUrl } from './utils/trameViewerUrl.js';
 import {
     installViewerActivityListeners,
@@ -65,7 +66,7 @@ export class FileManager extends LitElement {
                 max-width: 320px;
                 padding: 8px 12px;
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-sm);
                 font: inherit;
                 color: var(--color-text-primary);
                 background: var(--color-surface, var(--color-background));
@@ -73,19 +74,12 @@ export class FileManager extends LitElement {
             }
 
             .file-list-search:focus-visible {
-                outline: 2px solid var(--color-secondary);
-                outline-offset: 1px;
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
             }
 
             .file-list-sort {
-                padding: 8px 10px;
-                border: 1px solid var(--color-border);
-                border-radius: 10px;
-                font: inherit;
-                color: var(--color-text-primary);
-                background: var(--color-surface, var(--color-background));
                 min-width: 220px;
-                cursor: pointer;
             }
 
             .file-list-pager {
@@ -104,12 +98,13 @@ export class FileManager extends LitElement {
 
             .file-list-pager-buttons {
                 display: inline-flex;
-                gap: 8px;
+                gap: 10px;
+                padding: 2px;
             }
 
             .file-list-pager-btn {
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 background: transparent;
                 color: var(--color-text-primary);
                 min-height: 38px;
@@ -122,7 +117,8 @@ export class FileManager extends LitElement {
             .file-list-pager-btn:hover:not(:disabled),
             .file-list-pager-btn:focus-visible:not(:disabled) {
                 background: color-mix(in srgb, var(--color-primary) 10%, transparent);
-                outline: none;
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
             }
 
             .file-list-pager-btn:disabled {
@@ -159,12 +155,18 @@ export class FileManager extends LitElement {
             }
 
             .iframe-header {
-                background: #333;
-                color: white;
-                padding: 15px 20px;
+                background: var(--color-primary);
+                color: var(--color-on-primary);
+                padding: 12px 16px;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
+                gap: 12px;
+                border-bottom: 1px solid var(--color-border);
+            }
+
+            :host-context([data-theme='dark']) .iframe-header {
+                background: color-mix(in srgb, var(--color-primary) 72%, #000);
             }
 
             .iframe-title {
@@ -176,13 +178,13 @@ export class FileManager extends LitElement {
                 margin-left: 12px;
                 font-size: 13px;
                 font-weight: 400;
-                color: #ffc107;
+                color: color-mix(in srgb, var(--color-on-primary) 85%, transparent);
             }
 
             .save-indicator {
                 background: #2e7d32;
-                color: white;
-                border-radius: 4px;
+                color: #fff;
+                border-radius: var(--radius-sm);
                 padding: 6px 10px;
                 font-size: 12px;
                 margin-right: 10px;
@@ -191,79 +193,62 @@ export class FileManager extends LitElement {
 
             .close-iframe-btn {
                 background: #f44336;
-                color: white;
-                border: none;
-                padding: 8px 20px;
-                border-radius: 4px;
+                color: #fff;
+                border: 1px solid color-mix(in srgb, #f44336 70%, var(--color-border));
+                padding: 8px 16px;
+                border-radius: var(--radius-md);
                 cursor: pointer;
+                font: inherit;
                 font-size: 14px;
+                font-weight: 600;
             }
 
-            .open-window-btn {
-                background: #2196F3;
-                color: white;
-                border: none;
-                padding: 8px 20px;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 14px;
-                margin-right: 8px;
-            }
-
-            .save-scene-btn {
-                background: #4CAF50;
-                color: white;
-                border: none;
-                padding: 8px 20px;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 14px;
-                margin-right: 8px;
-            }
-
+            .open-window-btn,
+            .save-scene-btn,
             .save-as-new-btn {
-                background: #FF9800;
-                color: white;
-                border: none;
-                padding: 8px 20px;
-                border-radius: 4px;
+                background: var(--color-secondary);
+                color: var(--color-on-secondary);
+                border: 1px solid color-mix(in srgb, var(--color-secondary) 70%, var(--color-border));
+                padding: 8px 16px;
+                border-radius: var(--radius-md);
                 cursor: pointer;
+                font: inherit;
                 font-size: 14px;
+                font-weight: 600;
                 margin-right: 8px;
+            }
+
+            :host-context([data-theme='light']) .open-window-btn,
+            :host-context([data-theme='light']) .save-scene-btn,
+            :host-context([data-theme='light']) .save-as-new-btn {
+                background: var(--color-background);
+                color: var(--color-primary);
+                border-color: var(--color-border);
             }
 
             .close-iframe-btn:hover {
                 background: #d32f2f;
             }
 
-            .open-window-btn:hover {
-                background: #1976D2;
-            }
-
-            .save-scene-btn:hover {
-                background: #43A047;
-            }
-
+            .open-window-btn:hover,
+            .save-scene-btn:hover,
             .save-as-new-btn:hover {
-                background: #F57C00;
+                background: color-mix(in srgb, var(--color-secondary) 82%, #fff);
+                color: var(--color-on-secondary);
             }
 
-            .open-window-btn:disabled {
-                background: #ccc;
-                cursor: not-allowed;
-                opacity: 0.6;
+            :host-context([data-theme='light']) .open-window-btn:hover,
+            :host-context([data-theme='light']) .save-scene-btn:hover,
+            :host-context([data-theme='light']) .save-as-new-btn:hover {
+                background: var(--color-accent);
+                color: var(--color-text-primary);
             }
 
-            .save-scene-btn:disabled {
-                background: #ccc;
-                cursor: not-allowed;
-                opacity: 0.6;
-            }
-
+            .open-window-btn:disabled,
+            .save-scene-btn:disabled,
             .save-as-new-btn:disabled {
-                background: #ccc;
-                cursor: not-allowed;
                 opacity: 0.6;
+                cursor: not-allowed;
             }
 
             .iframe-container {
@@ -277,7 +262,7 @@ export class FileManager extends LitElement {
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                background: white;
+                background: var(--color-surface, var(--color-background));
                 text-align: center;
             }
 
@@ -316,34 +301,44 @@ export class FileManager extends LitElement {
             .trame-iframe {
                 flex: 1;
                 border: none;
-                background: white;
+                background: #000;
                 width: 100%;
                 height: 100%;
             }
 
             .iframe-header .action-btn {
                 padding: 8px 12px;
-                border-radius: 4px;
+                border-radius: var(--radius-md);
                 font-size: 14px;
                 font: inherit;
             }
 
-            .iframe-header select.action-btn {
-                border: 1px solid #ccc;
-                background: #fff;
-                color: #333;
-                cursor: pointer;
+            .iframe-header dropdown-select {
+                margin-right: 8px;
+                min-width: 170px;
             }
 
             .iframe-header .share-btn {
-                border: none;
-                background: #673ab7;
-                color: white;
+                border: 1px solid color-mix(in srgb, var(--color-secondary) 70%, var(--color-border));
+                background: var(--color-secondary);
+                color: var(--color-on-secondary);
                 cursor: pointer;
+                font-weight: 600;
             }
 
             .iframe-header .share-btn:hover {
-                background: #5e35b1;
+                background: color-mix(in srgb, var(--color-secondary) 82%, #fff);
+            }
+
+            :host-context([data-theme='light']) .iframe-header .share-btn {
+                background: var(--color-secondary);
+                color: var(--color-on-secondary);
+                border-color: var(--color-border);
+            }
+
+            :host-context([data-theme='light']) .iframe-header .share-btn:hover {
+                background: var(--color-accent);
+                color: var(--color-text-primary);
             }
 
             .share-dialog-overlay {
@@ -358,13 +353,18 @@ export class FileManager extends LitElement {
             }
 
             .share-dialog {
-                background: var(--color-surface, var(--color-background));
+                background: var(--color-panel, var(--color-surface, var(--color-background)));
                 color: var(--color-text-primary);
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-lg);
                 width: min(520px, 100%);
                 padding: 16px;
                 box-shadow: 0 8px 30px var(--color-shadow, rgba(0, 0, 0, 0.25));
+            }
+
+            :host-context([data-theme='dark']) .share-dialog {
+                border-color: color-mix(in srgb, var(--color-border) 75%, var(--color-primary));
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
             }
 
             .share-dialog h3 {
@@ -383,17 +383,21 @@ export class FileManager extends LitElement {
                 font-weight: 500;
             }
 
-            .share-field select,
             .share-field input {
                 width: 100%;
                 padding: 8px 10px;
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 box-sizing: border-box;
                 font-size: 14px;
                 font: inherit;
                 color: var(--color-text-primary);
                 background: var(--color-surface, var(--color-background));
+            }
+
+            .share-field dropdown-select {
+                width: 100%;
+                display: block;
             }
 
             .share-help {
@@ -412,7 +416,7 @@ export class FileManager extends LitElement {
             .secondary-button,
             .primary-button {
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 min-height: 42px;
                 padding: 8px 16px;
                 font: inherit;
@@ -425,17 +429,30 @@ export class FileManager extends LitElement {
                 color: var(--color-text-primary);
             }
 
+            .secondary-button:focus-visible,
+            .primary-button:focus-visible,
+            .upload-button:focus-visible {
+                outline: 3px solid var(--color-focus, #0057c2);
+                outline-offset: 2px;
+                box-shadow: var(--focus-ring-shadow, 0 0 0 2px #fff, 0 0 0 5px #0057c2);
+            }
+
             .primary-button {
                 background: var(--color-primary);
-                color: var(--color-background);
+                color: var(--color-on-primary);
             }
 
             .primary-button:hover,
             .primary-button:focus-visible {
+                background: color-mix(in srgb, var(--color-primary) 78%, #5b7cff);
+                color: var(--color-on-primary);
+                transform: translateY(-1px);
+            }
+
+            :host-context([data-theme='light']) .primary-button:hover,
+            :host-context([data-theme='light']) .primary-button:focus-visible {
                 background: var(--color-accent);
                 color: var(--color-text-primary);
-                outline: none;
-                transform: translateY(-1px);
             }
 
             .primary-button:disabled,
@@ -447,7 +464,7 @@ export class FileManager extends LitElement {
 
             .upload-area {
                 border: 2px dashed var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 padding: 22px 16px;
                 text-align: center;
                 background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface, var(--color-background)));
@@ -470,14 +487,14 @@ export class FileManager extends LitElement {
 
             .upload-button {
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 min-height: 38px;
                 padding: 8px 14px;
                 font: inherit;
                 font-weight: 600;
                 cursor: pointer;
                 background: var(--color-primary);
-                color: var(--color-background);
+                color: var(--color-on-primary);
             }
 
             .upload-button.secondary {
@@ -1456,7 +1473,7 @@ export class FileManager extends LitElement {
                 ` : ''}
 
                 ${!this.loading && (this.totalFileCount > 0 || this.fileListSearch) ? html`
-                    <h2 slot="content" class="files-section-title">Your files</h2>
+                    <h2 slot="content" class="files-section-title">Files</h2>
                     <div slot="content" class="file-list-toolbar">
                         <input
                             type="search"
@@ -1466,18 +1483,19 @@ export class FileManager extends LitElement {
                             .value=${this.fileListSearchDraft}
                             @input=${this.handleFileSearchInput}
                         />
-                        <select
+                        <dropdown-select
                             class="file-list-sort"
                             aria-label="Sort files"
                             .value=${this.fileListOrder}
+                            .options=${[
+                                { value: 'date-desc', label: 'Last modified (newest first)' },
+                                { value: 'date-asc', label: 'Last modified (oldest first)' },
+                                { value: 'viewed-desc', label: 'Recently viewed' },
+                                { value: 'name-asc', label: 'Name (A–Z)' },
+                                { value: 'name-desc', label: 'Name (Z–A)' }
+                            ]}
                             @change=${this.handleFileOrderChange}
-                        >
-                            <option value="date-desc">Last modified (newest first)</option>
-                            <option value="date-asc">Last modified (oldest first)</option>
-                            <option value="viewed-desc">Recently viewed</option>
-                            <option value="name-asc">Name (A–Z)</option>
-                            <option value="name-desc">Name (Z–A)</option>
-                        </select>
+                        ></dropdown-select>
                     </div>
                     <div slot="content" class="file-list">
                         ${this.files.map((file) => html`
@@ -1559,7 +1577,7 @@ export class FileManager extends LitElement {
                 ></file-storage-summary>
             </page-layout-template>
 
-            <app-dialog id="file-upload-dialog" title="Add file">
+            <app-dialog id="file-upload-dialog" title="Add File">
                 <div
                     class="upload-area ${this.dragOver ? 'drag-over' : ''}"
                     @dragover=${this.handleUploadDialogDragOver}
@@ -1579,7 +1597,7 @@ export class FileManager extends LitElement {
                         ?disabled=${this.uploading}
                         @click=${() => this.shadowRoot?.querySelector('#my-files-upload-input')?.click()}
                     >
-                        Choose File
+                        Choose file
                     </button>
                     ${this.selectedFile ? html`
                         <div class="upload-file-info">
@@ -1592,7 +1610,7 @@ export class FileManager extends LitElement {
                                 ?disabled=${this.uploading}
                                 @click=${() => this.uploadFile()}
                             >
-                                ${this.uploading ? 'Uploading...' : 'Upload File'}
+                                ${this.uploading ? 'Uploading...' : 'Upload file'}
                             </button>
                             <button
                                 class="upload-button secondary"
@@ -1617,7 +1635,7 @@ export class FileManager extends LitElement {
                     <p class="close-prompt-message">${this.closePromptMessage}</p>
                     ${this.closePromptMode === 'unsaved' ? html`
                         <button slot="actions" class="upload-button secondary" type="button" @click=${() => this.finishClosePrompt('discard')}>
-                            Don't Save
+                            Don't save
                         </button>
                         <button slot="actions" class="upload-button" type="button" @click=${() => this.finishClosePrompt('save')}>
                             Save
@@ -1637,7 +1655,7 @@ export class FileManager extends LitElement {
                 <div class="iframe-overlay">
                     <div class="iframe-header">
                         <div class="iframe-title">
-                            🚀 Trame: ${this.currentFileName}
+                            Viewer: ${this.currentFileName}
                             ${this.viewerLoading ? html`
                                 <span class="iframe-status">${this.viewerLoadingMessage}</span>
                             ` : ''}
@@ -1647,28 +1665,30 @@ export class FileManager extends LitElement {
                                 <span class="save-indicator">${this.saveIndicatorMessage}</span>
                             ` : ''}
                             <button class="open-window-btn" @click=${this.openInNewWindow} ?disabled=${this.iframeUrl === 'about:blank'}>
-                                🗗 Open in New Window
+                                Open in new window
                             </button>
-                            <select
-                                class="action-btn"
+                            <dropdown-select
+                                variant="chip"
                                 style="margin-right:8px;"
                                 .value=${this.viewerShareMode}
+                                .options=${[
+                                    { value: 'whole_file', label: 'Share whole file' },
+                                    { value: 'current_view', label: 'Share current view' }
+                                ]}
+                                aria-label="Share mode"
                                 @change=${(e) => { this.viewerShareMode = e.target.value; }}
-                            >
-                                <option value="whole_file">Share whole file</option>
-                                <option value="current_view">Share current view</option>
-                            </select>
+                            ></dropdown-select>
                             <button class="action-btn share-btn" @click=${() => this.openViewerShareDialog()} ?disabled=${this.iframeUrl === 'about:blank'}>
-                                🔗 Share
+                                Share
                             </button>
                             <button class="save-scene-btn" @click=${() => this.saveCurrentScene('overwrite')} ?disabled=${this.iframeUrl === 'about:blank'}>
-                                💾 Save Scene
+                                Save scene
                             </button>
                             <button class="save-as-new-btn" @click=${this.saveCurrentSceneAsNew} ?disabled=${this.iframeUrl === 'about:blank'}>
-                                🧾 Save As New
+                                Save as new
                             </button>
                             <button class="close-iframe-btn" @click=${this.closeIframe}>
-                                ✕ Close Trame
+                                Close viewer
                             </button>
                         </div>
                     </div>
@@ -1707,28 +1727,34 @@ export class FileManager extends LitElement {
                         ` : ''}
                         <div class="share-field">
                             <label for="shareMode">Share mode</label>
-                            <select
+                            <dropdown-select
                                 id="shareMode"
+                                fullwidth
                                 .value=${this.shareMode}
+                                .options=${[
+                                    { value: 'whole_file', label: 'Open with whole file' },
+                                    { value: 'current_view', label: 'Open with my current view' }
+                                ]}
+                                aria-label="Share mode"
                                 @change=${(e) => { this.shareMode = e.target.value; }}
-                            >
-                                <option value="whole_file">Open with whole file</option>
-                                <option value="current_view">Open with my current view</option>
-                            </select>
+                            ></dropdown-select>
                         </div>
                         <div class="share-field">
                             <label for="shareDuration">Link duration</label>
-                            <select
+                            <dropdown-select
                                 id="shareDuration"
+                                fullwidth
                                 .value=${String(this.shareDurationHours)}
+                                .options=${[
+                                    { value: '1', label: '1 hour' },
+                                    { value: '24', label: '24 hours' },
+                                    { value: '72', label: '3 days' },
+                                    { value: '168', label: '7 days' },
+                                    { value: '720', label: '30 days' }
+                                ]}
+                                aria-label="Link duration"
                                 @change=${(e) => { this.shareDurationHours = Number(e.target.value); }}
-                            >
-                                <option value="1">1 hour</option>
-                                <option value="24">24 hours</option>
-                                <option value="72">3 days</option>
-                                <option value="168">7 days</option>
-                                <option value="720">30 days</option>
-                            </select>
+                            ></dropdown-select>
                         </div>
                         <div class="share-field">
                             <label for="shareEmails">Restrict to users (optional, comma-separated emails)</label>
@@ -1744,7 +1770,7 @@ export class FileManager extends LitElement {
                         <div class="share-dialog-actions">
                             <button class="secondary-button" @click=${this.closeShareDialog}>Cancel</button>
                             <button class="primary-button" @click=${this.createShareLink} ?disabled=${this.sharingFileId === this.shareTargetFile?.id}>
-                                ${this.sharingFileId === this.shareTargetFile?.id ? 'Creating...' : 'Create Link'}
+                                ${this.sharingFileId === this.shareTargetFile?.id ? 'Creating...' : 'Create link'}
                             </button>
                         </div>
                     </div>

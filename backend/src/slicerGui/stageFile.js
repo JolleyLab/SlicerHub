@@ -127,6 +127,97 @@ export async function stageProjectFileForSlicerGui({
     };
 }
 
+/**
+ * Stage an already-cached host file (e.g. Directus asset) into the per-user
+ * Full Slicer data directory and write open-request + busy markers.
+ * stagedKey should be unique per source (e.g. "dx-{directusFileId}").
+ */
+export async function stageCachedFileForSlicerGui({
+    sourcePath,
+    stagedKey,
+    fileName,
+    launcherUserId,
+    useSimplifiedViewer = false
+}) {
+    const src = String(sourcePath || '').trim();
+    if (!src || !fs.existsSync(src)) {
+        throw new ValidationError('Cached file not found on server');
+    }
+
+    const key = String(stagedKey || '').trim();
+    if (!key) {
+        throw new ValidationError('stagedKey is required');
+    }
+
+    const safeName = path.basename(fileName || src);
+    const stagedName = `${key}-${safeName}`;
+    const destDir = ensureSlicerGuiUserDir(launcherUserId);
+    const destPath = path.join(destDir, stagedName);
+
+    let copied = false;
+    try {
+        const srcStat = fs.statSync(src);
+        if (fs.existsSync(destPath) && fs.statSync(destPath).size === srcStat.size) {
+            console.log('Reusing staged Full Slicer file on disk', {
+                userId: launcherUserId,
+                destPath,
+                bytes: srcStat.size
+            });
+        } else {
+            fs.copyFileSync(src, destPath);
+            copied = true;
+        }
+    } catch {
+        fs.copyFileSync(src, destPath);
+        copied = true;
+    }
+    if (copied) {
+        chmodQuiet(destPath, 0o666);
+    }
+
+    const containerPath = `/home/slicer/data/${stagedName}`;
+    const requestFile = requestFilePath(launcherUserId);
+    const busyFile = busyFilePath(launcherUserId);
+    const requestPayload = {
+        fileId: key,
+        fileName: safeName,
+        stagedName,
+        containerPath,
+        useSimplifiedViewer: useSimplifiedViewer === true,
+        requestedAt: new Date().toISOString()
+    };
+
+    fs.writeFileSync(busyFile, JSON.stringify({
+        busy: true,
+        message: 'staging',
+        fileId: key,
+        updatedAt: new Date().toISOString()
+    }, null, 2));
+    chmodQuiet(busyFile, 0o666);
+
+    fs.writeFileSync(`${requestFile}.tmp`, JSON.stringify(requestPayload, null, 2));
+    fs.renameSync(`${requestFile}.tmp`, requestFile);
+    chmodQuiet(requestFile, 0o666);
+
+    console.log('Staged Directus/cached full-slicer file', {
+        userId: launcherUserId,
+        destPath,
+        containerPath,
+        requestedAt: requestPayload.requestedAt,
+        useSimplifiedViewer: requestPayload.useSimplifiedViewer,
+        bytes: fs.statSync(destPath).size
+    });
+
+    return {
+        fileName: safeName,
+        stagedName,
+        containerPath,
+        useSimplifiedViewer: requestPayload.useSimplifiedViewer,
+        dataDir: destDir,
+        stagedKey: key
+    };
+}
+
 export function readSlicerGuiBusyStatus(userId) {
     ensureSlicerGuiUserDir(userId);
     const busyFile = busyFilePath(userId);

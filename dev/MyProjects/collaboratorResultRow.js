@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit-element';
+import '../components/dropdown-select.js';
 
 export class CollaboratorResultRow extends LitElement {
     static get styles() {
@@ -25,15 +26,21 @@ export class CollaboratorResultRow extends LitElement {
             .user-initial {
                 border: 1px solid var(--color-border);
                 border-radius: 50%;
-                background: var(--color-accent);
-                color: var(--color-text-contrast);
+                background: var(--color-primary);
+                color: var(--color-on-primary);
                 width: 40px;
                 height: 40px;
                 display: inline-flex;
                 align-items: center;
                 justify-content: center;
-                font-weight: 500;
+                font-weight: 600;
                 flex: 0 0 40px;
+            }
+
+            :host-context([data-theme='dark']) .user-initial {
+                background: color-mix(in srgb, #c5cce6 55%, #5b7cff);
+                color: var(--color-primary);
+                border-color: color-mix(in srgb, #c5cce6 45%, var(--color-border));
             }
 
             .user-name {
@@ -45,7 +52,8 @@ export class CollaboratorResultRow extends LitElement {
             .result-actions {
                 display: flex;
                 align-items: center;
-                gap: 10px;
+                gap: 12px;
+                padding: 2px;
             }
 
             .add-button-wrapper {
@@ -54,29 +62,15 @@ export class CollaboratorResultRow extends LitElement {
                 align-items: center;
             }
 
-            .role-select {
-                border: 1px solid var(--color-border);
-                border-radius: 8px;
-                background: var(--color-surface, var(--color-background));
-                color: var(--color-text-primary);
-                appearance: none;
-                -webkit-appearance: none;
-                -moz-appearance: none;
-                min-height: 38px;
-                padding: 8px 36px 8px 10px;
-                font: inherit;
-                line-height: 1.2;
-                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23666' d='M1.41 0.59 6 5.17 10.59 0.59 12 2l-6 6-6-6z'/%3E%3C/svg%3E");
-                background-repeat: no-repeat;
-                background-position: right 12px center;
-                background-size: 12px 8px;
+            .result-actions dropdown-select {
+                min-width: 160px;
             }
 
             .add-user-button {
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 background: var(--color-primary);
-                color: var(--color-text-primary);
+                color: var(--color-on-primary);
                 min-height: 38px;
                 padding: 8px 14px;
                 font: inherit;
@@ -87,6 +81,15 @@ export class CollaboratorResultRow extends LitElement {
                 cursor: pointer;
             }
 
+            .add-user-button:hover:not(:disabled) {
+                background: color-mix(in srgb, var(--color-primary) 78%, #5b7cff);
+            }
+
+            .add-user-button:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
+            }
+
             .add-user-button:disabled {
                 opacity: 0.6;
                 cursor: not-allowed;
@@ -94,7 +97,7 @@ export class CollaboratorResultRow extends LitElement {
 
             .remove-icon-button {
                 border: none;
-                border-radius: 8px;
+                border-radius: var(--radius-lg);
                 background: transparent;
                 color: var(--color-text-primary);
                 width: 34px;
@@ -109,7 +112,8 @@ export class CollaboratorResultRow extends LitElement {
             .remove-icon-button:hover,
             .remove-icon-button:focus-visible {
                 background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-                outline: none;
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
             }
 
             .remove-icon {
@@ -124,7 +128,7 @@ export class CollaboratorResultRow extends LitElement {
                 right: 0;
                 background: var(--color-text-primary);
                 color: var(--color-background);
-                border-radius: 8px;
+                border-radius: var(--radius-lg);
                 padding: 9px 12px;
                 font-size: 0.8rem;
                 line-height: 1.45;
@@ -225,18 +229,18 @@ export class CollaboratorResultRow extends LitElement {
                     <div class="user-name">${this.user.username}</div>
                 </div>
                 <div class="result-actions">
-                    <select
-                        class="role-select"
+                    <dropdown-select
                         .value=${roleValue}
-                        @change=${(event) => this.handleRoleChange(event)}
+                        .options=${[
+                            { value: '', label: 'Select role', disabled: true },
+                            { value: 'admin', label: 'Admin' },
+                            { value: 'collaborator', label: 'Collaborator' },
+                            { value: 'observer', label: 'Observer' }
+                        ]}
                         aria-label="Assign collaborator role"
                         ?disabled=${!this.isRoleEditable}
-                    >
-                        <option value="" disabled>--Select Role--</option>
-                        <option value="admin">Admin</option>
-                        <option value="collaborator">Collaborator</option>
-                        <option value="observer">Observer</option>
-                    </select>
+                        @change=${(event) => this.handleRoleChange(event)}
+                    ></dropdown-select>
                     ${this.mode === 'search' ? html`
                         <div class="add-button-wrapper ${addDisabled ? 'show-tooltip' : ''}">
                             <button

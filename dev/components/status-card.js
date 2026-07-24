@@ -10,12 +10,18 @@ export class StatusCard extends LitElement {
 
             .card {
                 width: min(560px, calc(100vw - 32px));
-                background: var(--color-surface, var(--color-background));
+                background: var(--color-panel, var(--color-surface, var(--color-background)));
                 border: 1px solid var(--color-border);
-                border-radius: 12px;
+                border-radius: var(--radius-lg);
                 padding: 18px;
                 box-sizing: border-box;
                 color: var(--color-text-primary);
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+            }
+
+            :host-context([data-theme='dark']) .card {
+                border-color: color-mix(in srgb, var(--color-border) 75%, var(--color-primary));
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
             }
 
             .card.error {
@@ -42,7 +48,7 @@ export class StatusCard extends LitElement {
 
             .actions ::slotted(button) {
                 border: 1px solid var(--color-border);
-                border-radius: 10px;
+                border-radius: var(--radius-md);
                 min-height: 42px;
                 padding: 8px 16px;
                 font: inherit;
@@ -54,7 +60,7 @@ export class StatusCard extends LitElement {
 
             .actions ::slotted(button.primary) {
                 background: var(--color-primary);
-                color: var(--color-background);
+                color: var(--color-on-primary);
             }
         `;
     }

@@ -90,6 +90,13 @@ const config = {
         bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS || '10', 10),
         passwordMinLength: parseInt(process.env.PASSWORD_MIN_LENGTH || '8', 10),
         sessionIdleMinutes: parseInt(process.env.SESSION_IDLE_MINUTES || '30', 10)
+    },
+
+    // Directus (optional PoC — headless case spine behind BFF)
+    directus: {
+        url: (process.env.DIRECTUS_URL || '').trim().replace(/\/+$/, ''),
+        token: (process.env.DIRECTUS_TOKEN || '').trim(),
+        cacheDir: (process.env.DIRECTUS_CACHE_DIR || '').trim()
     }
 };
 

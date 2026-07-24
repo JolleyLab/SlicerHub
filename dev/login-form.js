@@ -13,7 +13,7 @@ export class LoginForm extends LitElement {
 
       .login-container {
         background: #fff;
-        border-radius: 8px;
+        border-radius: var(--radius-lg);
         box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
         padding: 30px;
       }
@@ -39,7 +39,7 @@ export class LoginForm extends LitElement {
         width: 100%;
         padding: 10px;
         border: 1px solid #ddd;
-        border-radius: 4px;
+        border-radius: var(--radius-sm);
         font-size: 14px;
         box-sizing: border-box;
       }
@@ -55,7 +55,7 @@ export class LoginForm extends LitElement {
         background: #4CAF50;
         color: white;
         border: none;
-        border-radius: 4px;
+        border-radius: var(--radius-sm);
         font-size: 16px;
         cursor: pointer;
         transition: background 0.3s;

@@ -3,7 +3,8 @@ export const APP_VIEWS = Object.freeze({
     PROJECTS: 'projects',
     CREATE_PROJECT: 'create-project',
     PROJECT_REVIEW: 'project-review',
-    SETTINGS: 'settings'
+    SETTINGS: 'settings',
+    CASES: 'cases'
 });
 
 export const DEFAULT_APP_VIEW = APP_VIEWS.FILES;

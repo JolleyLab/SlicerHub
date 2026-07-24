@@ -40,11 +40,21 @@ export class PageShellTemplate extends LitElement {
 
             .content-region {
                 border: 1px solid var(--color-border);
-                border-radius: 12px;
+                border-radius: var(--radius-lg);
                 background: var(--color-surface, var(--color-background));
                 box-shadow: 0 6px 18px var(--color-shadow, rgba(0, 0, 0, 0.08));
                 padding: 20px;
                 min-height: 320px;
+            }
+
+            :host-context([data-theme='dark']) .content-region {
+                border-color: var(--color-border);
+                box-shadow: 0 3px 14px rgba(0, 0, 0, 0.32);
+                background: var(--color-surface);
+            }
+
+            :host-context([data-theme='dark']) .content-description {
+                color: var(--color-text-secondary);
             }
 
             .content-title {
