@@ -1233,7 +1233,10 @@ export class TrameApp extends LitElement {
         return;
       }
 
-      this.shareFileName = data?.file?.originalName || 'Shared file';
+      this.shareFileName = data?.file?.title
+        || data?.file?.displayTitle
+        || data?.file?.originalName
+        || 'Shared file';
       this.shareReplayStatus = '';
       this.shareViewerKind = data?.viewerKind === VIEWER_KINDS.SLICER_GUI
         ? VIEWER_KINDS.SLICER_GUI

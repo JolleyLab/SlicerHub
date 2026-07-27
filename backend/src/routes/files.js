@@ -171,6 +171,18 @@ function isMrbFileName(name) {
     return String(name || '').toLowerCase().endsWith('.mrb');
 }
 
+function publicShareFilePayload(file) {
+    const originalName = file.original_name || 'Shared file';
+    const displayTitle = String(file.display_title || '').trim() || null;
+    return {
+        id: file.id,
+        originalName,
+        displayTitle,
+        // Convenience label for share chrome (prefer scene title for MRBs).
+        title: displayTitle || originalName
+    };
+}
+
 async function resolveShareLinkOrThrow(token) {
     const share = ShareLink.findByToken(token);
     if (!share || ShareLink.isExpired(share)) {
@@ -572,10 +584,7 @@ export default function fileRoutes(app) {
                 useSimplifiedViewer: true,
                 sessionReused: session.reused === true,
                 sceneReloaded,
-                file: {
-                    id: file.id,
-                    originalName: file.original_name
-                },
+                file: publicShareFilePayload(file),
                 readOnly: true,
                 shareMode: 'whole_file',
                 sessionTtlSeconds: getSessionTtlSeconds(SESSION_KINDS.SLICER_GUI),
@@ -611,10 +620,7 @@ export default function fileRoutes(app) {
         res.json({
             viewerKind: SHARE_VIEWER_KINDS.TRAME,
             frontendUrl,
-            file: {
-                id: file.id,
-                originalName: file.original_name
-            },
+            file: publicShareFilePayload(file),
             readOnly: true,
             shareMode: share.share_mode || 'whole_file',
             viewStateApplied: !viewState,

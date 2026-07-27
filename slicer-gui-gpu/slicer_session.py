@@ -165,9 +165,20 @@ def run_window_size_sync() -> None:
         log(f"[slicer_session] apply-slicer-window-size failed: {exc}")
 
 
-def refresh_slice_views() -> None:
+def refresh_slice_views(*, fit: bool = True) -> None:
     layout_manager = slicer.app.layoutManager()
     if not layout_manager:
+        return
+
+    # Soft follow-up refreshes must not touch slice offsets — PropagateVolumeSelection /
+    # setSliceViewerLayers(..., fit=...) resets Red/Yellow/Green after scroll-wheel.
+    if not fit:
+        for _name, widget in iter_slice_widgets():
+            try:
+                widget.sliceView().forceRender()
+            except Exception:
+                pass
+        slicer.app.processEvents()
         return
 
     app_logic = slicer.app.applicationLogic()
@@ -195,6 +206,54 @@ def refresh_slice_views() -> None:
     slicer.app.processEvents()
 
 
+def iter_slice_widgets():
+    """Yield (name, widget) for every slice view in the current layout."""
+    layout_manager = slicer.app.layoutManager()
+    if not layout_manager:
+        return
+    names = []
+    try:
+        names = list(layout_manager.sliceViewNames() or [])
+    except Exception:
+        names = []
+    if not names:
+        names = ["Red", "Yellow", "Green"]
+    seen = set()
+    for name in names:
+        if name in seen:
+            continue
+        seen.add(name)
+        try:
+            widget = layout_manager.sliceWidget(name)
+        except Exception:
+            widget = None
+        if widget is not None:
+            yield name, widget
+
+
+def force_render_all_views() -> None:
+    """Re-paint without changing camera, FOV, or slice offsets."""
+    layout_manager = slicer.app.layoutManager()
+    if not layout_manager:
+        return
+    for _name, widget in iter_slice_widgets():
+        try:
+            widget.sliceView().forceRender()
+        except Exception:
+            pass
+    for index in range(getattr(layout_manager, "threeDViewCount", 0) or 0):
+        widget = layout_manager.threeDWidget(index)
+        if not widget:
+            continue
+        try:
+            widget.threeDView().forceRender()
+        except Exception:
+            pass
+    if hasattr(slicer.util, "forceRenderAllViews"):
+        slicer.util.forceRenderAllViews()
+    slicer.app.processEvents()
+
+
 def volume_from_vr_display_node(display_node):
     if hasattr(display_node, "GetDisplayableNode"):
         return display_node.GetDisplayableNode()
@@ -202,7 +261,7 @@ def volume_from_vr_display_node(display_node):
     return slicer.mrmlScene.GetNodeByID(volume_id) if volume_id else None
 
 
-def refresh_three_d_views() -> None:
+def refresh_three_d_views(*, reset_camera: bool = False) -> None:
     layout_manager = slicer.app.layoutManager()
     if not layout_manager:
         return
@@ -217,10 +276,12 @@ def refresh_three_d_views() -> None:
         if not view_node:
             continue
         three_d_view_ids.append(view_node.GetID())
-        visible = view_node.GetVisibility()
-        view_node.SetVisibility(False)
-        view_node.SetVisibility(visible)
-        view_node.Modified()
+        # Avoid visibility toggling on follow-up refreshes — it flashes blank over VNC.
+        if reset_camera:
+            visible = view_node.GetVisibility()
+            view_node.SetVisibility(False)
+            view_node.SetVisibility(visible)
+            view_node.Modified()
 
     vol_ren_logic = getattr(getattr(slicer.modules, "volumerendering", None), "logic", lambda: None)()
     vr_count = 0
@@ -261,10 +322,12 @@ def refresh_three_d_views() -> None:
         if not widget:
             continue
         view = widget.threeDView()
-        view.resetFocalPoint()
-        view.resetCamera()
-        if hasattr(view, "resetCameraClippingRange"):
-            view.resetCameraClippingRange()
+        # resetCamera/FocalPoint undo wheel zoom / user camera — only on initial reveal.
+        if reset_camera:
+            view.resetFocalPoint()
+            view.resetCamera()
+            if hasattr(view, "resetCameraClippingRange"):
+                view.resetCameraClippingRange()
         view.forceRender()
 
     if hasattr(slicer.util, "forceRenderAllViews"):
@@ -274,22 +337,39 @@ def refresh_three_d_views() -> None:
     log(
         f"[slicer_session] refreshed {layout_manager.threeDViewCount} 3D view(s), "
         f"{vr_count} volume-rendering display node(s)"
+        f"{' (reset camera)' if reset_camera else ''}"
     )
 
 
-def refresh_all_views() -> None:
-    refresh_slice_views()
-    refresh_three_d_views()
+def refresh_all_views(*, fit: bool = True, reset_camera: bool = False) -> None:
+    refresh_slice_views(fit=fit)
+    refresh_three_d_views(reset_camera=reset_camera)
 
 
 def schedule_view_refresh() -> None:
-    refresh_all_views()
-    QTimer.singleShot(500, refresh_all_views)
-    QTimer.singleShot(1500, refresh_all_views)
-    QTimer.singleShot(3000, refresh_three_d_views)
-    QTimer.singleShot(5000, refresh_three_d_views)
-    QTimer.singleShot(1000, run_window_size_sync)
-    QTimer.singleShot(3000, run_window_size_sync)
+    # Preserve cameras/FOVs from the MRB. FitSliceToAll is OK for simple FourUp
+    # demo scenes but fights CAVC/custom layouts (layout 1512 etc.) and pairs
+    # badly with VirtualGL slice redraws after the first wheel event.
+    layout_id = None
+    try:
+        layout_id = int(slicer.app.layoutManager().layout)
+    except Exception:
+        layout_id = None
+    # FourUp=3, Conventional=2, ConventionalWidescreen=4 (common built-ins)
+    simple_layouts = {2, 3, 4, 5, 6, 7, 8}
+    do_fit = layout_id in simple_layouts if layout_id is not None else False
+    log(f"[slicer_session] schedule_view_refresh layout={layout_id} fit={do_fit}")
+    refresh_all_views(fit=do_fit, reset_camera=False)
+    # Delayed force-renders help simple demos settle under VNC; on heavy custom
+    # layouts they collide with the first wheel and blank slice GL. Skip them.
+    if do_fit:
+        QTimer.singleShot(500, force_render_all_views)
+        QTimer.singleShot(1500, force_render_all_views)
+        QTimer.singleShot(3000, force_render_all_views)
+    else:
+        # One gentle kick only, well before typical user interaction.
+        QTimer.singleShot(400, force_render_all_views)
+    QTimer.singleShot(800, run_window_size_sync)
 
 
 def ensure_simplified_viewer_module_path() -> None:
@@ -500,10 +580,15 @@ def restore_view_widgets() -> None:
 
 
 def show_load_overlay(message: str = "Loading viewer…") -> None:
-    """Show a splash over the main window and hide GL views during load."""
+    """Show a splash over the main window during load.
+
+    Do NOT hide OpenGL view widgets here. Under VirtualGL/noVNC, hide→show on
+    heavy scenes (e.g. CAVC custom layouts) leaves slice views blank until a
+    context rebuild that often never happens; light FourUp scenes recover, so
+    the bug looks scene-specific even though desktop Slicer is fine.
+    """
     global _load_overlay, _overlay_raise_timer
     hide_load_overlay()
-    hide_view_widgets()
     try:
         from qt import QWidget, QLabel, QVBoxLayout, Qt
 
@@ -511,7 +596,7 @@ def show_load_overlay(message: str = "Loading viewer…") -> None:
         if not main_window:
             return
 
-        # Parent to main window so noVNC always shows it; GL views are hidden above.
+        # Parent to main window so noVNC always shows it above the views.
         overlay = QWidget(main_window)
         overlay.setObjectName("slicerWebLoadOverlay")
         overlay.setAttribute(Qt.WA_StyledBackground, True)
@@ -1137,6 +1222,7 @@ def poll_open_requests() -> None:
             log(f"[slicer_session] Done: {path}")
 
             try:
+                # Soft refresh only: skip FitSliceToAll on custom layouts (e.g. CAVC 1512).
                 if use_simplified_viewer:
                     maybe_apply_simplified_viewer(True, force=True)
                 schedule_view_refresh()
@@ -1192,11 +1278,41 @@ def poll_open_requests() -> None:
         _busy = False
 
 
+def log_opengl_renderer() -> None:
+    """Log whether Slicer is on real GPU or software GL (explains CAVC vs Test Scene)."""
+    try:
+        out = subprocess.check_output(
+            [
+                "sh",
+                "-c",
+                "vglrun -d egl glxinfo 2>/dev/null | grep -E 'OpenGL renderer|OpenGL vendor' "
+                "|| glxinfo 2>/dev/null | grep 'OpenGL renderer' || true",
+            ],
+            text=True,
+            timeout=8,
+        ).strip()
+    except Exception as exc:
+        out = f"(glxinfo failed: {exc})"
+    log(f"[slicer_session] OpenGL: {out or 'unknown'}")
+    soft = "llvmpipe" in out.lower() or "softpipe" in out.lower() or "swrast" in out.lower()
+    mesa_only = "mesa" in out.lower() and "nvidia" not in out.lower()
+    if soft or mesa_only:
+        log(
+            "[slicer_session] WARNING: software/Mesa OpenGL — heavy scenes (CAVC/layout "
+            "1512) often blank slice panels after scroll over VNC; Test Scene may still "
+            "work. Need NVIDIA EGL in the seat (/dev/nvidia* + libEGL_nvidia), not just nvidia-smi."
+        )
+
+
 def start_polling() -> None:
     global _poll_timer
     enable_developer_mode()
     clear_busy()
     clear_ready()
+    try:
+        log_opengl_renderer()
+    except Exception as exc:
+        log(f"[slicer_session] OpenGL probe failed: {exc}")
     _poll_timer = QTimer()
     _poll_timer.timeout.connect(poll_open_requests)
     _poll_timer.start(POLL_MS)

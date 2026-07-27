@@ -230,12 +230,15 @@ function polishVncChrome() {
         if (doc.getElementById('slicer-web-vnc-chrome')) return;
         const style = doc.createElement('style');
         style.id = 'slicer-web-vnc-chrome';
+        // Do not force canvas width/height — that fights noVNC scale=true and can
+        // blank the framebuffer after wheel/zoom (canvas ends up 0× or clipped).
         style.textContent = `
             #top_bar { display: none !important; }
             html, body {
                 margin: 0 !important;
                 height: 100% !important;
                 background: #090b14 !important;
+                overscroll-behavior: none !important;
             }
             body { display: flex !important; flex-direction: column !important; }
             #screen {
@@ -243,10 +246,7 @@ function polishVncChrome() {
                 width: 100% !important;
                 height: 100% !important;
                 overflow: hidden !important;
-            }
-            #screen > canvas, #screen > div {
-                width: 100% !important;
-                height: 100% !important;
+                touch-action: none !important;
             }
         `;
         doc.head.appendChild(style);
@@ -360,17 +360,26 @@ function installWakeHandlers() {
 function installEmbedActivityBridge() {
     if (!embedded) return;
     const onActivity = () => notifyParentActivity();
-    ['pointerdown', 'keydown', 'wheel', 'touchstart', 'mousemove'].forEach((eventName) => {
+    // Block Ctrl/Meta+wheel browser zoom over the viewer (blanks scaled noVNC).
+    const onWheel = (event) => {
+        onActivity();
+        if (event.ctrlKey || event.metaKey) {
+            event.preventDefault();
+        }
+    };
+    ['pointerdown', 'keydown', 'touchstart', 'mousemove'].forEach((eventName) => {
         window.addEventListener(eventName, onActivity, { passive: true, capture: true });
     });
+    window.addEventListener('wheel', onWheel, { passive: false, capture: true });
     viewer.addEventListener('load', () => {
         polishVncChrome();
         try {
             const doc = viewer.contentDocument;
             if (!doc) return;
-            ['pointerdown', 'keydown', 'wheel', 'touchstart', 'mousemove'].forEach((eventName) => {
+            ['pointerdown', 'keydown', 'touchstart', 'mousemove'].forEach((eventName) => {
                 doc.addEventListener(eventName, onActivity, { passive: true, capture: true });
             });
+            doc.addEventListener('wheel', onWheel, { passive: false, capture: true });
         } catch {
             /* cross-origin VNC path */
         }

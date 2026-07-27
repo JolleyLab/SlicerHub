@@ -17,6 +17,9 @@ fi
 launch_cmd=(/opt/Slicer/Slicer --no-splash)
 echo "[launch-slicer] Starting Slicer (base image default launcher)"
 
+export VGL_SPOILLAST="${VGL_SPOILLAST:-0}"
+export VGL_SPOIL="${VGL_SPOIL:-0}"
+
 if command -v vglrun &>/dev/null; then
   vglrun -d egl "${launch_cmd[@]}" &
 else

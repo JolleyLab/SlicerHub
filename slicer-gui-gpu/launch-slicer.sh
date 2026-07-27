@@ -107,6 +107,14 @@ fi
 launch_cmd+=(--python-script /usr/local/bin/slicer_session.py)
 echo "[launch-slicer] Starting Slicer with in-process open poller"
 
+# VirtualGL + multi-viewport Qt/VTK (Slicer Red/Yellow/Green/3D): default
+# "spoil last" on glFlush can drop the post-scroll readback for some slice
+# panels, so noVNC shows blank views while desktop Slicer is fine.
+# Spoil-first + no frame spoiling trades GPU load for correct VNC pixels.
+export VGL_SPOILLAST="${VGL_SPOILLAST:-0}"
+export VGL_SPOIL="${VGL_SPOIL:-0}"
+echo "[launch-slicer] VirtualGL VGL_SPOILLAST=${VGL_SPOILLAST} VGL_SPOIL=${VGL_SPOIL}"
+
 if command -v vglrun &>/dev/null; then
   vglrun -d egl "${launch_cmd[@]}" &
 else

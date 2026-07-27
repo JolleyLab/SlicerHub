@@ -86,6 +86,14 @@ vglrun -d egl glxinfo 2>&1 | grep -E "OpenGL renderer|OpenGL vendor" || echo "vg
 echo "--- NVIDIA env ---"
 echo "  NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES}"
 echo "  NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES}"
+if ! ls /dev/nvidia* >/dev/null 2>&1; then
+  echo "WARNING: /dev/nvidia* missing — GPU compute/NVML may work via WSL, but OpenGL/EGL will NOT."
+  echo "WARNING: Seats will use llvmpipe. Light Test Scene may scroll; heavy CAVC often blanks under VNC."
+fi
+if ! ls /usr/share/glvnd/egl_vendor.d/*nvidia* >/dev/null 2>&1 \
+   && ! ls /usr/lib/x86_64-linux-gnu/libEGL_nvidia* >/dev/null 2>&1; then
+  echo "WARNING: NVIDIA EGL ICD not present (only Mesa). VirtualGL -d egl cannot use the GPU."
+fi
 echo "======================="
 echo ""
 
