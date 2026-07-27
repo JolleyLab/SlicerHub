@@ -122,3 +122,30 @@ export async function listProjectFiles(projectId) {
 
     return data;
 }
+
+export async function updateProjectFileTitle(projectId, fileId, displayTitle) {
+    const response = await fetch(`${API_URL}/api/projects/${projectId}/files/${fileId}/title`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        credentials: 'include',
+        body: JSON.stringify({ displayTitle })
+    });
+
+    let data = {};
+    try {
+        data = await response.json();
+    } catch (_) {
+        data = {};
+    }
+
+    if (!response.ok) {
+        const message = data.error?.message || data.message || 'Failed to update file title';
+        const err = new Error(message);
+        err.status = response.status;
+        throw err;
+    }
+
+    return data;
+}

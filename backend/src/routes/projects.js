@@ -198,6 +198,7 @@ export default function projectRoutes(app) {
         const files = File.findByProjectId(projectId).map((file) => ({
             id: file.id,
             originalName: file.original_name,
+            displayTitle: file.display_title || null,
             storedName: file.stored_name,
             size: file.file_size,
             mimeType: file.mime_type,
@@ -207,5 +208,41 @@ export default function projectRoutes(app) {
         }));
 
         res.json({ files });
+    }));
+
+    app.put('/api/projects/:projectId/files/:fileId/title', authenticateToken, asyncHandler(async (req, res) => {
+        const projectId = Number(req.params.projectId);
+        const fileId = Number(req.params.fileId);
+        if (!Number.isInteger(projectId) || projectId <= 0 || !Number.isInteger(fileId) || fileId <= 0) {
+            throw new ValidationError('Invalid project or file id');
+        }
+
+        const project = Project.findForUser({ projectId, userId: req.user.id });
+        if (!project) {
+            throw new ValidationError('Project not found or inaccessible');
+        }
+        if (project.userRole !== 'admin' && project.userRole !== 'collaborator') {
+            throw new ValidationError('Only project admins or collaborators can edit file titles');
+        }
+
+        const file = File.findById(fileId);
+        if (!file || Number(file.project_id) !== projectId) {
+            throw new ValidationError('File not found in this project');
+        }
+
+        const rawTitle = typeof req.body?.displayTitle === 'string' ? req.body.displayTitle : '';
+        const trimmed = rawTitle.trim();
+        const displayTitle = trimmed ? trimmed.slice(0, 120) : null;
+
+        File.updateDisplayTitle(fileId, displayTitle);
+        const updated = File.findById(fileId);
+
+        res.json({
+            file: {
+                id: updated.id,
+                displayTitle: updated.display_title || null,
+                originalName: updated.original_name
+            }
+        });
     }));
 }

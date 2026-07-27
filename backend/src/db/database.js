@@ -360,6 +360,13 @@ const migrations = [
             SET billing_owner_user_id = created_by_user_id
             WHERE billing_owner_user_id IS NULL AND created_by_user_id IS NOT NULL;
         `
+    },
+    {
+        id: '014_files_display_title',
+        up: `
+            ALTER TABLE files
+            ADD COLUMN display_title TEXT;
+        `
     }
 ];
 

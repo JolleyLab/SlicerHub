@@ -12,6 +12,7 @@ import userRoutes from "./routes/users.js";
 import projectRoutes from "./routes/projects.js";
 import projectGpuRoutes from "./routes/projectGpu.js";
 import directusRoutes from "./routes/directus.js";
+import featuresRoutes from "./routes/features.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { isDirectusConfigured } from "./services/directus.js";
 import { startBillingWatchdog } from "./gpu/billingWatchdog.js";
@@ -79,6 +80,8 @@ app.use(cors({
 // Register authentication routes
 authRoutes(app);
 
+featuresRoutes(app);
+
 // Register file routes
 fileRoutes(app);
 
@@ -103,8 +106,10 @@ app.use(errorHandler);     // Handles all other errors
 app.listen(config.server.port, config.server.host, async () => {
     console.log(`Backend listening on ${config.server.host}:${config.server.port}`);
     console.log(`Environment: ${config.env}`);
-    if (isDirectusConfigured()) {
-        console.log('Directus PoC: configured (BFF /api/directus/*)');
+    if (config.directus.casesEnabled && isDirectusConfigured()) {
+        console.log('Directus Cases: enabled (BFF /api/directus/*)');
+    } else if (isDirectusConfigured()) {
+        console.log('Directus Cases: disabled (set ENABLE_DIRECTUS_CASES=true to expose)');
     } else {
         console.log('Directus PoC: not configured (set DIRECTUS_URL + DIRECTUS_TOKEN)');
     }

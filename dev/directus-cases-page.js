@@ -1,5 +1,4 @@
 import { LitElement, html, css } from 'lit-element';
-import { APP_MENU_ITEMS } from './components/app-menu.js';
 import './components/page-layout-template.js';
 import './components/page-content-message.js';
 import './components/file-list-row.js';
@@ -485,7 +484,6 @@ export class DirectusCasesPage extends LitElement {
     static get properties() {
         return {
             username: { type: String },
-            menuItems: { type: Array },
             loading: { type: Boolean },
             errorMessage: { type: String },
             cases: { type: Array },
@@ -503,7 +501,6 @@ export class DirectusCasesPage extends LitElement {
     constructor() {
         super();
         this.username = 'Guest';
-        this.menuItems = APP_MENU_ITEMS;
         this.loading = false;
         this.errorMessage = '';
         this.cases = [];
@@ -742,7 +739,6 @@ export class DirectusCasesPage extends LitElement {
     renderLanding() {
         return html`
             <page-layout-template
-                .menuItems=${this.menuItems}
                 .username=${this.username}
                 selectedMenuKey="cases"
                 homeHref="/file-manager"
@@ -820,7 +816,6 @@ export class DirectusCasesPage extends LitElement {
         const comments = Array.isArray(caseRow.comments) ? caseRow.comments : [];
         return html`
             <page-layout-template
-                .menuItems=${this.menuItems}
                 .username=${this.username}
                 selectedMenuKey="cases"
                 homeHref="/file-manager"

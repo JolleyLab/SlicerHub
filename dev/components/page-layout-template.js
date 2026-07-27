@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
-import { APP_MENU_ITEMS, DEFAULT_MENU_KEY } from './app-menu.js';
+import { getAppMenuItems, DEFAULT_MENU_KEY } from './app-menu.js';
+import { loadAppFeatures } from '../services/features.js';
 import './navigation-header.js';
 import './side-menu.js';
 
@@ -94,9 +95,17 @@ export class PageShellTemplate extends LitElement {
         this.selectedMenuKey = DEFAULT_MENU_KEY;
         this.pageTitle = '';
         this.pageDescription = '';
-        this.menuItems = APP_MENU_ITEMS;
+        this.menuItems = getAppMenuItems();
         this.homeHref = '/file-manager';
         this.homeLabel = 'Home';
+    }
+
+    connectedCallback() {
+        super.connectedCallback();
+        loadAppFeatures().then((flags) => {
+            this.menuItems = getAppMenuItems({ directusCasesEnabled: flags.directusCases });
+            this.requestUpdate();
+        });
     }
 
     handleMenuSelectionChange(event) {

@@ -1,6 +1,5 @@
 import { LitElement, html, css } from 'lit-element';
 import { API_URL } from '../config.js';
-import { APP_MENU_ITEMS } from '../components/app-menu.js';
 import '../components/page-layout-template.js';
 import '../components/add-button.js';
 import '../components/file-list-row.js';
@@ -8,7 +7,12 @@ import '../components/app-dialog.js';
 import '../components/dropdown-select.js';
 import './collaboratorSearch.js';
 import './collaboratorResultRow.js';
-import { getProjectById, updateProjectCollaborators, listProjectFiles } from '../services/projects.js';
+import {
+    getProjectById,
+    updateProjectCollaborators,
+    listProjectFiles,
+    updateProjectFileTitle
+} from '../services/projects.js';
 import {
     getProjectGpu,
     listGpuProviders,
@@ -352,7 +356,60 @@ export class ProjectReviewPage extends LitElement {
             .collaborators-title {
                 font-weight: 600;
                 color: var(--color-text-primary);
-                margin-bottom: 10px;
+                margin-bottom: 0;
+            }
+
+            .collaborators-details {
+                margin: 0;
+            }
+
+            .collaborators-summary {
+                cursor: pointer;
+                list-style: none;
+                padding: 6px 2px;
+                margin-bottom: 4px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .collaborators-summary::-webkit-details-marker {
+                display: none;
+            }
+
+            .collaborators-summary:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
+                border-radius: var(--radius-lg);
+            }
+
+            .collaborators-chevron {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 20px;
+                height: 20px;
+                border: 1px solid var(--color-border);
+                border-radius: var(--radius-md);
+                font-size: 0.95rem;
+                font-weight: 700;
+                color: var(--color-text-primary);
+                background: var(--color-panel, var(--color-surface, var(--color-background)));
+                transition: transform 0.15s ease, background-color 0.15s ease;
+                flex-shrink: 0;
+            }
+
+            .collaborators-details[open] .collaborators-chevron {
+                transform: rotate(90deg);
+            }
+
+            .collaborators-summary:hover .collaborators-chevron,
+            .collaborators-summary:focus-visible .collaborators-chevron {
+                background: color-mix(in srgb, var(--color-primary) 14%, var(--color-panel, var(--color-surface, var(--color-background))));
+            }
+
+            .collaborators-body {
+                margin-top: 8px;
             }
 
             .collaborators-list {
@@ -455,10 +512,14 @@ export class ProjectReviewPage extends LitElement {
                 font-weight: 600;
                 color: var(--color-text-primary);
                 padding: 10px 2px;
-                margin-bottom: 6px;
+                margin-bottom: 0;
                 display: flex;
                 align-items: center;
                 gap: 8px;
+            }
+
+            .gpu-panel details[open] summary {
+                margin-bottom: 6px;
             }
 
             .gpu-panel summary::-webkit-details-marker {
@@ -762,7 +823,6 @@ export class ProjectReviewPage extends LitElement {
         return {
             username: { type: String },
             projectId: { type: Number },
-            menuItems: { type: Array },
             loading: { type: Boolean },
             saving: { type: Boolean },
             toastMessage: { type: String },
@@ -812,7 +872,12 @@ export class ProjectReviewPage extends LitElement {
             remoteActivity: { type: Object },
             remoteProvision: { type: Object },
             gpuDetailsOpen: { type: Boolean },
-            gpuPanelOpen: { type: Boolean }
+            gpuPanelOpen: { type: Boolean },
+            collaboratorsPanelOpen: { type: Boolean },
+            savingFileTitleId: { type: Number },
+            editTitleFileId: { type: Number },
+            editTitleDraft: { type: String },
+            editTitleOriginalName: { type: String }
         };
     }
 
@@ -820,7 +885,6 @@ export class ProjectReviewPage extends LitElement {
         super();
         this.username = 'Guest';
         this.projectId = null;
-        this.menuItems = APP_MENU_ITEMS;
         this.loading = false;
         this.saving = false;
         this.toastMessage = '';
@@ -872,6 +936,11 @@ export class ProjectReviewPage extends LitElement {
         this.remoteProvision = null;
         this.gpuDetailsOpen = false;
         this.gpuPanelOpen = false;
+        this.collaboratorsPanelOpen = false;
+        this.savingFileTitleId = null;
+        this.editTitleFileId = null;
+        this.editTitleDraft = '';
+        this.editTitleOriginalName = '';
         this._prestageHoverTimer = null;
         this._autoPrestageDone = false;
         this._fullSlicerWarmPromise = null;
@@ -1191,6 +1260,24 @@ export class ProjectReviewPage extends LitElement {
         return parts.join(' · ');
     }
 
+    isMrbFile(file) {
+        const name = String(file?.originalName || '').toLowerCase();
+        return name.endsWith('.mrb');
+    }
+
+    defaultDisplayTitleForFile(file) {
+        const rawName = String(file?.originalName || '');
+        const noExtension = rawName.replace(/\.mrb$/i, '');
+        const cleaned = noExtension.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+        return cleaned || rawName || 'Untitled';
+    }
+
+    displayTitleForFile(file) {
+        if (!this.isMrbFile(file)) return file.originalName;
+        const explicit = String(file.displayTitle || '').trim();
+        return explicit || this.defaultDisplayTitleForFile(file);
+    }
+
     isFileStagedOnGpu(file) {
         return (this.stagedFileIds || []).includes(file.id);
     }
@@ -1303,16 +1390,17 @@ export class ProjectReviewPage extends LitElement {
         const label = this.savedGpuProviderId === 'vast'
             ? 'Full Slicer (Vast)'
             : viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified });
-        this.currentFileName = file.originalName;
+        const sceneTitle = this.displayTitleForFile(file);
+        this.currentFileName = sceneTitle;
         this.launchingFileId = file.id;
         this.viewerKind = VIEWER_KINDS.SLICER_GUI;
         this.viewerSimplified = simplified;
         this.viewerLoading = true;
         this.viewerLoadingDetail = switchingInPlace
-            ? `Switching to ${file.originalName}…`
+            ? `Switching to ${sceneTitle}…`
             : (this.savedGpuProviderId === 'vast'
-                ? `Copying ${file.originalName} to Vast Full Slicer…`
-                : `Starting ${label} for ${file.originalName}…`);
+                ? `Copying ${sceneTitle} to Vast Full Slicer…`
+                : `Starting ${label} for ${sceneTitle}…`);
         this.showIframe = true;
         this.iframeUrl = 'about:blank';
 
@@ -1324,7 +1412,7 @@ export class ProjectReviewPage extends LitElement {
 
             this._viewerSessionToken = data.sessionToken || null;
             this.viewerSimplified = data.useSimplifiedViewer === true;
-            this.currentFileName = data.fileName || file.originalName;
+            this.currentFileName = sceneTitle;
 
             if (this.viewerSimplified !== simplified) {
                 console.warn(
@@ -1341,7 +1429,7 @@ export class ProjectReviewPage extends LitElement {
             const url = buildSlicerGuiLoaderUrl({
                 projectId: this.projectId,
                 fileId: file.id,
-                fileName: this.currentFileName,
+                fileName: sceneTitle,
                 vncPath: data.vncPath || data.slicerGuiUrl || '',
                 sessionToken: this._viewerSessionToken,
                 simplified: this.viewerSimplified,
@@ -1350,13 +1438,13 @@ export class ProjectReviewPage extends LitElement {
             });
 
             this.viewerLoadingDetail = quickReconnect
-                ? `Reconnecting to ${this.currentFileName}…`
+                ? `Reconnecting to ${sceneTitle}…`
                 : (data.sessionReused
-                    ? `Loading ${this.currentFileName}…`
-                    : `Loading ${this.currentFileName}… First launch can take 1–2 minutes.`);
+                    ? `Loading ${sceneTitle}…`
+                    : `Loading ${sceneTitle}… First launch can take 1–2 minutes.`);
             this.iframeUrl = url;
             markViewerActivity();
-            this.showToast(`Launched ${this.currentFileName} in ${viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified: this.viewerSimplified })}`);
+            this.showToast(`Launched ${sceneTitle} in ${viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified: this.viewerSimplified })}`);
             this.startTrameHeartbeat();
         } catch (error) {
             this.showIframe = false;
@@ -1507,10 +1595,12 @@ export class ProjectReviewPage extends LitElement {
     }
 
     getFileLaunchTitle(file) {
+        // Kept for later revisit (e.g. hover filename / launch hints). Not shown in UI now.
         if (this.launchingFileId === file.id) return 'Opening…';
         const block = this.getRemoteGpuLaunchBlockMessage();
         if (block) return block;
-        return 'Open file';
+        const originalName = file.originalName || 'file';
+        return `Open file (${originalName})`;
     }
 
     parseApiErrorMessage(data, fallback) {
@@ -2035,6 +2125,10 @@ export class ProjectReviewPage extends LitElement {
         this.gpuPanelOpen = event.target.open;
     }
 
+    handleCollaboratorsPanelToggle(event) {
+        this.collaboratorsPanelOpen = event.target.open;
+    }
+
     toggleGpuDetails() {
         this.gpuDetailsOpen = !this.gpuDetailsOpen;
     }
@@ -2360,12 +2454,13 @@ export class ProjectReviewPage extends LitElement {
 
     async handleLaunchFile(file) {
         // Immediate feedback — remote open can wait on prestage/sync with no network logs in DevTools.
+        const sceneTitle = this.displayTitleForFile(file);
         this.launchingFileId = file.id;
         this.viewerLoading = true;
         this.viewerLoadingDetail = 'Checking GPU status…';
         this.viewerKind = VIEWER_KINDS.TRAME;
         this.viewerSimplified = false;
-        this.currentFileName = file.originalName;
+        this.currentFileName = sceneTitle;
         this.showIframe = true;
         this.iframeUrl = 'about:blank';
 
@@ -2404,16 +2499,16 @@ export class ProjectReviewPage extends LitElement {
         if (this.projectId) {
             cancelViewerStopOnLeave(this.projectId);
         }
-        this.viewerLoadingDetail = `Starting viewer for ${file.originalName}…`;
+        this.viewerLoadingDetail = `Starting viewer for ${sceneTitle}…`;
 
         try {
             this.stopTrameHeartbeat();
             if (this.isRemoteGpuRunning()) {
                 this.viewerLoadingDetail = this.isFileStagedOnGpu(file)
-                    ? `Opening ${file.originalName} on GPU…`
-                    : `Copying ${file.originalName} to GPU (large scenes can take a few minutes)…`;
+                    ? `Opening ${sceneTitle} on GPU…`
+                    : `Copying ${sceneTitle} to GPU (large scenes can take a few minutes)…`;
             } else {
-                this.viewerLoadingDetail = `Preparing session for ${file.originalName}…`;
+                this.viewerLoadingDetail = `Preparing session for ${sceneTitle}…`;
             }
 
             // Sync lives in /containers/start (waits on shared prestage job, then syncs).
@@ -2437,10 +2532,10 @@ export class ProjectReviewPage extends LitElement {
                 throw new Error('Trame did not return a viewer URL.');
             }
 
-            this.viewerLoadingDetail = `Loading ${file.originalName}…`;
+            this.viewerLoadingDetail = `Loading ${sceneTitle}…`;
             this.iframeUrl = url;
             markViewerActivity();
-            this.showToast(`Launched ${file.originalName}`);
+            this.showToast(`Launched ${sceneTitle}`);
             this.startTrameHeartbeat();
         } catch (error) {
             this.showIframe = false;
@@ -2684,6 +2779,90 @@ export class ProjectReviewPage extends LitElement {
         }
     }
 
+    openEditFileTitleDialog(file) {
+        if (!this.canUploadFiles || !this.isMrbFile(file) || this.savingFileTitleId === file.id) return;
+        this.editTitleFileId = file.id;
+        this.editTitleDraft = this.displayTitleForFile(file);
+        this.editTitleOriginalName = file.originalName || '';
+        const dialogHost = this.renderRoot?.querySelector('#edit-file-title-dialog');
+        dialogHost?.openDialog();
+        const native = dialogHost?.nativeDialog;
+        if (native && !this._editTitleCloseBound) {
+            this._editTitleCloseBound = true;
+            native.addEventListener('close', () => {
+                this.editTitleFileId = null;
+                this.editTitleDraft = '';
+                this.editTitleOriginalName = '';
+                if (document.activeElement instanceof HTMLElement) {
+                    document.activeElement.blur();
+                }
+            });
+        }
+        requestAnimationFrame(() => {
+            const input = this.renderRoot?.querySelector('#edit-file-title-input');
+            if (!input) return;
+            input.focus();
+            input.select();
+        });
+    }
+
+    closeEditFileTitleDialog() {
+        this.renderRoot?.querySelector('#edit-file-title-dialog')?.closeDialog();
+    }
+
+    handleEditTitleDraftInput(event) {
+        this.editTitleDraft = event.target.value;
+    }
+
+    async handleSaveFileTitle() {
+        const fileId = this.editTitleFileId;
+        if (!fileId || this.savingFileTitleId === fileId) return;
+
+        const file = this.projectFiles.find((entry) => entry.id === fileId);
+        if (!file) {
+            this.closeEditFileTitleDialog();
+            return;
+        }
+
+        const current = this.displayTitleForFile(file);
+        const normalized = String(this.editTitleDraft || '').trim();
+        if (!normalized) {
+            this.showErrorAlert('Title cannot be empty.', {
+                title: 'Edit Scene Title',
+                force: true
+            });
+            return;
+        }
+        if (normalized === current) {
+            this.closeEditFileTitleDialog();
+            return;
+        }
+
+        this.savingFileTitleId = fileId;
+        try {
+            const data = await updateProjectFileTitle(this.projectId, fileId, normalized);
+            const savedTitle = data?.file?.displayTitle || null;
+            this.projectFiles = this.projectFiles.map((entry) => (
+                entry.id === fileId
+                    ? { ...entry, displayTitle: savedTitle }
+                    : entry
+            ));
+            this.closeEditFileTitleDialog();
+            this.showToast('Scene title updated.');
+        } catch (error) {
+            this.showErrorAlert(error.message || 'Unable to update file title.', {
+                title: 'Unable to save',
+                force: true
+            });
+        } finally {
+            this.savingFileTitleId = null;
+        }
+    }
+
+    handleEditFileTitle(file) {
+        this.openEditFileTitleDialog(file);
+    }
+
     async handleDownloadFile(file) {
         try {
             const response = await fetch(`${API_URL}/api/files/${file.id}`, {
@@ -2807,7 +2986,6 @@ export class ProjectReviewPage extends LitElement {
     render() {
         return html`
             <page-layout-template
-                .menuItems=${this.menuItems}
                 .username=${this.username}
                 selectedMenuKey="my-projects"
                 homeHref="/file-manager"
@@ -2820,53 +2998,64 @@ export class ProjectReviewPage extends LitElement {
                 ` : ''}
                 ${!this.loading ? html`
                     <div slot="content" class="collaborators-panel">
-                        <div class="collaborators-title">Collaborators (${this.collaborators.length})</div>
-                        ${this.collaborators.length === 0 ? html`
-                            <div class="empty-note">No collaborators yet.</div>
-                        ` : html`
-                            <div class="collaborators-list">
-                                ${this.collaborators.map((entry) => html`
-                                    <div class="collaborator-row">
-                                        <collaborator-result-row
-                                            .user=${entry.user}
-                                            mode="selected"
-                                            .role=${entry.role}
-                                            .selectedRole=${entry.role}
-                                            .isRoleEditable=${this.canEditCollaborators}
-                                            .showRemoveButton=${this.canEditCollaborators}
-                                            @role-change=${(event) => this.handleCollaboratorRoleChange(event)}
-                                            @remove-collaborator=${(event) => this.handleRemoveCollaborator(event)}
-                                        ></collaborator-result-row>
+                        <details
+                            class="collaborators-details"
+                            ?open=${this.collaboratorsPanelOpen}
+                            @toggle=${(e) => this.handleCollaboratorsPanelToggle(e)}
+                        >
+                            <summary class="collaborators-summary">
+                                <span class="collaborators-title">Collaborators (${this.collaborators.length})</span>
+                                <span class="collaborators-chevron" aria-hidden="true">▸</span>
+                            </summary>
+                            <div class="collaborators-body">
+                                ${this.collaborators.length === 0 ? html`
+                                    <div class="empty-note">No collaborators yet.</div>
+                                ` : html`
+                                    <div class="collaborators-list">
+                                        ${this.collaborators.map((entry) => html`
+                                            <div class="collaborator-row">
+                                                <collaborator-result-row
+                                                    .user=${entry.user}
+                                                    mode="selected"
+                                                    .role=${entry.role}
+                                                    .selectedRole=${entry.role}
+                                                    .isRoleEditable=${this.canEditCollaborators}
+                                                    .showRemoveButton=${this.canEditCollaborators}
+                                                    @role-change=${(event) => this.handleCollaboratorRoleChange(event)}
+                                                    @remove-collaborator=${(event) => this.handleRemoveCollaborator(event)}
+                                                ></collaborator-result-row>
+                                            </div>
+                                        `)}
                                     </div>
-                                `)}
+                                `}
+                                ${this.canEditCollaborators ? html`
+                                    <add-button
+                                        title="Add collaborators"
+                                        @add-button-click=${() => this.openCollaboratorDialog()}
+                                    ></add-button>
+                                ` : ''}
+                                ${this.canEditCollaborators && this.hasPendingCollaboratorChanges ? html`
+                                    <div class="section-actions">
+                                        <button
+                                            class="secondary-button"
+                                            type="button"
+                                            ?disabled=${this.saving}
+                                            @click=${() => this.handleCancelCollaboratorChanges()}
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            class="primary-button"
+                                            type="button"
+                                            ?disabled=${this.saving}
+                                            @click=${() => this.handleSaveCollaborators()}
+                                        >
+                                            ${this.saving ? 'Saving...' : 'Save'}
+                                        </button>
+                                    </div>
+                                ` : ''}
                             </div>
-                        `}
-                        ${this.canEditCollaborators ? html`
-                            <add-button
-                                title="Add collaborators"
-                                @add-button-click=${() => this.openCollaboratorDialog()}
-                            ></add-button>
-                        ` : ''}
-                        ${this.canEditCollaborators && this.hasPendingCollaboratorChanges ? html`
-                            <div class="section-actions">
-                                <button
-                                    class="secondary-button"
-                                    type="button"
-                                    ?disabled=${this.saving}
-                                    @click=${() => this.handleCancelCollaboratorChanges()}
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    class="primary-button"
-                                    type="button"
-                                    ?disabled=${this.saving}
-                                    @click=${() => this.handleSaveCollaborators()}
-                                >
-                                    ${this.saving ? 'Saving...' : 'Save'}
-                                </button>
-                            </div>
-                        ` : ''}
+                        </details>
                     </div>
                     <div slot="content" class="gpu-panel">
                         <div class="gpu-panel-header">
@@ -2994,11 +3183,15 @@ export class ProjectReviewPage extends LitElement {
                             <div class="file-list">
                                 ${this.projectFiles.map((file) => html`
                                     <file-list-row
-                                        .fileName=${file.originalName}
+                                        .fileName=${this.displayTitleForFile(file)}
                                         .metaLine=${this.formatProjectFileMetaLine(file)}
                                         .nameButtonDisabled=${this.viewerLoading || !!this.getRemoteGpuLaunchBlockMessage()}
-                                        .nameButtonTitle=${this.getFileLaunchTitle(file)}
+                                        .nameButtonTitle=${''}
+                                        ?showEditTitle=${this.isMrbFile(file) && this.canUploadFiles}
+                                        .editTitleDisabled=${this.savingFileTitleId === file.id}
+                                        editTitleLabel="Edit scene title"
                                         @name-click=${() => this.handleLaunchFile(file)}
+                                        @edit-title-click=${() => this.handleEditFileTitle(file)}
                                         @mouseenter=${() => this.handleFileHover(file)}
                                     >
                                         <button
@@ -3106,6 +3299,48 @@ export class ProjectReviewPage extends LitElement {
                             </button>
                         </div>
                     ` : ''}
+                </div>
+            </app-dialog>
+            <app-dialog id="edit-file-title-dialog" title="Edit Scene Title">
+                <div class="gpu-dialog-form">
+                    <div class="gpu-field">
+                        <label for="edit-file-title-input">Title</label>
+                        <input
+                            id="edit-file-title-input"
+                            type="text"
+                            maxlength="120"
+                            .value=${this.editTitleDraft}
+                            ?disabled=${this.savingFileTitleId === this.editTitleFileId}
+                            @input=${(e) => this.handleEditTitleDraftInput(e)}
+                            @keydown=${(e) => {
+                                if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    this.handleSaveFileTitle();
+                                }
+                            }}
+                        />
+                    </div>
+                    ${false && this.editTitleOriginalName ? html`
+                        <div class="gpu-hint">File: ${this.editTitleOriginalName}</div>
+                    ` : ''}
+                    <div class="gpu-dialog-actions">
+                        <button
+                            class="secondary-button"
+                            type="button"
+                            ?disabled=${this.savingFileTitleId === this.editTitleFileId}
+                            @click=${() => this.closeEditFileTitleDialog()}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            class="primary-button"
+                            type="button"
+                            ?disabled=${this.savingFileTitleId === this.editTitleFileId}
+                            @click=${() => this.handleSaveFileTitle()}
+                        >
+                            ${this.savingFileTitleId === this.editTitleFileId ? 'Saving…' : 'Save'}
+                        </button>
+                    </div>
                 </div>
             </app-dialog>
             <app-dialog id="gpu-provider-dialog" title=${this.gpuProviderDialogTitle}>

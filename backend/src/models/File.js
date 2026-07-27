@@ -125,6 +125,18 @@ class File {
     }
 
     /**
+     * Update the optional user-facing display title for project file rows.
+     */
+    static updateDisplayTitle(fileId, displayTitle) {
+        const stmt = db.prepare(`
+            UPDATE files
+            SET display_title = ?, last_modified_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `);
+        return stmt.run(displayTitle, fileId);
+    }
+
+    /**
      * Record that someone opened this file in the viewer (or follow-up activity).
      */
     static touchLastViewed(fileId) {

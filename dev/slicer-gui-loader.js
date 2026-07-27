@@ -97,7 +97,8 @@ async function reconnectSession() {
     if (data.vncPath) {
         vncPath = data.vncPath;
     }
-    if (data.fileName) {
+    if (data.fileName && !fileName) {
+        // Prefer an existing display title from the opener; fall back to server file name.
         fileName = data.fileName;
     }
     const url = new URL(window.location.href);

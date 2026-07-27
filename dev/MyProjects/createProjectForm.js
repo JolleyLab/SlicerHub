@@ -1,5 +1,4 @@
 import { LitElement, html, css } from 'lit-element';
-import { APP_MENU_ITEMS } from '../components/app-menu.js';
 import '../components/page-layout-template.js';
 import '../components/add-button.js';
 import '../components/toggle-switch.js';
@@ -216,7 +215,6 @@ export class CreateProjectForm extends LitElement {
     static get properties() {
         return {
             username: { type: String },
-            menuItems: { type: Array },
             isPublic: { type: Boolean },
             collaborators: { type: Array },
             projectName: { type: String },
@@ -228,7 +226,6 @@ export class CreateProjectForm extends LitElement {
     constructor() {
         super();
         this.username = 'Guest';
-        this.menuItems = APP_MENU_ITEMS;
         this.isPublic = false;
         this.collaborators = [];
         this.projectName = '';
@@ -325,7 +322,6 @@ export class CreateProjectForm extends LitElement {
     render() {
         return html`
             <page-layout-template
-                .menuItems=${this.menuItems}
                 .username=${this.username}
                 selectedMenuKey="my-projects"
                 homeHref="/file-manager"

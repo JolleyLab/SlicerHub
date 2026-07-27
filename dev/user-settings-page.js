@@ -1,5 +1,4 @@
 import { LitElement, html, css } from 'lit-element';
-import { APP_MENU_ITEMS } from './components/app-menu.js';
 import './components/page-layout-template.js';
 import './components/theme-toggle.js';
 import './components/local-slicer-viewer-options.js';
@@ -89,7 +88,6 @@ export class UserSettingsPage extends LitElement {
     static get properties() {
         return {
             username: { type: String },
-            menuItems: { type: Array },
             theme: { type: String },
             useFullSlicer: { type: Boolean },
             useSimplifiedViewer: { type: Boolean },
@@ -102,7 +100,6 @@ export class UserSettingsPage extends LitElement {
     constructor() {
         super();
         this.username = 'Guest';
-        this.menuItems = APP_MENU_ITEMS;
         this.errorMessage = '';
         this.saveState = 'idle';
         this.saveStatusMessage = 'Changes save automatically.';
@@ -205,7 +202,6 @@ export class UserSettingsPage extends LitElement {
     render() {
         return html`
             <page-layout-template
-                .menuItems=${this.menuItems}
                 .username=${this.username}
                 selectedMenuKey=""
                 homeHref="/file-manager"

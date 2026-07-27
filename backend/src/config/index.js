@@ -96,7 +96,9 @@ const config = {
     directus: {
         url: (process.env.DIRECTUS_URL || '').trim().replace(/\/+$/, ''),
         token: (process.env.DIRECTUS_TOKEN || '').trim(),
-        cacheDir: (process.env.DIRECTUS_CACHE_DIR || '').trim()
+        cacheDir: (process.env.DIRECTUS_CACHE_DIR || '').trim(),
+        // Off by default — set ENABLE_DIRECTUS_CASES=true to expose Cases UI + /api/directus/*
+        casesEnabled: process.env.ENABLE_DIRECTUS_CASES === 'true'
     }
 };
 

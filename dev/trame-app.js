@@ -6,6 +6,7 @@ import {
   readAppViewFromUrl,
   writeAppViewToUrl
 } from './components/app-views.js';
+import { loadAppFeatures, isDirectusCasesEnabled, areAppFeaturesLoaded } from './services/features.js';
 import './login-form.js';
 import './register-form.js';
 import './file-manager.js';
@@ -268,13 +269,26 @@ export class TrameApp extends LitElement {
     this._trameHeartbeatInterval = null;
     this._onPopState = () => this.restoreViewFromUrl();
 
-    // Restore view from URL before session check so refresh lands on the same page.
     if (!this.shareToken) {
-      this.restoreViewFromUrl({ writeBack: false });
+      this.initializeAppView();
       this.checkExistingSession();
     }
 
     window.addEventListener('popstate', this._onPopState);
+  }
+
+  async initializeAppView() {
+    await loadAppFeatures();
+    this.restoreViewFromUrl({ writeBack: false });
+    this.guardCasesView();
+  }
+
+  guardCasesView() {
+    if (!areAppFeaturesLoaded()) return;
+    if (!isDirectusCasesEnabled() && this.currentView === APP_VIEWS.CASES) {
+      this.currentView = DEFAULT_APP_VIEW;
+      this.syncViewToUrl();
+    }
   }
 
   disconnectedCallback() {
@@ -297,6 +311,7 @@ export class TrameApp extends LitElement {
       this.currentView = DEFAULT_APP_VIEW;
       this.selectedProjectId = null;
     }
+    this.guardCasesView();
     if (writeBack) {
       this.syncViewToUrl();
     }
@@ -413,6 +428,7 @@ export class TrameApp extends LitElement {
       return;
     }
     if (selectedKey === 'cases') {
+      if (!isDirectusCasesEnabled()) return;
       this.selectedProjectId = null;
       this.currentView = APP_VIEWS.CASES;
       this.syncViewToUrl();
@@ -946,7 +962,7 @@ export class TrameApp extends LitElement {
           @logout-request=${this.handleLogout}
         ></user-settings-page>
       ` : ''}
-      ${this.currentView === APP_VIEWS.CASES ? html`
+      ${this.currentView === APP_VIEWS.CASES && isDirectusCasesEnabled() ? html`
         <directus-cases-page
           .username=${this.user?.username || 'Guest'}
           @menu-selection-change=${this.handleProjectsMenuSelection}

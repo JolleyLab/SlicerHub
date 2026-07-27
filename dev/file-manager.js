@@ -1,7 +1,6 @@
 import { LitElement, html, css } from 'lit-element';
 import { API_URL } from './config.js';
 import { initializeTheme } from './components/theme.js';
-import { APP_MENU_ITEMS } from './components/app-menu.js';
 import './components/page-layout-template.js';
 import './components/page-content-message.js';
 import './components/file-storage-summary.js';
@@ -565,7 +564,6 @@ export class FileManager extends LitElement {
             shareMode: { type: String },
             viewerShareMode: { type: String },
             username: { type: String },
-            menuItems: { type: Array },
             fileListSearch: { type: String },
             fileListSearchDraft: { type: String },
             fileListOrder: { type: String },
@@ -613,7 +611,6 @@ export class FileManager extends LitElement {
         this.shareMode = 'whole_file';
         this.viewerShareMode = 'whole_file';
         this.username = 'Guest';
-        this.menuItems = APP_MENU_ITEMS;
         this.fileListSearch = '';
         this.fileListSearchDraft = '';
         this.fileListOrder = 'date-desc';
@@ -1431,7 +1428,6 @@ export class FileManager extends LitElement {
     render() {
         return html`
             <page-layout-template
-                .menuItems=${this.menuItems}
                 .username=${this.username}
                 selectedMenuKey="my-files"
                 homeHref="/file-manager"

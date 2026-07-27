@@ -1,6 +1,7 @@
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { ValidationError } from '../utils/errors.js';
+import config from '../config/index.js';
 import User from '../models/User.js';
 import {
     listCases,
@@ -52,6 +53,10 @@ async function ensureLocalFullSlicerSeat(req, { failureMessage, requireSlicerUiR
 }
 
 export default function directusRoutes(app) {
+    if (!config.directus.casesEnabled) {
+        return;
+    }
+
     /**
      * PoC: list Directus cases for the logged-in app user.
      * Browser never sees the Directus service token.

@@ -1,5 +1,4 @@
 import { LitElement, html, css } from 'lit-element';
-import { APP_MENU_ITEMS } from '../components/app-menu.js';
 import '../components/page-layout-template.js';
 import '../components/add-button.js';
 import '../components/page-content-message.js';
@@ -114,7 +113,6 @@ export class MyProjectsLandingPage extends LitElement {
     static get properties() {
         return {
             username: { type: String },
-            menuItems: { type: Array },
             projects: { type: Array },
             loading: { type: Boolean },
             loadingMore: { type: Boolean },
@@ -128,7 +126,6 @@ export class MyProjectsLandingPage extends LitElement {
     constructor() {
         super();
         this.username = 'Guest';
-        this.menuItems = APP_MENU_ITEMS;
         this.projects = [];
         this.loading = false;
         this.loadingMore = false;
@@ -211,7 +208,6 @@ export class MyProjectsLandingPage extends LitElement {
     render() {
         return html`
             <page-layout-template
-                .menuItems=${this.menuItems}
                 .username=${this.username}
                 selectedMenuKey="my-projects"
                 homeHref="/file-manager"
