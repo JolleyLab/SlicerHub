@@ -53,6 +53,24 @@
     #splash.hidden {
       display: none;
     }
+    #splash.error .spinner {
+      display: none;
+    }
+    #reconnect {
+      display: none;
+      margin-top: 8px;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 16px;
+      background: #5b7cff;
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #splash.error #reconnect {
+      display: inline-flex;
+    }
     .spinner {
       width: 28px;
       height: 28px;
@@ -72,6 +90,7 @@
     <div class="spinner" aria-hidden="true"></div>
     <h1 id="title">Opening viewer…</h1>
     <p id="subtitle">Please wait while the scene loads.</p>
+    <button id="reconnect" type="button">Reconnect</button>
   </div>
   <iframe id="viewer" title="Full Slicer viewer" allow="fullscreen"></iframe>
   <script type="module" src="./slicer-gui-loader.js"></script>

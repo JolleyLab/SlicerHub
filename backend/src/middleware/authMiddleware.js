@@ -4,13 +4,13 @@ import db from '../db/database.js';
 import config from '../config/index.js';
 import { UnauthorizedError, ForbiddenError } from '../utils/errors.js';
 
-function scheduleLocalViewerCleanup(userId, reason) {
-    if (!userId) return;
-    import('../sessions/cleanup.js')
-        .then(({ cleanupLocalViewerSessionsForUser }) => cleanupLocalViewerSessionsForUser(userId))
-        .catch((err) => {
-            console.warn(`Local viewer cleanup (${reason}) for user ${userId}:`, err.message);
-        });
+/**
+ * Intentionally a no-op for single-session expiry.
+ * Killing all Full Slicer seats here used to disrupt other browsers for the
+ * same user. Orphaned seats are reaped by the viewer lease watchdog / TTL.
+ */
+function scheduleLocalViewerCleanup(_userId, _reason) {
+    /* no-op: multi-seat safe */
 }
 
 const { secret: JWT_SECRET, expiresIn: JWT_EXPIRES_IN } = config.jwt;

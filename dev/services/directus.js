@@ -48,11 +48,15 @@ export async function createDirectusCaseComment(caseId, comment) {
 }
 
 export async function openDirectusAttachmentFullSlicer(caseId, attachmentId, {
-    useSimplifiedViewer
+    useSimplifiedViewer,
+    seatId
 } = {}) {
     const body = {};
     if (useSimplifiedViewer !== undefined) {
         body.useSimplifiedViewer = useSimplifiedViewer === true;
+    }
+    if (seatId != null && seatId !== '') {
+        body.seatId = Number(seatId);
     }
 
     const response = await fetch(
@@ -76,12 +80,16 @@ export async function openDirectusAttachmentFullSlicer(caseId, attachmentId, {
     return data;
 }
 
-export async function directusFullSlicerHeartbeat(sessionToken) {
+export async function directusFullSlicerHeartbeat(sessionToken, { seatId } = {}) {
+    const body = { sessionToken };
+    if (seatId != null && seatId !== '') {
+        body.seatId = Number(seatId);
+    }
     const response = await fetch(`${API_URL}/api/directus/full-slicer-heartbeat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ sessionToken })
+        body: JSON.stringify(body)
     });
 
     const data = await parseJson(response);
@@ -95,12 +103,16 @@ export async function directusFullSlicerHeartbeat(sessionToken) {
     return data;
 }
 
-export async function stopDirectusFullSlicer(sessionToken, { mode = 'soft' } = {}) {
+export async function stopDirectusFullSlicer(sessionToken, { mode = 'soft', seatId } = {}) {
+    const body = { sessionToken, mode };
+    if (seatId != null && seatId !== '') {
+        body.seatId = Number(seatId);
+    }
     const response = await fetch(`${API_URL}/api/directus/full-slicer-stop`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ sessionToken, mode })
+        body: JSON.stringify(body)
     });
 
     const data = await parseJson(response);

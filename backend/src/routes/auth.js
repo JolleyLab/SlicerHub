@@ -164,14 +164,9 @@ export default function authRoutes(app) {
             if (decoded?.jti) {
                 deleteSession(decoded.jti);
             }
-            if (decoded?.userId) {
-                try {
-                    const { cleanupLocalViewerSessionsForUser } = await import('../sessions/cleanup.js');
-                    await cleanupLocalViewerSessionsForUser(decoded.userId);
-                } catch (err) {
-                    console.log('Local viewer cleanup during logout:', err.message);
-                }
-            }
+            // Do not stop other browsers' Full Slicer seats here — multi-seat
+            // means another device may still be attached. Orphaned seats expire
+            // via heartbeat TTL / watchdog. Use logout-all to wipe everything.
         }
 
         clearAuthCookie(res);

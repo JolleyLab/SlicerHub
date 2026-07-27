@@ -12,12 +12,15 @@ const simplified = params.get('simplified') === '1';
 const embedded = params.get('embed') === '1';
 const quick = params.get('quick') === '1';
 let sessionToken = params.get('sessionToken') || '';
+let seatId = params.get('seatId') || '';
 const fileId = params.get('fileId') || '';
-let vncPath = params.get('vnc') || '/slicer-gui/vnc_lite.html?autoconnect=true&resize=remote';
+let vncPath = params.get('vnc') || '/slicer-gui/vnc_lite.html?path=slicer-gui/websockify&autoconnect=true&scale=true';
+let sawVncConnected = false;
 
 const splash = document.getElementById('splash');
 const title = document.getElementById('title');
 const subtitle = document.getElementById('subtitle');
+const reconnectBtn = document.getElementById('reconnect');
 const viewer = document.getElementById('viewer');
 
 function sessionEndpoints() {
@@ -29,9 +32,11 @@ function sessionEndpoints() {
     });
 }
 
-function setSplashMessage(heading, detail) {
+function setSplashMessage(heading, detail, { error = false } = {}) {
     title.textContent = heading;
     subtitle.textContent = detail || '';
+    splash.classList.toggle('error', Boolean(error));
+    splash.classList.remove('hidden');
 }
 
 if (quick) {
@@ -54,23 +59,58 @@ const minSplashMs = quick ? 150 : 900;
 let sawBusy = false;
 let revealed = false;
 let lifecycle = null;
+let vncWatchTimer = null;
+let reconnecting = false;
+let disconnectNotified = false;
 
 function reveal() {
     if (revealed) return;
     revealed = true;
-    viewer.classList.add('visible');
+    disconnectNotified = false;
     splash.classList.add('hidden');
+    splash.classList.remove('error');
+    viewer.classList.add('visible');
+}
+
+function hideViewer() {
+    viewer.classList.remove('visible');
+}
+
+function readVncStatusText() {
+    try {
+        // Only the live status node — never body/script text (false positives).
+        return (viewer.contentDocument?.getElementById('status')?.textContent || '').trim();
+    } catch {
+        return '';
+    }
+}
+
+function isVncConnectedStatus(text) {
+    return /^connected\b/i.test(String(text || '').trim());
+}
+
+function isVncDisconnectedStatus(text) {
+    const lower = String(text || '').trim().toLowerCase();
+    if (!lower) return false;
+    return (
+        lower === 'disconnected'
+        || lower.startsWith('disconnected')
+        || lower.includes('connection is closed')
+        || lower.includes('failed to connect')
+    );
 }
 
 async function heartbeatSession(token) {
     const endpoints = sessionEndpoints();
     if (!endpoints) return false;
+    const body = { sessionToken: token };
+    if (seatId) body.seatId = Number(seatId);
     const response = await fetch(endpoints.heartbeatUrl, {
         method: 'POST',
         credentials: 'include',
         cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionToken: token })
+        body: JSON.stringify(body)
     });
     return response.ok;
 }
@@ -79,21 +119,26 @@ async function reconnectSession() {
     const endpoints = sessionEndpoints();
     if (!endpoints) return false;
     setSplashMessage('Reconnecting…', 'Restoring your Full Slicer session');
+    const body = {
+        ...(fileId ? { fileId: Number(fileId) } : {}),
+        useSimplifiedViewer: simplified
+    };
+    if (seatId) body.seatId = Number(seatId);
     const response = await fetch(endpoints.reconnectUrl, {
         method: 'POST',
         credentials: 'include',
         cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            ...(fileId ? { fileId: Number(fileId) } : {}),
-            useSimplifiedViewer: simplified
-        })
+        body: JSON.stringify(body)
     });
     if (!response.ok) {
         return false;
     }
     const data = await response.json();
     sessionToken = data.sessionToken || sessionToken;
+    if (data.seatId != null) {
+        seatId = String(data.seatId);
+    }
     if (data.vncPath) {
         vncPath = data.vncPath;
     }
@@ -103,6 +148,9 @@ async function reconnectSession() {
     }
     const url = new URL(window.location.href);
     url.searchParams.set('sessionToken', sessionToken);
+    if (seatId) {
+        url.searchParams.set('seatId', seatId);
+    }
     if (data.vncPath) {
         url.searchParams.set('vnc', data.vncPath);
     }
@@ -136,6 +184,10 @@ function startLifecycle() {
         stopUrl: endpoints.stopUrl,
         releaseOnUnload: true,
         releaseMode: VIEWER_RELEASE_MODES.SOFT,
+        heartbeatBody: (token) => ({
+            sessionToken: token,
+            ...(seatId ? { seatId: Number(seatId) } : {})
+        }),
         onHeartbeatFailed: async () => {
             const ok = await reconnectSession();
             if (ok) {
@@ -145,13 +197,147 @@ function startLifecycle() {
     });
 }
 
-function notifyParentActivity() {
+function notifyParent(type, extra = {}) {
     if (!embedded || window.parent === window) return;
     try {
-        window.parent.postMessage({ type: 'slicer-viewer-activity' }, window.location.origin);
+        window.parent.postMessage({ type, ...extra }, window.location.origin);
     } catch {
         /* ignore */
     }
+}
+
+function polishVncChrome() {
+    try {
+        const doc = viewer.contentDocument;
+        if (!doc?.head) return;
+        if (doc.getElementById('slicer-web-vnc-chrome')) return;
+        const style = doc.createElement('style');
+        style.id = 'slicer-web-vnc-chrome';
+        style.textContent = `
+            #top_bar { display: none !important; }
+            html, body {
+                margin: 0 !important;
+                height: 100% !important;
+                background: #090b14 !important;
+            }
+            body { display: flex !important; flex-direction: column !important; }
+            #screen {
+                flex: 1 1 auto !important;
+                width: 100% !important;
+                height: 100% !important;
+                overflow: hidden !important;
+            }
+            #screen > canvas, #screen > div {
+                width: 100% !important;
+                height: 100% !important;
+            }
+        `;
+        doc.head.appendChild(style);
+    } catch {
+        /* cross-origin */
+    }
+}
+
+function notifyParentActivity() {
+    notifyParent('slicer-viewer-activity');
+}
+
+function handleVncDisconnected() {
+    if (reconnecting || disconnectNotified) return;
+    disconnectNotified = true;
+    revealed = false;
+    hideViewer();
+    setSplashMessage(
+        'Viewer disconnected',
+        'The remote desktop connection was lost. This can happen after the tab sleeps (common in Microsoft Edge).',
+        { error: true }
+    );
+    notifyParent('slicer-viewer-disconnected');
+}
+
+async function reconnectViewer() {
+    if (reconnecting) return;
+    reconnecting = true;
+    disconnectNotified = false;
+    sawVncConnected = false;
+    revealed = false;
+    hideViewer();
+    setSplashMessage('Reconnecting…', 'Restoring the viewer session');
+    try {
+        const ok = await ensureViewerSession();
+        if (!ok) {
+            setSplashMessage(
+                'Unable to reconnect',
+                'Return to My Projects and open the viewer again.',
+                { error: true }
+            );
+            return;
+        }
+        startLifecycle();
+        loadViewer({ forceReload: true });
+        // Wait for a real Connected status before revealing.
+        const deadline = Date.now() + 8000;
+        const waitConnected = () => {
+            const status = readVncStatusText();
+            if (isVncConnectedStatus(status)) {
+                sawVncConnected = true;
+                reveal();
+                notifyParentActivity();
+                return;
+            }
+            if (Date.now() >= deadline) {
+                if (isVncDisconnectedStatus(status)) {
+                    handleVncDisconnected();
+                } else {
+                    // Still connecting — show the viewer anyway.
+                    reveal();
+                }
+                return;
+            }
+            setTimeout(waitConnected, 250);
+        };
+        setTimeout(waitConnected, 300);
+    } finally {
+        reconnecting = false;
+    }
+}
+
+function installVncDisconnectWatch() {
+    if (vncWatchTimer) {
+        clearInterval(vncWatchTimer);
+    }
+    // Only treat disconnect after we have seen Connected at least once.
+    vncWatchTimer = setInterval(() => {
+        if (!revealed || reconnecting || document.hidden) return;
+        const status = readVncStatusText();
+        if (isVncConnectedStatus(status)) {
+            sawVncConnected = true;
+            polishVncChrome();
+            return;
+        }
+        if (sawVncConnected && isVncDisconnectedStatus(status)) {
+            handleVncDisconnected();
+        }
+    }, 2000);
+}
+
+function installWakeHandlers() {
+    const onWake = async () => {
+        if (document.hidden) return;
+        notifyParentActivity();
+        if (sessionToken) {
+            await heartbeatSession(sessionToken).catch(() => false);
+        }
+        // Avoid interrupting the first connect; only auto-recover after a known session.
+        if (disconnectNotified || (sawVncConnected && isVncDisconnectedStatus(readVncStatusText()))) {
+            await reconnectViewer();
+        }
+    };
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('focus', onWake);
+    reconnectBtn?.addEventListener('click', () => {
+        reconnectViewer();
+    });
 }
 
 function installEmbedActivityBridge() {
@@ -161,6 +347,7 @@ function installEmbedActivityBridge() {
         window.addEventListener(eventName, onActivity, { passive: true, capture: true });
     });
     viewer.addEventListener('load', () => {
+        polishVncChrome();
         try {
             const doc = viewer.contentDocument;
             if (!doc) return;
@@ -174,8 +361,19 @@ function installEmbedActivityBridge() {
     });
 }
 
-function loadViewer() {
-    viewer.src = vncPath;
+function loadViewer({ forceReload = false } = {}) {
+    const next = vncPath;
+    if (forceReload) {
+        // Cache-bust so Edge does not keep a dead websocket page.
+        const url = new URL(next, window.location.href);
+        url.searchParams.set('_ts', String(Date.now()));
+        viewer.src = url.pathname + url.search;
+    } else {
+        viewer.src = next;
+    }
+    viewer.addEventListener('load', () => {
+        polishVncChrome();
+    });
     if (quick) {
         viewer.addEventListener('load', () => {
             if (Date.now() - startedAt >= minSplashMs) {
@@ -225,11 +423,14 @@ async function init() {
     if (!ready) {
         setSplashMessage(
             'Unable to connect',
-            'Return to My Projects and open Full Slicer again.'
+            'Return to My Projects and open Full Slicer again.',
+            { error: true }
         );
         return;
     }
     installEmbedActivityBridge();
+    installWakeHandlers();
+    installVncDisconnectWatch();
     startLifecycle();
     loadViewer();
 

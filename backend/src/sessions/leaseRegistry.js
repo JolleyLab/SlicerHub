@@ -49,6 +49,42 @@ export function touchSession(kind, sessionKey, sessionToken) {
     return entry;
 }
 
+/** Find a lease by opaque session token (seat-aware heartbeats need only the token). */
+export function findSessionByToken(kind, sessionToken) {
+    const token = String(sessionToken || '').trim();
+    if (!token) return null;
+    const prefix = `${kind}:`;
+    for (const [key, entry] of sessions.entries()) {
+        if (!key.startsWith(prefix)) continue;
+        if (entry.sessionToken === token) {
+            return {
+                sessionKey: key.slice(prefix.length),
+                entry
+            };
+        }
+    }
+    return null;
+}
+
+export function touchSessionByToken(kind, sessionToken) {
+    const found = findSessionByToken(kind, sessionToken);
+    if (!found) return null;
+    return touchSession(kind, found.sessionKey, sessionToken);
+}
+
+export function listSessionsForKind(kind) {
+    const prefix = `${kind}:`;
+    const out = [];
+    for (const [key, entry] of sessions.entries()) {
+        if (!key.startsWith(prefix)) continue;
+        out.push({
+            sessionKey: key.slice(prefix.length),
+            ...entry
+        });
+    }
+    return out;
+}
+
 /**
  * Soft-release: keep runtime, drop attached-UI requirement, park until warm-idle TTL.
  * Watchdog hard-stops when the parked lease expires.

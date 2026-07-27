@@ -34,15 +34,30 @@ function resolveUseSimplifiedViewer({ body, userId }) {
     return accountPrefs?.useSimplifiedViewer === true;
 }
 
-async function ensureLocalFullSlicerSeat(req, { failureMessage, requireSlicerUiReady = true }) {
+function parseOptionalSeatId(raw) {
+    if (raw == null || raw === '') return null;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1) return null;
+    return n;
+}
+
+async function ensureLocalFullSlicerSeat(req, { failureMessage, requireSlicerUiReady = true, preferFileId = null } = {}) {
     const useSimplifiedViewer = resolveUseSimplifiedViewer({
         body: req.body,
         userId: req.user.id
     });
     const launcherUserId = String(req.user.id);
+    const seatId = parseOptionalSeatId(req.body?.seatId);
+    const preferFromBody = preferFileId != null
+        ? preferFileId
+        : (Number(req.body?.preferFileId) || null);
     try {
         const session = await ensureSlicerGuiSession({
             userId: launcherUserId,
+            seatId,
+            preferFileId: Number.isInteger(preferFromBody) && preferFromBody > 0
+                ? preferFromBody
+                : null,
             useSimplifiedViewer,
             requireSlicerUiReady
         });
@@ -134,6 +149,7 @@ export default function directusRoutes(app) {
 
             const [cached, seat] = await Promise.all([cachePromise, seatPromise]);
             const { launcherUserId, session } = seat;
+            const seatId = session.seatId;
             const effectiveSimplified = false;
 
             console.log('Staging Directus MRB into Full Slicer seat', {
@@ -142,6 +158,7 @@ export default function directusRoutes(app) {
                 fileName: cached.fileName,
                 bytes: cached.bytes,
                 cached: cached.reused,
+                seatId,
                 useSimplifiedViewer: effectiveSimplified
             });
 
@@ -151,10 +168,11 @@ export default function directusRoutes(app) {
                 stagedKey,
                 fileName: cached.fileName,
                 launcherUserId,
-                useSimplifiedViewer: effectiveSimplified
+                useSimplifiedViewer: effectiveSimplified,
+                seatId
             });
 
-            const viewerPath = buildSlicerGuiViewerPath(launcherUserId);
+            const viewerPath = buildSlicerGuiViewerPath(launcherUserId, seatId);
             const frontendUrl = buildViewerFrontendUrl(req, launcherUserId, null, null);
             const origin = frontendUrl ? new URL(frontendUrl).origin : `${req.protocol}://${req.get('host')}`;
             const slicerGuiUrl = `${origin}${viewerPath.startsWith('/') ? viewerPath : `/${viewerPath}`}`;
@@ -164,6 +182,8 @@ export default function directusRoutes(app) {
                 vncPath: viewerPath,
                 sessionId: session.containerName,
                 sessionToken: session.sessionToken,
+                seatId,
+                maxSeats: session.maxSeats,
                 userId: launcherUserId,
                 fileName: staged.fileName,
                 containerPath: staged.containerPath || null,
@@ -187,7 +207,11 @@ export default function directusRoutes(app) {
         }
 
         const userId = String(req.user.id);
-        const lease = touchSlicerGuiSessionHeartbeat({ userId, sessionToken });
+        const lease = touchSlicerGuiSessionHeartbeat({
+            userId,
+            sessionToken,
+            seatId: parseOptionalSeatId(req.body?.seatId)
+        });
         if (!lease) {
             return res.status(404).json({
                 error: { message: 'Full Slicer session not found or expired' }
@@ -196,6 +220,7 @@ export default function directusRoutes(app) {
 
         res.json({
             success: true,
+            seatId: lease.metadata?.seatId ?? null,
             leaseExpiresAt: new Date(lease.leaseExpiresAt).toISOString(),
             sessionTtlSeconds: getSessionTtlSeconds(SESSION_KINDS.SLICER_GUI)
         });

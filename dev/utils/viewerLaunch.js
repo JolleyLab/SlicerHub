@@ -72,12 +72,16 @@ export function buildViewerStopBody({
     kind,
     sessionToken,
     projectId = null,
-    mode = null
+    mode = null,
+    seatId = null
 } = {}) {
     const body = {};
     if (sessionToken) body.sessionToken = sessionToken;
     if (kind === VIEWER_KINDS.TRAME && projectId) {
         body.projectId = projectId;
+    }
+    if (kind === VIEWER_KINDS.SLICER_GUI && seatId != null && seatId !== '') {
+        body.seatId = Number(seatId);
     }
     const releaseMode = mode || defaultReleaseModeForClose(kind);
     if (viewerSupportsSoftRelease(kind)) {
@@ -96,6 +100,7 @@ export function buildSlicerGuiLoaderUrl({
     fileName = '',
     vncPath = '',
     sessionToken = '',
+    seatId = null,
     simplified = false,
     embed = false,
     quick = false,
@@ -126,11 +131,31 @@ export function buildSlicerGuiLoaderUrl({
     if (sessionToken) {
         loader.searchParams.set('sessionToken', sessionToken);
     }
+    if (seatId != null && seatId !== '') {
+        loader.searchParams.set('seatId', String(seatId));
+    }
 
-    const rawVnc = vncPath || '/slicer-gui/vnc_lite.html?autoconnect=true&resize=remote';
+    const rawVnc = vncPath || '/slicer-gui/vnc_lite.html?path=slicer-gui/websockify&autoconnect=true&scale=true';
     let vncParam = rawVnc;
     try {
         const parsed = new URL(rawVnc, baseHref);
+        // Ensure websocket path stays under the /slicer-gui/... prefix when proxied.
+        if (!parsed.searchParams.get('path')) {
+            const parts = parsed.pathname.split('/').filter(Boolean);
+            // ["slicer-gui", "user-1-seat1", "vnc_lite.html"] or ["slicer-gui", "vnc_lite.html"]
+            if (parts[0] === 'slicer-gui') {
+                const prefixParts = parts.slice(0, -1);
+                if (prefixParts.length) {
+                    parsed.searchParams.set('path', `${prefixParts.join('/')}/websockify`);
+                }
+            }
+        }
+        parsed.searchParams.set('autoconnect', parsed.searchParams.get('autoconnect') || 'true');
+        parsed.searchParams.set('scale', 'true');
+        // vnc_lite ignores these full-UI flags.
+        parsed.searchParams.delete('resize');
+        parsed.searchParams.delete('reconnect');
+        parsed.searchParams.delete('reconnect_delay');
         vncParam = parsed.pathname + parsed.search;
     } catch (_) {
         /* keep as-is */

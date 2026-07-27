@@ -1200,6 +1200,7 @@ export class ProjectReviewPage extends LitElement {
         this._errorAlertKind = null;
         this._trameHeartbeatInterval = null;
         this._viewerSessionToken = null;
+        this._viewerSeatId = null;
         this._gpuPollInterval = null;
         this._gpuBillingHeartbeatInterval = null;
     }
@@ -1242,6 +1243,7 @@ export class ProjectReviewPage extends LitElement {
                     kind,
                     sessionToken: this._viewerSessionToken,
                     projectId: this.projectId,
+                    seatId: this._viewerSeatId,
                     // Soft-park Full Slicer so refresh/reopen can reuse the warm seat.
                     mode: defaultReleaseModeForClose(kind)
                 }),
@@ -1263,11 +1265,13 @@ export class ProjectReviewPage extends LitElement {
         const projectId = this.projectId;
         const viewerKind = this.viewerKind || VIEWER_KINDS.TRAME;
         const sessionToken = this._viewerSessionToken;
+        const seatId = this._viewerSeatId;
         if (hadViewer && projectId) {
             scheduleViewerStopOnLeave(projectId, () => {
                 this.cleanupContainerSession(projectId, {
                     kind: viewerKind,
                     sessionToken,
+                    seatId,
                     mode: defaultReleaseModeForClose(viewerKind)
                 });
             });
@@ -1655,15 +1659,24 @@ export class ProjectReviewPage extends LitElement {
                 ? `Copying ${sceneTitle} to Vast Full Slicer…`
                 : `Starting ${label} for ${sceneTitle}…`);
         this.showIframe = true;
-        this.iframeUrl = 'about:blank';
+        // Blank only when replacing an already-open VNC. Fresh open stays on the
+        // parent loading overlay until the loader URL is ready (avoids about:blank flash).
+        if (switchingInPlace) {
+            this.iframeUrl = 'about:blank';
+        }
 
         try {
             this.stopTrameHeartbeat();
             const data = await openFullSlicerViewer(this.projectId, file.id, {
-                useSimplifiedViewer: simplified
+                useSimplifiedViewer: simplified,
+                // Stick to this seat when switching files in the same overlay.
+                ...(switchingInPlace && this._viewerSeatId
+                    ? { seatId: this._viewerSeatId }
+                    : {})
             });
 
             this._viewerSessionToken = data.sessionToken || null;
+            this._viewerSeatId = data.seatId != null ? Number(data.seatId) : null;
             this.viewerSimplified = data.useSimplifiedViewer === true;
             this.currentFileName = sceneTitle;
 
@@ -1685,6 +1698,7 @@ export class ProjectReviewPage extends LitElement {
                 fileName: sceneTitle,
                 vncPath: data.vncPath || data.slicerGuiUrl || '',
                 sessionToken: this._viewerSessionToken,
+                seatId: this._viewerSeatId,
                 simplified: this.viewerSimplified,
                 embed: true,
                 quick: quickReconnect
@@ -1709,6 +1723,7 @@ export class ProjectReviewPage extends LitElement {
             this.viewerLoadingDetail = '';
             this.launchingFileId = null;
             this._viewerSessionToken = null;
+            this._viewerSeatId = null;
             this.showErrorAlert(error.message || 'Unable to open Full Slicer.', {
                 title: 'Unable to open file',
                 force: true
@@ -3057,16 +3072,72 @@ export class ProjectReviewPage extends LitElement {
                 heartbeatUrl,
                 includeUserActive: kind === VIEWER_KINDS.TRAME,
                 onIdleTimeout: () => this.handleViewerInactivityTimeout()
-            }).catch(() => {});
+            }).catch((err) => {
+                if (kind === VIEWER_KINDS.SLICER_GUI && err?.status === 404) {
+                    this.handleViewerSupersededElsewhere();
+                }
+            });
         };
         ping();
-        this._trameHeartbeatInterval = setInterval(ping, kind === VIEWER_KINDS.SLICER_GUI ? 30000 : 60000);
+        // Full Slicer: shorter cadence — Edge Sleeping Tabs can pause timers for minutes.
+        this._trameHeartbeatInterval = setInterval(ping, kind === VIEWER_KINDS.SLICER_GUI ? 20000 : 60000);
+        this._onViewerWakeHeartbeat = () => {
+            if (document.hidden || !this.showIframe) return;
+            markViewerActivity();
+            ping();
+        };
+        document.addEventListener('visibilitychange', this._onViewerWakeHeartbeat);
+        window.addEventListener('focus', this._onViewerWakeHeartbeat);
+        this._onSlicerViewerMessage = (event) => {
+            if (event?.origin && event.origin !== window.location.origin) return;
+            if (event?.data?.type === 'slicer-viewer-disconnected') {
+                this.showToast('Viewer disconnected — reconnecting may be needed (common after Edge sleeps the tab)');
+            }
+            if (event?.data?.type === 'slicer-viewer-superseded') {
+                this.handleViewerSupersededElsewhere();
+            }
+        };
+        window.addEventListener('message', this._onSlicerViewerMessage);
+    }
+
+    /**
+     * This seat's lease was rotated (another client took the same seat, or the
+     * seat cap forced LRU reuse). Drop this window's VNC; other seats keep running.
+     */
+    handleViewerSupersededElsewhere() {
+        if (!this.showIframe) return;
+        if (this.viewerKind !== VIEWER_KINDS.SLICER_GUI) return;
+        this.stopTrameHeartbeat();
+        this.showIframe = false;
+        this.iframeUrl = '';
+        this.viewerLoading = false;
+        this.viewerLoadingDetail = '';
+        this.viewerFullscreen = false;
+        this.viewerMenuOpen = false;
+        this.showFullscreenTip = false;
+        this._viewerSessionToken = null;
+        this._viewerSeatId = null;
+        this.showErrorAlert(
+            'This Full Slicer seat was taken by another browser window. '
+            + 'Concurrent desktops are limited per account; opening beyond that limit '
+            + 'replaces the least-recently used seat.',
+            { title: 'Viewer opened elsewhere', force: true }
+        );
     }
 
     stopTrameHeartbeat() {
         if (this._trameHeartbeatInterval) {
             clearInterval(this._trameHeartbeatInterval);
             this._trameHeartbeatInterval = null;
+        }
+        if (this._onViewerWakeHeartbeat) {
+            document.removeEventListener('visibilitychange', this._onViewerWakeHeartbeat);
+            window.removeEventListener('focus', this._onViewerWakeHeartbeat);
+            this._onViewerWakeHeartbeat = null;
+        }
+        if (this._onSlicerViewerMessage) {
+            window.removeEventListener('message', this._onSlicerViewerMessage);
+            this._onSlicerViewerMessage = null;
         }
     }
 
@@ -3078,9 +3149,14 @@ export class ProjectReviewPage extends LitElement {
         const mode = overrides.mode || defaultReleaseModeForClose(kind);
         if (overrides.sessionToken === undefined) {
             this._viewerSessionToken = null;
+            this._viewerSeatId = null;
         } else if (token && token === this._viewerSessionToken) {
             this._viewerSessionToken = null;
+            this._viewerSeatId = null;
         }
+        const seatId = overrides.seatId !== undefined
+            ? overrides.seatId
+            : this._viewerSeatId;
         const { stopUrl } = getViewerSessionEndpoints({
             kind,
             projectId: projectId || this.projectId
@@ -3092,6 +3168,7 @@ export class ProjectReviewPage extends LitElement {
                 kind,
                 sessionToken: token,
                 projectId: projectId || this.projectId,
+                seatId,
                 mode
             })
         });
@@ -3120,6 +3197,7 @@ export class ProjectReviewPage extends LitElement {
         this.viewerLoadingDetail = '';
         this.launchingFileId = null;
         this._viewerSessionToken = null;
+        this._viewerSeatId = null;
         this.viewerKind = VIEWER_KINDS.TRAME;
         this.viewerSimplified = false;
     }

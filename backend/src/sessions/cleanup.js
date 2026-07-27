@@ -1,10 +1,10 @@
 import { SESSION_KINDS } from './kinds.js';
 import { clearSession } from './leaseRegistry.js';
-import { stopSlicerGuiContainer } from './providers/slicerGui.js';
 import { stopLocalTrameViewerSession } from './providers/trame.js';
+import { stopSlicerGuiSession } from '../slicerGui/sessionManager.js';
 
 /**
- * Stop all local viewer containers for a user (Trame + Full Slicer).
+ * Stop all local viewer containers for a user (Trame + Full Slicer seats).
  * Does not stop remote/Vast trame sessions or GPU billing — intentional so
  * multiple project members can share a Vast instance independently.
  */
@@ -16,9 +16,8 @@ export async function cleanupLocalViewerSessionsForUser(userId) {
         slicerGui: null
     };
 
-    clearSession(SESSION_KINDS.SLICER_GUI, sessionKey);
     try {
-        result.slicerGui = await stopSlicerGuiContainer({ sessionKey });
+        result.slicerGui = await stopSlicerGuiSession({ userId: sessionKey });
     } catch (err) {
         result.slicerGui = { stopped: false, error: err.message };
         console.warn(`Local Full Slicer cleanup for user ${sessionKey}:`, err.message);

@@ -18,6 +18,7 @@ REQUEST_FILE = "/home/slicer/data/.open-request.json"
 BUSY_FILE = "/home/slicer/data/.slicer-busy"
 READY_FILE = "/home/slicer/data/.slicer-ready"
 LAST_LOADED_FILE = "/home/slicer/data/.last-loaded.json"
+SCENE_LOADED_FILE = "/home/slicer/data/.scene-loaded.json"
 LOAD_RESULT_FILE = "/home/slicer/data/.load-result.json"
 LOG_FILE = "/home/slicer/data/slicer-session.log"
 POLL_MS = 250
@@ -719,17 +720,17 @@ def restore_full_slicer_ui() -> None:
     log("[slicer_session] Full Slicer UI restored")
 
 
-def maybe_apply_simplified_viewer(use_simplified_viewer: bool) -> None:
+def maybe_apply_simplified_viewer(use_simplified_viewer: bool, *, force: bool = False) -> None:
     global _viewer_mode_simplified
     try:
         if use_simplified_viewer:
-            # Always re-apply. FullInterfaceVisible is persisted in QSettings, and the
-            # developer "Show full 3D Slicer Interface" toggle hides the overlay gear,
-            # so reopen must force simplified chrome even when already in this mode.
-            apply_simplified_viewer_ui()
+            # Re-apply when forced (e.g. developer "show full interface" recovery),
+            # or when we are not already in simplified chrome.
+            if force or _viewer_mode_simplified is not True:
+                apply_simplified_viewer_ui()
             _viewer_mode_simplified = True
             return
-        if _viewer_mode_simplified is False:
+        if _viewer_mode_simplified is False and not force:
             return
         restore_full_slicer_ui()
         _viewer_mode_simplified = False
@@ -818,17 +819,37 @@ def write_load_result(success: bool, payload: dict | None = None, error: str = "
 
 def persist_scene_loaded(payload: dict) -> None:
     """Mark scene loaded only after a confirmed Slicer load (for warm reopen skip)."""
-    try:
-        with open(LAST_LOADED_FILE, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps({
-                "fileId": payload.get("fileId"),
-                "fileName": payload.get("fileName") or payload.get("stagedName"),
-                "useSimplifiedViewer": payload.get("useSimplifiedViewer") is True,
-                "sceneLoaded": True,
-                "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            }))
-    except OSError as exc:
-        log(f"[slicer_session] Could not persist last-loaded marker: {exc}")
+    body = json.dumps({
+        "fileId": payload.get("fileId"),
+        "fileName": payload.get("fileName") or payload.get("stagedName"),
+        "useSimplifiedViewer": payload.get("useSimplifiedViewer") is True,
+        "sceneLoaded": True,
+        "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    })
+    # Prefer a slicer-owned marker. Backend often creates .last-loaded.json as root,
+    # which this process cannot overwrite (EACCES) on Docker Desktop binds.
+    for target in (SCENE_LOADED_FILE, LAST_LOADED_FILE):
+        try:
+            if target == LAST_LOADED_FILE:
+                try:
+                    os.remove(target)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    # Keep going — SCENE_LOADED_FILE is the reliable path.
+                    continue
+            with open(target, "w", encoding="utf-8") as handle:
+                handle.write(body)
+            try:
+                os.chmod(target, 0o666)
+            except OSError:
+                pass
+            if target == SCENE_LOADED_FILE:
+                log(f"[slicer_session] Persisted scene-loaded marker ({target})")
+            return
+        except OSError as exc:
+            log(f"[slicer_session] Could not persist {target}: {exc}")
+    log("[slicer_session] Could not persist last-loaded marker")
 
 
 def load_mrb_scene(path: str) -> bool:
@@ -1039,6 +1060,42 @@ def poll_open_requests() -> None:
             f"useSimplifiedViewer={use_simplified_viewer})"
         )
 
+        skip_load = payload.get("skipLoad") is True
+
+        # Mode-only warm reopen: stay silent — no black overlay / view hide flash.
+        if skip_load:
+            try:
+                node_count = int(slicer.mrmlScene.GetNumberOfNodes())
+            except Exception:
+                node_count = 0
+            try:
+                data_count = int(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLVolumeNode")) + int(
+                    slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLModelNode")
+                )
+            except Exception:
+                data_count = 0
+            scene_present = node_count > 15 or data_count >= 1
+            if scene_present:
+                maybe_apply_simplified_viewer(use_simplified_viewer)
+                try:
+                    persist_scene_loaded(payload)
+                except Exception as exc:
+                    log(f"[slicer_session] persist_scene_loaded failed: {exc}")
+                try:
+                    write_load_result(True, payload)
+                except Exception as exc:
+                    log(f"[slicer_session] write_load_result failed: {exc}")
+                log(
+                    f"[slicer_session] Mode-only apply done "
+                    f"(simplified={use_simplified_viewer}, skipLoad, silent)"
+                )
+                clear_busy()
+                return
+            log(
+                f"[slicer_session] skipLoad requested but scene looks empty "
+                f"(nodes={node_count}, data≈{data_count}) — loading file"
+            )
+
         show_load_overlay(
             "Opening simplified viewer…" if use_simplified_viewer else "Opening Full Slicer…"
         )
@@ -1081,7 +1138,7 @@ def poll_open_requests() -> None:
 
             try:
                 if use_simplified_viewer:
-                    maybe_apply_simplified_viewer(True)
+                    maybe_apply_simplified_viewer(True, force=True)
                 schedule_view_refresh()
                 schedule_hide_load_overlay(_OVERLAY_HOLD_MS)
                 overlay_shown = False

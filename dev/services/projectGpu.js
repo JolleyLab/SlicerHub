@@ -66,6 +66,9 @@ export async function openFullSlicerViewer(projectId, fileId, options = {}) {
         fileId,
         useSimplifiedViewer: options.useSimplifiedViewer === true
     };
+    if (options.seatId != null && options.seatId !== '') {
+        body.seatId = Number(options.seatId);
+    }
     const response = await fetch(`${API_URL}/api/projects/${projectId}/gpu/open-full-slicer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -79,6 +82,9 @@ export async function prepareFullSlicerViewer(projectId, options = {}) {
     const body = {
         useSimplifiedViewer: options.useSimplifiedViewer === true
     };
+    if (options.seatId != null && options.seatId !== '') {
+        body.seatId = Number(options.seatId);
+    }
     const response = await fetch(`${API_URL}/api/projects/${projectId}/gpu/prepare-full-slicer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

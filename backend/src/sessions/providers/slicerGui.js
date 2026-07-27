@@ -1,7 +1,10 @@
 import Docker from 'dockerode';
 import { SESSION_KINDS } from '../kinds.js';
 import { getSession } from '../leaseRegistry.js';
-import { slicerGuiContainerName, safeSlicerGuiUserId } from '../../slicerGui/paths.js';
+import {
+    slicerGuiContainerNameFromSessionKey,
+    parseSlicerGuiSessionKey
+} from '../../slicerGui/paths.js';
 
 const docker = new Docker({
     socketPath: process.env.DOCKER_HOST?.replace('unix://', '') || '/var/run/docker.sock'
@@ -27,15 +30,33 @@ export async function listPerUserSlicerGuiContainers() {
         })
         .map((item) => {
             const name = (item.Names?.[0] || '').replace(/^\//, '');
-            const userId = item.Labels?.['slicer-gui-user']
-                || name.slice('slicer-gui-'.length);
-            return { sessionKey: userId, containerName: name, state: item.State };
+            const labelUser = item.Labels?.['slicer-gui-user'];
+            const labelSeat = item.Labels?.['slicer-gui-seat'];
+            let sessionKey;
+            if (labelUser && labelSeat) {
+                sessionKey = `${labelUser}-seat${labelSeat}`;
+            } else if (labelUser) {
+                sessionKey = labelUser;
+            } else {
+                sessionKey = name.slice('slicer-gui-'.length);
+            }
+            let seatId = null;
+            try {
+                seatId = parseSlicerGuiSessionKey(sessionKey).seatId;
+            } catch {
+                seatId = null;
+            }
+            return {
+                sessionKey,
+                containerName: name,
+                state: item.State,
+                seatId
+            };
         });
 }
 
 export async function stopSlicerGuiContainer({ sessionKey }) {
-    const safeUserId = safeSlicerGuiUserId(sessionKey);
-    const containerName = slicerGuiContainerName(safeUserId);
+    const containerName = slicerGuiContainerNameFromSessionKey(sessionKey);
     await removeIfExists(containerName);
     return { stopped: true, containerName };
 }
@@ -46,7 +67,7 @@ export async function stopAllPerUserSlicerGuiContainers() {
         try {
             await stopSlicerGuiContainer({ sessionKey });
         } catch (err) {
-            console.warn(`Failed to stop Full Slicer session for user ${sessionKey}:`, err.message);
+            console.warn(`Failed to stop Full Slicer session ${sessionKey}:`, err.message);
         }
     }
 }

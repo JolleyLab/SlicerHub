@@ -513,6 +513,7 @@ export class DirectusCasesPage extends LitElement {
         this.viewerLoadingDetail = '';
         this.currentFileName = '';
         this._viewerSessionToken = null;
+        this._viewerSeatId = null;
         this._heartbeatInterval = null;
         this._handleBeforeUnload = null;
     }
@@ -536,6 +537,7 @@ export class DirectusCasesPage extends LitElement {
                 body: buildViewerStopBody({
                     kind: VIEWER_KINDS.SLICER_GUI,
                     sessionToken: this._viewerSessionToken,
+                    seatId: this._viewerSeatId,
                     mode: defaultReleaseModeForClose(VIEWER_KINDS.SLICER_GUI)
                 }),
                 keepalive: true
@@ -640,7 +642,9 @@ export class DirectusCasesPage extends LitElement {
         this.stopHeartbeat();
         resetViewerActivity();
         const token = this._viewerSessionToken;
+        const seatId = this._viewerSeatId;
         this._viewerSessionToken = null;
+        this._viewerSeatId = null;
         this.showIframe = false;
         this.iframeUrl = '';
         this.viewerLoading = false;
@@ -659,6 +663,7 @@ export class DirectusCasesPage extends LitElement {
             body: buildViewerStopBody({
                 kind: VIEWER_KINDS.SLICER_GUI,
                 sessionToken: token,
+                seatId,
                 mode: VIEWER_RELEASE_MODES.SOFT
             })
         });
@@ -700,6 +705,7 @@ export class DirectusCasesPage extends LitElement {
             });
 
             this._viewerSessionToken = data.sessionToken || null;
+            this._viewerSeatId = data.seatId != null ? Number(data.seatId) : null;
             this.currentFileName = data.fileName || this.currentFileName;
 
             const url = buildSlicerGuiLoaderUrl({
@@ -707,6 +713,7 @@ export class DirectusCasesPage extends LitElement {
                 fileName: this.currentFileName,
                 vncPath: data.vncPath || data.slicerGuiUrl || '',
                 sessionToken: this._viewerSessionToken,
+                seatId: this._viewerSeatId,
                 simplified: false,
                 embed: true,
                 quick: false
@@ -725,6 +732,7 @@ export class DirectusCasesPage extends LitElement {
             this.viewerLoadingDetail = '';
             this.currentFileName = '';
             this._viewerSessionToken = null;
+            this._viewerSeatId = null;
             this.openingAttachmentId = '';
             this.errorMessage = err.message || 'Unable to open Full Slicer';
         }
