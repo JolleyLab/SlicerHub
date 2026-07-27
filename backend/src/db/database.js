@@ -367,6 +367,13 @@ const migrations = [
             ALTER TABLE files
             ADD COLUMN display_title TEXT;
         `
+    },
+    {
+        id: '015_share_links_viewer_kind',
+        up: `
+            ALTER TABLE share_links
+            ADD COLUMN viewer_kind TEXT DEFAULT 'trame';
+        `
     }
 ];
 

@@ -1059,6 +1059,72 @@ export class ProjectReviewPage extends LitElement {
             .gpu-local-option .gpu-hint {
                 margin-top: 4px;
             }
+
+            .share-dialog-overlay {
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.45);
+                z-index: 1100;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 16px;
+            }
+
+            .share-dialog {
+                background: var(--color-panel, var(--color-surface, var(--color-background)));
+                color: var(--color-text-primary);
+                border: 1px solid var(--color-border);
+                border-radius: var(--radius-lg);
+                width: min(520px, 100%);
+                padding: 16px;
+                box-shadow: 0 8px 30px var(--color-shadow, rgba(0, 0, 0, 0.25));
+            }
+
+            .share-dialog h3 {
+                margin: 0 0 12px;
+            }
+
+            .share-field {
+                margin: 10px 0;
+            }
+
+            .share-field label {
+                display: block;
+                margin-bottom: 6px;
+                font-size: 0.9rem;
+            }
+
+            .share-field input {
+                width: 100%;
+                box-sizing: border-box;
+                min-height: 40px;
+                padding: 8px 10px;
+                border: 1px solid var(--color-border);
+                border-radius: var(--radius-md);
+                background: var(--color-surface, var(--color-background));
+                color: var(--color-text-primary);
+                font: inherit;
+            }
+
+            .share-help {
+                margin-top: 6px;
+                font-size: 0.8rem;
+                color: var(--color-text-secondary);
+            }
+
+            .share-dialog-error {
+                margin: 8px 0;
+                color: var(--color-danger, #b00020);
+                font-size: 0.9rem;
+            }
+
+            .share-dialog-actions {
+                display: flex;
+                justify-content: flex-end;
+                gap: 8px;
+                margin-top: 14px;
+            }
         `;
     }
 
@@ -1124,7 +1190,13 @@ export class ProjectReviewPage extends LitElement {
             editTitleDraft: { type: String },
             editTitleOriginalName: { type: String },
             fullscreenTipDontShowAgain: { type: Boolean },
-            showFullscreenTip: { type: Boolean }
+            showFullscreenTip: { type: Boolean },
+            showShareDialog: { type: Boolean },
+            shareTargetFile: { type: Object },
+            shareDurationHours: { type: Number },
+            shareAllowedEmails: { type: String },
+            shareDialogError: { type: String },
+            sharingFileId: { type: Number }
         };
     }
 
@@ -1192,6 +1264,12 @@ export class ProjectReviewPage extends LitElement {
         this.editTitleOriginalName = '';
         this.fullscreenTipDontShowAgain = false;
         this.showFullscreenTip = false;
+        this.showShareDialog = false;
+        this.shareTargetFile = null;
+        this.shareDurationHours = 72;
+        this.shareAllowedEmails = '';
+        this.shareDialogError = '';
+        this.sharingFileId = null;
         this._prestageHoverTimer = null;
         this._autoPrestageDone = false;
         this._fullSlicerWarmPromise = null;
@@ -3387,6 +3465,90 @@ export class ProjectReviewPage extends LitElement {
         }
     }
 
+    openShareDialog(file) {
+        if (!this.canUploadFiles || !this.isMrbFile(file)) return;
+        this.shareTargetFile = file;
+        this.shareDurationHours = 72;
+        this.shareAllowedEmails = '';
+        this.shareDialogError = '';
+        this.showShareDialog = true;
+    }
+
+    closeShareDialog() {
+        this.showShareDialog = false;
+        this.shareTargetFile = null;
+        this.shareDialogError = '';
+    }
+
+    async createShareLink() {
+        const file = this.shareTargetFile;
+        if (!file?.id) return;
+        this.shareDialogError = '';
+        this.sharingFileId = file.id;
+        try {
+            const rawEmails = this.shareAllowedEmails
+                .split(',')
+                .map((email) => email.trim())
+                .filter((email) => email.length > 0);
+            const uniqueEmails = [...new Set(rawEmails)];
+            const allowedUserIds = [];
+            for (const email of uniqueEmails) {
+                const userResponse = await fetch(
+                    `${API_URL}/api/users/lookup?email=${encodeURIComponent(email)}`,
+                    { credentials: 'include' }
+                );
+                const userData = await userResponse.json().catch(() => ({}));
+                if (!userResponse.ok) {
+                    const msg = userData?.error?.message
+                        || userData?.message
+                        || `Could not resolve user: ${email}`;
+                    throw new Error(msg);
+                }
+                if (userData?.user?.id) {
+                    allowedUserIds.push(userData.user.id);
+                }
+            }
+
+            const response = await fetch(`${API_URL}/api/files/${file.id}/share-links`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    expiresInHours: Number(this.shareDurationHours || 72),
+                    allowedUserIds,
+                    shareMode: 'whole_file',
+                    viewerKind: 'slicer-gui'
+                })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                this.shareDialogError = data?.error?.message
+                    || data?.message
+                    || 'Failed to create share link';
+                return;
+            }
+
+            const shareUrl = data?.shareLink?.url;
+            if (!shareUrl) {
+                this.shareDialogError = 'Share link was created but no URL was returned';
+                return;
+            }
+
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(shareUrl);
+                this.showToast(`Simplified Viewer share link copied for ${this.displayTitleForFile(file)}`);
+            } else {
+                this.showToast(`Share link: ${shareUrl}`);
+            }
+            this.closeShareDialog();
+        } catch (err) {
+            console.error('Share link creation error:', err);
+            this.shareDialogError = err.message || 'Failed to create share link';
+        } finally {
+            this.sharingFileId = null;
+        }
+    }
+
     async handleDeleteFile(file) {
         if (!this.canDeleteProjectFiles) return;
         const confirmed = window.confirm(`Delete ${file.originalName}?`);
@@ -3699,6 +3861,21 @@ export class ProjectReviewPage extends LitElement {
                                                 <path fill="currentColor" d="M5 20h14v-2H5v2zm7-18v10.17l3.59-3.58L17 10l-5 5-5-5 1.41-1.41L11 12.17V2h2z"></path>
                                             </svg>
                                         </button>
+                                        ${this.canUploadFiles && this.isMrbFile(file) ? html`
+                                            <button
+                                                slot="actions"
+                                                class="file-icon-button"
+                                                type="button"
+                                                aria-label="Create Simplified Viewer share link"
+                                                title="Share Simplified Viewer link"
+                                                ?disabled=${this.sharingFileId === file.id}
+                                                @click=${() => this.openShareDialog(file)}
+                                            >
+                                                <svg class="file-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                                    <path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"></path>
+                                                </svg>
+                                            </button>
+                                        ` : ''}
                                         ${this.canDeleteProjectFiles ? html`
                                             <button
                                                 slot="actions"
@@ -4106,6 +4283,60 @@ export class ProjectReviewPage extends LitElement {
             ` : ''}
             ${this.toastMessage ? html`
                 <div class="toast" role="status" aria-live="polite">${this.toastMessage}</div>
+            ` : ''}
+            ${this.showShareDialog ? html`
+                <div class="share-dialog-overlay" @click=${(e) => { if (e.target === e.currentTarget) this.closeShareDialog(); }}>
+                    <div class="share-dialog">
+                        <h3>Share Simplified Viewer</h3>
+                        <div><strong>File:</strong> ${this.displayTitleForFile(this.shareTargetFile) || ''}</div>
+                        <p class="share-help">
+                            Recipients open Simplified Viewer (developer mode) for this scene.
+                            Current-view sharing is not included in this pass.
+                        </p>
+                        ${this.shareDialogError ? html`
+                            <div class="share-dialog-error">${this.shareDialogError}</div>
+                        ` : ''}
+                        <div class="share-field">
+                            <label for="projectShareDuration">Link duration</label>
+                            <dropdown-select
+                                id="projectShareDuration"
+                                fullwidth
+                                .value=${String(this.shareDurationHours)}
+                                .options=${[
+                                    { value: '1', label: '1 hour' },
+                                    { value: '24', label: '24 hours' },
+                                    { value: '72', label: '3 days' },
+                                    { value: '168', label: '7 days' },
+                                    { value: '720', label: '30 days' }
+                                ]}
+                                aria-label="Link duration"
+                                @change=${(e) => { this.shareDurationHours = Number(e.target.value); }}
+                            ></dropdown-select>
+                        </div>
+                        <div class="share-field">
+                            <label for="projectShareEmails">Restrict to users (optional, comma-separated emails)</label>
+                            <input
+                                id="projectShareEmails"
+                                type="text"
+                                .value=${this.shareAllowedEmails}
+                                @input=${(e) => { this.shareAllowedEmails = e.target.value; }}
+                                placeholder="alice@example.com, bob@example.com"
+                            />
+                            <div class="share-help">Leave empty for anyone with the link. If set, recipients must sign in.</div>
+                        </div>
+                        <div class="share-dialog-actions">
+                            <button class="secondary-button" type="button" @click=${() => this.closeShareDialog()}>Cancel</button>
+                            <button
+                                class="primary-button"
+                                type="button"
+                                @click=${() => this.createShareLink()}
+                                ?disabled=${this.sharingFileId === this.shareTargetFile?.id}
+                            >
+                                ${this.sharingFileId === this.shareTargetFile?.id ? 'Creating…' : 'Create link'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
             ` : ''}
         `;
     }

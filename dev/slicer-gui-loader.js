@@ -7,6 +7,7 @@ import {
 
 const params = new URLSearchParams(window.location.search);
 let projectId = params.get('projectId') || '';
+const shareToken = params.get('shareToken') || '';
 let fileName = params.get('fileName') || '';
 const simplified = params.get('simplified') === '1';
 const embedded = params.get('embed') === '1';
@@ -24,6 +25,14 @@ const reconnectBtn = document.getElementById('reconnect');
 const viewer = document.getElementById('viewer');
 
 function sessionEndpoints() {
+    if (shareToken) {
+        return getViewerSessionEndpoints({
+            kind: VIEWER_KINDS.SLICER_GUI,
+            sessionScope: 'share',
+            shareToken,
+            apiUrl: ''
+        });
+    }
     if (!projectId) return null;
     return getViewerSessionEndpoints({
         kind: VIEWER_KINDS.SLICER_GUI,
@@ -159,6 +168,13 @@ async function reconnectSession() {
 }
 
 async function ensureViewerSession() {
+    if (shareToken) {
+        if (sessionToken && await heartbeatSession(sessionToken)) {
+            return true;
+        }
+        // Share links have no reconnect endpoint; keep going if token was issued.
+        return Boolean(sessionToken);
+    }
     if (!projectId) {
         return true;
     }
@@ -172,9 +188,10 @@ async function ensureViewerSession() {
 }
 
 function startLifecycle() {
-    // When embedded in the app iframe, the parent page owns heartbeat/stop.
+    // When embedded in the app iframe, the parent page owns heartbeat/stop —
+    // except share links, where the shell does not run Full Slicer heartbeats.
     const endpoints = sessionEndpoints();
-    if (embedded || !endpoints || !sessionToken) {
+    if ((embedded && !shareToken) || !endpoints || !sessionToken) {
         return;
     }
     lifecycle?.stopHeartbeat?.();

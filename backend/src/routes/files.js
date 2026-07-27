@@ -7,7 +7,7 @@ import https from 'https';
 import jwt from 'jsonwebtoken';
 import File from '../models/File.js';
 import Project from '../models/Project.js';
-import ShareLink from '../models/ShareLink.js';
+import ShareLink, { SHARE_VIEWER_KINDS } from '../models/ShareLink.js';
 import db from '../db/database.js';
 import config from '../config/index.js';
 import objectStorage from '../storage/index.js';
@@ -16,6 +16,23 @@ import { authenticateToken } from '../middleware/authMiddleware.js';
 import { createRateLimiter, getRateLimitClientIp } from '../middleware/rateLimit.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { ValidationError, NotFoundError, ForbiddenError } from '../utils/errors.js';
+import {
+    ensureSlicerGuiSession,
+    touchSlicerGuiSessionHeartbeat,
+    releaseSlicerGuiSession
+} from '../slicerGui/sessionManager.js';
+import { stageProjectFileForSlicerGui } from '../slicerGui/stageFile.js';
+import {
+    buildSlicerGuiViewerPath,
+    writeLastLoadedFile
+} from '../slicerGui/paths.js';
+import {
+    getSessionTtlSeconds,
+    getWarmIdleTtlSeconds,
+    SESSION_KINDS
+} from '../sessions/index.js';
+import { normalizeViewerReleaseMode } from '../sessions/config.js';
+import { patchSessionMetadata } from '../sessions/leaseRegistry.js';
 
 const TRAME_SERVICE_URL = process.env.TRAME_SERVICE_URL || 'http://localhost:8090';
 
@@ -142,6 +159,38 @@ function parseAllowedUserIds(rawValue) {
 
 function parseShareMode(rawValue) {
     return rawValue === 'current_view' ? 'current_view' : 'whole_file';
+}
+
+function parseViewerKind(rawValue) {
+    return rawValue === SHARE_VIEWER_KINDS.SLICER_GUI
+        ? SHARE_VIEWER_KINDS.SLICER_GUI
+        : SHARE_VIEWER_KINDS.TRAME;
+}
+
+function isMrbFileName(name) {
+    return String(name || '').toLowerCase().endsWith('.mrb');
+}
+
+async function resolveShareLinkOrThrow(token) {
+    const share = ShareLink.findByToken(token);
+    if (!share || ShareLink.isExpired(share)) {
+        throw new NotFoundError('Share link is invalid or expired');
+    }
+    return share;
+}
+
+async function authorizeShareAccess(req, share) {
+    const requester = getOptionalAuthenticatedUser(req);
+    const allowedUserIds = ShareLink.getAllowedUserIds(share);
+    if (allowedUserIds.length > 0) {
+        if (!requester) {
+            throw new ForbiddenError('This shared file requires sign in');
+        }
+        if (!allowedUserIds.includes(Number(requester.id))) {
+            throw new ForbiddenError('You are not permitted to open this shared file');
+        }
+    }
+    return requester;
 }
 
 const createShareLinkRateLimit = createRateLimiter({
@@ -386,10 +435,19 @@ export default function fileRoutes(app) {
         }
         const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString();
         const allowedUserIds = parseAllowedUserIds(req.body?.allowedUserIds);
-        const shareMode = parseShareMode(req.body?.shareMode);
+        const viewerKind = parseViewerKind(req.body?.viewerKind);
+        let shareMode = parseShareMode(req.body?.shareMode);
         const viewState = req.body?.viewState && typeof req.body.viewState === 'object'
             ? req.body.viewState
             : null;
+
+        // Project Simplified Viewer shares: whole file only for this pass.
+        if (viewerKind === SHARE_VIEWER_KINDS.SLICER_GUI) {
+            shareMode = 'whole_file';
+            if (!isMrbFileName(file.original_name)) {
+                throw new ValidationError('Simplified Viewer share links are only supported for MRB files');
+            }
+        }
         if (shareMode === 'current_view' && !viewState) {
             throw new ValidationError('viewState is required when shareMode is current_view');
         }
@@ -401,7 +459,8 @@ export default function fileRoutes(app) {
             expiresAt,
             allowedUserIds,
             shareMode,
-            viewState
+            viewState: shareMode === 'current_view' ? viewState : null,
+            viewerKind
         });
 
         const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
@@ -416,13 +475,14 @@ export default function fileRoutes(app) {
                 expiresAt: share.expiresAt,
                 readOnly: true,
                 allowedUserIds: share.allowedUserIds,
-                shareMode: share.shareMode
+                shareMode: share.shareMode,
+                viewerKind: share.viewerKind
             }
         });
     }));
 
     /**
-     * Launch read-only session from a share token
+     * Launch read-only session from a share token (Trame or Simplified Viewer).
      */
     app.get(
         '/api/share-links/:token/launch',
@@ -434,21 +494,10 @@ export default function fileRoutes(app) {
             throw new ValidationError('Share token is required');
         }
 
-        const share = ShareLink.findByToken(token);
-        if (!share || ShareLink.isExpired(share)) {
-            throw new NotFoundError('Share link is invalid or expired');
-        }
-        const requester = getOptionalAuthenticatedUser(req);
-        const allowedUserIds = ShareLink.getAllowedUserIds(share);
+        const share = await resolveShareLinkOrThrow(token);
+        await authorizeShareAccess(req, share);
         const viewState = ShareLink.getViewState(share);
-        if (allowedUserIds.length > 0) {
-            if (!requester) {
-                throw new ForbiddenError('This shared file requires sign in');
-            }
-            if (!allowedUserIds.includes(Number(requester.id))) {
-                throw new ForbiddenError('You are not permitted to open this shared file');
-            }
-        }
+        const viewerKind = ShareLink.getViewerKind(share);
 
         const file = File.findById(Number(share.file_id));
         if (!file) {
@@ -460,6 +509,81 @@ export default function fileRoutes(app) {
         }
 
         const sessionUserId = `share-${share.id}`;
+
+        // --- Simplified Viewer (Full Slicer seat, developer mode) ---
+        if (viewerKind === SHARE_VIEWER_KINDS.SLICER_GUI) {
+            const useSimplifiedViewer = true;
+            let session;
+            try {
+                session = await ensureSlicerGuiSession({
+                    userId: sessionUserId,
+                    seatId: 1,
+                    preferFileId: file.id,
+                    useSimplifiedViewer,
+                    requireSlicerUiReady: true
+                });
+            } catch (err) {
+                throw new ValidationError(
+                    err.message || 'Unable to start Simplified Viewer for this share link'
+                );
+            }
+            const seatId = session.seatId || 1;
+            const sameFileAlreadyLoaded = session.reused === true
+                && session.sceneLoaded === true
+                && Number(session.lastLoadedFileId) === file.id;
+
+            let staged;
+            let sceneReloaded = true;
+            if (sameFileAlreadyLoaded) {
+                sceneReloaded = false;
+                staged = {
+                    fileName: file.original_name,
+                    useSimplifiedViewer: true,
+                    skipped: true
+                };
+            } else {
+                staged = await stageProjectFileForSlicerGui({
+                    file,
+                    launcherUserId: sessionUserId,
+                    useSimplifiedViewer: true,
+                    seatId
+                });
+                patchSessionMetadata(SESSION_KINDS.SLICER_GUI, session.sessionKey, {
+                    lastLoadedFileId: file.id,
+                    lastLoadedFileName: staged.fileName,
+                    sceneLoaded: false
+                });
+                writeLastLoadedFile(sessionUserId, {
+                    fileId: file.id,
+                    fileName: staged.fileName,
+                    useSimplifiedViewer: true,
+                    sceneLoaded: false,
+                    seatId
+                });
+            }
+
+            File.touchLastViewed(file.id);
+            const viewerPath = buildSlicerGuiViewerPath(sessionUserId, seatId);
+            return res.json({
+                viewerKind: SHARE_VIEWER_KINDS.SLICER_GUI,
+                vncPath: viewerPath,
+                sessionToken: session.sessionToken,
+                seatId,
+                useSimplifiedViewer: true,
+                sessionReused: session.reused === true,
+                sceneReloaded,
+                file: {
+                    id: file.id,
+                    originalName: file.original_name
+                },
+                readOnly: true,
+                shareMode: 'whole_file',
+                sessionTtlSeconds: getSessionTtlSeconds(SESSION_KINDS.SLICER_GUI),
+                warmIdleSeconds: getWarmIdleTtlSeconds(SESSION_KINDS.SLICER_GUI)
+            });
+        }
+
+        // --- Trame (My Files default) ---
         objectStorage.ensureUserDir(sessionUserId);
         const sharedName = `shared-${file.id}-${path.basename(objectKey)}`;
         await objectStorage.ensureStagedCopy({
@@ -468,13 +592,7 @@ export default function fileRoutes(app) {
             fileName: sharedName
         });
 
-        let sessionData = null;
-        let viewStateApplied = false;
-        let viewStateApplyError = null;
-        let viewStateApplyDebug = null;
-
-        // Start session first; this is required and should fail request if unavailable.
-        sessionData = await httpRequestWithRetry(`${TRAME_SERVICE_URL}/api/sessions/start`, {
+        const sessionData = await httpRequestWithRetry(`${TRAME_SERVICE_URL}/api/sessions/start`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -487,16 +605,11 @@ export default function fileRoutes(app) {
             }
         }, 2, 500);
 
-        // Replay is applied later from the shared viewer after iframe load.
-        viewStateApplied = !viewState;
-        viewStateApplyError = null;
-        viewStateApplyDebug = null;
-
         const frontendUrl = buildViewerFrontendUrl(req, sessionData.userId, sessionData.port);
-
         File.touchLastViewed(file.id);
 
         res.json({
+            viewerKind: SHARE_VIEWER_KINDS.TRAME,
             frontendUrl,
             file: {
                 id: file.id,
@@ -504,12 +617,75 @@ export default function fileRoutes(app) {
             },
             readOnly: true,
             shareMode: share.share_mode || 'whole_file',
-            viewStateApplied,
-            viewStateApplyError,
-            viewStateApplyDebug
+            viewStateApplied: !viewState,
+            viewStateApplyError: null,
+            viewStateApplyDebug: null
         });
         })
     );
+
+    app.post('/api/share-links/:token/full-slicer-heartbeat',
+        launchShareLinkPerIpRateLimit,
+        asyncHandler(async (req, res) => {
+            const token = (req.params.token || '').trim();
+            const share = await resolveShareLinkOrThrow(token);
+            await authorizeShareAccess(req, share);
+            if (ShareLink.getViewerKind(share) !== SHARE_VIEWER_KINDS.SLICER_GUI) {
+                throw new ValidationError('This share link does not use Simplified Viewer');
+            }
+
+            const sessionToken = String(req.body?.sessionToken || '').trim();
+            if (!sessionToken) {
+                throw new ValidationError('sessionToken is required');
+            }
+
+            const lease = touchSlicerGuiSessionHeartbeat({
+                userId: `share-${share.id}`,
+                sessionToken,
+                seatId: Number(req.body?.seatId) || 1
+            });
+            if (!lease) {
+                return res.status(404).json({
+                    error: { message: 'Full Slicer session not found or expired' }
+                });
+            }
+
+            res.json({
+                success: true,
+                seatId: lease.metadata?.seatId ?? 1,
+                leaseExpiresAt: new Date(lease.leaseExpiresAt).toISOString(),
+                sessionTtlSeconds: getSessionTtlSeconds(SESSION_KINDS.SLICER_GUI)
+            });
+        }));
+
+    app.post('/api/share-links/:token/full-slicer-stop',
+        launchShareLinkPerIpRateLimit,
+        asyncHandler(async (req, res) => {
+            const token = (req.params.token || '').trim();
+            const share = await resolveShareLinkOrThrow(token);
+            await authorizeShareAccess(req, share);
+            if (ShareLink.getViewerKind(share) !== SHARE_VIEWER_KINDS.SLICER_GUI) {
+                throw new ValidationError('This share link does not use Simplified Viewer');
+            }
+
+            const sessionToken = String(req.body?.sessionToken || '').trim();
+            if (!sessionToken) {
+                throw new ValidationError('sessionToken is required');
+            }
+
+            const mode = normalizeViewerReleaseMode(req.body?.mode, { supportsSoft: true });
+            const result = await releaseSlicerGuiSession({
+                userId: `share-${share.id}`,
+                sessionToken,
+                seatId: Number(req.body?.seatId) || 1,
+                mode
+            });
+
+            res.json({
+                success: true,
+                ...result
+            });
+        }));
 
     /**
      * Re-apply shared view state after viewer iframe is loaded.
@@ -526,6 +702,9 @@ export default function fileRoutes(app) {
         const share = ShareLink.findByToken(token);
         if (!share || ShareLink.isExpired(share)) {
             throw new NotFoundError('Share link is invalid or expired');
+        }
+        if (ShareLink.getViewerKind(share) === SHARE_VIEWER_KINDS.SLICER_GUI) {
+            return res.json({ applied: true, skipped: true, reason: 'slicer_gui_no_view_state' });
         }
 
         const viewState = ShareLink.getViewState(share);

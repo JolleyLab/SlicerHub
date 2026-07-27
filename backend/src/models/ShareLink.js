@@ -3,6 +3,11 @@ import db from '../db/database.js';
 
 const DEFAULT_EXPIRATION_HOURS = 72;
 
+export const SHARE_VIEWER_KINDS = Object.freeze({
+    TRAME: 'trame',
+    SLICER_GUI: 'slicer-gui'
+});
+
 class ShareLink {
     static create({
         fileId,
@@ -11,16 +16,23 @@ class ShareLink {
         readOnly = true,
         allowedUserIds = [],
         shareMode = 'whole_file',
-        viewState = null
+        viewState = null,
+        viewerKind = SHARE_VIEWER_KINDS.TRAME
     }) {
         const token = crypto.randomBytes(24).toString('hex');
         const effectiveExpiresAt = expiresAt || new Date(Date.now() + DEFAULT_EXPIRATION_HOURS * 60 * 60 * 1000).toISOString();
         const normalizedAllowedUserIds = Array.isArray(allowedUserIds)
             ? [...new Set(allowedUserIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))]
             : [];
+        const kind = viewerKind === SHARE_VIEWER_KINDS.SLICER_GUI
+            ? SHARE_VIEWER_KINDS.SLICER_GUI
+            : SHARE_VIEWER_KINDS.TRAME;
         const stmt = db.prepare(`
-            INSERT INTO share_links (token, file_id, created_by_user_id, expires_at, read_only, allowed_user_ids, share_mode, view_state_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO share_links (
+                token, file_id, created_by_user_id, expires_at, read_only,
+                allowed_user_ids, share_mode, view_state_json, viewer_kind
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         const result = stmt.run(
@@ -31,7 +43,8 @@ class ShareLink {
             readOnly ? 1 : 0,
             JSON.stringify(normalizedAllowedUserIds),
             shareMode,
-            viewState ? JSON.stringify(viewState) : null
+            viewState ? JSON.stringify(viewState) : null,
+            kind
         );
 
         return {
@@ -43,7 +56,8 @@ class ShareLink {
             readOnly: !!readOnly,
             allowedUserIds: normalizedAllowedUserIds,
             shareMode,
-            viewState: viewState || null
+            viewState: viewState || null,
+            viewerKind: kind
         };
     }
 
@@ -78,6 +92,12 @@ class ShareLink {
         } catch (_) {
             return null;
         }
+    }
+
+    static getViewerKind(shareLink) {
+        return shareLink?.viewer_kind === SHARE_VIEWER_KINDS.SLICER_GUI
+            ? SHARE_VIEWER_KINDS.SLICER_GUI
+            : SHARE_VIEWER_KINDS.TRAME;
     }
 }
 

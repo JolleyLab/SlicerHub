@@ -35,11 +35,25 @@ export function getViewerSessionEndpoints({
     kind,
     projectId = null,
     sessionScope = 'project',
+    shareToken = null,
     apiUrl = API_URL
 } = {}) {
     if (kind === VIEWER_KINDS.SLICER_GUI) {
         if (sessionScope === 'directus') {
             const base = `${apiUrl}/api/directus`;
+            return {
+                baseUrl: base,
+                heartbeatUrl: `${base}/full-slicer-heartbeat`,
+                stopUrl: `${base}/full-slicer-stop`,
+                reconnectUrl: null,
+                statusUrl: null
+            };
+        }
+        if (sessionScope === 'share') {
+            if (!shareToken) {
+                throw new Error('shareToken is required for share Full Slicer session endpoints');
+            }
+            const base = `${apiUrl}/api/share-links/${encodeURIComponent(shareToken)}`;
             return {
                 baseUrl: base,
                 heartbeatUrl: `${base}/full-slicer-heartbeat`,
@@ -101,6 +115,7 @@ export function buildSlicerGuiLoaderUrl({
     vncPath = '',
     sessionToken = '',
     seatId = null,
+    shareToken = '',
     simplified = false,
     embed = false,
     quick = false,
@@ -133,6 +148,9 @@ export function buildSlicerGuiLoaderUrl({
     }
     if (seatId != null && seatId !== '') {
         loader.searchParams.set('seatId', String(seatId));
+    }
+    if (shareToken) {
+        loader.searchParams.set('shareToken', String(shareToken));
     }
 
     const rawVnc = vncPath || '/slicer-gui/vnc_lite.html?path=slicer-gui/websockify&autoconnect=true&scale=true';

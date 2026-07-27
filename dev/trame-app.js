@@ -17,6 +17,7 @@ import './MyProjects/projectReviewPage.js';
 import './user-settings-page.js';
 import './directus-cases-page.js';
 import { resolveTramePageUrl } from './utils/trameViewerUrl.js';
+import { buildSlicerGuiLoaderUrl, VIEWER_KINDS } from './utils/viewerLaunch.js';
 import {
   installViewerActivityListeners,
   markViewerActivity,
@@ -222,6 +223,7 @@ export class TrameApp extends LitElement {
       shareErrorStatus: { type: Number },
       shareIframeUrl: { type: String },
       shareFileName: { type: String },
+      shareViewerKind: { type: String },
       shareReplayStatus: { type: String },
       logoutBillingBusy: { type: Boolean },
       logoutBillingMode: { type: String },
@@ -253,6 +255,7 @@ export class TrameApp extends LitElement {
     this.shareErrorStatus = 0;
     this.shareIframeUrl = '';
     this.shareFileName = '';
+    this.shareViewerKind = '';
     this.shareReplayStatus = '';
     this.shareReplayPollTimer = null;
     this.shareReplayAttempts = 0;
@@ -862,7 +865,9 @@ export class TrameApp extends LitElement {
       return html`
         <div class="header">
           <div class="user-info">
-            <span class="user-name">Shared Read-Only Viewer: ${this.shareFileName || 'File'}</span>
+            <span class="user-name">${this.shareViewerKind === VIEWER_KINDS.SLICER_GUI
+              ? `Shared Simplified Viewer: ${this.shareFileName || 'File'}`
+              : `Shared Read-Only Viewer: ${this.shareFileName || 'File'}`}</span>
             ${this.shareReplayStatus ? html`<span style="margin-left:10px; color:#666; font-size:12px;">${this.shareReplayStatus}</span>` : ''}
           </div>
         </div>
@@ -1228,6 +1233,31 @@ export class TrameApp extends LitElement {
         return;
       }
 
+      this.shareFileName = data?.file?.originalName || 'Shared file';
+      this.shareReplayStatus = '';
+      this.shareViewerKind = data?.viewerKind === VIEWER_KINDS.SLICER_GUI
+        ? VIEWER_KINDS.SLICER_GUI
+        : VIEWER_KINDS.TRAME;
+
+      if (this.shareViewerKind === VIEWER_KINDS.SLICER_GUI) {
+        if (!data?.vncPath || !data?.sessionToken) {
+          this.shareError = 'Unable to open shared Simplified Viewer';
+          return;
+        }
+        this.shareIframeUrl = buildSlicerGuiLoaderUrl({
+          fileId: data.file?.id,
+          fileName: this.shareFileName,
+          vncPath: data.vncPath,
+          sessionToken: data.sessionToken,
+          seatId: data.seatId,
+          shareToken: this.shareToken,
+          simplified: true,
+          embed: true,
+          quick: data.sessionReused === true && data.sceneReloaded === false
+        });
+        return;
+      }
+
       const url = data?.frontendUrl;
       if (!url) {
         this.shareError = 'Unable to open shared viewer';
@@ -1235,8 +1265,6 @@ export class TrameApp extends LitElement {
       }
 
       this.shareIframeUrl = url;
-      this.shareFileName = data?.file?.originalName || 'Shared file';
-      this.shareReplayStatus = '';
     } catch (err) {
       console.error('Shared viewer launch error:', err);
       this.shareError = 'Failed to load shared viewer';
@@ -1248,6 +1276,7 @@ export class TrameApp extends LitElement {
 
   async handleSharedIframeLoad() {
     if (!this.shareToken) return;
+    if (this.shareViewerKind === VIEWER_KINDS.SLICER_GUI) return;
     this.startSharedReplayPolling();
   }
 
