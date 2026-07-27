@@ -66,6 +66,29 @@ ensure_sandbox_extension() {
 
 ensure_sandbox_extension
 
+ensure_developer_mode() {
+  # ScriptedLoadableModuleWidget reads Developer/DeveloperMode at widget init.
+  # Set it in Slicer.ini before Slicer starts so SimplifiedViewer picks it up.
+  local ini="/home/slicer/.config/slicer.org/Slicer.ini"
+  mkdir -p "$(dirname "$ini")"
+  if [ -f "$ini" ]; then
+    if grep -q '^\[Developer\]' "$ini"; then
+      if grep -q '^DeveloperMode=' "$ini"; then
+        sed -i 's/^DeveloperMode=.*/DeveloperMode=true/' "$ini"
+      else
+        sed -i '/^\[Developer\]/a DeveloperMode=true' "$ini"
+      fi
+    else
+      printf '\n[Developer]\nDeveloperMode=true\n' >> "$ini"
+    fi
+  else
+    printf '[Developer]\nDeveloperMode=true\n' > "$ini"
+  fi
+  echo "[launch-slicer] DeveloperMode=true in ${ini}"
+}
+
+ensure_developer_mode
+
 launch_cmd=(/opt/Slicer/Slicer --no-splash)
 
 SIMPLIFIED_VIEWER_PATH="${SLICER_SIMPLIFIED_VIEWER_PATH:-/opt/slicer-modules/SimplifiedViewer}"

@@ -3,7 +3,7 @@ set -e
 
 CLOUDFLARE_PID=""
 VNC_EXTRA_ARGS=()
-NOVNC_PARAMS="autoconnect=true&resize=scale"
+NOVNC_PARAMS="autoconnect=true&resize=remote"
 
 setup_vnc_auth() {
   if [ "${VNC_ALLOW_NO_PASSWORD:-true}" = "false" ] || [ "${VNC_ALLOW_NO_PASSWORD:-true}" = "0" ]; then
@@ -94,7 +94,7 @@ cat > /opt/novnc/index.html << HTML
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="refresh" content="0; url=vnc.html?${NOVNC_PARAMS}">
+  <meta http-equiv="refresh" content="0; url=vnc_lite.html?${NOVNC_PARAMS}">
   <title>Slicer</title>
 </head>
 <body></body>
@@ -193,7 +193,7 @@ echo "3D Slicer with noVNC is running!"
 echo "========================================"
 echo ""
 echo "Local Access:"
-echo "  Web browser: http://localhost:6080/vnc.html"
+echo "  Web browser: http://localhost:6080/vnc_lite.html"
 echo "  VNC Port: 5901"
 [ -n "${CLOUDFLARE_TUNNEL_TOKEN}" ] && echo "  Cloudflare Tunnel: Active" || echo "  Cloudflare Tunnel: Not configured"
 echo ""

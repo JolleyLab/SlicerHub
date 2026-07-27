@@ -347,8 +347,63 @@ def module_is_registered(name: str) -> bool:
     return hasattr(slicer.modules, target) or hasattr(slicer.modules, name)
 
 
+def enable_developer_mode() -> None:
+    """Enable Slicer developer mode (reload UI, SimplifiedViewer full-interface action)."""
+    try:
+        from qt import QSettings
+        settings = QSettings()
+        settings.setValue("Developer/DeveloperMode", True)
+        settings.sync()
+        log("[slicer_session] Developer/DeveloperMode enabled")
+    except Exception as exc:
+        log(f"[slicer_session] Could not enable DeveloperMode: {exc}")
+
+
+def enable_simplified_viewer_developer_ui(widget) -> None:
+    """developerMode is snapshotted at widget init; force UI bits after we enable settings.
+
+    SimplifiedViewer only adds the Settings gear when developerMode is true during setup().
+    If the widget was created before DeveloperMode was enabled, re-parent the gear now.
+    """
+    if widget is None:
+        return
+    try:
+        widget.developerMode = True
+        action = getattr(widget, "fullSlicerInterfaceAction", None)
+        if action is not None:
+            action.setVisible(True)
+
+        settings_button = getattr(widget, "settingsButton", None)
+        top_left = getattr(widget, "topLeftWidget", None)
+        if settings_button is not None and top_left is not None:
+            parent = settings_button.parent()
+            if parent is None or parent != top_left:
+                layout = top_left.layout()
+                if layout is not None:
+                    button_size = getattr(widget, "buttonSize", 40)
+                    spacing = getattr(widget, "spacing", 4)
+                    settings_button.setFixedSize(button_size, button_size)
+                    # Insert before the trailing stretch (last item).
+                    insert_at = max(0, layout.count() - 1)
+                    layout.insertWidget(insert_at, settings_button)
+                    button_count = layout.count() - 1  # exclude stretch
+                    if button_count > 0:
+                        top_left.setFixedWidth(
+                            button_count * button_size + max(0, button_count - 1) * spacing
+                        )
+                    settings_button.show()
+                    top_left.show()
+                    log("[slicer_session] Added SimplifiedViewer Settings button for developer mode")
+
+        log("[slicer_session] SimplifiedViewer developer UI enabled")
+    except Exception as exc:
+        log(f"[slicer_session] Could not enable SimplifiedViewer developer UI: {exc}")
+        log(traceback.format_exc())
+
+
 def hide_full_slicer_chrome() -> None:
     """Hide standard Slicer chrome even if SimplifiedViewer widget is unavailable."""
+    enable_developer_mode()
     try:
         from qt import QSettings
         settings = QSettings()
@@ -612,6 +667,8 @@ def apply_simplified_viewer_ui() -> bool:
         widget = find_simplified_viewer_widget()
 
     if widget is not None:
+        # Enable developer UI before collapsing chrome so the Settings gear is present.
+        enable_simplified_viewer_developer_ui(widget)
         widget.setFull3DSlicerInterfaceVisible(False)
         log("[slicer_session] SimplifiedViewer enabled")
         return True
@@ -665,13 +722,17 @@ def restore_full_slicer_ui() -> None:
 def maybe_apply_simplified_viewer(use_simplified_viewer: bool) -> None:
     global _viewer_mode_simplified
     try:
-        if _viewer_mode_simplified is use_simplified_viewer:
-            return
         if use_simplified_viewer:
+            # Always re-apply. FullInterfaceVisible is persisted in QSettings, and the
+            # developer "Show full 3D Slicer Interface" toggle hides the overlay gear,
+            # so reopen must force simplified chrome even when already in this mode.
             apply_simplified_viewer_ui()
-        else:
-            restore_full_slicer_ui()
-        _viewer_mode_simplified = use_simplified_viewer
+            _viewer_mode_simplified = True
+            return
+        if _viewer_mode_simplified is False:
+            return
+        restore_full_slicer_ui()
+        _viewer_mode_simplified = False
     except Exception as exc:
         mode = "SimplifiedViewer" if use_simplified_viewer else "Full Slicer"
         log(f"[slicer_session] Could not apply {mode} UI: {exc}")
@@ -1076,6 +1137,7 @@ def poll_open_requests() -> None:
 
 def start_polling() -> None:
     global _poll_timer
+    enable_developer_mode()
     clear_busy()
     clear_ready()
     _poll_timer = QTimer()

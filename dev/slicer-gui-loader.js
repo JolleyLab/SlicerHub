@@ -13,7 +13,7 @@ const embedded = params.get('embed') === '1';
 const quick = params.get('quick') === '1';
 let sessionToken = params.get('sessionToken') || '';
 const fileId = params.get('fileId') || '';
-let vncPath = params.get('vnc') || '/slicer-gui/vnc.html?autoconnect=true&resize=scale';
+let vncPath = params.get('vnc') || '/slicer-gui/vnc_lite.html?autoconnect=true&resize=remote';
 
 const splash = document.getElementById('splash');
 const title = document.getElementById('title');

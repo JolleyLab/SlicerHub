@@ -127,7 +127,7 @@ export function buildSlicerGuiLoaderUrl({
         loader.searchParams.set('sessionToken', sessionToken);
     }
 
-    const rawVnc = vncPath || '/slicer-gui/vnc.html?autoconnect=true&resize=scale';
+    const rawVnc = vncPath || '/slicer-gui/vnc_lite.html?autoconnect=true&resize=remote';
     let vncParam = rawVnc;
     try {
         const parsed = new URL(rawVnc, baseHref);

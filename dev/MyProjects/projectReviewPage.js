@@ -59,6 +59,8 @@ const GPU_PROVIDER_CONSOLE_URLS = {
     vast: 'https://cloud.vast.ai/instances/'
 };
 
+const FULLSCREEN_TIP_DISMISSED_KEY = 'slicer-web:fullscreen-tip-dismissed';
+
 export class ProjectReviewPage extends LitElement {
     static get styles() {
         return css`
@@ -151,6 +153,13 @@ export class ProjectReviewPage extends LitElement {
                 font-feature-settings: var(--font-feature-defaults);
             }
 
+            .iframe-overlay:fullscreen,
+            .iframe-overlay.is-fullscreen {
+                gap: 0;
+                padding: 0;
+                background: #090b14;
+            }
+
             .iframe-header {
                 display: flex;
                 justify-content: space-between;
@@ -163,12 +172,144 @@ export class ProjectReviewPage extends LitElement {
                 background: var(--color-primary);
                 color: var(--color-on-primary);
                 box-shadow: 0 6px 18px var(--color-shadow, rgba(0, 0, 0, 0.08));
+                position: relative;
+                z-index: 3;
+            }
+
+            /* Fullscreen: hide all app chrome so the viewer owns the whole surface.
+               Desktop: Exit with Escape. Touch: use the bottom Exit control. */
+            .iframe-overlay:fullscreen .iframe-header,
+            .iframe-overlay.is-fullscreen .iframe-header {
+                display: none;
+            }
+
+            .iframe-fs-exit {
+                display: none;
+            }
+
+            .fullscreen-tip-backdrop {
+                display: none;
+            }
+
+            .iframe-overlay:fullscreen .fullscreen-tip-backdrop,
+            .iframe-overlay.is-fullscreen .fullscreen-tip-backdrop {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                position: absolute;
+                inset: 0;
+                z-index: 6;
+                padding: max(20px, env(safe-area-inset-top, 0px)) 20px max(20px, env(safe-area-inset-bottom, 0px));
+                box-sizing: border-box;
+                background: rgba(8, 10, 18, 0.52);
+            }
+
+            .fullscreen-tip {
+                width: min(380px, 100%);
+                padding: 20px 20px 16px;
+                border-radius: var(--radius-lg);
+                border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+                background: var(--color-panel, var(--color-surface, var(--color-background)));
+                color: var(--color-text-primary);
+                box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+            }
+
+            .fullscreen-tip-title {
+                margin: 0 0 8px;
+                font-size: 1.1rem;
+                font-weight: 700;
+                line-height: 1.3;
+            }
+
+            .fullscreen-tip-body {
+                margin: 0;
+                font-size: 0.95rem;
+                line-height: 1.5;
+                color: var(--color-text-secondary, var(--color-text-primary));
+            }
+
+            .fullscreen-tip-body + .fullscreen-tip-body {
+                margin-top: 8px;
+            }
+
+            .fullscreen-tip-check {
+                display: flex;
+                align-items: flex-start;
+                gap: 10px;
+                margin: 16px 0 18px;
+                font-size: 0.9rem;
+                line-height: 1.35;
+                color: var(--color-text-primary);
+                cursor: pointer;
+                user-select: none;
+            }
+
+            .fullscreen-tip-check input {
+                margin: 2px 0 0;
+                flex: 0 0 auto;
+            }
+
+            .fullscreen-tip-actions {
+                display: flex;
+                justify-content: flex-end;
+            }
+
+            .fullscreen-tip-actions .primary-button {
+                min-width: 96px;
+            }
+
+            @media (pointer: coarse), (hover: none) {
+                .iframe-overlay:fullscreen .iframe-fs-exit,
+                .iframe-overlay.is-fullscreen .iframe-fs-exit {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    position: absolute;
+                    left: 50%;
+                    bottom: max(12px, env(safe-area-inset-bottom, 0px));
+                    transform: translateX(-50%);
+                    z-index: 5;
+                    min-height: 40px;
+                    padding: 8px 16px;
+                    border: none;
+                    border-radius: 999px;
+                    background: rgba(12, 16, 28, 0.78);
+                    color: #f4f6fb;
+                    font: inherit;
+                    font-size: 0.92rem;
+                    font-weight: 600;
+                    cursor: pointer;
+                    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+                    backdrop-filter: blur(6px);
+                }
+
+                .iframe-overlay:fullscreen .iframe-fs-exit:hover,
+                .iframe-overlay.is-fullscreen .iframe-fs-exit:hover,
+                .iframe-overlay:fullscreen .iframe-fs-exit:focus-visible,
+                .iframe-overlay.is-fullscreen .iframe-fs-exit:focus-visible {
+                    background: rgba(12, 16, 28, 0.92);
+                    outline: none;
+                }
+
+                .iframe-overlay:fullscreen .iframe-fs-exit:focus-visible,
+                .iframe-overlay.is-fullscreen .iframe-fs-exit:focus-visible {
+                    outline: 2px solid var(--color-focus, #8eb6ff);
+                    outline-offset: 2px;
+                }
             }
 
             :host-context([data-theme='dark']) .iframe-header {
                 background: color-mix(in srgb, var(--color-primary) 72%, #000);
                 border-color: color-mix(in srgb, var(--color-border) 75%, var(--color-primary));
                 box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+            }
+
+            .iframe-title-group {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                min-width: 0;
+                flex: 1;
             }
 
             .iframe-title {
@@ -178,6 +319,95 @@ export class ProjectReviewPage extends LitElement {
                 overflow: hidden;
                 text-overflow: ellipsis;
                 white-space: nowrap;
+            }
+
+            .iframe-more {
+                position: relative;
+                flex-shrink: 0;
+            }
+
+            .iframe-more-backdrop {
+                position: absolute;
+                inset: 0;
+                z-index: 2;
+                background: transparent;
+            }
+
+            .iframe-more-button {
+                border: none;
+                border-radius: var(--radius-md);
+                background: transparent;
+                color: inherit;
+                width: 32px;
+                height: 32px;
+                padding: 0;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                opacity: 0.82;
+            }
+
+            .iframe-more-button:hover,
+            .iframe-more-button:focus-visible,
+            .iframe-more-button[aria-expanded='true'] {
+                opacity: 1;
+                background: color-mix(in srgb, var(--color-on-primary) 16%, transparent);
+            }
+
+            .iframe-more-button:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-on-primary));
+                outline-offset: var(--focus-ring-offset, 2px);
+            }
+
+            .iframe-more-button:disabled {
+                opacity: 0.45;
+                cursor: not-allowed;
+            }
+
+            .iframe-more-button svg {
+                width: 18px;
+                height: 18px;
+                display: block;
+            }
+
+            .iframe-more-menu {
+                position: absolute;
+                top: calc(100% + 6px);
+                left: 0;
+                z-index: 4;
+                min-width: 190px;
+                padding: 4px;
+                border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+                border-radius: var(--radius-md);
+                background: var(--color-panel, var(--color-surface, var(--color-background)));
+                color: var(--color-text-primary);
+                box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+            }
+
+            .iframe-more-item {
+                display: block;
+                width: 100%;
+                border: none;
+                border-radius: var(--radius-sm);
+                background: transparent;
+                color: inherit;
+                font: inherit;
+                font-size: 0.92rem;
+                text-align: left;
+                padding: 8px 10px;
+                cursor: pointer;
+            }
+
+            .iframe-more-item:hover,
+            .iframe-more-item:focus-visible {
+                background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+                outline: none;
+            }
+
+            .iframe-more-item:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
             }
 
             .iframe-header-actions {
@@ -243,12 +473,25 @@ export class ProjectReviewPage extends LitElement {
                 box-shadow: 0 6px 18px var(--color-shadow, rgba(0, 0, 0, 0.08));
             }
 
+            .iframe-overlay:fullscreen .iframe-container,
+            .iframe-overlay.is-fullscreen .iframe-container {
+                border: none;
+                border-radius: 0;
+                box-shadow: none;
+                background: #090b14;
+            }
+
             .trame-iframe {
                 flex: 1;
                 border: none;
                 background: var(--color-surface, var(--color-background));
                 width: 100%;
                 height: 100%;
+            }
+
+            .iframe-overlay:fullscreen .trame-iframe,
+            .iframe-overlay.is-fullscreen .trame-iframe {
+                background: #090b14;
             }
 
             .loading-state {
@@ -842,6 +1085,8 @@ export class ProjectReviewPage extends LitElement {
             viewerSimplified: { type: Boolean },
             viewerLoading: { type: Boolean },
             viewerLoadingDetail: { type: String },
+            viewerFullscreen: { type: Boolean },
+            viewerMenuOpen: { type: Boolean },
             launchingFileId: { type: Number },
             currentFileName: { type: String },
             selectedFile: { type: Object },
@@ -877,7 +1122,9 @@ export class ProjectReviewPage extends LitElement {
             savingFileTitleId: { type: Number },
             editTitleFileId: { type: Number },
             editTitleDraft: { type: String },
-            editTitleOriginalName: { type: String }
+            editTitleOriginalName: { type: String },
+            fullscreenTipDontShowAgain: { type: Boolean },
+            showFullscreenTip: { type: Boolean }
         };
     }
 
@@ -904,6 +1151,8 @@ export class ProjectReviewPage extends LitElement {
         this.viewerSimplified = false;
         this.viewerLoading = false;
         this.viewerLoadingDetail = '';
+        this.viewerFullscreen = false;
+        this.viewerMenuOpen = false;
         this.launchingFileId = null;
         this.currentFileName = '';
         this.selectedFile = null;
@@ -941,6 +1190,8 @@ export class ProjectReviewPage extends LitElement {
         this.editTitleFileId = null;
         this.editTitleDraft = '';
         this.editTitleOriginalName = '';
+        this.fullscreenTipDontShowAgain = false;
+        this.showFullscreenTip = false;
         this._prestageHoverTimer = null;
         this._autoPrestageDone = false;
         this._fullSlicerWarmPromise = null;
@@ -998,11 +1249,13 @@ export class ProjectReviewPage extends LitElement {
             });
         };
         window.addEventListener('beforeunload', this._handleBeforeUnload);
+        this.attachViewerFullscreenListener();
     }
 
     disconnectedCallback() {
         window.removeEventListener('beforeunload', this._handleBeforeUnload);
         this._handleBeforeUnload = null;
+        this.detachViewerFullscreenListener();
         this.stopTrameHeartbeat();
         this.stopGpuBillingHeartbeat();
         this.stopGpuPolling();
@@ -2580,6 +2833,164 @@ export class ProjectReviewPage extends LitElement {
         }
     }
 
+    syncViewerFullscreenState() {
+        const overlay = this.renderRoot?.querySelector('.iframe-overlay');
+        const nativeActive = Boolean(document.fullscreenElement);
+        if (this._nativeFullscreenActive && !nativeActive) {
+            // Browser exited fullscreen (often Escape).
+            this._nativeFullscreenActive = false;
+            overlay?.classList.remove('is-fullscreen');
+            this.viewerFullscreen = false;
+            this.closeFullscreenTip();
+            return;
+        }
+        if (nativeActive) {
+            this._nativeFullscreenActive = true;
+            this.viewerFullscreen = true;
+        }
+    }
+
+    async toggleViewerFullscreen() {
+        if (this.viewerFullscreen) {
+            await this.exitViewerFullscreen();
+            return;
+        }
+
+        this.closeViewerMenu();
+        await this.enterViewerFullscreen();
+        if (!this.hasDismissedFullscreenTip()) {
+            this.openFullscreenTip();
+        }
+    }
+
+    hasDismissedFullscreenTip() {
+        try {
+            return localStorage.getItem(FULLSCREEN_TIP_DISMISSED_KEY) === '1';
+        } catch (_) {
+            return false;
+        }
+    }
+
+    openFullscreenTip() {
+        this.fullscreenTipDontShowAgain = false;
+        this.showFullscreenTip = true;
+    }
+
+    closeFullscreenTip() {
+        this.showFullscreenTip = false;
+    }
+
+    acknowledgeFullscreenTip() {
+        if (this.fullscreenTipDontShowAgain) {
+            try {
+                localStorage.setItem(FULLSCREEN_TIP_DISMISSED_KEY, '1');
+            } catch (_) {
+                /* ignore quota / private mode */
+            }
+        }
+        this.closeFullscreenTip();
+    }
+
+    async enterViewerFullscreen() {
+        const overlay = this.renderRoot?.querySelector('.iframe-overlay');
+        if (!overlay) return;
+
+        this.closeViewerMenu();
+
+        // Always apply the edge-to-edge layout. Native fullscreen alone is easy to miss
+        // because this overlay is already viewport-sized.
+        this.viewerFullscreen = true;
+        overlay.classList.add('is-fullscreen');
+
+        const requestFs = overlay.requestFullscreen
+            || overlay.webkitRequestFullscreen
+            || overlay.msRequestFullscreen;
+
+        try {
+            if (typeof requestFs === 'function') {
+                await requestFs.call(overlay);
+                this._nativeFullscreenActive = Boolean(document.fullscreenElement);
+            }
+        } catch (_) {
+            // CSS fullscreen still applies if the native API is blocked.
+            this._nativeFullscreenActive = false;
+        }
+    }
+
+    async exitViewerFullscreen() {
+        const overlay = this.renderRoot?.querySelector('.iframe-overlay');
+        try {
+            const exitFs = document.exitFullscreen
+                || document.webkitExitFullscreen
+                || document.msExitFullscreen;
+            if (document.fullscreenElement && typeof exitFs === 'function') {
+                await exitFs.call(document);
+            }
+        } catch (_) {
+            /* ignore */
+        }
+        overlay?.classList.remove('is-fullscreen');
+        this.viewerFullscreen = false;
+        this._nativeFullscreenActive = false;
+        this.closeFullscreenTip();
+    }
+
+    toggleViewerMenu(event) {
+        event?.stopPropagation?.();
+        if (this.iframeUrl === 'about:blank') return;
+        this.viewerMenuOpen = !this.viewerMenuOpen;
+    }
+
+    closeViewerMenu() {
+        this.viewerMenuOpen = false;
+    }
+
+    handleViewerMenuAction(action, event) {
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+        // Run while still in the user-gesture stack (needed for window.open / requestFullscreen).
+        if (action === 'fullscreen') {
+            this.toggleViewerFullscreen();
+        } else if (action === 'new-window') {
+            this.openViewerInNewWindow();
+            this.closeViewerMenu();
+        }
+    }
+
+    attachViewerFullscreenListener() {
+        if (this._onFullscreenChange) return;
+        this._onFullscreenChange = () => this.syncViewerFullscreenState();
+        this._onFullscreenKeydown = (event) => {
+            if (event.key !== 'Escape') return;
+            if (this.showFullscreenTip) {
+                this.acknowledgeFullscreenTip();
+                event.preventDefault();
+                return;
+            }
+            if (this.viewerMenuOpen) {
+                this.closeViewerMenu();
+                return;
+            }
+            // Native fullscreen is already exited by the browser; this covers CSS-only mode.
+            if (this.viewerFullscreen && !document.fullscreenElement) {
+                this.exitViewerFullscreen();
+            }
+        };
+        document.addEventListener('fullscreenchange', this._onFullscreenChange);
+        document.addEventListener('keydown', this._onFullscreenKeydown);
+    }
+
+    detachViewerFullscreenListener() {
+        if (this._onFullscreenChange) {
+            document.removeEventListener('fullscreenchange', this._onFullscreenChange);
+            this._onFullscreenChange = null;
+        }
+        if (this._onFullscreenKeydown) {
+            document.removeEventListener('keydown', this._onFullscreenKeydown);
+            this._onFullscreenKeydown = null;
+        }
+    }
+
     attachViewerIframeActivityTracking() {
         if (this._viewerIframeActivityCleanup) {
             this._viewerIframeActivityCleanup();
@@ -2691,6 +3102,8 @@ export class ProjectReviewPage extends LitElement {
      * (used when handing Full Slicer off to a standalone window).
      */
     detachViewerOverlay() {
+        this.exitViewerFullscreen();
+        this.closeViewerMenu();
         this.stopTrameHeartbeat();
         resetViewerActivity();
         if (this._viewerIframeActivityCleanup) {
@@ -2753,6 +3166,8 @@ export class ProjectReviewPage extends LitElement {
         const mode = releaseMode || defaultReleaseModeForClose(kind);
         const promptAfterClose = !skipOwnerBillingPrompt
             && this.shouldPromptTransferredOwnerOnViewerClose();
+        await this.exitViewerFullscreen();
+        this.closeViewerMenu();
         this.stopTrameHeartbeat();
         resetViewerActivity();
         if (this._viewerIframeActivityCleanup) {
@@ -3478,18 +3893,56 @@ export class ProjectReviewPage extends LitElement {
                 </div>
             </app-dialog>
             ${this.showIframe ? html`
-                <div class="iframe-overlay">
+                <div class="iframe-overlay ${this.viewerFullscreen ? 'is-fullscreen' : ''}">
+                    ${this.viewerMenuOpen ? html`
+                        <div
+                            class="iframe-more-backdrop"
+                            @click=${() => this.closeViewerMenu()}
+                        ></div>
+                    ` : ''}
                     <div class="iframe-header">
-                        <div class="iframe-title">${this.viewerChromeLabel}: ${this.currentFileName}</div>
+                        <div class="iframe-title-group">
+                            <div class="iframe-title">${this.viewerChromeLabel}: ${this.currentFileName}</div>
+                            <div class="iframe-more">
+                                <button
+                                    class="iframe-more-button"
+                                    type="button"
+                                    aria-label="Viewer options"
+                                    title="Viewer options"
+                                    aria-haspopup="menu"
+                                    aria-expanded=${this.viewerMenuOpen ? 'true' : 'false'}
+                                    ?disabled=${this.iframeUrl === 'about:blank'}
+                                    @click=${(e) => this.toggleViewerMenu(e)}
+                                >
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <circle cx="12" cy="5" r="1.8" fill="currentColor"></circle>
+                                        <circle cx="12" cy="12" r="1.8" fill="currentColor"></circle>
+                                        <circle cx="12" cy="19" r="1.8" fill="currentColor"></circle>
+                                    </svg>
+                                </button>
+                                ${this.viewerMenuOpen ? html`
+                                    <div class="iframe-more-menu" role="menu">
+                                        <button
+                                            class="iframe-more-item"
+                                            type="button"
+                                            role="menuitem"
+                                            @click=${(e) => this.handleViewerMenuAction('fullscreen', e)}
+                                        >
+                                            ${this.viewerFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                                        </button>
+                                        <button
+                                            class="iframe-more-item"
+                                            type="button"
+                                            role="menuitem"
+                                            @click=${(e) => this.handleViewerMenuAction('new-window', e)}
+                                        >
+                                            Open in new window
+                                        </button>
+                                    </div>
+                                ` : ''}
+                            </div>
+                        </div>
                         <div class="iframe-header-actions">
-                            <button
-                                class="secondary-button"
-                                type="button"
-                                ?disabled=${this.iframeUrl === 'about:blank'}
-                                @click=${() => this.openViewerInNewWindow()}
-                            >
-                                Open in new window
-                            </button>
                             <button
                                 class="primary-button"
                                 type="button"
@@ -3499,12 +3952,63 @@ export class ProjectReviewPage extends LitElement {
                             </button>
                         </div>
                     </div>
+                    <button
+                        class="iframe-fs-exit"
+                        type="button"
+                        aria-label="Exit fullscreen"
+                        @click=${() => this.exitViewerFullscreen()}
+                    >
+                        Exit fullscreen
+                    </button>
+                    ${this.showFullscreenTip ? html`
+                        <div
+                            class="fullscreen-tip-backdrop"
+                            @click=${(e) => {
+                                if (e.target === e.currentTarget) this.acknowledgeFullscreenTip();
+                            }}
+                        >
+                            <div
+                                class="fullscreen-tip"
+                                role="dialog"
+                                aria-modal="true"
+                                aria-labelledby="fullscreen-tip-title"
+                                @click=${(e) => e.stopPropagation()}
+                            >
+                                <h2 class="fullscreen-tip-title" id="fullscreen-tip-title">Leaving fullscreen</h2>
+                                <p class="fullscreen-tip-body">
+                                    Press Esc to exit fullscreen and restore the viewer controls.
+                                </p>
+                                <p class="fullscreen-tip-body">
+                                    On phones and tablets, use Exit fullscreen at the bottom of the screen.
+                                </p>
+                                <label class="fullscreen-tip-check">
+                                    <input
+                                        type="checkbox"
+                                        .checked=${this.fullscreenTipDontShowAgain}
+                                        @change=${(e) => {
+                                            this.fullscreenTipDontShowAgain = Boolean(e.target.checked);
+                                        }}
+                                    />
+                                    <span>Don't show this again</span>
+                                </label>
+                                <div class="fullscreen-tip-actions">
+                                    <button
+                                        class="primary-button"
+                                        type="button"
+                                        @click=${() => this.acknowledgeFullscreenTip()}
+                                    >
+                                        Got it
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    ` : ''}
                     <div class="iframe-container">
                         ${this.iframeUrl !== 'about:blank' ? html`
                             <iframe
                                 class="trame-iframe"
                                 src="${this.iframeUrl}"
-                                allow="clipboard-read; clipboard-write; cross-origin-isolated"
+                                allow="clipboard-read; clipboard-write; cross-origin-isolated; fullscreen"
                                 allowfullscreen
                                 frameborder="0"
                                 referrerpolicy="origin"

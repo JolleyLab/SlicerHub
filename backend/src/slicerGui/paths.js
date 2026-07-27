@@ -63,7 +63,7 @@ export function ensureSlicerGuiUserDir(userId) {
 
 export function buildSlicerGuiViewerPath(userId) {
     const safe = safeSlicerGuiUserId(userId);
-    return `/slicer-gui/user-${safe}/vnc.html?autoconnect=true&resize=scale`;
+    return `/slicer-gui/user-${safe}/vnc_lite.html?autoconnect=true&resize=remote`;
 }
 
 export function requestFilePath(userId) {
