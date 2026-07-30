@@ -35,11 +35,7 @@ if [ -z "${WIDTH}" ] || [ -z "${HEIGHT}" ]; then
   exit 1
 fi
 
-echo "Syncing X11 geometry to ${WIDTH}x${HEIGHT}"
-
-if command -v xrefresh >/dev/null 2>&1; then
-  xrefresh -white >/dev/null 2>&1 || true
-fi
+# Avoid xrefresh -white (can blank OpenGL viewports).
 
 if command -v xrandr >/dev/null 2>&1; then
   xrandr --query | awk '/ connected/{print $1}' | while read -r output; do
@@ -61,5 +57,3 @@ fi
 if command -v wmctrl >/dev/null 2>&1; then
   wmctrl -m >/dev/null 2>&1 || true
 fi
-
-echo "Screen geometry sync complete"

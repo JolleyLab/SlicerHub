@@ -25,8 +25,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     x11-utils \
     dbus-x11 \
     xauth \
-    tigervnc-standalone-server \
-    tigervnc-tools \
     x11-xserver-utils \
     wmctrl \
     && rm -rf /var/lib/apt/lists/*
@@ -114,8 +112,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && wget -q https://github.com/VirtualGL/virtualgl/releases/download/3.1.1/virtualgl_3.1.1_amd64.deb \
     -O /tmp/virtualgl.deb \
-    && dpkg -i /tmp/virtualgl.deb \
-    && rm /tmp/virtualgl.deb
+    && wget -q https://github.com/TurboVNC/turbovnc/releases/download/3.1.1/turbovnc_3.1.1_amd64.deb \
+    -O /tmp/turbovnc.deb \
+    && dpkg -i /tmp/virtualgl.deb /tmp/turbovnc.deb \
+    && rm -f /tmp/virtualgl.deb /tmp/turbovnc.deb \
+    && ln -sf /opt/TurboVNC/bin/Xvnc /usr/local/bin/Xvnc \
+    && ln -sf /opt/TurboVNC/bin/vncpasswd /usr/local/bin/vncpasswd
+
+ENV PATH="/opt/TurboVNC/bin:/opt/VirtualGL/bin:${PATH}"
 
 USER slicer
 WORKDIR /home/slicer

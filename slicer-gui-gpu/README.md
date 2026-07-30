@@ -10,7 +10,7 @@ We split the image so we can stop owning the heavy desktop stack when upstream p
 
 | Image | Dockerfile | Owns |
 |---|---|---|
-| `slicer-web-slicer-gui-base:local` | `Dockerfile.base` | CUDA, Slicer, noVNC, VirtualGL, `start.sh` — **replace with Hub tag later** |
+| `slicer-web-slicer-gui-base:local` | `Dockerfile.base` | CUDA, Slicer, noVNC, VirtualGL, **TurboVNC**, `start.sh` — **replace with Hub tag later** |
 | `slicer-web-slicer-gui:local` | `Dockerfile` | Open-request poller (`slicer_session.py`), `launch-slicer.sh`, optional SimplifiedViewer/Sandbox |
 
 Backend runtime uses **`SLICER_GUI_IMAGE`** (the adapter). Set **`SLICER_GUI_BASE_IMAGE`** when deriving from a published base.
@@ -79,7 +79,9 @@ docker compose --profile slicer-gui build slicer-gui
 
 At build time, `SimplifiedViewer` is copied into `/opt/slicer-modules/SimplifiedViewer` when `SLICER_HEART_VIEWER_REPO` is configured.
 
-The adapter also installs the **Sandbox** extension (provides `UserStatistics`, required by SimplifiedViewer). On first container start with a fresh home volume, launch will install Sandbox once if missing.
+The adapter also installs **Sandbox** (`UserStatistics` for SimplifiedViewer) and
+**SlicerHeart** (Cardiac Four-Up / valve layouts used by CAVC scenes). On first
+container start with a fresh home volume, launch will install either once if missing.
 
 At runtime, launch checks `${SLICER_SIMPLIFIED_VIEWER_PATH}` (default: `/opt/slicer-modules/SimplifiedViewer`) and falls back to `/home/slicer/data/SimplifiedViewer` for local/manual testing.
 

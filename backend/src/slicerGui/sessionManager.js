@@ -263,37 +263,14 @@ async function startOrReuseSeat({
             }
             if (vncReady) {
                 const existingLease = getSession(SLICER_GUI, sessionKey);
-                const persistedForMode = readLastLoadedFile(safeUserId, seatId);
-                const existingMode = existingLease?.metadata?.useSimplifiedViewer === true
-                    || persistedForMode?.useSimplifiedViewer === true;
-                const desiredMode = useSimplifiedViewer == null
-                    ? null
-                    : useSimplifiedViewer === true;
-                // Do not recreate on mode mismatch — that kills the warm scene.
-                // Open path re-applies Simplified/Full chrome (skipLoad or restage).
-                if (desiredMode !== null && existingMode !== desiredMode) {
-                    console.log(
-                        `Full Slicer mode mismatch for ${containerName} `
-                        + `(seat ${existingMode ? 'simplified' : 'full'}, `
-                        + `wanted ${desiredMode ? 'simplified' : 'full'}) — `
-                        + 'reusing seat; mode will be applied on open'
-                    );
-                }
+                // Mode mismatch: reuse seat; open path re-applies chrome.
                 if (!readSlicerReadyFile(safeUserId, seatId)) {
                     try {
                         await waitForSlicerSessionReady(safeUserId, seatId, READY_TIMEOUT_MS, {
                             touchLease: touchExistingLease
                         });
                     } catch {
-                        if (!requireSlicerUiReady) {
-                            console.log(
-                                `Full Slicer ${containerName} VNC is up; UI not ready yet — `
-                                + 'continuing (open request will wait for UI)'
-                            );
-                        } else {
-                            console.log(
-                                `Full Slicer ${containerName} VNC is up but Slicer UI is not ready — recreating`
-                            );
+                        if (requireSlicerUiReady) {
                             clearSession(SLICER_GUI, sessionKey);
                             clearSlicerReadyFile(safeUserId, seatId);
                             await existing.remove({ force: true });
@@ -302,7 +279,6 @@ async function startOrReuseSeat({
                     }
                 }
                 if (vncReady) {
-                    console.log(`Reusing Full Slicer session ${containerName}`);
                     const priorMeta = existingLease?.metadata || {};
                     const persisted = readLastLoadedFile(safeUserId, seatId);
                     const lastLoadedFileId = priorMeta.lastLoadedFileId
@@ -370,21 +346,19 @@ async function startOrReuseSeat({
     );
     if (hostWorkspace && mountDevScripts) {
         const scripts = [
+            ['slicer-gui-gpu/start.sh', '/usr/local/bin/start.sh'],
             ['slicer-gui-gpu/launch-slicer.sh', '/usr/local/bin/launch-slicer.sh'],
             ['slicer-gui-gpu/slicer_session.py', '/usr/local/bin/slicer_session.py'],
-            ['slicer-gui-gpu/install-slicer-extensions.py', '/usr/local/bin/install-slicer-extensions.py']
+            ['slicer-gui-gpu/install-slicer-extensions.py', '/usr/local/bin/install-slicer-extensions.py'],
+            ['slicer-gui-gpu/fix-screen-geometry.sh', '/usr/local/bin/fix-screen-geometry.sh'],
+            ['slicer-gui-gpu/novnc/slicer-vnc.html', '/opt/novnc/slicer-vnc.html']
         ];
         for (const [rel, dest] of scripts) {
             binds.push(`${toDockerBindPath(`${hostWorkspace.replace(/\/$/, '')}/${rel}`)}:${dest}:ro`);
         }
     }
 
-    console.log(`Starting Full Slicer session ${containerName}`, {
-        image: IMAGE,
-        hostDataDir,
-        network: NETWORK,
-        seatId
-    });
+    console.log(`Starting Full Slicer session ${containerName}`);
 
     const container = await docker.createContainer({
         Image: IMAGE,
@@ -461,10 +435,7 @@ async function startOrReuseSeat({
                     touchLease: () => touchSession(SLICER_GUI, sessionKey, token)
                 });
             } catch {
-                console.warn(
-                    `Full Slicer UI not ready yet for ${containerName}; `
-                    + 'returning VNC seat and letting open-request wait'
-                );
+                /* open-request poller waits for UI */
             }
         }
     } catch (err) {

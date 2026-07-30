@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- Chrome-free noVNC; client scale (no resize=remote). -->
+    <title>Slicer</title>
+    <style>
+        html, body {
+            margin: 0;
+            height: 100%;
+            background: #090b14;
+            overflow: hidden;
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+        }
+        #screen {
+            flex: 1;
+            overflow: hidden;
+            touch-action: none;
+            overscroll-behavior: none;
+        }
+    </style>
+    <script type="module" crossorigin="anonymous">
+        import RFB from './core/rfb.js';
+
+        function readQueryVariable(name, defaultValue) {
+            const re = new RegExp('.*[?&]' + name + '=([^&#]*)');
+            const match = document.location.href.match(re);
+            if (match) {
+                return decodeURIComponent(match[1]);
+            }
+            return defaultValue;
+        }
+
+        function asBool(value, fallback = false) {
+            if (value === undefined || value === null || value === '') return fallback;
+            const s = String(value).toLowerCase();
+            if (['1', 'true', 'yes', 'on'].includes(s)) return true;
+            if (['0', 'false', 'no', 'off'].includes(s)) return false;
+            return fallback;
+        }
+
+        const host = readQueryVariable('host', window.location.hostname);
+        const port = readQueryVariable('port', window.location.port);
+        const password = readQueryVariable('password');
+        const path = readQueryVariable('path', 'websockify');
+        // Default: scale to iframe (legacy vnc_lite behavior). Remote resize is opt-in only.
+        const resizeMode = String(readQueryVariable('resize', 'scale') || 'scale').toLowerCase();
+        const scale = asBool(readQueryVariable('scale', true), true);
+        const quality = parseInt(readQueryVariable('quality', '9'), 10);
+
+        let url = (window.location.protocol === 'https:' ? 'wss' : 'ws') + '://' + host;
+        if (port) url += ':' + port;
+        url += '/' + path;
+
+        const rfb = new RFB(document.getElementById('screen'), url, {
+            credentials: { password: password }
+        });
+
+        rfb.viewOnly = asBool(readQueryVariable('view_only', false), false);
+        rfb.scaleViewport = scale || resizeMode === 'scale';
+        rfb.resizeSession = resizeMode === 'remote';
+        if (Number.isFinite(quality)) {
+            rfb.qualityLevel = Math.max(0, Math.min(9, quality));
+        }
+
+        // Keep wheel for slice browse; only block Ctrl/Meta pinch-zoom.
+        document.getElementById('screen').addEventListener(
+            'wheel',
+            (ev) => {
+                if (ev.ctrlKey || ev.metaKey) {
+                    ev.preventDefault();
+                }
+            },
+            { capture: true, passive: false }
+        );
+    </script>
+</head>
+<body>
+    <div id="screen"></div>
+</body>
+</html>

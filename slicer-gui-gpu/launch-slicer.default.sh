@@ -15,16 +15,20 @@ if [ -f "$PID_FILE" ]; then
 fi
 
 launch_cmd=(/opt/Slicer/Slicer --no-splash)
-echo "[launch-slicer] Starting Slicer (base image default launcher)"
 
-export VGL_SPOILLAST="${VGL_SPOILLAST:-0}"
-export VGL_SPOIL="${VGL_SPOIL:-0}"
+nvidia_egl_available() {
+  ls /dev/nvidia* >/dev/null 2>&1 || return 1
+  if ls /usr/lib/x86_64-linux-gnu/libEGL_nvidia* >/dev/null 2>&1; then
+    return 0
+  fi
+  ls /usr/share/glvnd/egl_vendor.d/*nvidia* >/dev/null 2>&1
+}
 
-if command -v vglrun &>/dev/null; then
+if command -v vglrun &>/dev/null && nvidia_egl_available; then
   vglrun -d egl "${launch_cmd[@]}" &
 else
+  echo "[launch-slicer] No NVIDIA EGL — using software OpenGL (llvmpipe)"
   "${launch_cmd[@]}" &
 fi
 
 echo "$!" > "$PID_FILE"
-echo "[launch-slicer] Slicer pid $(cat "$PID_FILE")"

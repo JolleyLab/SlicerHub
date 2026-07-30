@@ -15,7 +15,7 @@ const quick = params.get('quick') === '1';
 let sessionToken = params.get('sessionToken') || '';
 let seatId = params.get('seatId') || '';
 const fileId = params.get('fileId') || '';
-let vncPath = params.get('vnc') || '/slicer-gui/vnc_lite.html?path=slicer-gui/websockify&autoconnect=true&scale=true';
+let vncPath = params.get('vnc') || '/slicer-gui/slicer-vnc.html?path=slicer-gui/websockify&autoconnect=true&scale=true';
 let sawVncConnected = false;
 
 const splash = document.getElementById('splash');
@@ -45,7 +45,21 @@ function setSplashMessage(heading, detail, { error = false } = {}) {
     title.textContent = heading;
     subtitle.textContent = detail || '';
     splash.classList.toggle('error', Boolean(error));
-    splash.classList.remove('hidden');
+    splash.classList.remove('hidden', 'fading');
+}
+
+const BUSY_SPLASH = {
+    queued: ['Opening viewer…', 'Waiting for the desktop…'],
+    opening: ['Opening viewer…', 'Setting up the desktop…'],
+    loading: ['Loading scene…', fileName ? `Loading ${fileName}` : 'Large scenes can take a minute…'],
+    preparing: ['Preparing viewer…', 'Getting everything ready for this project…']
+};
+
+function applyBusySplash(message) {
+    const key = String(message || '').toLowerCase();
+    const pair = BUSY_SPLASH[key] || BUSY_SPLASH.loading;
+    setSplashMessage(pair[0], pair[1]);
+    notifyParent('slicer-viewer-loading', { heading: pair[0], detail: pair[1] });
 }
 
 if (quick) {
@@ -63,8 +77,8 @@ if (quick) {
 }
 
 const startedAt = Date.now();
-const maxWaitMs = quick ? 15000 : 90000;
-const minSplashMs = quick ? 150 : 900;
+const maxWaitMs = quick ? 15000 : 120000;
+const minSplashMs = quick ? 150 : 600;
 let sawBusy = false;
 let revealed = false;
 let lifecycle = null;
@@ -76,9 +90,13 @@ function reveal() {
     if (revealed) return;
     revealed = true;
     disconnectNotified = false;
-    splash.classList.add('hidden');
-    splash.classList.remove('error');
+    notifyParent('slicer-viewer-ready');
     viewer.classList.add('visible');
+    splash.classList.add('fading');
+    splash.classList.remove('error');
+    setTimeout(() => {
+        splash.classList.add('hidden');
+    }, 380);
 }
 
 function hideViewer() {
@@ -227,13 +245,28 @@ function polishVncChrome() {
     try {
         const doc = viewer.contentDocument;
         if (!doc?.head) return;
-        if (doc.getElementById('slicer-web-vnc-chrome')) return;
-        const style = doc.createElement('style');
-        style.id = 'slicer-web-vnc-chrome';
-        // Do not force canvas width/height — that fights noVNC scale=true and can
-        // blank the framebuffer after wheel/zoom (canvas ends up 0× or clipped).
+        let style = doc.getElementById('slicer-web-vnc-chrome');
+        if (!style) {
+            style = doc.createElement('style');
+            style.id = 'slicer-web-vnc-chrome';
+            doc.head.appendChild(style);
+        }
+        // Hide leftover noVNC chrome.
         style.textContent = `
-            #top_bar { display: none !important; }
+            #top_bar,
+            #noVNC_control_bar_anchor,
+            #noVNC_control_bar,
+            #noVNC_control_bar_handle,
+            #noVNC_control_bar_handle *,
+            #noVNC_status,
+            #noVNC_transition,
+            .noVNC_panel,
+            .noVNC_logo {
+                display: none !important;
+                visibility: hidden !important;
+                pointer-events: none !important;
+                opacity: 0 !important;
+            }
             html, body {
                 margin: 0 !important;
                 height: 100% !important;
@@ -241,7 +274,7 @@ function polishVncChrome() {
                 overscroll-behavior: none !important;
             }
             body { display: flex !important; flex-direction: column !important; }
-            #screen {
+            #screen, #noVNC_container, #noVNC_screen {
                 flex: 1 1 auto !important;
                 width: 100% !important;
                 height: 100% !important;
@@ -249,7 +282,6 @@ function polishVncChrome() {
                 touch-action: none !important;
             }
         `;
-        doc.head.appendChild(style);
     } catch {
         /* cross-origin */
     }
@@ -360,7 +392,7 @@ function installWakeHandlers() {
 function installEmbedActivityBridge() {
     if (!embedded) return;
     const onActivity = () => notifyParentActivity();
-    // Block Ctrl/Meta+wheel browser zoom over the viewer (blanks scaled noVNC).
+    // Block Ctrl/Meta+wheel browser zoom over the viewer.
     const onWheel = (event) => {
         onActivity();
         if (event.ctrlKey || event.metaKey) {
@@ -399,7 +431,9 @@ function loadViewer({ forceReload = false } = {}) {
     }
     viewer.addEventListener('load', () => {
         polishVncChrome();
-    });
+        setTimeout(polishVncChrome, 400);
+        setTimeout(polishVncChrome, 1200);
+    }, { once: !forceReload });
     if (quick) {
         viewer.addEventListener('load', () => {
             if (Date.now() - startedAt >= minSplashMs) {
@@ -417,30 +451,38 @@ async function checkStatus() {
         return;
     }
     const endpoints = sessionEndpoints();
-    if (!endpoints) {
-        if (Date.now() - startedAt > 3500) reveal();
+    if (!endpoints?.statusUrl) {
+        if (Date.now() - startedAt > 8000) reveal();
         return;
     }
     try {
-        const response = await fetch(endpoints.statusUrl, {
+        const statusUrl = new URL(endpoints.statusUrl, window.location.origin);
+        if (seatId) statusUrl.searchParams.set('seatId', String(seatId));
+        const response = await fetch(statusUrl.toString(), {
             credentials: 'include',
             cache: 'no-store'
         });
         if (!response.ok) {
-            if (Date.now() - startedAt > 5000) reveal();
+            if (Date.now() - startedAt > 12000) reveal();
             return;
         }
         const data = await response.json();
         if (data.busy) {
             sawBusy = true;
+            applyBusySplash(data.message);
             return;
         }
         const waitedLongEnough = Date.now() - startedAt >= minSplashMs;
-        if ((sawBusy || Date.now() - startedAt > 4000) && waitedLongEnough) {
+        // Reveal after a real busy→idle cycle.
+        if (sawBusy && waitedLongEnough) {
+            reveal();
+            return;
+        }
+        if (!sawBusy && Date.now() - startedAt > 10000 && waitedLongEnough) {
             reveal();
         }
     } catch {
-        if (Date.now() - startedAt > 5000) reveal();
+        if (Date.now() - startedAt > 12000) reveal();
     }
 }
 

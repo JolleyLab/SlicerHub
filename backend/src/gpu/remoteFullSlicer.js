@@ -15,7 +15,7 @@ export function isVastFullSlicerMode() {
 }
 
 export function remoteFullSlicerViewerPath() {
-    return '/remote-slicer-gui/vnc.html?autoconnect=true&resize=scale';
+    return '/remote-slicer-gui/slicer-vnc.html?autoconnect=true&scale=true&quality=9';
 }
 
 function getSyncToken(instance) {

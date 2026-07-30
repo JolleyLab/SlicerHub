@@ -116,15 +116,15 @@ export function ensureSlicerGuiUserDir(userId, seatId = 1) {
 export function buildSlicerGuiViewerPath(userId, seatId = 1) {
     const safe = safeSlicerGuiUserId(userId);
     const seat = normalizeSlicerGuiSeatId(seatId);
-    // vnc_lite builds ws://host/<path>. Behind nginx the socket must stay under the
-    // per-seat prefix (not bare /websockify at the site root).
+    // Fixed seat geometry — client scale only (no resize=remote).
     const prefix = `slicer-gui/user-${safe}-seat${seat}`;
     const qs = new URLSearchParams({
         path: `${prefix}/websockify`,
         autoconnect: 'true',
-        scale: 'true'
+        scale: 'true',
+        quality: '9'
     });
-    return `/${prefix}/vnc_lite.html?${qs.toString()}`;
+    return `/${prefix}/slicer-vnc.html?${qs.toString()}`;
 }
 
 export function requestFilePath(userId, seatId = 1) {

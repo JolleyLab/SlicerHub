@@ -503,6 +503,25 @@ export class ProjectReviewPage extends LitElement {
                 text-align: center;
             }
 
+            .loading-state.slicer-gui-splash {
+                background: #0c0c14;
+            }
+
+            .loading-state.slicer-gui-splash .viewer-loading {
+                color: #9aa0b4;
+            }
+
+            .loading-state.slicer-gui-splash .viewer-loading p {
+                color: #e8e8ef;
+                font-size: 1.05rem;
+                font-weight: 600;
+            }
+
+            .loading-state.slicer-gui-splash .viewer-spinner {
+                border-color: #2a2a3a;
+                border-top-color: #c7c9d9;
+            }
+
             .loading-state.loading-overlay {
                 position: absolute;
                 inset: 0;
@@ -1737,8 +1756,7 @@ export class ProjectReviewPage extends LitElement {
                 ? `Copying ${sceneTitle} to Vast Full Slicer…`
                 : `Starting ${label} for ${sceneTitle}…`);
         this.showIframe = true;
-        // Blank only when replacing an already-open VNC. Fresh open stays on the
-        // parent loading overlay until the loader URL is ready (avoids about:blank flash).
+        // Blank only when replacing an open VNC (avoids about:blank on fresh open).
         if (switchingInPlace) {
             this.iframeUrl = 'about:blank';
         }
@@ -1758,17 +1776,7 @@ export class ProjectReviewPage extends LitElement {
             this.viewerSimplified = data.useSimplifiedViewer === true;
             this.currentFileName = sceneTitle;
 
-            if (this.viewerSimplified !== simplified) {
-                console.warn(
-                    'Full Slicer mode mismatch: client requested simplified='
-                    + simplified
-                    + ' but server returned '
-                    + this.viewerSimplified
-                );
-            }
-
-            // Quick splash only when the warm seat already has this scene in memory.
-            // Prepared-empty seats still need a real load (busy wait), not a reconnect skip.
+            // Quick splash only when this scene is already warm in the seat.
             const quickReconnect = data.sessionReused === true && data.sceneReloaded === false;
             const url = buildSlicerGuiLoaderUrl({
                 projectId: this.projectId,
@@ -1988,16 +1996,8 @@ export class ProjectReviewPage extends LitElement {
         this._fullSlicerWarmPromise = prepareFullSlicerViewer(this.projectId, {
             useSimplifiedViewer: simplified
         })
-            .then((data) => {
-                if (data?.ready === true) {
-                    console.log('Full Slicer seat warmed', {
-                        sessionReused: data.sessionReused,
-                        warmIdleSeconds: data.warmIdleSeconds
-                    });
-                }
-            })
-            .catch((err) => {
-                console.warn('Full Slicer warm prepare failed:', err.message);
+            .catch(() => {
+                /* warm is best-effort */
             })
             .finally(() => {
                 this._fullSlicerWarmPromise = null;
@@ -2917,13 +2917,30 @@ export class ProjectReviewPage extends LitElement {
     }
 
     handleViewerIframeLoad() {
-        if (this.iframeUrl && this.iframeUrl !== 'about:blank') {
-            this.viewerLoading = false;
-            this.viewerLoadingDetail = '';
-            this.launchingFileId = null;
+        if (!this.iframeUrl || this.iframeUrl === 'about:blank') {
+            return;
+        }
+        // Keep overlay until loader posts slicer-viewer-ready.
+        if (this.viewerKind === VIEWER_KINDS.SLICER_GUI) {
             markViewerActivity();
             this.attachViewerIframeActivityTracking();
+            if (this._slicerReadyFallbackTimer) {
+                clearTimeout(this._slicerReadyFallbackTimer);
+            }
+            this._slicerReadyFallbackTimer = setTimeout(() => {
+                if (this.viewerKind === VIEWER_KINDS.SLICER_GUI && this.viewerLoading) {
+                    this.viewerLoading = false;
+                    this.viewerLoadingDetail = '';
+                    this.launchingFileId = null;
+                }
+            }, 120000);
+            return;
         }
+        this.viewerLoading = false;
+        this.viewerLoadingDetail = '';
+        this.launchingFileId = null;
+        markViewerActivity();
+        this.attachViewerIframeActivityTracking();
     }
 
     syncViewerFullscreenState() {
@@ -3173,6 +3190,26 @@ export class ProjectReviewPage extends LitElement {
             }
             if (event?.data?.type === 'slicer-viewer-superseded') {
                 this.handleViewerSupersededElsewhere();
+            }
+            if (event?.data?.type === 'slicer-viewer-loading') {
+                if (this.viewerKind !== VIEWER_KINDS.SLICER_GUI || !this.viewerLoading) return;
+                const heading = event.data.heading || '';
+                const detail = event.data.detail || '';
+                if (detail) {
+                    this.viewerLoadingDetail = detail;
+                } else if (heading) {
+                    this.viewerLoadingDetail = heading;
+                }
+            }
+            if (event?.data?.type === 'slicer-viewer-ready') {
+                if (this.viewerKind !== VIEWER_KINDS.SLICER_GUI) return;
+                if (this._slicerReadyFallbackTimer) {
+                    clearTimeout(this._slicerReadyFallbackTimer);
+                    this._slicerReadyFallbackTimer = null;
+                }
+                this.viewerLoading = false;
+                this.viewerLoadingDetail = '';
+                this.launchingFileId = null;
             }
         };
         window.addEventListener('message', this._onSlicerViewerMessage);
@@ -4271,7 +4308,7 @@ export class ProjectReviewPage extends LitElement {
                             ></iframe>
                         ` : ''}
                         ${this.viewerLoading ? html`
-                            <div class="loading-state ${this.iframeUrl !== 'about:blank' ? 'loading-overlay' : ''}">
+                            <div class="loading-state ${this.iframeUrl !== 'about:blank' ? 'loading-overlay' : ''} ${this.viewerKind === VIEWER_KINDS.SLICER_GUI ? 'slicer-gui-splash' : ''}">
                                 <div class="viewer-loading">
                                     <div class="viewer-spinner" role="status" aria-label="Loading viewer"></div>
                                     <p>${this.viewerLoadingMessage}</p>

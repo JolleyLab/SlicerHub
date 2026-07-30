@@ -153,14 +153,20 @@ export function buildSlicerGuiLoaderUrl({
         loader.searchParams.set('shareToken', String(shareToken));
     }
 
-    const rawVnc = vncPath || '/slicer-gui/vnc_lite.html?path=slicer-gui/websockify&autoconnect=true&scale=true';
+    const rawVnc = vncPath || '/slicer-gui/slicer-vnc.html?path=slicer-gui/websockify&autoconnect=true&scale=true';
     let vncParam = rawVnc;
     try {
         const parsed = new URL(rawVnc, baseHref);
-        // Ensure websocket path stays under the /slicer-gui/... prefix when proxied.
+        // Match basename only — "slicer-vnc.html".endsWith("vnc.html") is true.
+        const vncPage = parsed.pathname.split('/').pop() || '';
+        if (vncPage === 'vnc.html' || vncPage === 'vnc_lite.html') {
+            parsed.pathname = parsed.pathname.replace(/\/(?:vnc_lite|vnc)\.html$/, '/slicer-vnc.html');
+        }
+        parsed.pathname = parsed.pathname.replace(/(?:slicer-)+slicer-vnc\.html$/, 'slicer-vnc.html');
+        parsed.pathname = parsed.pathname.replace(/slicer-slicer-vnc\.html$/, 'slicer-vnc.html');
+        // Keep websocket path under the /slicer-gui/... proxy prefix.
         if (!parsed.searchParams.get('path')) {
             const parts = parsed.pathname.split('/').filter(Boolean);
-            // ["slicer-gui", "user-1-seat1", "vnc_lite.html"] or ["slicer-gui", "vnc_lite.html"]
             if (parts[0] === 'slicer-gui') {
                 const prefixParts = parts.slice(0, -1);
                 if (prefixParts.length) {
@@ -170,8 +176,8 @@ export function buildSlicerGuiLoaderUrl({
         }
         parsed.searchParams.set('autoconnect', parsed.searchParams.get('autoconnect') || 'true');
         parsed.searchParams.set('scale', 'true');
-        // vnc_lite ignores these full-UI flags.
         parsed.searchParams.delete('resize');
+        parsed.searchParams.set('quality', parsed.searchParams.get('quality') || '9');
         parsed.searchParams.delete('reconnect');
         parsed.searchParams.delete('reconnect_delay');
         vncParam = parsed.pathname + parsed.search;

@@ -41,7 +41,6 @@ _ui_wait_logged = False
 _poll_timer = None
 _load_overlay = None
 _overlay_raise_timer = None
-_hidden_view_widgets: list = []
 _viewer_mode_simplified: bool | None = None
 _ready_timer = None
 _ready_announced = False
@@ -170,8 +169,7 @@ def refresh_slice_views(*, fit: bool = True) -> None:
     if not layout_manager:
         return
 
-    # Soft follow-up refreshes must not touch slice offsets — PropagateVolumeSelection /
-    # setSliceViewerLayers(..., fit=...) resets Red/Yellow/Green after scroll-wheel.
+    # Soft refresh: forceRender only — fit resets slice offsets after scroll.
     if not fit:
         for _name, widget in iter_slice_widgets():
             try:
@@ -276,7 +274,7 @@ def refresh_three_d_views(*, reset_camera: bool = False) -> None:
         if not view_node:
             continue
         three_d_view_ids.append(view_node.GetID())
-        # Avoid visibility toggling on follow-up refreshes — it flashes blank over VNC.
+        # Soft refresh: skip visibility toggle (flashes blank over VNC).
         if reset_camera:
             visible = view_node.GetVisibility()
             view_node.SetVisibility(False)
@@ -284,10 +282,8 @@ def refresh_three_d_views(*, reset_camera: bool = False) -> None:
             view_node.Modified()
 
     vol_ren_logic = getattr(getattr(slicer.modules, "volumerendering", None), "logic", lambda: None)()
-    vr_count = 0
     if vol_ren_logic:
         for display_node in iter_nodes("vtkMRMLVolumeRenderingDisplayNode"):
-            vr_count += 1
             volume = volume_from_vr_display_node(display_node)
             display_node.SetVisibility(True)
             for view_id in three_d_view_ids:
@@ -322,7 +318,7 @@ def refresh_three_d_views(*, reset_camera: bool = False) -> None:
         if not widget:
             continue
         view = widget.threeDView()
-        # resetCamera/FocalPoint undo wheel zoom / user camera — only on initial reveal.
+        # Only reset camera on initial reveal.
         if reset_camera:
             view.resetFocalPoint()
             view.resetCamera()
@@ -334,11 +330,6 @@ def refresh_three_d_views(*, reset_camera: bool = False) -> None:
         slicer.util.forceRenderAllViews()
 
     slicer.app.processEvents()
-    log(
-        f"[slicer_session] refreshed {layout_manager.threeDViewCount} 3D view(s), "
-        f"{vr_count} volume-rendering display node(s)"
-        f"{' (reset camera)' if reset_camera else ''}"
-    )
 
 
 def refresh_all_views(*, fit: bool = True, reset_camera: bool = False) -> None:
@@ -347,29 +338,320 @@ def refresh_all_views(*, fit: bool = True, reset_camera: bool = False) -> None:
 
 
 def schedule_view_refresh() -> None:
-    # Preserve cameras/FOVs from the MRB. FitSliceToAll is OK for simple FourUp
-    # demo scenes but fights CAVC/custom layouts (layout 1512 etc.) and pairs
-    # badly with VirtualGL slice redraws after the first wheel event.
+    # Custom layouts: skip FitSliceToAll (preserves MRB FOVs).
     layout_id = None
     try:
         layout_id = int(slicer.app.layoutManager().layout)
     except Exception:
         layout_id = None
-    # FourUp=3, Conventional=2, ConventionalWidescreen=4 (common built-ins)
     simple_layouts = {2, 3, 4, 5, 6, 7, 8}
     do_fit = layout_id in simple_layouts if layout_id is not None else False
-    log(f"[slicer_session] schedule_view_refresh layout={layout_id} fit={do_fit}")
     refresh_all_views(fit=do_fit, reset_camera=False)
-    # Delayed force-renders help simple demos settle under VNC; on heavy custom
-    # layouts they collide with the first wheel and blank slice GL. Skip them.
     if do_fit:
         QTimer.singleShot(500, force_render_all_views)
         QTimer.singleShot(1500, force_render_all_views)
-        QTimer.singleShot(3000, force_render_all_views)
     else:
-        # One gentle kick only, well before typical user interaction.
         QTimer.singleShot(400, force_render_all_views)
     QTimer.singleShot(800, run_window_size_sync)
+
+
+# SlicerHeart layouts 1512/1513 (MRBs store ID only; XML registered here).
+CARDIAC_FOURUP_LAYOUT_ID = 1512
+CARDIAC_EIGHTUP_LAYOUT_ID = 1513
+_CARDIAC_FOURUP_LAYOUT_XML = (
+    '<layout type="vertical">'
+    " <item>"
+    '  <layout type="horizontal">'
+    "   <item>"
+    '    <view class="vtkMRMLSliceNode" singletontag="Green">'
+    '     <property name="orientation" action="default">Coronal</property>'
+    '     <property name="viewlabel" action="default">G</property>'
+    '     <property name="viewcolor" action="default">#6EB04B</property>'
+    "    </view>"
+    "   </item>"
+    "   <item>"
+    '    <view class="vtkMRMLSliceNode" singletontag="Yellow">'
+    '     <property name="orientation" action="default">Sagittal</property>'
+    '     <property name="viewlabel" action="default">Y</property>'
+    '     <property name="viewcolor" action="default">#EDD54C</property>'
+    "    </view>"
+    "   </item>"
+    "  </layout>"
+    " </item>"
+    " <item>"
+    '  <layout type="horizontal">'
+    "   <item>"
+    '    <view class="vtkMRMLSliceNode" singletontag="Red">'
+    '     <property name="orientation" action="default">Axial</property>'
+    '     <property name="viewlabel" action="default">R</property>'
+    '     <property name="viewcolor" action="default">#F34A33</property>'
+    "    </view>"
+    "   </item>"
+    "   <item>"
+    '    <view class="vtkMRMLViewNode" singletontag="1">'
+    '     <property name="viewlabel" action="default">1</property>'
+    "    </view>"
+    "   </item>"
+    "  </layout>"
+    " </item>"
+    "</layout>"
+)
+_CARDIAC_EIGHTUP_LAYOUT_XML = (
+    '<layout type="horizontal" split="true">'
+    "<item>"
+    '<layout type="vertical">'
+    " <item>"
+    '  <layout type="horizontal">'
+    "   <item>"
+    '    <view class="vtkMRMLSliceNode" singletontag="Green">'
+    '     <property name="orientation" action="default">Coronal</property>'
+    '     <property name="viewlabel" action="default">G</property>'
+    '     <property name="viewcolor" action="default">#6EB04B</property>'
+    "    </view>"
+    "   </item>"
+    "   <item>"
+    '    <view class="vtkMRMLSliceNode" singletontag="Yellow">'
+    '     <property name="orientation" action="default">Sagittal</property>'
+    '     <property name="viewlabel" action="default">Y</property>'
+    '     <property name="viewcolor" action="default">#EDD54C</property>'
+    "    </view>"
+    "   </item>"
+    "  </layout>"
+    " </item>"
+    " <item>"
+    '  <layout type="horizontal">'
+    "   <item>"
+    '    <view class="vtkMRMLSliceNode" singletontag="Red">'
+    '     <property name="orientation" action="default">Axial</property>'
+    '     <property name="viewlabel" action="default">R</property>'
+    '     <property name="viewcolor" action="default">#F34A33</property>'
+    "    </view>"
+    "   </item>"
+    "   <item>"
+    '    <view class="vtkMRMLViewNode" singletontag="1">'
+    '     <property name="viewlabel" action="default">1</property>'
+    "    </view>"
+    "   </item>"
+    "  </layout>"
+    " </item>"
+    "</layout>"
+    "</item>"
+    "<item>"
+    '<layout type="vertical">'
+    " <item>"
+    '  <layout type="horizontal">'
+    "   <item>"
+    '    <view class="vtkMRMLSliceNode" singletontag="Slice6">'
+    '     <property name="orientation" action="default">Coronal</property>'
+    '     <property name="viewlabel" action="default">GS</property>'
+    '     <property name="viewcolor" action="default">#6EB04B</property>'
+    "    </view>"
+    "   </item>"
+    "   <item>"
+    '    <view class="vtkMRMLSliceNode" singletontag="Slice5">'
+    '     <property name="orientation" action="default">Sagittal</property>'
+    '     <property name="viewlabel" action="default">YS</property>'
+    '     <property name="viewcolor" action="default">#EDD54C</property>'
+    "    </view>"
+    "   </item>"
+    "  </layout>"
+    " </item>"
+    " <item>"
+    '  <layout type="horizontal">'
+    "   <item>"
+    '    <view class="vtkMRMLSliceNode" singletontag="Slice4">'
+    '     <property name="orientation" action="default">Axial</property>'
+    '     <property name="viewlabel" action="default">RS</property>'
+    '     <property name="viewcolor" action="default">#F34A33</property>'
+    "    </view>"
+    "   </item>"
+    "   <item>"
+    '    <view class="vtkMRMLViewNode" singletontag="1S">'
+    '     <property name="viewlabel" action="default">1S</property>'
+    "    </view>"
+    "   </item>"
+    "  </layout>"
+    " </item>"
+    "</layout>"
+    "</item>"
+    "</layout>"
+)
+
+
+def ensure_slicerheart_layouts() -> bool:
+    """Register Cardiac Four-Up/Eight-Up (1512/1513) if missing."""
+    layout_manager = slicer.app.layoutManager()
+    if not layout_manager:
+        return False
+    layout_node = layout_manager.layoutLogic().GetLayoutNode()
+    if layout_node is None:
+        return False
+
+    for layout_id, xml in (
+        (CARDIAC_FOURUP_LAYOUT_ID, _CARDIAC_FOURUP_LAYOUT_XML),
+        (CARDIAC_EIGHTUP_LAYOUT_ID, _CARDIAC_EIGHTUP_LAYOUT_XML),
+    ):
+        try:
+            if hasattr(layout_node, "IsLayoutDescription") and layout_node.IsLayoutDescription(
+                layout_id
+            ):
+                continue
+        except Exception:
+            pass
+        try:
+            layout_node.AddLayoutDescription(layout_id, xml)
+        except Exception as exc:
+            log(f"[slicer_session] Failed to register layout {layout_id}: {exc}")
+    return True
+
+
+# Custom layout ID → extension for quiet on-demand install.
+LAYOUT_EXTENSION_HINTS: dict[int, str] = {
+    CARDIAC_FOURUP_LAYOUT_ID: "SlicerHeart",
+    CARDIAC_EIGHTUP_LAYOUT_ID: "SlicerHeart",
+}
+
+
+def _layout_is_described(layout_node, layout_id: int) -> bool:
+    try:
+        if hasattr(layout_node, "IsLayoutDescription"):
+            return bool(layout_node.IsLayoutDescription(layout_id))
+    except Exception:
+        pass
+    try:
+        desc = layout_node.GetLayoutDescription(layout_id)
+        return bool(desc and str(desc).strip())
+    except Exception:
+        return False
+
+
+def _reapply_layout(layout_id: int) -> None:
+    layout_manager = slicer.app.layoutManager()
+    if not layout_manager:
+        return
+    try:
+        # Built-in bounce so Qt recreates GL widgets.
+        layout_manager.setLayout(3)
+        slicer.app.processEvents()
+        layout_manager.setLayout(layout_id)
+        slicer.app.processEvents()
+    except Exception as exc:
+        log(f"[slicer_session] Could not re-apply layout {layout_id}: {exc}")
+
+
+def install_extension_quiet(name: str) -> bool:
+    """Install extension without restart (splash stays visible)."""
+    try:
+        em = slicer.app.extensionsManagerModel()
+        em.interactive = False
+    except Exception as exc:
+        log(f"[slicer_session] Extensions manager unavailable: {exc}")
+        return False
+
+    try:
+        if em.isExtensionInstalled(name):
+            return True
+    except Exception:
+        pass
+
+    set_load_overlay_message(
+        "Preparing viewer…",
+        "Getting everything ready for this project…",
+    )
+    log(f"[slicer_session] Installing extension: {name}")
+    try:
+        em.updateExtensionsMetadataFromServer(True, True)
+    except Exception as exc:
+        log(f"[slicer_session] Extension metadata update warning: {exc}")
+
+    ok = False
+    try:
+        if hasattr(em, "installExtensionFromServer"):
+            ok = bool(em.installExtensionFromServer(name, False))
+        elif hasattr(em, "downloadAndInstallExtensionByName"):
+            ok = bool(em.downloadAndInstallExtensionByName(name, True, False))
+    except Exception as exc:
+        log(f"[slicer_session] Extension install failed ({name}): {exc}")
+        return False
+
+    if not ok:
+        log(f"[slicer_session] Extension install returned false: {name}")
+    return ok
+
+
+def _try_load_extension_modules() -> None:
+    try:
+        factory = slicer.app.moduleManager().factoryManager()
+        if hasattr(factory, "loadModules"):
+            factory.loadModules()
+        slicer.app.processEvents()
+    except Exception as exc:
+        log(f"[slicer_session] Module reload after extension install: {exc}")
+    try:
+        import HeartValveLib
+
+        HeartValveLib.registerCustomLayouts()
+    except Exception:
+        pass
+
+
+def ensure_scene_layout_ready() -> None:
+    """Register/install the scene layout if missing; fall back to FourUp."""
+    ensure_slicerheart_layouts()
+    layout_manager = slicer.app.layoutManager()
+    if not layout_manager:
+        return
+    layout_node = layout_manager.layoutLogic().GetLayoutNode()
+    if layout_node is None:
+        return
+    try:
+        layout_id = int(layout_manager.layout)
+    except Exception:
+        return
+
+    if layout_id < 100 or layout_id in {2, 3, 4, 5, 6, 7, 8}:
+        return
+
+    if _layout_is_described(layout_node, layout_id):
+        _reapply_layout(layout_id)
+        return
+
+    extension = LAYOUT_EXTENSION_HINTS.get(layout_id)
+    if extension:
+        set_load_overlay_message(
+            "Preparing viewer…",
+            "Getting everything ready for this project…",
+        )
+        log(
+            f"[slicer_session] Layout {layout_id} not registered; "
+            f"ensuring extension {extension}"
+        )
+        install_extension_quiet(extension)
+        _try_load_extension_modules()
+        ensure_slicerheart_layouts()
+
+    if _layout_is_described(layout_node, layout_id):
+        set_load_overlay_message("Opening viewer…", "Please wait while the scene loads.")
+        _reapply_layout(layout_id)
+        return
+
+    set_load_overlay_message(
+        "Opening viewer…",
+        "Using a standard layout for this session…",
+    )
+    log(
+        f"[slicer_session] Layout {layout_id} still unavailable after prep; "
+        "falling back to FourUp"
+    )
+    try:
+        layout_manager.setLayout(3)
+        slicer.app.processEvents()
+    except Exception as exc:
+        log(f"[slicer_session] FourUp fallback failed: {exc}")
+
+
+def reapply_scene_layout_if_needed() -> None:
+    ensure_scene_layout_ready()
 
 
 def ensure_simplified_viewer_module_path() -> None:
@@ -388,8 +670,6 @@ def ensure_simplified_viewer_module_path() -> None:
         return
 
     # Module factory searchPaths must include the folder that contains SimplifiedViewer.py.
-    log(f"[slicer_session] Ensuring module search path: {module_dir}")
-
     try:
         from qt import QSettings
         settings = QSettings()
@@ -400,7 +680,6 @@ def ensure_simplified_viewer_module_path() -> None:
         if module_dir not in paths:
             paths.append(module_dir)
             settings.setValue("Modules/AdditionalPaths", paths)
-            log(f"[slicer_session] Added Modules/AdditionalPaths entry: {module_dir}")
     except Exception as exc:
         log(f"[slicer_session] Could not update Modules/AdditionalPaths: {exc}")
 
@@ -435,7 +714,6 @@ def enable_developer_mode() -> None:
         settings = QSettings()
         settings.setValue("Developer/DeveloperMode", True)
         settings.sync()
-        log("[slicer_session] Developer/DeveloperMode enabled")
     except Exception as exc:
         log(f"[slicer_session] Could not enable DeveloperMode: {exc}")
 
@@ -474,9 +752,7 @@ def enable_simplified_viewer_developer_ui(widget) -> None:
                         )
                     settings_button.show()
                     top_left.show()
-                    log("[slicer_session] Added SimplifiedViewer Settings button for developer mode")
 
-        log("[slicer_session] SimplifiedViewer developer UI enabled")
     except Exception as exc:
         log(f"[slicer_session] Could not enable SimplifiedViewer developer UI: {exc}")
         log(traceback.format_exc())
@@ -519,75 +795,29 @@ def _qt_rect(obj, *names: str):
     return None
 
 
-def hide_view_widgets() -> None:
-    """Temporarily hide slice/3D view widgets so OpenGL cannot flash under splash."""
-    global _hidden_view_widgets
-    restore_view_widgets()
-    layout_manager = slicer.app.layoutManager()
-    if not layout_manager:
-        return
-    widgets = []
-    try:
-        for name in ("Red", "Yellow", "Green"):
-            widget = layout_manager.sliceWidget(name)
-            if widget is not None:
-                widgets.append(widget)
-        for index in range(getattr(layout_manager, "threeDViewCount", 0) or 0):
-            widget = layout_manager.threeDWidget(index)
-            if widget is not None:
-                widgets.append(widget)
-    except Exception as exc:
-        log(f"[slicer_session] Could not collect view widgets: {exc}")
-        return
-
-    for widget in widgets:
-        try:
-            if widget.isVisible():
-                widget.hide()
-                _hidden_view_widgets.append(widget)
-        except Exception:
-            pass
-    if _hidden_view_widgets:
-        log(f"[slicer_session] Hid {len(_hidden_view_widgets)} view widget(s) during load")
+def use_external_web_splash() -> bool:
+    """Prefer the HTML loader splash over an in-Slicer Qt overlay."""
+    val = str(os.environ.get("SLICER_WEB_EXTERNAL_SPLASH", "1")).strip().lower()
+    return val not in ("0", "false", "no", "off")
 
 
-def restore_view_widgets() -> None:
-    global _hidden_view_widgets
-    restored = set()
-    for widget in _hidden_view_widgets:
-        try:
-            widget.show()
-            restored.add(id(widget))
-        except Exception:
-            pass
-    _hidden_view_widgets = []
-
-    # Scene load can recreate view widgets; show current layout widgets too.
-    layout_manager = slicer.app.layoutManager()
-    if not layout_manager:
-        return
-    try:
-        for name in ("Red", "Yellow", "Green"):
-            widget = layout_manager.sliceWidget(name)
-            if widget is not None and id(widget) not in restored:
-                widget.show()
-        for index in range(getattr(layout_manager, "threeDViewCount", 0) or 0):
-            widget = layout_manager.threeDWidget(index)
-            if widget is not None and id(widget) not in restored:
-                widget.show()
-    except Exception:
-        pass
+def _busy_token_from_message(message: str) -> str:
+    lower = (message or "").lower()
+    if "prepar" in lower:
+        return "preparing"
+    if "open" in lower:
+        return "opening"
+    return "loading"
 
 
 def show_load_overlay(message: str = "Loading viewer…") -> None:
-    """Show a splash over the main window during load.
-
-    Do NOT hide OpenGL view widgets here. Under VirtualGL/noVNC, hide→show on
-    heavy scenes (e.g. CAVC custom layouts) leaves slice views blank until a
-    context rebuild that often never happens; light FourUp scenes recover, so
-    the bug looks scene-specific even though desktop Slicer is fine.
-    """
+    """Update busy status; show Qt splash only when external web splash is off."""
     global _load_overlay, _overlay_raise_timer
+    set_busy(_busy_token_from_message(message))
+
+    if use_external_web_splash():
+        return
+
     hide_load_overlay()
     try:
         from qt import QWidget, QLabel, QVBoxLayout, Qt
@@ -596,7 +826,6 @@ def show_load_overlay(message: str = "Loading viewer…") -> None:
         if not main_window:
             return
 
-        # Parent to main window so noVNC always shows it above the views.
         overlay = QWidget(main_window)
         overlay.setObjectName("slicerWebLoadOverlay")
         overlay.setAttribute(Qt.WA_StyledBackground, True)
@@ -614,12 +843,14 @@ def show_load_overlay(message: str = "Loading viewer…") -> None:
         layout.setContentsMargins(24, 24, 24, 24)
         layout.addStretch(1)
         label = QLabel(message)
+        label.setObjectName("slicerWebLoadOverlayTitle")
         label.setAlignment(Qt.AlignCenter)
         label.setStyleSheet(
             "color: #e8e8ef; font-size: 20px; font-weight: 600; background: transparent;"
         )
         layout.addWidget(label)
         hint = QLabel("Please wait while the scene loads.")
+        hint.setObjectName("slicerWebLoadOverlayHint")
         hint.setAlignment(Qt.AlignCenter)
         hint.setStyleSheet("color: #9aa0b4; font-size: 14px; background: transparent;")
         layout.addWidget(hint)
@@ -635,10 +866,34 @@ def show_load_overlay(message: str = "Loading viewer…") -> None:
         _overlay_raise_timer.start()
 
         slicer.app.processEvents()
-        log("[slicer_session] Load overlay shown")
     except Exception as exc:
         log(f"[slicer_session] Could not show load overlay: {exc}")
         _load_overlay = None
+
+
+def set_load_overlay_message(message: str, hint: str | None = None) -> None:
+    """Update splash / busy message without tearing down the overlay."""
+    set_busy(_busy_token_from_message(message))
+    if use_external_web_splash():
+        return
+
+    if _load_overlay is None:
+        show_load_overlay(message)
+    if _load_overlay is None:
+        return
+    try:
+        from qt import QLabel
+
+        title = _load_overlay.findChild(QLabel, "slicerWebLoadOverlayTitle")
+        hint_label = _load_overlay.findChild(QLabel, "slicerWebLoadOverlayHint")
+        if title is not None:
+            title.setText(message)
+        if hint is not None and hint_label is not None:
+            hint_label.setText(hint)
+        _keep_overlay_on_top()
+        slicer.app.processEvents()
+    except Exception as exc:
+        log(f"[slicer_session] Could not update load overlay: {exc}")
 
 
 def _keep_overlay_on_top() -> None:
@@ -668,12 +923,10 @@ def hide_load_overlay() -> None:
             _load_overlay.deleteLater()
             _load_overlay = None
             slicer.app.processEvents()
-            log("[slicer_session] Load overlay hidden")
     except Exception as exc:
         log(f"[slicer_session] Could not hide load overlay: {exc}")
         _load_overlay = None
         _overlay_raise_timer = None
-    restore_view_widgets()
 
 
 def schedule_hide_load_overlay(delay_ms: int = _OVERLAY_HOLD_MS) -> None:
@@ -756,7 +1009,6 @@ def apply_simplified_viewer_ui() -> bool:
         # Enable developer UI before collapsing chrome so the Settings gear is present.
         enable_simplified_viewer_developer_ui(widget)
         widget.setFull3DSlicerInterfaceVisible(False)
-        log("[slicer_session] SimplifiedViewer enabled")
         return True
 
     log(
@@ -802,7 +1054,6 @@ def restore_full_slicer_ui() -> None:
     except Exception:
         pass
     slicer.app.processEvents()
-    log("[slicer_session] Full Slicer UI restored")
 
 
 def maybe_apply_simplified_viewer(use_simplified_viewer: bool, *, force: bool = False) -> None:
@@ -929,8 +1180,6 @@ def persist_scene_loaded(payload: dict) -> None:
                 os.chmod(target, 0o666)
             except OSError:
                 pass
-            if target == SCENE_LOADED_FILE:
-                log(f"[slicer_session] Persisted scene-loaded marker ({target})")
             return
         except OSError as exc:
             log(f"[slicer_session] Could not persist {target}: {exc}")
@@ -942,7 +1191,7 @@ def load_mrb_scene(path: str) -> bool:
     _last_load_error = ""
     cleaned_path = None
     try:
-        log(f"[slicer_session] loadScene: {path}")
+        log(f"[slicer_session] loadScene: {os.path.basename(path)}")
         slicer.mrmlScene.Clear(0)
         slicer.app.processEvents()
         try:
@@ -1139,11 +1388,7 @@ def poll_open_requests() -> None:
     keep_busy_for_overlay = False
     set_busy("opening")
     try:
-        log(
-            f"[slicer_session] Open request: {path} "
-            f"(fileId={payload.get('fileId', '')}, requestedAt={requested_at}, "
-            f"useSimplifiedViewer={use_simplified_viewer})"
-        )
+        log(f"[slicer_session] Open request: {os.path.basename(path)}")
 
         skip_load = payload.get("skipLoad") is True
 
@@ -1187,6 +1432,7 @@ def poll_open_requests() -> None:
         overlay_shown = True
 
         # Apply chrome mode once per transition (skipping repeated Full restores saves time).
+        ensure_slicerheart_layouts()
         maybe_apply_simplified_viewer(use_simplified_viewer)
 
         if not wait_file_readable(path):
@@ -1201,6 +1447,7 @@ def poll_open_requests() -> None:
 
         # Always defer view refresh until after we mark complete — refresh calls
         # processEvents and must not run while a request could be re-claimed.
+        set_busy("loading")
         try:
             loaded = load_staged_file(path, defer_view_refresh=True)
         except Exception as exc:
@@ -1219,12 +1466,13 @@ def poll_open_requests() -> None:
                 write_load_result(True, payload)
             except Exception as exc:
                 log(f"[slicer_session] write_load_result failed: {exc}")
-            log(f"[slicer_session] Done: {path}")
+            log(f"[slicer_session] Done: {os.path.basename(path)}")
 
             try:
-                # Soft refresh only: skip FitSliceToAll on custom layouts (e.g. CAVC 1512).
+                ensure_slicerheart_layouts()
                 if use_simplified_viewer:
                     maybe_apply_simplified_viewer(True, force=True)
+                ensure_scene_layout_ready()
                 schedule_view_refresh()
                 schedule_hide_load_overlay(_OVERLAY_HOLD_MS)
                 overlay_shown = False
@@ -1257,8 +1505,7 @@ def poll_open_requests() -> None:
         log(traceback.format_exc())
     finally:
         if overlay_shown:
-            # Do not call hide_load_overlay() here — it processEvents() and can
-            # re-enter the poller. Tear down splash without pumping the event loop.
+            # Tear down overlay without processEvents (avoids poller re-entry).
             try:
                 if _overlay_raise_timer is not None:
                     _overlay_raise_timer.stop()
@@ -1268,40 +1515,12 @@ def poll_open_requests() -> None:
                     _load_overlay.hide()
                     _load_overlay.deleteLater()
                     _load_overlay = None
-                    log("[slicer_session] Load overlay hidden")
             except Exception:
                 _load_overlay = None
                 _overlay_raise_timer = None
-            restore_view_widgets()
         if not keep_busy_for_overlay:
             clear_busy()
         _busy = False
-
-
-def log_opengl_renderer() -> None:
-    """Log whether Slicer is on real GPU or software GL (explains CAVC vs Test Scene)."""
-    try:
-        out = subprocess.check_output(
-            [
-                "sh",
-                "-c",
-                "vglrun -d egl glxinfo 2>/dev/null | grep -E 'OpenGL renderer|OpenGL vendor' "
-                "|| glxinfo 2>/dev/null | grep 'OpenGL renderer' || true",
-            ],
-            text=True,
-            timeout=8,
-        ).strip()
-    except Exception as exc:
-        out = f"(glxinfo failed: {exc})"
-    log(f"[slicer_session] OpenGL: {out or 'unknown'}")
-    soft = "llvmpipe" in out.lower() or "softpipe" in out.lower() or "swrast" in out.lower()
-    mesa_only = "mesa" in out.lower() and "nvidia" not in out.lower()
-    if soft or mesa_only:
-        log(
-            "[slicer_session] WARNING: software/Mesa OpenGL — heavy scenes (CAVC/layout "
-            "1512) often blank slice panels after scroll over VNC; Test Scene may still "
-            "work. Need NVIDIA EGL in the seat (/dev/nvidia* + libEGL_nvidia), not just nvidia-smi."
-        )
 
 
 def start_polling() -> None:
@@ -1310,13 +1529,12 @@ def start_polling() -> None:
     clear_busy()
     clear_ready()
     try:
-        log_opengl_renderer()
+        ensure_slicerheart_layouts()
     except Exception as exc:
-        log(f"[slicer_session] OpenGL probe failed: {exc}")
+        log(f"[slicer_session] SlicerHeart layout registration failed: {exc}")
     _poll_timer = QTimer()
     _poll_timer.timeout.connect(poll_open_requests)
     _poll_timer.start(POLL_MS)
-    log(f"[slicer_session] Polling {REQUEST_FILE} every {POLL_MS}ms")
     QTimer.singleShot(500, maintain_ready_marker)
     QTimer.singleShot(500, poll_open_requests)
 

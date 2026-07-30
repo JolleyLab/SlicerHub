@@ -18,6 +18,7 @@ ARG SLICER_HEART_VIEWER_REF=
 COPY --chmod=755 launch-slicer.sh /usr/local/bin/launch-slicer.sh
 COPY slicer_session.py /usr/local/bin/slicer_session.py
 COPY install-slicer-extensions.py /usr/local/bin/install-slicer-extensions.py
+COPY novnc/slicer-vnc.html /opt/novnc/slicer-vnc.html
 
 RUN mkdir -p /opt/slicer-modules && \
     if [ -n "${SLICER_HEART_VIEWER_REPO}" ]; then \
@@ -37,15 +38,14 @@ RUN mkdir -p /opt/slicer-modules && \
     fi && \
     chown -R slicer:slicer /opt/slicer-modules
 
-# Sandbox provides UserStatistics (required by SimplifiedViewer).
-# Install into the image home directory; runtime volume may override /home/slicer.
+# Sandbox + SlicerHeart (Cardiac layouts). Launch may re-ensure on fresh volumes.
 USER slicer
 RUN mkdir -p /home/slicer/.config /home/slicer/slicer.org \
     && xvfb-run -a /opt/Slicer/Slicer \
         --no-splash \
         --no-main-window \
         --exit-after-startup \
-        --python-script /usr/local/bin/install-slicer-extensions.py Sandbox \
-    || (echo "WARNING: Sandbox extension install failed during image build" && true)
+        --python-script /usr/local/bin/install-slicer-extensions.py Sandbox SlicerHeart \
+    || (echo "WARNING: Sandbox/SlicerHeart extension install failed during image build" && true)
 
 # Inherit ENTRYPOINT [/usr/local/bin/start.sh] from base.

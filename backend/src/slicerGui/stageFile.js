@@ -69,14 +69,7 @@ export async function stageProjectFileForSlicerGui({
     let copied = false;
     try {
         const srcStat = fs.statSync(srcPath);
-        if (fs.existsSync(destPath) && fs.statSync(destPath).size === srcStat.size) {
-            console.log('Reusing staged Full Slicer file on disk', {
-                userId: launcherUserId,
-                seatId,
-                destPath,
-                bytes: srcStat.size
-            });
-        } else {
+        if (!(fs.existsSync(destPath) && fs.statSync(destPath).size === srcStat.size)) {
             fs.copyFileSync(srcPath, destPath);
             copied = true;
         }
@@ -111,16 +104,6 @@ export async function stageProjectFileForSlicerGui({
     fs.writeFileSync(`${requestFile}.tmp`, JSON.stringify(requestPayload, null, 2));
     fs.renameSync(`${requestFile}.tmp`, requestFile);
     chmodQuiet(requestFile, 0o666);
-
-    console.log('Staged full-slicer file', {
-        userId: launcherUserId,
-        seatId,
-        destPath,
-        containerPath,
-        requestedAt: requestPayload.requestedAt,
-        useSimplifiedViewer: requestPayload.useSimplifiedViewer,
-        bytes: fs.statSync(destPath).size
-    });
 
     return {
         fileName: safeName,
@@ -188,13 +171,6 @@ export function requestSlicerGuiModeApply({
     fs.renameSync(`${requestFile}.tmp`, requestFile);
     chmodQuiet(requestFile, 0o666);
 
-    console.log('Requested Full Slicer mode apply (skip load)', {
-        userId: launcherUserId,
-        seatId,
-        useSimplifiedViewer: requestPayload.useSimplifiedViewer,
-        fileId: requestPayload.fileId
-    });
-
     return {
         fileName: requestPayload.fileName,
         containerPath,
@@ -235,14 +211,7 @@ export async function stageCachedFileForSlicerGui({
     let copied = false;
     try {
         const srcStat = fs.statSync(src);
-        if (fs.existsSync(destPath) && fs.statSync(destPath).size === srcStat.size) {
-            console.log('Reusing staged Full Slicer file on disk', {
-                userId: launcherUserId,
-                seatId,
-                destPath,
-                bytes: srcStat.size
-            });
-        } else {
+        if (!(fs.existsSync(destPath) && fs.statSync(destPath).size === srcStat.size)) {
             fs.copyFileSync(src, destPath);
             copied = true;
         }
@@ -277,16 +246,6 @@ export async function stageCachedFileForSlicerGui({
     fs.writeFileSync(`${requestFile}.tmp`, JSON.stringify(requestPayload, null, 2));
     fs.renameSync(`${requestFile}.tmp`, requestFile);
     chmodQuiet(requestFile, 0o666);
-
-    console.log('Staged Directus/cached full-slicer file', {
-        userId: launcherUserId,
-        seatId,
-        destPath,
-        containerPath,
-        requestedAt: requestPayload.requestedAt,
-        useSimplifiedViewer: requestPayload.useSimplifiedViewer,
-        bytes: fs.statSync(destPath).size
-    });
 
     return {
         fileName: safeName,
