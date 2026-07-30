@@ -28,6 +28,9 @@ yarn-error.log*
 # Local dev overrides
 docker-compose.local.yml
 scripts/local/
+tests/full-slicer/accounts.json
+tests/full-slicer/results/
+full-slicer-load-results/
 
 # OS files
 .DS_Store
