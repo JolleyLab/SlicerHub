@@ -3630,9 +3630,13 @@ export class ProjectReviewPage extends LitElement {
         dialog?.closeDialog();
     }
 
-    handleCollaboratorsDone(event) {
+    async handleCollaboratorsDone(event) {
         this.collaborators = this.sortCollaborators(event.detail.collaborators);
         this.closeCollaboratorDialog();
+        // Dialog "Done" used to only update local state — easy to miss the separate Save.
+        if (this.hasPendingCollaboratorChanges) {
+            await this.handleSaveCollaborators();
+        }
     }
 
     handleCollaboratorRoleChange(event) {

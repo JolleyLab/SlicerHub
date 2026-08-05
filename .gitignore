@@ -29,6 +29,7 @@ yarn-error.log*
 docker-compose.local.yml
 scripts/local/
 tests/full-slicer/accounts.json
+tests/full-slicer/accounts.auto-*.json
 tests/full-slicer/results/
 full-slicer-load-results/
 

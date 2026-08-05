@@ -92,10 +92,11 @@ class User {
      * Find user by email
      */
     static findByEmail(email) {
+        const normalized = String(email || '').trim();
         const user = db.prepare(`
             SELECT id, username, email, created_at, updated_at, last_login, is_active, role, preferences_json
-            FROM users WHERE email = ?
-        `).get(email);
+            FROM users WHERE lower(email) = lower(?)
+        `).get(normalized);
 
         return mapUserRow(user);
     }

@@ -4,6 +4,7 @@ import File from '../models/File.js';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { ValidationError } from '../utils/errors.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { flushDatabase } from '../db/database.js';
 
 export default function projectRoutes(app) {
     app.get('/api/projects', authenticateToken, asyncHandler(async (req, res) => {
@@ -81,6 +82,7 @@ export default function projectRoutes(app) {
                 role: collaborator.role
             });
         }
+        flushDatabase();
 
         res.status(201).json({
             project: {
@@ -174,6 +176,7 @@ export default function projectRoutes(app) {
         }
 
         Project.replaceCollaborators({ projectId, collaborators: normalized });
+        flushDatabase();
 
         res.json({
             project: {

@@ -5,27 +5,20 @@
  * Does NOT cover Trame or Vast. Talks to the same APIs the My Projects UI uses:
  *   prepare / open / busy-status / heartbeat / stop
  *
- * Examples:
+ * Auto capacity (finds max concurrent seats without a manual range):
  *   node tests/full-slicer/full-slicer-load.mjs \
  *     --base-url http://localhost:8000 \
- *     --project 1 --file-id 12 \
+ *     --project 1 --file-name "Scene.mrb" \
  *     --user alice --password secret \
- *     --mode capacity --concurrency 1-4 --hold-seconds 90
+ *     --mode capacity --concurrency auto
  *
- *   node tests/full-slicer/full-slicer-load.mjs \
- *     --base-url https://your-server \
- *     --project 1 --file-name "CAVC Quantification2.mrb" \
- *     --accounts-file tests/full-slicer/accounts.json \
- *     --mode soak --concurrency 3 --duration 30m
+ * Optional: --max-concurrency 8 --latency-factor 2.5 --gpu-mem-limit 90
  *
- *   node tests/full-slicer/full-slicer-load.mjs ... --mode robustness --cycles 5
- *
- * Tips:
- *   - True multi-user capacity needs N accounts (or raise SLICER_GUI_MAX_SEATS_PER_USER
- *     and treat one account's seats as concurrent desktops on the same GPU).
- *   - Project must use Local GPU (providerId=local).
- *   - GPU diagnostics CSV needs nvidia-smi + docker on the machine running this script
- *     (run it on the production host when possible).
+ * Multi-user capacity (provision + auto-ramp + delete fake users):
+ *   node tests/full-slicer/run-multiuser-capacity.mjs \
+ *     --base-url http://localhost:8000 \
+ *     --admin-user test --admin-password '...' \
+ *     --project 2 --file-name "Scene.mrb" --users 6
  */
 
 import { spawn } from 'node:child_process';
@@ -51,10 +44,13 @@ Modes:
   --mode robustness         Open/stop, warm reopen, seat-kick checks
 
 Capacity / soak:
-  --concurrency <n|a-b>     Fixed N or ramp a..b (default 1-3)
-  --hold-seconds <n>        Hold each capacity step (default 90)
-  --duration <30s|10m|1h>   Soak length (default 15m)
-  --step-cooldown <n>       Seconds between capacity steps (default 20)
+  --concurrency <n|a-b|auto>  Fixed N, ramp a..b, or auto-find max (default: auto)
+  --max-concurrency <n>       Ceiling for auto ramp (default 8)
+  --latency-factor <n>         Fail if ready p95 > baseline×factor (default 2.5)
+  --gpu-mem-limit <n>         Fail if GPU mem % ≥ limit (default 90)
+  --hold-seconds <n>          Hold each capacity step (default 90)
+  --duration <30s|10m|1h>     Soak length (default 15m)
+  --step-cooldown <n>         Seconds between capacity steps (default 20)
 
 Robustness:
   --cycles <n>              Repeat count (default 3)
@@ -82,7 +78,10 @@ function parseArgs(argv) {
         password: '',
         accountsFile: '',
         mode: 'capacity',
-        concurrency: '1-3',
+        concurrency: 'auto',
+        maxConcurrency: 8,
+        latencyFactor: 2.5,
+        gpuMemLimit: 90,
         holdSeconds: 90,
         durationMs: 15 * 60 * 1000,
         stepCooldown: 20,
@@ -134,6 +133,15 @@ function parseArgs(argv) {
             case '--concurrency':
                 args.concurrency = next();
                 break;
+            case '--max-concurrency':
+                args.maxConcurrency = Number(next());
+                break;
+            case '--latency-factor':
+                args.latencyFactor = Number(next());
+                break;
+            case '--gpu-mem-limit':
+                args.gpuMemLimit = Number(next());
+                break;
             case '--hold-seconds':
                 args.holdSeconds = Number(next());
                 break;
@@ -176,6 +184,15 @@ function parseArgs(argv) {
     if (!['capacity', 'soak', 'robustness'].includes(args.mode)) {
         throw new Error('--mode must be capacity|soak|robustness');
     }
+    if (!Number.isFinite(args.maxConcurrency) || args.maxConcurrency < 1) {
+        throw new Error('--max-concurrency must be >= 1');
+    }
+    if (!Number.isFinite(args.latencyFactor) || args.latencyFactor < 1) {
+        throw new Error('--latency-factor must be >= 1');
+    }
+    if (!Number.isFinite(args.gpuMemLimit) || args.gpuMemLimit <= 0) {
+        throw new Error('--gpu-mem-limit must be > 0');
+    }
     return args;
 }
 
@@ -190,18 +207,46 @@ function parseDuration(raw) {
     return Math.round(n * 3_600_000);
 }
 
-function parseConcurrency(raw) {
-    const s = String(raw).trim();
+function parseConcurrency(raw, maxConcurrency) {
+    const s = String(raw).trim().toLowerCase();
+    if (s === 'auto') {
+        return { auto: true, from: 1, to: maxConcurrency };
+    }
     if (/^\d+$/.test(s)) {
         const n = Number(s);
-        return { from: n, to: n };
+        return { auto: false, from: n, to: n };
     }
     const m = s.match(/^(\d+)\s*-\s*(\d+)$/);
-    if (!m) throw new Error(`Invalid --concurrency: ${raw}`);
+    if (!m) throw new Error(`Invalid --concurrency: ${raw} (use N, A-B, or auto)`);
     const from = Number(m[1]);
     const to = Number(m[2]);
     if (from < 1 || to < from) throw new Error(`Invalid --concurrency range: ${raw}`);
-    return { from, to };
+    return { auto: false, from, to };
+}
+
+function stepGateFailures(step, { latencyFactor = 2.5, gpuMemLimit = 90 } = {}) {
+    const failures = [];
+    if ((step.errors || 0) > 0) failures.push(`open_errors=${step.errors}`);
+    if ((step.heartbeatFailures || 0) > 0) {
+        failures.push(`heartbeat_failures=${step.heartbeatFailures}`);
+    }
+    if (step.gpuMemPctMax != null && step.gpuMemPctMax >= gpuMemLimit) {
+        failures.push(`gpu_mem=${step.gpuMemPctMax}%>=${gpuMemLimit}%`);
+    }
+    if (
+        step.openReadyP95Ms != null
+        && step.baselineReadyMs != null
+        && step.openReadyP95Ms > step.baselineReadyMs * latencyFactor
+    ) {
+        failures.push(
+            `ready_p95=${step.openReadyP95Ms}ms > baseline ${step.baselineReadyMs}ms × ${latencyFactor}`
+        );
+    }
+    return failures;
+}
+
+function stepPassesGates(step, gates) {
+    return stepGateFailures(step, gates).length === 0;
 }
 
 function sleep(ms) {
@@ -417,10 +462,11 @@ class ResultSink {
     }
 
     finalize(extra = {}) {
+        const gates = extra.gates || {};
         const summary = {
             finishedAt: nowIso(),
             steps: this.steps,
-            suggestedMaxConcurrency: suggestMax(this.steps),
+            suggestedMaxConcurrency: suggestMax(this.steps, gates),
             ...extra
         };
         fs.writeFileSync(this.summaryPath, JSON.stringify(summary, null, 2));
@@ -428,17 +474,12 @@ class ResultSink {
     }
 }
 
-function suggestMax(steps) {
+function suggestMax(steps, gates = {}) {
     const capacity = steps.filter((s) => s.kind === 'capacity');
     if (!capacity.length) return null;
     let best = 0;
     for (const step of capacity) {
-        const ok = step.errors === 0
-            && step.heartbeatFailures === 0
-            && (step.gpuMemPctMax == null || step.gpuMemPctMax < 90)
-            && (step.openReadyP95Ms == null || step.baselineReadyMs == null
-                || step.openReadyP95Ms <= step.baselineReadyMs * 2.5);
-        if (ok) best = step.concurrency;
+        if (stepPassesGates(step, gates)) best = step.concurrency;
         else break;
     }
     return best || null;
@@ -767,8 +808,27 @@ async function openMany({ args, accounts, fileId, sink, count }) {
 }
 
 async function runCapacity(args, accounts, fileId, sink) {
-    const { from, to } = parseConcurrency(args.concurrency);
+    const { auto, from, to } = parseConcurrency(args.concurrency, args.maxConcurrency);
+    const gates = {
+        latencyFactor: args.latencyFactor,
+        gpuMemLimit: args.gpuMemLimit
+    };
     let baselineReadyMs = null;
+    let breakingN = null;
+    let breakReasons = [];
+
+    console.log(
+        auto
+            ? `\nAuto capacity ramp 1…${to} (stop on first gate failure)`
+            : `\nCapacity ramp ${from}…${to}`
+    );
+    if (accounts.length < to) {
+        console.log(
+            `Note: ${accounts.length} account(s) for up to ${to} seats — `
+            + 'one user reuses seats (kick at maxSeats). '
+            + 'Use --accounts-file with N users for true multi-user capacity.'
+        );
+    }
 
     for (let n = from; n <= to; n += 1) {
         console.log(`\n=== capacity concurrency=${n} ===`);
@@ -779,25 +839,63 @@ async function runCapacity(args, accounts, fileId, sink) {
         await metrics.stop();
         const step = {
             kind: 'capacity',
-            ...summarizeSessions(sessions, peaks, { errors, baselineReadyMs })
+            ...summarizeSessions(sessions, peaks, { errors, baselineReadyMs }),
+            auto
         };
         if (baselineReadyMs == null && step.openReadyP50Ms != null) {
             baselineReadyMs = step.openReadyP50Ms;
             step.baselineReadyMs = baselineReadyMs;
+        } else {
+            step.baselineReadyMs = baselineReadyMs;
         }
+        const failures = stepGateFailures(step, gates);
+        step.passed = failures.length === 0;
+        step.failures = failures;
         sink.addStep(step);
         printStep(step);
+
         if (!args.noCleanup) {
             await stopMany(sessions, 'hard');
             activeSessions.length = 0;
         }
+
+        if (failures.length) {
+            breakingN = n;
+            breakReasons = failures;
+            console.log(`  GATE FAIL at concurrency=${n}: ${failures.join('; ')}`);
+            if (auto) {
+                console.log('  Auto ramp stopping.');
+                break;
+            }
+        } else {
+            console.log(`  GATE OK at concurrency=${n}`);
+        }
+
         if (n < to) await sleep(args.stepCooldown * 1000);
     }
+
+    const suggested = suggestMax(sink.steps, gates);
+    sink.event('capacity_done', {
+        auto,
+        suggestedMaxConcurrency: suggested,
+        breakingConcurrency: breakingN,
+        breakReasons
+    });
+    console.log(
+        `\nSuggested max concurrent Full Slicer seats: ${suggested ?? 'none (N=1 already failed)'}`
+    );
+    if (breakingN != null) {
+        console.log(`First failure at concurrency=${breakingN}: ${breakReasons.join('; ')}`);
+    }
+    console.log('Confirm scroll/UX manually at that N before treating it as production capacity.');
 }
 
 async function runSoak(args, accounts, fileId, sink) {
-    const { to } = parseConcurrency(args.concurrency);
-    const n = to;
+    const parsed = parseConcurrency(args.concurrency, args.maxConcurrency);
+    if (parsed.auto) {
+        throw new Error('Soak mode needs a fixed --concurrency N (not auto)');
+    }
+    const n = parsed.to;
     console.log(`\n=== soak concurrency=${n} duration=${args.durationMs}ms ===`);
     const metrics = await startMetricsLoop(sink, { enabled: !args.skipMetrics, intervalMs: 10_000 });
     const { sessions, errors } = await openMany({ args, accounts, fileId, sink, count: n });
@@ -930,11 +1028,12 @@ async function runRobustness(args, accounts, fileId, sink) {
 
 function printStep(step) {
     if (step.kind === 'capacity' || step.kind === 'soak') {
+        const gate = step.passed == null ? '' : (step.passed ? ' PASS' : ' FAIL');
         console.log(
             `  summary concurrency=${step.concurrency} errors=${step.errors} `
             + `hbFail=${step.heartbeatFailures} `
             + `readyP50=${step.openReadyP50Ms ?? '-'}ms readyP95=${step.openReadyP95Ms ?? '-'}ms `
-            + `gpuMemMax=${step.gpuMemPctMax ?? '-'}%`
+            + `gpuMemMax=${step.gpuMemPctMax ?? '-'}%${gate}`
         );
         return;
     }
@@ -1015,7 +1114,12 @@ async function main() {
         projectId: args.projectId,
         fileId,
         baseUrl: args.baseUrl,
-        accounts: accounts.map((a) => a.username)
+        accounts: accounts.map((a) => a.username),
+        gates: {
+            latencyFactor: args.latencyFactor,
+            gpuMemLimit: args.gpuMemLimit,
+            maxConcurrency: args.maxConcurrency
+        }
     });
 
     console.log('\n=== done ===');
