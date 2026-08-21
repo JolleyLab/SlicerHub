@@ -9,6 +9,7 @@ import {
 import { loadAppFeatures, isDirectusCasesEnabled, areAppFeaturesLoaded } from './services/features.js';
 import './login-form.js';
 import './register-form.js';
+import './change-password-form.js';
 import './file-manager.js';
 import './components/status-card.js';
 import './MyProjects/myProjectsEmptyState.js';
@@ -386,6 +387,15 @@ export class TrameApp extends LitElement {
     this.name = user.username;
     hydrateUserPreferencesFromUser(user);
     this.startInactivityTimer();
+  }
+
+  handlePasswordChanged(e) {
+    const { user } = e.detail || {};
+    if (user) {
+      this.user = { ...(this.user || {}), ...user, mustChangePassword: false };
+    } else if (this.user) {
+      this.user = { ...this.user, mustChangePassword: false };
+    }
   }
 
   handleShowRegister() {
@@ -889,6 +899,17 @@ export class TrameApp extends LitElement {
                 @show-login=${this.handleShowLogin}>
               </register-form>`
         }
+        </div>
+      `;
+    }
+
+    // Provisioned accounts must set a personal password before using the product
+    if (this.user?.mustChangePassword) {
+      return html`
+        <div class="auth-container">
+          <change-password-form
+            @password-changed=${this.handlePasswordChanged}>
+          </change-password-form>
         </div>
       `;
     }

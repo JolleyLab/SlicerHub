@@ -63,12 +63,15 @@ services:
       - .env
     volumes:
       - ./backend:/app
-      - /app/node_modules  # Prevent host node_modules from overriding container's Linux-compiled modules
+      # Named volume so npm deps persist and can be refreshed (anonymous volumes go stale after package.json changes)
+      - backend-node-modules:/app/node_modules
       - slicer-backend-data:/app/data
       - ./backend/data:/app/data-seed:ro
       - ./data/slicer-gui:/app/data/slicer-gui
       - ./nginx:/nginx
       - /var/run/docker.sock:/var/run/docker.sock
+    # Re-install when a new lockfile dep is missing from the volume (e.g. @simplewebauthn/server)
+    command: ["sh", "-c", "test -d node_modules/@simplewebauthn/server || npm ci; exec node src/server.js"]
     environment:
       - NODE_ENV=development
       - DB_PATH=/app/data/users.db
@@ -132,7 +135,8 @@ services:
     # No external port - accessed only via nginx
     volumes:
       - ./dev:/app
-      - /app/node_modules
+      - frontend-node-modules:/app/node_modules
+    command: ["sh", "-c", "test -d node_modules/@simplewebauthn/browser || npm ci; exec npm run serve -- --host"]
     networks:
       - trame-net
 
@@ -238,3 +242,5 @@ networks:
 volumes:
   slicer-backend-data:
   slicer-gui-home:
+  backend-node-modules:
+  frontend-node-modules:

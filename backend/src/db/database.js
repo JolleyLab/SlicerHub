@@ -374,6 +374,121 @@ const migrations = [
             ALTER TABLE share_links
             ADD COLUMN viewer_kind TEXT DEFAULT 'trame';
         `
+    },
+    {
+        id: '016_auth_identity_links',
+        up: `
+            CREATE TABLE IF NOT EXISTS auth_identity_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                external_id TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (provider, external_id),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_auth_identity_links_user_id
+                ON auth_identity_links(user_id);
+
+            CREATE TABLE IF NOT EXISTS auth_provider_tokens (
+                token_jti TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                access_token TEXT,
+                refresh_token TEXT,
+                expires_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_auth_provider_tokens_user_id
+                ON auth_provider_tokens(user_id);
+        `
+    },
+    {
+        id: '017_auth_audit_events',
+        up: `
+            CREATE TABLE IF NOT EXISTS auth_audit_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event TEXT NOT NULL,
+                provider TEXT,
+                user_id INTEGER,
+                identity_hash TEXT,
+                ip TEXT,
+                user_agent TEXT,
+                detail TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_auth_audit_events_created
+                ON auth_audit_events(created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_auth_audit_events_user_id
+                ON auth_audit_events(user_id);
+        `
+    },
+    {
+        id: '018_auth_trusted_devices',
+        up: `
+            CREATE TABLE IF NOT EXISTS auth_trusted_devices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider TEXT NOT NULL,
+                identity_hash TEXT NOT NULL,
+                user_id INTEGER,
+                device_token_hash TEXT NOT NULL UNIQUE,
+                refresh_token_enc TEXT NOT NULL,
+                expires_at DATETIME NOT NULL,
+                last_used_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_auth_trusted_devices_identity
+                ON auth_trusted_devices(provider, identity_hash);
+
+            CREATE INDEX IF NOT EXISTS idx_auth_trusted_devices_expires
+                ON auth_trusted_devices(expires_at);
+        `
+    },
+    {
+        id: '019_auth_webauthn',
+        up: `
+            CREATE TABLE IF NOT EXISTS auth_webauthn_credentials (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                credential_id TEXT NOT NULL UNIQUE,
+                public_key TEXT NOT NULL,
+                counter INTEGER NOT NULL DEFAULT 0,
+                transports_json TEXT,
+                device_type TEXT,
+                backed_up INTEGER DEFAULT 0,
+                friendly_name TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_used_at DATETIME,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_auth_webauthn_credentials_user_id
+                ON auth_webauthn_credentials(user_id);
+
+            CREATE TABLE IF NOT EXISTS auth_webauthn_challenges (
+                challenge TEXT PRIMARY KEY,
+                type TEXT NOT NULL,
+                user_id INTEGER,
+                expires_at DATETIME NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_auth_webauthn_challenges_expires
+                ON auth_webauthn_challenges(expires_at);
+        `
+    },
+    {
+        id: '020_users_must_change_password',
+        up: `
+            ALTER TABLE users
+            ADD COLUMN must_change_password INTEGER DEFAULT 0;
+        `
     }
 ];
 

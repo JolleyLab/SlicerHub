@@ -33,6 +33,10 @@ export function errorHandler(err, req, res, next) {
         }
     };
 
+    if (isOperationalError && err.code) {
+        errorResponse.error.code = err.code;
+    }
+
     // In development, add more details to help debugging
     if (config.isDevelopment) {
         errorResponse.error.stack = err.stack;

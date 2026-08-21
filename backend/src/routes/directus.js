@@ -3,9 +3,11 @@ import { asyncHandler } from '../middleware/errorHandler.js';
 import { ValidationError } from '../utils/errors.js';
 import config from '../config/index.js';
 import User from '../models/User.js';
+import { requireDirectusLink } from '../auth/requireDirectusLink.js';
+import { requireDirectusUserToken } from '../auth/directusUserSession.js';
 import {
     listCases,
-    isDirectusConfigured,
+    isDirectusUrlConfigured,
     getCaseAttachment,
     ensureDirectusAssetCached,
     isMrbAttachment,
@@ -72,33 +74,44 @@ export default function directusRoutes(app) {
         return;
     }
 
+    // Collab/Cases: product JWT + Directus link + call-as-user access token (no service fallback).
+    const collabAuth = [
+        authenticateToken,
+        requireDirectusLink,
+        requireDirectusUserToken
+    ];
+
     /**
-     * PoC: list Directus cases for the logged-in app user.
-     * Browser never sees the Directus service token.
+     * List Directus cases as the logged-in user's Directus identity.
      */
-    app.get('/api/directus/cases', authenticateToken, asyncHandler(async (req, res) => {
-        const cases = await listCases({ limit: req.query.limit });
+    app.get('/api/directus/cases', ...collabAuth, asyncHandler(async (req, res) => {
+        const cases = await listCases({
+            limit: req.query.limit,
+            accessToken: req.directusAccessToken
+        });
         res.json({
             cases,
             meta: {
-                configured: isDirectusConfigured(),
-                source: 'directus:case'
+                configured: isDirectusUrlConfigured(),
+                source: 'directus:case',
+                actingAs: 'user',
+                directusUserId: req.directusIdentity?.externalId || null
             }
         });
     }));
 
     /**
-     * PoC: create a Directus activity comment on a case.
-     * Auth is app JWT; Directus write uses the server service token.
-     * Note: Directus attributes user_created to the service account for now.
+     * Create a Directus comment as the logged-in user.
      */
-    app.post('/api/directus/cases/:caseId/comments', authenticateToken, asyncHandler(async (req, res) => {
+    app.post('/api/directus/cases/:caseId/comments', ...collabAuth, asyncHandler(async (req, res) => {
         const caseId = String(req.params.caseId || '').trim();
         const text = typeof req.body?.comment === 'string'
             ? req.body.comment
             : (typeof req.body?.text === 'string' ? req.body.text : '');
 
-        const comment = await createCaseComment(caseId, text);
+        const comment = await createCaseComment(caseId, text, {
+            accessToken: req.directusAccessToken
+        });
         res.status(201).json({
             comment,
             meta: {
@@ -107,18 +120,18 @@ export default function directusRoutes(app) {
                     username: req.user.username || null,
                     email: req.user.email || null
                 },
-                note: 'Directus stores user_created as the BFF service account until app↔Directus user mapping exists.'
+                directusUserId: req.directusIdentity?.externalId || null,
+                actingAs: 'user'
             }
         });
     }));
 
     /**
-     * PoC: download a case attachment from Directus, stage into local Full Slicer, open.
-     * No Project/File rows — keeps Cases separate from My Projects.
+     * Download a case attachment from Directus as the user, stage into local Full Slicer, open.
      */
     app.post(
         '/api/directus/cases/:caseId/attachments/:attachmentId/open-local-full-slicer',
-        authenticateToken,
+        ...collabAuth,
         asyncHandler(async (req, res) => {
             const caseId = String(req.params.caseId || '').trim();
             const attachmentId = String(req.params.attachmentId || '').trim();
@@ -126,7 +139,9 @@ export default function directusRoutes(app) {
                 throw new ValidationError('caseId and attachmentId are required');
             }
 
-            const attachment = await getCaseAttachment(caseId, attachmentId);
+            const attachment = await getCaseAttachment(caseId, attachmentId, {
+                accessToken: req.directusAccessToken
+            });
             if (!isMrbAttachment(attachment)) {
                 throw new ValidationError(
                     'Only MRB attachments can be opened in Full Slicer for this PoC'
@@ -140,7 +155,8 @@ export default function directusRoutes(app) {
             const cachePromise = ensureDirectusAssetCached({
                 fileId: attachment.fileId,
                 filenameDownload: attachment.filenameDownload || attachment.name || 'scene.mrb',
-                expectedSize: attachment.filesize
+                expectedSize: attachment.filesize,
+                accessToken: req.directusAccessToken
             });
             const seatPromise = ensureLocalFullSlicerSeat(req, {
                 failureMessage: 'Unable to start local Full Slicer session. Is the slicer-gui image built?',

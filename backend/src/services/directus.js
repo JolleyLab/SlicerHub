@@ -11,11 +11,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 /**
- * Thin Directus REST client for server-side (service token) use only.
- * Never expose config.directus.token to the browser.
+ * Thin Directus REST client.
+ * - Service ops (provision): config.directus.token
+ * - Cases / collab: per-request accessToken ("call as user") — never fall back to service token
+ * Never expose tokens to the browser.
  */
 export function isDirectusConfigured() {
+    // URL + service token (system jobs / provision / legacy)
     return Boolean(config.directus.url && config.directus.token);
+}
+
+/** Cases BFF only needs the Directus base URL; user bears API auth. */
+export function isDirectusUrlConfigured() {
+    return Boolean(config.directus.url);
 }
 
 export class DirectusUnavailableError extends AppError {
@@ -103,7 +111,7 @@ function extractMentionUserIds(text) {
 
 /**
  * Resolve Directus @<user-uuid> mentions (often wrapped in NBSP) to "@First Last".
- * PoC: assumes the service token can read first/last names for mentioned users.
+ * Assumes the service token can read first/last names for mentioned users.
  */
 function resolveCommentText(text, usersById = {}) {
     return String(text || '')
@@ -142,11 +150,12 @@ function mapComment(row, usersById = {}) {
  * Batch-load Directus users by id for mention resolution.
  * @returns {Promise<Record<string, object>>} keyed by lowercase user id
  */
-async function fetchUsersByIds(userIds) {
+async function fetchUsersByIds(userIds, { accessToken } = {}) {
     const unique = [...new Set((userIds || []).map((id) => String(id || '').trim().toLowerCase()).filter(Boolean))];
     if (!unique.length) return {};
 
     const payload = await directusFetch('/users', {
+        accessToken,
         query: {
             'filter[id][_in]': unique.join(','),
             fields: 'id,first_name,last_name,email',
@@ -183,12 +192,23 @@ function mapCase(row, commentsByCaseId = {}) {
 
 /**
  * @param {string} pathName - Path under the Directus host, e.g. "/items/case"
- * @param {{ method?: string, query?: Record<string, string>, body?: unknown }} [options]
+ * @param {{ method?: string, query?: Record<string, string>, body?: unknown, accessToken?: string }} [options]
+ * accessToken: when set, call as that user. When omitted, use service DIRECTUS_TOKEN.
  */
-export async function directusFetch(pathName, { method = 'GET', query, body } = {}) {
-    if (!isDirectusConfigured()) {
+export async function directusFetch(pathName, { method = 'GET', query, body, accessToken } = {}) {
+    if (!config.directus.url) {
+        throw new DirectusUnavailableError('Directus is not configured. Set DIRECTUS_URL.');
+    }
+
+    const bearer = accessToken
+        ? String(accessToken)
+        : (config.directus.token || '');
+
+    if (!bearer) {
         throw new DirectusUnavailableError(
-            'Directus is not configured. Set DIRECTUS_URL and DIRECTUS_TOKEN.'
+            accessToken === undefined
+                ? 'Directus service token is not configured. Set DIRECTUS_TOKEN for system operations.'
+                : 'Directus user access token is required'
         );
     }
 
@@ -206,7 +226,7 @@ export async function directusFetch(pathName, { method = 'GET', query, body } = 
         response = await fetch(url, {
             method,
             headers: {
-                Authorization: `Bearer ${config.directus.token}`,
+                Authorization: `Bearer ${bearer}`,
                 'Content-Type': 'application/json',
                 Accept: 'application/json'
             },
@@ -227,6 +247,11 @@ export async function directusFetch(pathName, { method = 'GET', query, body } = 
         const message = payload?.errors?.[0]?.message
             || payload?.message
             || `Directus returned ${response.status}`;
+        if (accessToken && (response.status === 401 || response.status === 403)) {
+            throw new AppError(message, response.status, response.status === 401
+                ? 'DIRECTUS_USER_UNAUTHORIZED'
+                : 'DIRECTUS_USER_FORBIDDEN');
+        }
         const status = response.status >= 400 && response.status < 600 ? response.status : 502;
         throw new AppError(message, status === 401 || status === 403 ? 502 : status);
     }
@@ -235,13 +260,90 @@ export async function directusFetch(pathName, { method = 'GET', query, body } = 
 }
 
 /**
+ * Look up a Directus user by email (service token).
+ * @returns {Promise<{ id: string, email: string, status?: string, role?: string } | null>}
+ */
+export async function findDirectusUserByEmail(email) {
+    const normalized = String(email || '').trim().toLowerCase();
+    if (!normalized) return null;
+
+    const payload = await directusFetch('/users', {
+        query: {
+            'filter[email][_eq]': normalized,
+            fields: 'id,email,status,role,first_name,last_name',
+            limit: '1'
+        }
+    });
+
+    const row = Array.isArray(payload?.data) ? payload.data[0] : null;
+    return row || null;
+}
+
+/**
+ * Create a Directus user with the service token (active, password set).
+ * @param {{ email: string, password: string, roleId: string, firstName?: string, lastName?: string }} input
+ */
+export async function createDirectusUser({ email, password, roleId, firstName, lastName }) {
+    const normalized = String(email || '').trim().toLowerCase();
+    if (!normalized) {
+        throw new ValidationError('Email is required');
+    }
+    if (!password || String(password).length < 8) {
+        throw new ValidationError('Password must be at least 8 characters');
+    }
+    const role = String(roleId || '').trim();
+    if (!role) {
+        throw new ValidationError('Directus role id is required (DIRECTUS_DEFAULT_ROLE_ID)');
+    }
+
+    const body = {
+        email: normalized,
+        password: String(password),
+        role,
+        status: 'active'
+    };
+    if (firstName) body.first_name = String(firstName).trim();
+    if (lastName) body.last_name = String(lastName).trim();
+
+    const payload = await directusFetch('/users', { method: 'POST', body });
+    const user = payload?.data;
+    if (!user?.id) {
+        throw new InternalError('Directus user create returned no id');
+    }
+    return user;
+}
+
+/**
+ * Update a Directus user's password (service token).
+ */
+export async function updateDirectusUserPassword(directusUserId, newPassword) {
+    const id = String(directusUserId || '').trim();
+    if (!id) {
+        throw new ValidationError('Directus user id is required');
+    }
+    if (!newPassword || String(newPassword).length < 8) {
+        throw new ValidationError('Password must be at least 8 characters');
+    }
+
+    const payload = await directusFetch(`/users/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: { password: String(newPassword) }
+    });
+    return payload?.data || null;
+}
+
+/**
  * List Directus activity comments for the `case` collection (one request),
  * resolving @user-uuid mentions to first/last names.
  * @returns {Promise<Record<string, Array>>} comments keyed by case id
  */
-export async function listCaseCommentsByCaseId({ limit = 200 } = {}) {
+export async function listCaseCommentsByCaseId({ limit = 200, accessToken } = {}) {
+    if (!accessToken) {
+        throw new ValidationError('Directus user access token is required for case comments');
+    }
     const safeLimit = Math.max(1, Math.min(500, Number(limit) || 200));
     const payload = await directusFetch('/comments', {
+        accessToken,
         query: {
             'filter[collection][_eq]': 'case',
             fields: [
@@ -269,7 +371,7 @@ export async function listCaseCommentsByCaseId({ limit = 200 } = {}) {
 
     let usersById = {};
     try {
-        usersById = await fetchUsersByIds(mentionIds);
+        usersById = await fetchUsersByIds(mentionIds, { accessToken });
     } catch (err) {
         console.warn('Directus mention user lookup failed:', err.message || err);
     }
@@ -298,12 +400,16 @@ const COMMENT_FIELDS = [
 ].join(',');
 
 /**
- * Create a Directus activity comment on a case (service token).
+ * Create a Directus activity comment on a case (as the logged-in user).
  * @param {string} caseId
  * @param {string} commentText
+ * @param {{ accessToken: string }} options
  * @returns {Promise<object>} mapped comment
  */
-export async function createCaseComment(caseId, commentText) {
+export async function createCaseComment(caseId, commentText, { accessToken } = {}) {
+    if (!accessToken) {
+        throw new ValidationError('Directus user access token is required to post comments');
+    }
     const caseKey = String(caseId || '').trim();
     const body = String(commentText || '').trim();
     if (!caseKey) {
@@ -316,13 +422,15 @@ export async function createCaseComment(caseId, commentText) {
         throw new ValidationError('Comment must be 5000 characters or less');
     }
 
-    // Ensure the case exists before writing.
+    // Ensure the case exists / is readable before writing.
     await directusFetch(`/items/case/${encodeURIComponent(caseKey)}`, {
+        accessToken,
         query: { fields: 'id' }
     });
 
     const created = await directusFetch('/comments', {
         method: 'POST',
+        accessToken,
         body: {
             collection: 'case',
             item: caseKey,
@@ -335,6 +443,7 @@ export async function createCaseComment(caseId, commentText) {
     if (createdId) {
         try {
             const refreshed = await directusFetch(`/comments/${encodeURIComponent(createdId)}`, {
+                accessToken,
                 query: { fields: COMMENT_FIELDS }
             });
             if (refreshed?.data) row = refreshed.data;
@@ -346,7 +455,7 @@ export async function createCaseComment(caseId, commentText) {
     const mentionIds = extractMentionUserIds(row?.comment);
     let usersById = {};
     try {
-        usersById = await fetchUsersByIds(mentionIds);
+        usersById = await fetchUsersByIds(mentionIds, { accessToken });
     } catch (err) {
         console.warn('Directus mention user lookup failed:', err.message || err);
     }
@@ -361,17 +470,22 @@ export async function createCaseComment(caseId, commentText) {
 /**
  * List cases from the coworker sandbox collection (`case`, singular),
  * including attachments and Directus activity comments.
+ * Must pass the signed-in user's Directus access token (call-as-user).
  */
-export async function listCases({ limit = 50 } = {}) {
+export async function listCases({ limit = 50, accessToken } = {}) {
+    if (!accessToken) {
+        throw new ValidationError('Directus user access token is required to list cases');
+    }
     const safeLimit = Math.max(1, Math.min(100, Number(limit) || 50));
     const [payload, commentsByCaseId] = await Promise.all([
         directusFetch('/items/case', {
+            accessToken,
             query: {
                 limit: String(safeLimit),
                 fields: CASE_LIST_FIELDS
             }
         }),
-        listCaseCommentsByCaseId().catch((err) => {
+        listCaseCommentsByCaseId({ accessToken }).catch((err) => {
             console.warn('Directus comments fetch failed:', err.message || err);
             return {};
         })
@@ -384,7 +498,10 @@ export async function listCases({ limit = 50 } = {}) {
 /**
  * Fetch one attachment and verify it belongs to the given case.
  */
-export async function getCaseAttachment(caseId, attachmentId) {
+export async function getCaseAttachment(caseId, attachmentId, { accessToken } = {}) {
+    if (!accessToken) {
+        throw new ValidationError('Directus user access token is required for attachments');
+    }
     const caseKey = String(caseId || '').trim();
     const attachmentKey = String(attachmentId || '').trim();
     if (!caseKey || !attachmentKey) {
@@ -392,6 +509,7 @@ export async function getCaseAttachment(caseId, attachmentId) {
     }
 
     const payload = await directusFetch(`/items/attachment/${encodeURIComponent(attachmentKey)}`, {
+        accessToken,
         query: {
             fields: [
                 'id',
@@ -424,21 +542,24 @@ export async function getCaseAttachment(caseId, attachmentId) {
 
 /**
  * Ensure a Directus asset is cached on disk. Reuses the file when size matches.
+ * Download uses the caller's Directus access token (no service-token fallback).
  * @returns {Promise<{ cachePath: string, fileName: string, bytes: number, reused: boolean }>}
  */
 export async function ensureDirectusAssetCached({
     fileId,
     filenameDownload = null,
-    expectedSize = null
+    expectedSize = null,
+    accessToken = null
 } = {}) {
     const assetId = String(fileId || '').trim();
     if (!assetId) {
         throw new ValidationError('Directus file id is required');
     }
-    if (!isDirectusConfigured()) {
-        throw new DirectusUnavailableError(
-            'Directus is not configured. Set DIRECTUS_URL and DIRECTUS_TOKEN.'
-        );
+    if (!accessToken) {
+        throw new ValidationError('Directus user access token is required to download assets');
+    }
+    if (!isDirectusUrlConfigured()) {
+        throw new DirectusUnavailableError('Directus is not configured. Set DIRECTUS_URL.');
     }
 
     const safeName = sanitizeFileName(filenameDownload || `${assetId}.bin`);
@@ -498,7 +619,7 @@ export async function ensureDirectusAssetCached({
         response = await fetch(url, {
             method: 'GET',
             headers: {
-                Authorization: `Bearer ${config.directus.token}`,
+                Authorization: `Bearer ${accessToken}`,
                 Accept: '*/*'
             }
         });
@@ -514,7 +635,11 @@ export async function ensureDirectusAssetCached({
         } catch {
             /* ignore */
         }
-        throw new AppError(message, response.status === 401 || response.status === 403 ? 502 : 502);
+        throw new AppError(
+            message,
+            response.status === 401 || response.status === 403 ? response.status : 502,
+            response.status === 401 ? 'DIRECTUS_USER_UNAUTHORIZED' : 'DIRECTUS_USER_FORBIDDEN'
+        );
     }
 
     if (!response.body) {

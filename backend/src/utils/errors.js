@@ -6,10 +6,11 @@
  * Base class for application errors
  */
 export class AppError extends Error {
-    constructor(message, statusCode = 500) {
+    constructor(message, statusCode = 500, code = null) {
         super(message);
         this.statusCode = statusCode;
         this.isOperational = true; // Distinguishes operational errors from programming errors
+        this.code = code || null;
         Error.captureStackTrace(this, this.constructor);
     }
 }
@@ -18,8 +19,8 @@ export class AppError extends Error {
  * 400 Bad Request - Invalid input from client
  */
 export class ValidationError extends AppError {
-    constructor(message = 'Invalid input') {
-        super(message, 400);
+    constructor(message = 'Invalid input', code = null) {
+        super(message, 400, code);
     }
 }
 
@@ -27,8 +28,8 @@ export class ValidationError extends AppError {
  * 401 Unauthorized - Authentication required or failed
  */
 export class UnauthorizedError extends AppError {
-    constructor(message = 'Unauthorized') {
-        super(message, 401);
+    constructor(message = 'Unauthorized', code = null) {
+        super(message, 401, code);
     }
 }
 
@@ -36,8 +37,8 @@ export class UnauthorizedError extends AppError {
  * 403 Forbidden - Authenticated but not allowed
  */
 export class ForbiddenError extends AppError {
-    constructor(message = 'Forbidden') {
-        super(message, 403);
+    constructor(message = 'Forbidden', code = null) {
+        super(message, 403, code);
     }
 }
 

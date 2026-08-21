@@ -7,6 +7,8 @@ import config from "./config/index.js";
 
 import containerRoutes from "./routes/containers.js";
 import authRoutes from "./routes/auth.js";
+import webauthnRoutes from "./routes/webauthn.js";
+import adminProvisionRoutes from "./routes/adminProvision.js";
 import fileRoutes from "./routes/files.js";
 import userRoutes from "./routes/users.js";
 import projectRoutes from "./routes/projects.js";
@@ -24,6 +26,7 @@ import {
 } from "./sessions/index.js";
 import { clearSessions } from "./sessions/leaseRegistry.js";
 import { warnIfGpuCredentialsKeyMissing } from "./gpu/credentials.js";
+import { warnIfAuthTokenKeyMissing } from "./auth/tokenCrypto.js";
 import { repairGpuCredentialsFromSeed } from "./gpu/repairCredentials.js";
 import ProjectGpu from "./models/ProjectGpu.js";
 import { restoreGpuViewerProxies } from "./gpu/gpuViewerProxy.js";
@@ -79,6 +82,8 @@ app.use(cors({
 
 // Register authentication routes
 authRoutes(app);
+webauthnRoutes(app);
+adminProvisionRoutes(app);
 
 featuresRoutes(app);
 
@@ -115,6 +120,7 @@ app.listen(config.server.port, config.server.host, async () => {
     }
     warnIfWeakDemoSecrets();
     warnIfGpuCredentialsKeyMissing();
+    warnIfAuthTokenKeyMissing();
     try {
         const { repaired } = await repairGpuCredentialsFromSeed();
         if (repaired > 0) {

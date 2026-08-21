@@ -83,7 +83,8 @@ export function authenticateToken(req, res, next) {
         req.user = {
             id: decoded.userId,
             username: decoded.username,
-            role: decoded.role
+            role: decoded.role,
+            jti: decoded.jti
         };
 
         next();

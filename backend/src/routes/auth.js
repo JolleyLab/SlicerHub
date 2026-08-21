@@ -1,25 +1,34 @@
 import User from '../models/User.js';
 import {
-    generateToken,
-    storeSession,
-    deleteSession,
-    deleteAllUserSessions,
-    decodeToken,
     authenticateToken
 } from '../middleware/authMiddleware.js';
-import jwt from 'jsonwebtoken';
-import { ValidationError, UnauthorizedError, NotFoundError } from '../utils/errors.js';
+import {
+    ValidationError,
+    UnauthorizedError,
+    NotFoundError,
+    ForbiddenError
+} from '../utils/errors.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { createRateLimiter, getRateLimitClientIp } from '../middleware/rateLimit.js';
-
-const AUTH_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-
-const authPerIpRateLimit = createRateLimiter({
-    windowMs: 60 * 1000,
-    max: 30,
-    message: 'Too many authentication attempts. Please wait and try again.',
-    getKey: (req) => `auth:ip:${getRateLimitClientIp(req)}`
-});
+import {
+    getPublicAuthConfig,
+    getAuthProviderName,
+    loginWithProvider,
+    logoutCurrentSession,
+    logoutAllSessions
+} from '../auth/index.js';
+import { issueAppSession, rotateAppSession } from '../auth/session.js';
+import { clearProviderTokens } from '../auth/identityStore.js';
+import { findDirectusLinkForUser } from '../auth/identityStore.js';
+import {
+    loginRateLimitMiddleware,
+    recordLoginFailure,
+    recordLoginSuccess
+} from '../auth/loginRateLimit.js';
+import { requireAllowedWebOrigin } from '../auth/originCheck.js';
+import { recordAuthEvent } from '../auth/auditLog.js';
+import { changePasswordForUser } from '../auth/changePassword.js';
+import config from '../config/index.js';
 
 const registerPerIpRateLimit = createRateLimiter({
     windowMs: 60 * 1000,
@@ -28,148 +37,206 @@ const registerPerIpRateLimit = createRateLimiter({
     getKey: (req) => `register:ip:${getRateLimitClientIp(req)}`
 });
 
-function authCookieOptions() {
-    const secure = process.env.COOKIE_SECURE === 'true'
-        || (process.env.COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production');
-    return {
-        httpOnly: true,
-        secure,
-        sameSite: 'strict',
-        path: '/',
-        maxAge: AUTH_COOKIE_MAX_AGE_MS
-    };
+function isAuthFailure(err) {
+    if (!err) return false;
+    if (err.code === 'OTP_REQUIRED') return false; // not a failed password attempt
+    if (err instanceof UnauthorizedError) return true;
+    if (err.statusCode === 401) return true;
+    return false;
 }
 
-function clearAuthCookie(res) {
-    const secure = process.env.COOKIE_SECURE === 'true'
-        || (process.env.COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production');
-    res.clearCookie('token', {
-        httpOnly: true,
-        secure,
-        sameSite: 'strict',
-        path: '/'
-    });
+function loginIdentity(req) {
+    return String(req.body?.identity || req.body?.username || req.body?.email || '').trim();
+}
+
+function publicUser(user) {
+    return {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        mustChangePassword: Boolean(user.mustChangePassword),
+        preferences: user.preferences
+    };
 }
 
 export default function authRoutes(app) {
     /**
-     * Register new user
+     * Public auth UI flags (provider, registration, identity labels).
      */
-    app.post('/api/auth/register', registerPerIpRateLimit, asyncHandler(async (req, res) => {
-        if (process.env.REGISTRATION_ENABLED === 'false') {
-            throw new ValidationError('Registration is disabled on this server');
-        }
-
-        const { username, email, password } = req.body;
-
-        // Validate input
-        if (!username || !email || !password) {
-            throw new ValidationError('Username, email, and password are required');
-        }
-
-        // Validate email format
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
-            throw new ValidationError('Invalid email format');
-        }
-
-        // Validate password strength
-        if (password.length < 8) {
-            throw new ValidationError('Password must be at least 8 characters long');
-        }
-
-        // Create user
-        const user = await User.create({ username, email, password });
-
-        // Generate token
-        const token = generateToken(user);
-        const decoded = jwt.decode(token);
-
-        // Store session
-        const expiresAt = new Date(decoded.exp * 1000).toISOString();
-        storeSession(
-            user.id,
-            decoded.jti,
-            expiresAt,
-            req.get('user-agent')
-        );
-
-        res.cookie('token', token, authCookieOptions());
-
-        res.status(201).json({
-            message: 'User created successfully',
-            user: {
-                id: user.id,
-                username: user.username,
-                email: user.email,
-                role: user.role,
-                preferences: user.preferences
-            }
-        });
+    app.get('/api/auth/config', asyncHandler(async (_req, res) => {
+        res.json(getPublicAuthConfig());
     }));
 
     /**
-     * Login
+     * Register new user (local accounts only)
      */
-    app.post('/api/auth/login', authPerIpRateLimit, asyncHandler(async (req, res) => {
-        const { username, password } = req.body;
-
-        if (!username || !password) {
-            throw new ValidationError('Username and password are required');
-        }
-
-        // Verify credentials
-        const user = await User.verifyPassword(username, password);
-
-        if (!user) {
-            throw new UnauthorizedError('Invalid credentials');
-        }
-
-        // Generate token
-        const token = generateToken(user);
-        const decoded = jwt.decode(token);
-
-        // Store session
-        const expiresAt = new Date(decoded.exp * 1000).toISOString();
-        storeSession(
-            user.id,
-            decoded.jti,
-            expiresAt,
-            req.get('user-agent')
-        );
-
-        res.cookie('token', token, authCookieOptions());
-
-        res.json({
-            message: 'Login successful',
-            user: {
-                id: user.id,
-                username: user.username,
-                email: user.email,
-                role: user.role,
-                preferences: user.preferences
+    app.post(
+        '/api/auth/register',
+        requireAllowedWebOrigin,
+        registerPerIpRateLimit,
+        asyncHandler(async (req, res) => {
+            const authConfig = getPublicAuthConfig();
+            if (!authConfig.registrationEnabled) {
+                throw new ValidationError('Registration is disabled on this server');
             }
-        });
-    }));
+
+            const { username, email, password } = req.body;
+
+            if (!username || !email || !password) {
+                throw new ValidationError('Username, email, and password are required');
+            }
+
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(email)) {
+                throw new ValidationError('Invalid email format');
+            }
+
+            if (password.length < 8) {
+                throw new ValidationError('Password must be at least 8 characters long');
+            }
+
+            const user = await User.create({ username, email, password });
+            const { user: sessionUser } = issueAppSession(req, res, user);
+
+            recordAuthEvent({
+                event: 'register',
+                provider: 'local',
+                userId: user.id,
+                identity: email,
+                req
+            });
+
+            res.status(201).json({
+                message: 'User created successfully',
+                user: sessionUser
+            });
+        })
+    );
+
+    /**
+     * Login — identity checked by active AUTH_PROVIDER; app always issues its JWT.
+     * Body: { identity|username|email, password, otp? }
+     */
+    app.post(
+        '/api/auth/login',
+        requireAllowedWebOrigin,
+        loginRateLimitMiddleware,
+        asyncHandler(async (req, res) => {
+            const provider = getAuthProviderName();
+            const identity = loginIdentity(req);
+            let result;
+            try {
+                result = await loginWithProvider(req, res, req.body);
+            } catch (err) {
+                if (err?.code === 'OTP_REQUIRED') {
+                    recordAuthEvent({
+                        event: 'login_otp_required',
+                        provider,
+                        identity,
+                        req
+                    });
+                    throw err;
+                }
+                if (err instanceof ForbiddenError) {
+                    recordLoginFailure(req);
+                    recordAuthEvent({
+                        event: 'login_failure',
+                        provider,
+                        identity,
+                        detail: err.code || 'forbidden',
+                        req
+                    });
+                    throw err;
+                }
+                if (isAuthFailure(err)) {
+                    recordLoginFailure(req);
+                    recordAuthEvent({
+                        event: 'login_failure',
+                        provider,
+                        identity,
+                        detail: err.code || 'unauthorized',
+                        req
+                    });
+                }
+                throw err;
+            }
+
+            if (!result) {
+                recordLoginFailure(req);
+                recordAuthEvent({
+                    event: 'login_failure',
+                    provider,
+                    identity,
+                    detail: 'invalid_credentials',
+                    req
+                });
+                throw new UnauthorizedError('Invalid credentials');
+            }
+
+            recordLoginSuccess(req);
+            recordAuthEvent({
+                event: 'login_success',
+                provider: result.provider,
+                userId: result.user.id,
+                identity,
+                req
+            });
+
+            res.json({
+                message: 'Login successful',
+                user: publicUser(result.user),
+                provider: result.provider
+            });
+        })
+    );
+
+    /**
+     * Change password (Directus-linked users update Directus via service token;
+     * local-only users update SQLite). Clears must_change_password on success.
+     * Body: { currentPassword, newPassword }
+     */
+    app.post(
+        '/api/auth/change-password',
+        requireAllowedWebOrigin,
+        authenticateToken,
+        asyncHandler(async (req, res) => {
+            const { currentPassword, newPassword } = req.body || {};
+            const min = config.security.passwordMinLength || 8;
+            if (!currentPassword || !newPassword) {
+                throw new ValidationError('currentPassword and newPassword are required');
+            }
+            if (String(newPassword).length < min) {
+                throw new ValidationError(`Password must be at least ${min} characters long`);
+            }
+
+            const user = await changePasswordForUser({
+                userId: req.user.id,
+                currentPassword,
+                newPassword
+            });
+
+            recordAuthEvent({
+                event: 'password_change',
+                provider: getAuthProviderName(),
+                userId: user.id,
+                identity: user.email || user.username,
+                req
+            });
+
+            res.json({
+                message: 'Password updated',
+                user: publicUser(user)
+            });
+        })
+    );
 
     /**
      * Logout
      */
-    app.post('/api/auth/logout', asyncHandler(async (req, res) => {
-        const authHeader = req.headers['authorization'];
-        const token = authHeader && authHeader.split(' ')[1] || req.cookies?.token;
-
-        if (token) {
-            const decoded = decodeToken(token);
-            if (decoded?.jti) {
-                deleteSession(decoded.jti);
-            }
-            // Do not stop other browsers' Full Slicer seats here — multi-seat
-            // means another device may still be attached. Orphaned seats expire
-            // via heartbeat TTL / watchdog. Use logout-all to wipe everything.
-        }
-
-        clearAuthCookie(res);
+    app.post('/api/auth/logout', requireAllowedWebOrigin, asyncHandler(async (req, res) => {
+        logoutCurrentSession(req, res);
+        recordAuthEvent({ event: 'logout', provider: getAuthProviderName(), req });
         res.json({ message: 'Logout successful' });
     }));
 
@@ -183,7 +250,14 @@ export default function authRoutes(app) {
             throw new NotFoundError('User not found');
         }
 
-        res.json({ user });
+        const directusLink = findDirectusLinkForUser(user.id);
+        res.json({
+            user,
+            identity: {
+                directusLinked: Boolean(directusLink),
+                directusUserId: directusLink?.external_id || null
+            }
+        });
     }));
 
     /**
@@ -227,51 +301,38 @@ export default function authRoutes(app) {
     /**
      * Refresh token (optional - extends session)
      */
-    app.post('/api/auth/refresh', authenticateToken, asyncHandler(async (req, res) => {
+    app.post('/api/auth/refresh', requireAllowedWebOrigin, authenticateToken, asyncHandler(async (req, res) => {
         const user = User.findById(req.user.id);
 
         if (!user) {
             throw new NotFoundError('User not found');
         }
 
-        // Delete old session
-        const authHeader = req.headers['authorization'];
-        const oldToken = authHeader && authHeader.split(' ')[1] || req.cookies?.token;
-        const oldDecoded = decodeToken(oldToken);
-        if (oldDecoded && oldDecoded.jti) {
-            deleteSession(oldDecoded.jti);
+        const { previousJti } = rotateAppSession(req, res, user);
+        if (previousJti) {
+            clearProviderTokens(previousJti);
         }
 
-        // Generate new token
-        const token = generateToken(user);
-        const decoded = jwt.decode(token);
-
-        // Store new session
-        const expiresAt = new Date(decoded.exp * 1000).toISOString();
-        storeSession(
-            user.id,
-            decoded.jti,
-            expiresAt,
-            req.get('user-agent')
-        );
-
-        res.cookie('token', token, authCookieOptions());
-
-        res.json({ user });
+        res.json({ user: publicUser(user) });
     }));
 
     /**
      * Logout all sessions (security feature)
      */
-    app.post('/api/auth/logout-all', authenticateToken, asyncHandler(async (req, res) => {
-        deleteAllUserSessions(req.user.id);
+    app.post('/api/auth/logout-all', requireAllowedWebOrigin, authenticateToken, asyncHandler(async (req, res) => {
+        logoutAllSessions(req.user.id, res);
         try {
             const { cleanupLocalViewerSessionsForUser } = await import('../sessions/cleanup.js');
             await cleanupLocalViewerSessionsForUser(req.user.id);
         } catch (err) {
             console.log('Local viewer cleanup during logout-all:', err.message);
         }
-        clearAuthCookie(res);
+        recordAuthEvent({
+            event: 'logout_all',
+            provider: getAuthProviderName(),
+            userId: req.user.id,
+            req
+        });
         res.json({ message: 'All sessions terminated' });
     }));
 }
