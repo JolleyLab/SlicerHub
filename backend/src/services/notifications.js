@@ -90,3 +90,33 @@ export function unreadNotificationCount(userId) {
     `).get(uid);
     return Number(row?.c) || 0;
 }
+
+/**
+ * Permanently remove one notification from the user's inbox (manual dismiss).
+ * Does not cancel the underlying invite / work item.
+ */
+export function deleteNotificationForUser(userId, notificationId) {
+    const uid = Number(userId);
+    const nid = Number(notificationId);
+    if (!Number.isInteger(uid) || uid < 1 || !Number.isInteger(nid) || nid < 1) {
+        return false;
+    }
+    const result = db.prepare(`
+        DELETE FROM user_notifications
+        WHERE id = ? AND user_id = ?
+    `).run(nid, uid);
+    return result.changes > 0;
+}
+
+export function deleteNotificationsForInviteIds(inviteIds) {
+    const ids = (Array.isArray(inviteIds) ? inviteIds : [inviteIds])
+        .map((id) => Number(id))
+        .filter((id) => Number.isInteger(id) && id > 0);
+    if (!ids.length) return 0;
+    const placeholders = ids.map(() => '?').join(',');
+    const result = db.prepare(`
+        DELETE FROM user_notifications
+        WHERE invite_id IN (${placeholders})
+    `).run(...ids);
+    return result.changes || 0;
+}

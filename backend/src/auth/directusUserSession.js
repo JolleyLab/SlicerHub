@@ -17,6 +17,7 @@ import {
 } from './directusLinkCookie.js';
 import { UnauthorizedError, ForbiddenError, AppError } from '../utils/errors.js';
 import config from '../config/index.js';
+import { msg } from '../i18n/index.js';
 
 const PROVIDER = 'directus';
 const REFRESH_SKEW_MS = 60 * 1000;
@@ -50,7 +51,7 @@ function expiresAtFromDirectus(expires) {
 async function refreshDirectusAccess(refreshToken) {
     const base = directusBaseUrl();
     if (!base) {
-        throw new AppError('Directus is not configured (DIRECTUS_URL)', 503);
+        throw new AppError(msg('directus.url_not_configured'), 503, null, 'directus.url_not_configured');
     }
 
     const res = await fetch(`${base}/auth/refresh`, {
@@ -152,13 +153,14 @@ export async function getDirectusAccessTokenForAppUser(appUser, { forceRefresh =
     const userId = appUser?.id;
     if (!jti || !userId) {
         throw new UnauthorizedError(
-            'Your session is incomplete. Please sign in again.',
-            'DIRECTUS_SESSION_REQUIRED'
+            msg('directus.session_incomplete'),
+            'DIRECTUS_SESSION_REQUIRED',
+            'directus.session_incomplete'
         );
     }
 
     if (!directusBaseUrl()) {
-        throw new AppError('Directus is not configured (DIRECTUS_URL)', 503);
+        throw new AppError(msg('directus.url_not_configured'), 503, null, 'directus.url_not_configured');
     }
 
     let tokens = getProviderTokens(jti);
@@ -169,24 +171,27 @@ export async function getDirectusAccessTokenForAppUser(appUser, { forceRefresh =
 
     if (!tokens?.access_token && !tokens?.refresh_token) {
         throw new ForbiddenError(
-            'Sign in once with your email and password so Cases can connect to your account.',
-            'DIRECTUS_SESSION_REQUIRED'
+            msg('directus.session_sign_in_once'),
+            'DIRECTUS_SESSION_REQUIRED',
+            'directus.session_sign_in_once'
         );
     }
 
     if (forceRefresh) {
         if (!tokens.refresh_token) {
             throw new ForbiddenError(
-                'Your account connection expired. Please sign in again with your email and password.',
-                'DIRECTUS_SESSION_EXPIRED'
+                msg('directus.session_expired'),
+                'DIRECTUS_SESSION_EXPIRED',
+                'directus.session_expired'
             );
         }
         const next = await refreshDirectusAccess(tokens.refresh_token);
         if (!next?.accessToken) {
             clearDirectusLinkCookie(res);
             throw new ForbiddenError(
-                'Your account connection expired. Please sign in again with your email and password.',
-                'DIRECTUS_SESSION_EXPIRED'
+                msg('directus.session_expired'),
+                'DIRECTUS_SESSION_EXPIRED',
+                'directus.session_expired'
             );
         }
         persistSessionAndCookie(res, jti, userId, next);
@@ -211,8 +216,9 @@ export async function getDirectusAccessTokenForAppUser(appUser, { forceRefresh =
     }
 
     throw new ForbiddenError(
-        'Your account connection expired. Please sign in again with your email and password.',
-        'DIRECTUS_SESSION_EXPIRED'
+        msg('directus.session_expired'),
+        'DIRECTUS_SESSION_EXPIRED',
+        'directus.session_expired'
     );
 }
 

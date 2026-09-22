@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
+import { t } from '../i18n/index.js';
 
 /** Default outside-click safe zone (px) for motor/touch forgiveness. */
 const DEFAULT_LIGHT_DISMISS_BUFFER_PX = 28;
@@ -216,7 +217,7 @@ export class AppDialog extends LitElement {
             <dialog class="dialog">
                 ${this.title ? html`<h2 class="dialog-title">${this.title}</h2>` : ''}
                 ${this.showDefaultCloseButton ? html`
-                    <button class="close-button" aria-label="Close dialog" @click=${() => this.closeDialog()}>×</button>
+                    <button class="close-button" aria-label=${t('dialog.closeAria')} @click=${() => this.closeDialog()}>×</button>
                 ` : ''}
                 <slot></slot>
                 <div class="dialog-actions">

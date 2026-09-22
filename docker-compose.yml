@@ -157,7 +157,7 @@ services:
     volumes:
       - ./dev:/app
       - frontend-node-modules:/app/node_modules
-    command: ["sh", "-c", "test -d node_modules/es-dev-server || npm ci; exec npm run serve -- --host"]
+    command: ["sh", "-c", "test -d node_modules/lit-element || npm ci; exec npm run serve -- --host"]
     networks:
       - trame-net
 

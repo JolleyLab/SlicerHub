@@ -4,6 +4,7 @@
  */
 
 import { API_URL } from '../config.js';
+import { t } from '../i18n/index.js';
 
 async function parseJson(response) {
     try {
@@ -28,7 +29,7 @@ export async function listNotifications({ unreadOnly = false } = {}) {
     });
     const data = await parseJson(response);
     if (!response.ok) {
-        throwError(response, data, "Couldn't load notifications.");
+        throwError(response, data, t('notifications.loadFailed'));
     }
     return data;
 }
@@ -40,7 +41,7 @@ export async function markNotificationRead(id) {
     });
     const data = await parseJson(response);
     if (!response.ok) {
-        throwError(response, data, "Couldn't update notification.");
+        throwError(response, data, t('notifications.updateFailed'));
     }
     return data;
 }
@@ -52,7 +53,20 @@ export async function markAllNotificationsRead() {
     });
     const data = await parseJson(response);
     if (!response.ok) {
-        throwError(response, data, "Couldn't update notifications.");
+        throwError(response, data, t('notifications.markAllFailed'));
+    }
+    return data;
+}
+
+/** Remove from inbox; does not cancel pending invites. */
+export async function dismissNotification(id) {
+    const response = await fetch(`${API_URL}/api/notifications/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        credentials: 'include'
+    });
+    const data = await parseJson(response);
+    if (!response.ok) {
+        throwError(response, data, t('notifications.dismissFailed'));
     }
     return data;
 }

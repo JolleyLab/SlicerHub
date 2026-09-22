@@ -33,6 +33,7 @@ import {
     SESSION_KINDS
 } from "../sessions/index.js";
 import { getSession } from "../sessions/leaseRegistry.js";
+import { msg } from "../i18n/index.js";
 
 // Simple HTTP request helper
 function fileRowToApiSnapshot(row) {
@@ -119,7 +120,9 @@ export default async function containerRoutes(app) {
                         if (gpuSettings.providerId !== 'local') {
                             if (isVastFullSlicerMode()) {
                                 throw new ConflictError(
-                                    'This project uses Vast Full Slicer. Open the file with the Full Slicer viewer (not Trame).'
+                                    msg('gpu.vast_use_full_slicer_not_trame'),
+                                    null,
+                                    'gpu.vast_use_full_slicer_not_trame'
                                 );
                             }
                             console.log(
@@ -283,7 +286,7 @@ export default async function containerRoutes(app) {
             const userSession = sessions.sessions?.find(s => s.userId === userId);
 
             if (!userSession) {
-                return res.status(404).json({ error: "No active session found" });
+                return res.status(404).json({ error: msg('session.not_found') });
             }
 
             let normalizedName = path.basename(targetFileName || "last-saved-scene.mrb");
@@ -291,11 +294,11 @@ export default async function containerRoutes(app) {
 
             if (saveMode === "overwrite") {
                 if (!fileId) {
-                    return res.status(400).json({ error: "fileId is required for overwrite saves" });
+                    return res.status(400).json({ error: msg('session.overwrite_file_id_required') });
                 }
                 overwriteTargetRecord = File.findById(parseInt(fileId, 10));
                 if (!overwriteTargetRecord || overwriteTargetRecord.user_id !== req.user.id) {
-                    return res.status(404).json({ error: "Target file for overwrite not found" });
+                    return res.status(404).json({ error: msg('session.overwrite_target_not_found') });
                 }
                 normalizedName = path.basename(overwriteTargetRecord.file_path || overwriteTargetRecord.stored_name);
             }
@@ -311,11 +314,11 @@ export default async function containerRoutes(app) {
             const savedName = path.basename(saveResult.path || normalizedName);
             const dbFilePath = storage.relativeDbPathForUser(userId, savedName);
             if (!(await storage.exists(dbFilePath))) {
-                return res.status(404).json({ error: "Saved scene file was not found" });
+                return res.status(404).json({ error: msg('session.saved_scene_not_found') });
             }
             const { size } = await storage.stat(dbFilePath);
             if (size <= 0) {
-                return res.status(400).json({ error: "Saved scene file is empty" });
+                return res.status(400).json({ error: msg('session.saved_scene_empty') });
             }
 
             // Overwrite mode updates the active file by id; save-as-new creates a new record.
@@ -379,7 +382,7 @@ export default async function containerRoutes(app) {
             const sessions = await httpRequest(`${trameServiceUrl}/api/sessions`);
             const userSession = sessions.sessions?.find(s => s.userId === userId);
             if (!userSession) {
-                return res.status(404).json({ error: "No active session found" });
+                return res.status(404).json({ error: msg('session.not_found') });
             }
             const state = await httpRequest(`${trameServiceUrl}/api/sessions/${userSession.sessionId}/view-state`, {
                 method: 'GET'
@@ -430,7 +433,7 @@ export default async function containerRoutes(app) {
                 const sessions = await httpRequest(`${trameServiceUrl}/api/sessions`);
                 const userSession = sessions.sessions?.find((s) => String(s.userId) === userId);
                 if (!userSession) {
-                    return res.status(404).json({ error: "No active session found" });
+                    return res.status(404).json({ error: msg('session.not_found') });
                 }
                 remoteSessionId = userSession.sessionId;
             }

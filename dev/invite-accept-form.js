@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit-element';
 import { previewSignupInvite, acceptSignupInvite } from './services/directus.js';
 import { resolvePreferredThemeForNewAccount } from './utils/userPreferences.js';
 import { authFormSharedStyles } from './styles/auth-form-shared.js';
+import { t } from './i18n/index.js';
 
 /**
  * Redeem a case signup invite (?invite=token).
@@ -68,7 +69,7 @@ export class InviteAcceptForm extends LitElement {
             this.preview = await previewSignupInvite(this.token);
         } catch (err) {
             this.preview = null;
-            this.error = err?.message || 'This invite link is invalid or expired.';
+            this.error = err?.message || t('auth.invite.invalidOrExpired');
         } finally {
             this.loading = false;
         }
@@ -78,11 +79,11 @@ export class InviteAcceptForm extends LitElement {
         event.preventDefault();
         if (this.submitting || !this.preview) return;
         if (!this.password || this.password.length < 8) {
-            this.error = 'Password must be at least 8 characters.';
+            this.error = t('auth.invite.passwordMin');
             return;
         }
         if (this.password !== this.confirmPassword) {
-            this.error = 'Passwords do not match.';
+            this.error = t('auth.invite.passwordMismatch');
             return;
         }
         this.submitting = true;
@@ -100,7 +101,7 @@ export class InviteAcceptForm extends LitElement {
                 composed: true
             }));
         } catch (err) {
-            this.error = err?.message || "Couldn't create your account.";
+            this.error = err?.message || t('auth.invite.createFailed');
         } finally {
             this.submitting = false;
         }
@@ -108,36 +109,34 @@ export class InviteAcceptForm extends LitElement {
 
     render() {
         if (this.loading) {
-            return html`<div class="auth-card"><p class="sub">Loading invite…</p></div>`;
+            return html`<div class="auth-card"><p class="sub">${t('auth.invite.loading')}</p></div>`;
         }
         if (!this.preview) {
             return html`
                 <div class="auth-card">
-                    <h2>Invite unavailable</h2>
+                    <h2>${t('auth.invite.unavailable')}</h2>
                     <div class="auth-alert auth-alert--error" role="alert">
-                      ${this.error || 'This invite link is invalid or expired.'}
+                      ${this.error || t('auth.invite.invalidOrExpired')}
                     </div>
                 </div>
             `;
         }
-        const caseTitle = this.preview.caseTitle || 'a case';
+        const caseTitle = this.preview.caseTitle || t('auth.invite.caseFallback');
+        const role = String(this.preview.proposedRole || 'collaborator').replace('_', ' ');
         return html`
             <div class="auth-card">
-                <h2>Join ${caseTitle}</h2>
+                <h2>${t('auth.invite.joinTitle', { caseTitle })}</h2>
                 ${this.error ? html`
                   <div class="auth-alert auth-alert--error" role="alert">${this.error}</div>
                 ` : ''}
-                <p class="sub">
-                    Create your account to join as
-                    ${String(this.preview.proposedRole || 'collaborator').replace('_', ' ')}.
-                </p>
+                <p class="sub">${t('auth.invite.subcopy', { role })}</p>
                 <form @submit=${(e) => this.handleSubmit(e)}>
                     <div class="form-group">
-                        <label>Email</label>
+                        <label>${t('auth.invite.email')}</label>
                         <input type="email" .value=${this.preview.email || ''} disabled />
                     </div>
                     <div class="form-group">
-                        <label>First name</label>
+                        <label>${t('auth.invite.firstName')}</label>
                         <input
                             type="text"
                             .value=${this.firstName}
@@ -145,7 +144,7 @@ export class InviteAcceptForm extends LitElement {
                         />
                     </div>
                     <div class="form-group">
-                        <label>Last name</label>
+                        <label>${t('auth.invite.lastName')}</label>
                         <input
                             type="text"
                             .value=${this.lastName}
@@ -153,7 +152,7 @@ export class InviteAcceptForm extends LitElement {
                         />
                     </div>
                     <div class="form-group">
-                        <label>Password</label>
+                        <label>${t('auth.invite.password')}</label>
                         <input
                             type="password"
                             required
@@ -163,7 +162,7 @@ export class InviteAcceptForm extends LitElement {
                         />
                     </div>
                     <div class="form-group">
-                        <label>Confirm password</label>
+                        <label>${t('auth.invite.confirmPassword')}</label>
                         <input
                             type="password"
                             required
@@ -173,7 +172,7 @@ export class InviteAcceptForm extends LitElement {
                         />
                     </div>
                     <button type="submit" ?disabled=${this.submitting}>
-                        ${this.submitting ? 'Creating account…' : 'Create account & join'}
+                        ${this.submitting ? t('auth.invite.submitting') : t('auth.invite.submit')}
                     </button>
                 </form>
             </div>

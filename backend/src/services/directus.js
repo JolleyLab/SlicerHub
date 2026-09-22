@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import config from '../config/index.js';
 import { AppError, ForbiddenError, InternalError, NotFoundError, ValidationError } from '../utils/errors.js';
+import { msg } from '../i18n/index.js';
 import {
     applyCaseCollaboratorRoleOverrides,
     getCaseCollaboratorRoleOverride,
@@ -1375,14 +1376,14 @@ export async function findDirectusUserById(directusUserId) {
 export async function createDirectusUser({ email, password, roleId, firstName, lastName }) {
     const normalized = String(email || '').trim().toLowerCase();
     if (!normalized) {
-        throw new ValidationError('Email is required');
+        throw new ValidationError(msg('auth.email_required'), null, 'auth.email_required');
     }
     if (!password || String(password).length < 8) {
-        throw new ValidationError('Password must be at least 8 characters');
+        throw new ValidationError(msg('auth.password_min_length_short', { min: 8 }), null, 'auth.password_min_length_short');
     }
     const role = String(roleId || '').trim();
     if (!role) {
-        throw new ValidationError('Directus role id is required (DIRECTUS_DEFAULT_ROLE_ID)');
+        throw new ValidationError(msg('directus.role_id_required'), null, 'directus.role_id_required');
     }
 
     const body = {
@@ -1408,10 +1409,10 @@ export async function createDirectusUser({ email, password, roleId, firstName, l
 export async function updateDirectusUserPassword(directusUserId, newPassword) {
     const id = String(directusUserId || '').trim();
     if (!id) {
-        throw new ValidationError('Directus user id is required');
+        throw new ValidationError(msg('directus.user_id_required'), null, 'directus.user_id_required');
     }
     if (!newPassword || String(newPassword).length < 8) {
-        throw new ValidationError('Password must be at least 8 characters');
+        throw new ValidationError(msg('auth.password_min_length_short', { min: 8 }), null, 'auth.password_min_length_short');
     }
 
     const payload = await directusFetch(`/users/${encodeURIComponent(id)}`, {
@@ -1465,7 +1466,7 @@ const COMMENT_FIELDS_ATTEMPTS = Object.freeze([
  */
 export async function listCaseCommentsByCaseId({ limit = 200, accessToken } = {}) {
     if (!accessToken) {
-        throw new ValidationError('Directus user access token is required for case comments');
+        throw new ValidationError(msg('directus.comments_token_required'), null, 'directus.comments_token_required');
     }
     const safeLimit = Math.max(1, Math.min(500, Number(limit) || 200));
 
@@ -1534,18 +1535,18 @@ export async function listCaseCommentsByCaseId({ limit = 200, accessToken } = {}
  */
 export async function createCaseComment(caseId, commentText, { accessToken } = {}) {
     if (!accessToken) {
-        throw new ValidationError('Directus user access token is required to post comments');
+        throw new ValidationError(msg('directus.post_comment_token_required'), null, 'directus.post_comment_token_required');
     }
     const caseKey = String(caseId || '').trim();
     const body = String(commentText || '').trim();
     if (!caseKey) {
-        throw new ValidationError('caseId is required');
+        throw new ValidationError(msg('case.case_id_required'), null, 'case.case_id_required');
     }
     if (!body) {
-        throw new ValidationError('Comment text is required');
+        throw new ValidationError(msg('case.comment_text_required'), null, 'case.comment_text_required');
     }
     if (body.length > 5000) {
-        throw new ValidationError('Comment must be 5000 characters or less');
+        throw new ValidationError(msg('case.comment_too_long'), null, 'case.comment_too_long');
     }
 
     // Ensure the case exists / is readable before writing.
@@ -1610,7 +1611,7 @@ export async function createCaseComment(caseId, commentText, { accessToken } = {
  */
 export async function listCases({ limit = 50, accessToken } = {}) {
     if (!accessToken) {
-        throw new ValidationError('Directus user access token is required to list cases');
+        throw new ValidationError(msg('directus.list_cases_token_required'), null, 'directus.list_cases_token_required');
     }
     const safeLimit = Math.max(1, Math.min(100, Number(limit) || 50));
     let commentsError = null;
@@ -1769,27 +1770,27 @@ async function fetchAttachmentRow(attachmentKey, { accessToken } = {}) {
  */
 export async function getCaseAttachment(caseId, attachmentId, { accessToken } = {}) {
     if (!accessToken) {
-        throw new ValidationError('Directus user access token is required for attachments');
+        throw new ValidationError(msg('directus.attachments_token_required'), null, 'directus.attachments_token_required');
     }
     const caseKey = String(caseId || '').trim();
     const attachmentKey = String(attachmentId || '').trim();
     if (!caseKey || !attachmentKey) {
-        throw new ValidationError('caseId and attachmentId are required');
+        throw new ValidationError(msg('case.case_attachment_ids_required'), null, 'case.case_attachment_ids_required');
     }
 
     const row = await fetchAttachmentRow(attachmentKey, { accessToken });
     if (!row?.id) {
-        throw new NotFoundError('Attachment not found');
+        throw new NotFoundError(msg('case.attachment_not_found'), null, 'case.attachment_not_found');
     }
 
     const owningCase = typeof row.case === 'object' ? row.case?.id : row.case;
     if (String(owningCase) !== caseKey) {
-        throw new NotFoundError('Attachment not found on this case');
+        throw new NotFoundError(msg('case.attachment_not_on_case'), null, 'case.attachment_not_on_case');
     }
 
     const mapped = mapAttachment(row);
     if (!mapped.fileId) {
-        throw new ValidationError('Attachment has no Directus file');
+        throw new ValidationError(msg('case.attachment_no_directus_file'), null, 'case.attachment_no_directus_file');
     }
     return mapped;
 }
@@ -1807,10 +1808,10 @@ export async function ensureDirectusAssetCached({
 } = {}) {
     const assetId = String(fileId || '').trim();
     if (!assetId) {
-        throw new ValidationError('Directus file id is required');
+        throw new ValidationError(msg('directus.file_id_required'), null, 'directus.file_id_required');
     }
     if (!accessToken) {
-        throw new ValidationError('Directus user access token is required to download assets');
+        throw new ValidationError(msg('directus.asset_download_token_required'), null, 'directus.asset_download_token_required');
     }
     if (!isDirectusUrlConfigured()) {
         throw new DirectusUnavailableError('Directus is not configured. Set DIRECTUS_URL.');
@@ -1960,12 +1961,12 @@ export function canOpenAttachmentInSlicer(attachment) {
  */
 export async function deleteCaseAttachment(caseId, attachmentId, { accessToken } = {}) {
     if (!accessToken) {
-        throw new ValidationError('Directus user access token is required to delete attachments');
+        throw new ValidationError(msg('directus.delete_attachments_token_required'), null, 'directus.delete_attachments_token_required');
     }
     const caseKey = String(caseId || '').trim();
     const attachmentKey = String(attachmentId || '').trim();
     if (!caseKey || !attachmentKey) {
-        throw new ValidationError('caseId and attachmentId are required');
+        throw new ValidationError(msg('case.case_attachment_ids_required'), null, 'case.case_attachment_ids_required');
     }
 
     // Verify attachment belongs to this case before deleting
@@ -1985,11 +1986,11 @@ export async function deleteCaseAttachment(caseId, attachmentId, { accessToken }
  */
 export async function createCase({ title, description, status } = {}, { accessToken } = {}) {
     if (!accessToken) {
-        throw new ValidationError('Directus user access token is required to create a case');
+        throw new ValidationError(msg('directus.create_case_token_required'), null, 'directus.create_case_token_required');
     }
     const trimmedTitle = String(title || '').trim();
     if (!trimmedTitle) {
-        throw new ValidationError('Case title is required');
+        throw new ValidationError(msg('case.title_required'), null, 'case.title_required');
     }
 
     const body = { title: trimmedTitle };
@@ -2085,11 +2086,11 @@ export async function createCase({ title, description, status } = {}, { accessTo
  */
 export async function updateCase(caseId, updates = {}, { accessToken } = {}) {
     if (!accessToken) {
-        throw new ValidationError('Directus user access token is required to update a case');
+        throw new ValidationError(msg('directus.update_case_token_required'), null, 'directus.update_case_token_required');
     }
     const caseKey = String(caseId || '').trim();
     if (!caseKey) {
-        throw new ValidationError('caseId is required');
+        throw new ValidationError(msg('case.case_id_required'), null, 'case.case_id_required');
     }
 
     const body = {};
@@ -2102,10 +2103,10 @@ export async function updateCase(caseId, updates = {}, { accessToken } = {}) {
     }
 
     if (!Object.keys(body).length) {
-        throw new ValidationError('No updatable fields provided (title, description, status)');
+        throw new ValidationError(msg('directus.case_no_updatable_fields'), null, 'directus.case_no_updatable_fields');
     }
     if (body.title !== undefined && !body.title) {
-        throw new ValidationError('title cannot be empty');
+        throw new ValidationError(msg('case.title_empty'), null, 'case.title_empty');
     }
 
     const updatedStamp = new Date().toISOString();
@@ -2145,13 +2146,13 @@ export async function updateCase(caseId, updates = {}, { accessToken } = {}) {
  */
 export async function uploadDirectusFile({ buffer, originalname, mimetype } = {}, { accessToken } = {}) {
     if (!accessToken) {
-        throw new ValidationError('Directus user access token is required to upload files');
+        throw new ValidationError(msg('directus.upload_token_required'), null, 'directus.upload_token_required');
     }
     if (!config.directus.url) {
         throw new DirectusUnavailableError('Directus is not configured. Set DIRECTUS_URL.');
     }
     if (!buffer || !buffer.length) {
-        throw new ValidationError('File buffer is empty');
+        throw new ValidationError(msg('file.buffer_empty'), null, 'file.buffer_empty');
     }
 
     const url = new URL('/files', `${config.directus.url}/`);
@@ -2212,12 +2213,12 @@ export async function uploadDirectusFile({ buffer, originalname, mimetype } = {}
  */
 export async function createCaseAttachment(caseId, fileId, name, { accessToken, fileMeta } = {}) {
     if (!accessToken) {
-        throw new ValidationError('Directus user access token is required to create attachments');
+        throw new ValidationError(msg('directus.create_attachments_token_required'), null, 'directus.create_attachments_token_required');
     }
     const caseKey = String(caseId || '').trim();
     const fileKey = String(fileId || '').trim();
     if (!caseKey || !fileKey) {
-        throw new ValidationError('caseId and fileId are required');
+        throw new ValidationError(msg('case.case_and_file_ids_required'), null, 'case.case_and_file_ids_required');
     }
 
     const payload = await directusFetch('/items/attachment', {
@@ -2268,7 +2269,7 @@ export async function createCaseAttachment(caseId, fileId, name, { accessToken, 
 export async function lookupDirectusUserByEmail(email, { accessToken } = {}) {
     const normalized = String(email || '').trim().toLowerCase();
     if (!normalized || !normalized.includes('@')) {
-        throw new ValidationError('A valid email address is required');
+        throw new ValidationError(msg('case.invite_email_required'), null, 'case.invite_email_required');
     }
 
     const mapRow = (row) => {
@@ -2298,7 +2299,7 @@ export async function lookupDirectusUserByEmail(email, { accessToken } = {}) {
     const viaService = await findDirectusUserByEmail(normalized);
     const person = mapRow(viaService);
     if (!person) {
-        throw new NotFoundError('No Directus user found with that email');
+        throw new NotFoundError(msg('directus.user_not_found_by_email'), null, 'directus.user_not_found_by_email');
     }
     return person;
 }
@@ -2320,15 +2321,15 @@ export async function lookupDirectusUserByEmail(email, { accessToken } = {}) {
  */
 export async function getCaseCollabActorContext(caseId, { accessToken, actorDirectusUserId } = {}) {
     if (!accessToken) {
-        throw new ValidationError('Directus user access token is required');
+        throw new ValidationError(msg('directus.user_token_required'), null, 'directus.user_token_required');
     }
     const caseKey = String(caseId || '').trim();
     if (!caseKey) {
-        throw new ValidationError('caseId is required');
+        throw new ValidationError(msg('case.case_id_required'), null, 'case.case_id_required');
     }
     const actorId = String(actorDirectusUserId || '').trim();
     if (!actorId) {
-        throw new ValidationError('actorDirectusUserId is required');
+        throw new ValidationError(msg('directus.actor_directus_user_id_required'), null, 'directus.actor_directus_user_id_required');
     }
 
     const fieldAttempts = [
@@ -2567,7 +2568,7 @@ export async function addCaseCollaborator(
 ) {
     const ctx = await getCaseCollabActorContext(caseId, { accessToken, actorDirectusUserId });
     if (!ctx.actorIsAdmin) {
-        throw new ForbiddenError('Only case admins can add people directly');
+        throw new ForbiddenError(msg('case.people_add_admin_only'), null, 'case.people_add_admin_only');
     }
     const uid = String(userId || '').trim();
     if (!uid || uid === ctx.ownerId) {
@@ -2600,7 +2601,7 @@ export async function addCaseCollaboratorAsSystem(caseId, userId, role) {
     const caseKey = String(caseId || '').trim();
     const uid = String(userId || '').trim();
     if (!caseKey || !uid) {
-        throw new ValidationError('Case and user are required');
+        throw new ValidationError(msg('case.case_and_user_required'), null, 'case.case_and_user_required');
     }
     const nextRole = normalizeCaseCollabRole(role);
     const existingByUserId = await loadCaseJunctionByUserId(caseKey, {});
@@ -2651,7 +2652,7 @@ export async function setCaseCollaborators(caseId, collaborators, {
     } = ctx;
 
     if (!actorCanInvite && !actorIsAdmin) {
-        throw new ForbiddenError('Only case admins and collaborators can change people on this case');
+        throw new ForbiddenError(msg('case.people_change_forbidden'), null, 'case.people_change_forbidden');
     }
     if (!actorIsAdmin && !allowCollaboratorCreates) {
         // Collaborators use the invite API for adds; PUT is admin manage only.
@@ -2736,11 +2737,10 @@ export async function setCaseCollaborators(caseId, collaborators, {
         });
         if (unresolved) {
             throw new AppError(
-                'Could not update people on this case. Directus did not return collaborator '
-                + 'junction ids. Grant clinician Read on `case.collaborators` (fields id, role, '
-                + 'directus_users_id), or Read on collection `case_directus_users`.',
+                msg('case.collaborators_junction_unresolved'),
                 403,
-                'CASE_COLLABORATORS_UPDATE_FAILED'
+                'CASE_COLLABORATORS_UPDATE_FAILED',
+                'case.collaborators_junction_unresolved'
             );
         }
     }
@@ -2748,12 +2748,16 @@ export async function setCaseCollaborators(caseId, collaborators, {
     if (!actorIsAdmin) {
         if (toDelete.length || toUpdate.length) {
             throw new ForbiddenError(
-                "You don't have access to change people on this case."
+                msg('case.people_change_denied'),
+                null,
+                'case.people_change_denied'
             );
         }
         if (toCreate.length && !allowCollaboratorCreates) {
             throw new ForbiddenError(
-                'Ask a case admin to approve new people on this case.'
+                msg('case.people_add_needs_admin'),
+                null,
+                'case.people_add_needs_admin'
             );
         }
     }

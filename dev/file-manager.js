@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit-element';
+import { t } from './i18n/index.js';
 import { API_URL } from './config.js';
 import { initializeTheme } from './components/theme.js';
 import './components/page-layout-template.js';
@@ -610,7 +611,7 @@ export class FileManager extends LitElement {
         this.shareDialogError = '';
         this.shareMode = 'whole_file';
         this.viewerShareMode = 'whole_file';
-        this.username = 'Guest';
+        this.username = t('common.guest');
         this.fileListSearch = '';
         this.fileListSearchDraft = '';
         this.fileListOrder = 'date-desc';
@@ -703,11 +704,11 @@ export class FileManager extends LitElement {
                     return;
                 }
             } else {
-                this.error = 'Failed to load files';
+                this.error = t('files.loadFailed');
             }
         } catch (err) {
             console.error('Error loading files:', err);
-            this.error = 'Network error loading files';
+            this.error = t('files.loadFailed');
         } finally {
             this.loading = false;
         }
@@ -815,7 +816,7 @@ export class FileManager extends LitElement {
 
     async uploadFile() {
         if (!this.selectedFile) {
-            this.uploadError = 'Please choose a file.';
+            this.uploadError = t('files.chooseFileFirst');
             return;
         }
 
@@ -848,7 +849,7 @@ export class FileManager extends LitElement {
                 // Handle error response properly - error might be nested
                 console.error('Upload error:', data);
 
-                let errorMsg = 'Upload failed';
+                let errorMsg = t('files.uploadFailed');
                 if (typeof data.error === 'string') {
                     errorMsg = data.error;
                 } else if (data.error?.message) {
@@ -884,7 +885,7 @@ export class FileManager extends LitElement {
                 a.click();
                 window.URL.revokeObjectURL(url);
             } else {
-                this.error = 'Failed to download file';
+                this.error = t('files.downloadFailed');
             }
         } catch (err) {
             console.error('Download error:', err);
@@ -893,7 +894,7 @@ export class FileManager extends LitElement {
     }
 
     async deleteFile(file) {
-        if (!confirm(`Delete ${file.originalName}?`)) {
+        if (!confirm(t('files.confirmDelete', { name: file.originalName }))) {
             return;
         }
 
@@ -908,7 +909,7 @@ export class FileManager extends LitElement {
                 await this.loadFiles();
                 await this.loadStats();
             } else {
-                this.error = 'Failed to delete file';
+                this.error = t('files.deleteFailed');
             }
         } catch (err) {
             console.error('Delete error:', err);
@@ -974,26 +975,26 @@ export class FileManager extends LitElement {
             });
             const data = await response.json();
             if (!response.ok) {
-                this.shareDialogError = data?.error?.message || data?.message || 'Failed to create share link';
+                this.shareDialogError = data?.error?.message || data?.message || t('files.shareFailed');
                 return;
             }
 
             const shareUrl = data?.shareLink?.url;
             if (!shareUrl) {
-                this.error = 'Share link was created but no URL was returned';
+                this.error = t('files.shareNoUrl');
                 return;
             }
 
             if (navigator.clipboard?.writeText) {
                 await navigator.clipboard.writeText(shareUrl);
-                this.success = `Read-only share link copied for ${file.originalName}`;
+                this.success = t('files.shareLinkCopied', { name: file.originalName });
             } else {
                 this.success = `Read-only share link: ${shareUrl}`;
             }
             this.closeShareDialog();
         } catch (err) {
             console.error('Share link creation error:', err);
-            this.shareDialogError = err.message || 'Failed to create share link';
+            this.shareDialogError = err.message || t('files.shareFailed');
         } finally {
             this.sharingFileId = null;
         }
@@ -1012,7 +1013,7 @@ export class FileManager extends LitElement {
 
     openViewerShareDialog() {
         if (!this.currentFileId) {
-            this.error = 'No active file to share';
+            this.error = t('files.noActiveFile');
             return;
         }
         const file = this.files.find((item) => Number(item.id) === Number(this.currentFileId)) || {
@@ -1035,7 +1036,7 @@ export class FileManager extends LitElement {
             return this.viewerLoadingDetail;
         }
         const name = this.currentFileName || 'scene';
-        return `Opening ${name}… Large scenes can take 1–3 minutes.`;
+        return t('files.openingLarge', { name });
     }
 
     async launchFile(file) {
@@ -1044,7 +1045,7 @@ export class FileManager extends LitElement {
         this.launching = true;
         this.launchingFileId = file.id;
         this.viewerLoading = true;
-        this.viewerLoadingDetail = `Starting viewer for ${file.originalName}…`;
+        this.viewerLoadingDetail = t('files.startingViewer', { name: file.originalName });
         this.currentFileId = file.id;
         this.currentFileName = file.originalName;
         this.currentStoredName = file.storedName || file.originalName;
@@ -1054,7 +1055,7 @@ export class FileManager extends LitElement {
         try {
             this.stopHeartbeat();
             console.log('Starting Trame container for file:', file.originalName);
-            this.viewerLoadingDetail = `Preparing session for ${file.originalName}… This can take 1–3 minutes for large scenes.`;
+            this.viewerLoadingDetail = t('files.preparingSessionLarge', { name: file.originalName });
             const response = await fetch(`${API_URL}/api/containers/start`, {
                 method: 'POST',
                 headers: {
@@ -1093,7 +1094,7 @@ export class FileManager extends LitElement {
                     errorMsg = data.message;
                 }
                 if (response.status === 401 || response.status === 403) {
-                    errorMsg = 'Session expired — please sign out and sign in again.';
+                    errorMsg = t('files.sessionExpired');
                     this.dispatchEvent(new CustomEvent('logout-request', { bubbles: true, composed: true }));
                 }
                 throw new Error(errorMsg);
@@ -1174,7 +1175,7 @@ export class FileManager extends LitElement {
 
     async saveCurrentScene(mode = 'overwrite') {
         if (!this.iframeUrl || this.iframeUrl === 'about:blank') {
-            this.error = 'Trame is not ready yet';
+            this.error = t('files.viewerNotReady');
             return false;
         }
 
@@ -1228,8 +1229,8 @@ export class FileManager extends LitElement {
             this.hasUnsavedChanges = false;
             this.showSaveIndicator(
                 mode === 'saveAsNew'
-                    ? 'Saved as new file'
-                    : 'Saved'
+                    ? t('files.savedAsNew')
+                    : t('files.saved')
             );
             return true;
         } catch (err) {
@@ -1346,7 +1347,7 @@ export class FileManager extends LitElement {
 
         // Cleanup container
         await this.cleanupContainer();
-        this.success = `Closed Trame session for ${this.currentFileName}`;
+        this.success = t('files.viewerClosed', { name: this.currentFileName });
         this.currentFileName = '';
         this.currentStoredName = '';
         this.currentFileId = null;
@@ -1370,7 +1371,7 @@ export class FileManager extends LitElement {
 
     async handleViewerInactivityTimeout() {
         if (!this.showIframe) return;
-        this.success = 'Viewer closed after inactivity';
+        this.success = t('gpu.viewerClosedInactivity');
         await this.closeIframe(false);
     }
 
@@ -1394,9 +1395,9 @@ export class FileManager extends LitElement {
     }
 
     formatBytes(bytes) {
-        if (bytes === 0) return '0 Bytes';
+        if (bytes === 0) return t('files.zeroBytes');
         const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const sizes = [t('files.bytes'), t('files.kb'), t('files.mb'), t('files.gb')];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
     }
@@ -1417,10 +1418,10 @@ export class FileManager extends LitElement {
         const modifiedAt = file.lastModifiedAt || file.uploadDate;
         const parts = [
             this.formatBytes(file.size),
-            `Modified ${this.formatDate(modifiedAt)}`
+            t('files.modified', { date: this.formatDate(modifiedAt) })
         ];
         if (file.lastViewedAt) {
-            parts.push(`Viewed ${this.formatDate(file.lastViewedAt)}`);
+            parts.push(t('files.viewed', { date: this.formatDate(file.lastViewedAt) }));
         }
         return parts.join(' · ');
     }
@@ -1432,8 +1433,8 @@ export class FileManager extends LitElement {
                 selectedMenuKey="my-files"
                 homeHref="/file-manager"
                 homeLabel="Home"
-                pageTitle="My Files"
-                pageDescription="Upload, open, and manage your scene files."
+                pageTitle=${t('files.title')}
+                pageDescription=${t('files.description')}
                 @menu-selection-change=${this.handleMenuSelectionChange}
             >
                 ${this.error ? html`
@@ -1445,7 +1446,7 @@ export class FileManager extends LitElement {
 
                 <add-button
                     slot="content"
-                    title="Add file"
+                    title=${t('files.addFile')}
                     @add-button-click=${this.handleAddFileFromButton}
                 ></add-button>
 
@@ -1457,38 +1458,38 @@ export class FileManager extends LitElement {
                     <page-content-message
                         slot="content"
                         variant="empty"
-                        message="No files uploaded yet. Use Add file to upload."
+                        message=${t('files.noFilesHint')}
                     ></page-content-message>
                 ` : ''}
                 ${!this.loading && this.totalFileCount === 0 && this.fileListSearch ? html`
                     <page-content-message
                         slot="content"
                         variant="empty"
-                        message="No files match your search."
+                        message=${t('files.noMatchSearch')}
                     ></page-content-message>
                 ` : ''}
 
                 ${!this.loading && (this.totalFileCount > 0 || this.fileListSearch) ? html`
-                    <h2 slot="content" class="files-section-title">Files</h2>
+                    <h2 slot="content" class="files-section-title">${t('files.filesHeading')}</h2>
                     <div slot="content" class="file-list-toolbar">
                         <input
                             type="search"
                             class="file-list-search"
-                            placeholder="Search by file name…"
-                            aria-label="Search files by name"
+                            placeholder=${t('files.searchPlaceholder')}
+                            aria-label=${t('files.searchAria')}
                             .value=${this.fileListSearchDraft}
                             @input=${this.handleFileSearchInput}
                         />
                         <dropdown-select
                             class="file-list-sort"
-                            aria-label="Sort files"
+                            aria-label=${t('files.sortAria')}
                             .value=${this.fileListOrder}
                             .options=${[
-                                { value: 'date-desc', label: 'Last modified (newest first)' },
-                                { value: 'date-asc', label: 'Last modified (oldest first)' },
-                                { value: 'viewed-desc', label: 'Recently viewed' },
-                                { value: 'name-asc', label: 'Name (A–Z)' },
-                                { value: 'name-desc', label: 'Name (Z–A)' }
+                                { value: 'date-desc', label: t('files.sortNewestFirst') },
+                                { value: 'date-asc', label: t('files.sortOldestFirst') },
+                                { value: 'viewed-desc', label: t('files.sortRecentlyViewed') },
+                                { value: 'name-asc', label: t('files.sortNameAsc') },
+                                { value: 'name-desc', label: t('files.sortNameDesc') }
                             ]}
                             @change=${this.handleFileOrderChange}
                         ></dropdown-select>
@@ -1497,17 +1498,17 @@ export class FileManager extends LitElement {
                         ${this.files.map((file) => html`
                             <file-list-row
                                 .fileName=${file.originalName}
-                                .metaLine=${this.launchingFileId === file.id ? 'Opening…' : this.formatFileMetaLine(file)}
+                                .metaLine=${this.launchingFileId === file.id ? t('files.opening') : this.formatFileMetaLine(file)}
                                 .nameButtonDisabled=${this.launchingFileId === file.id}
-                                .nameButtonTitle=${this.launchingFileId === file.id ? 'Opening viewer…' : 'Launch file'}
+                                .nameButtonTitle=${this.launchingFileId === file.id ? t('files.openingViewer') : t('files.launchFile')}
                                 @name-click=${() => this.launchFile(file)}
                             >
                                 <button
                                     slot="actions"
                                     class="file-icon-button"
                                     type="button"
-                                    aria-label="Download file"
-                                    title="Download file"
+                                    aria-label=${t('files.download')}
+                                    title=${t('files.download')}
                                     @click=${() => this.downloadFile(file)}
                                 >
                                     <svg class="file-action-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -1518,8 +1519,8 @@ export class FileManager extends LitElement {
                                     slot="actions"
                                     class="file-icon-button"
                                     type="button"
-                                    aria-label="Create share link"
-                                    title="Create share link"
+                                    aria-label=${t('files.createShare')}
+                                    title=${t('files.createShare')}
                                     ?disabled=${this.sharingFileId === file.id}
                                     @click=${() => this.openShareDialog(file)}
                                 >
@@ -1531,8 +1532,8 @@ export class FileManager extends LitElement {
                                     slot="actions"
                                     class="file-icon-button"
                                     type="button"
-                                    aria-label="Delete file"
-                                    title="Delete file"
+                                    aria-label=${t('files.deleteFile')}
+                                    title=${t('files.deleteFile')}
                                     @click=${() => this.deleteFile(file)}
                                 >
                                     <svg class="file-action-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -1552,7 +1553,7 @@ export class FileManager extends LitElement {
                                     ?disabled=${this.filePage <= 0}
                                     @click=${this.handleFilePagerPrev}
                                 >
-                                    Previous
+                                    ${t('common.previous')}
                                 </button>
                                 <button
                                     type="button"
@@ -1560,7 +1561,7 @@ export class FileManager extends LitElement {
                                     ?disabled=${(this.filePage + 1) * this.pageSize >= this.totalFileCount}
                                     @click=${this.handleFilePagerNext}
                                 >
-                                    Next
+                                    ${t('common.next')}
                                 </button>
                             </div>
                         </div>
@@ -1573,14 +1574,14 @@ export class FileManager extends LitElement {
                 ></file-storage-summary>
             </page-layout-template>
 
-            <app-dialog id="file-upload-dialog" title="Add File">
+            <app-dialog id="file-upload-dialog" title=${t('files.addFile')}>
                 <div
                     class="upload-area ${this.dragOver ? 'drag-over' : ''}"
                     @dragover=${this.handleUploadDialogDragOver}
                     @dragleave=${this.handleUploadDialogDragLeave}
                     @drop=${this.handleUploadDialogDrop}
                 >
-                    <div class="upload-message">Drag and drop a file here, or choose a file to upload.</div>
+                    <div class="upload-message">${t('files.dragDrop')}</div>
                     <input
                         type="file"
                         id="my-files-upload-input"
@@ -1593,7 +1594,7 @@ export class FileManager extends LitElement {
                         ?disabled=${this.uploading}
                         @click=${() => this.shadowRoot?.querySelector('#my-files-upload-input')?.click()}
                     >
-                        Choose file
+                        ${t('files.chooseFile')}
                     </button>
                     ${this.selectedFile ? html`
                         <div class="upload-file-info">
@@ -1606,7 +1607,7 @@ export class FileManager extends LitElement {
                                 ?disabled=${this.uploading}
                                 @click=${() => this.uploadFile()}
                             >
-                                ${this.uploading ? 'Uploading...' : 'Upload file'}
+                                ${this.uploading ? t('files.uploading') : t('files.uploadFile')}
                             </button>
                             <button
                                 class="upload-button secondary"
@@ -1614,7 +1615,7 @@ export class FileManager extends LitElement {
                                 ?disabled=${this.uploading}
                                 @click=${() => this.closeFileUploadDialog()}
                             >
-                                Cancel
+                                ${t('common.cancel')}
                             </button>
                         </div>
                     ` : ''}
@@ -1631,17 +1632,17 @@ export class FileManager extends LitElement {
                     <p class="close-prompt-message">${this.closePromptMessage}</p>
                     ${this.closePromptMode === 'unsaved' ? html`
                         <button slot="actions" class="upload-button secondary" type="button" @click=${() => this.finishClosePrompt('discard')}>
-                            Don't save
+                            ${t('files.dontSave')}
                         </button>
                         <button slot="actions" class="upload-button" type="button" @click=${() => this.finishClosePrompt('save')}>
                             Save
                         </button>
                     ` : html`
                         <button slot="actions" class="upload-button secondary" type="button" @click=${() => this.finishClosePrompt('keep-open')}>
-                            Keep open
+                            ${t('files.keepOpen')}
                         </button>
                         <button slot="actions" class="upload-button" type="button" @click=${() => this.finishClosePrompt('close-anyway')}>
-                            Close anyway
+                            ${t('files.closeAnyway')}
                         </button>
                     `}
                 </app-dialog>
@@ -1651,7 +1652,7 @@ export class FileManager extends LitElement {
                 <div class="iframe-overlay">
                     <div class="iframe-header">
                         <div class="iframe-title">
-                            Viewer: ${this.currentFileName}
+                            ${t('files.viewerLabel')} ${this.currentFileName}
                             ${this.viewerLoading ? html`
                                 <span class="iframe-status">${this.viewerLoadingMessage}</span>
                             ` : ''}
@@ -1661,30 +1662,30 @@ export class FileManager extends LitElement {
                                 <span class="save-indicator">${this.saveIndicatorMessage}</span>
                             ` : ''}
                             <button class="open-window-btn" @click=${this.openInNewWindow} ?disabled=${this.iframeUrl === 'about:blank'}>
-                                Open in new window
+                                ${t('files.openInNewWindow')}
                             </button>
                             <dropdown-select
                                 variant="chip"
                                 style="margin-right:8px;"
                                 .value=${this.viewerShareMode}
                                 .options=${[
-                                    { value: 'whole_file', label: 'Share whole file' },
-                                    { value: 'current_view', label: 'Share current view' }
+                                    { value: 'whole_file', label: t('files.shareWholeFile') },
+                                    { value: 'current_view', label: t('files.shareCurrentView') }
                                 ]}
                                 aria-label="Share mode"
                                 @change=${(e) => { this.viewerShareMode = e.target.value; }}
                             ></dropdown-select>
                             <button class="action-btn share-btn" @click=${() => this.openViewerShareDialog()} ?disabled=${this.iframeUrl === 'about:blank'}>
-                                Share
+                                ${t('files.share')}
                             </button>
                             <button class="save-scene-btn" @click=${() => this.saveCurrentScene('overwrite')} ?disabled=${this.iframeUrl === 'about:blank'}>
-                                Save scene
+                                ${t('files.saveScene')}
                             </button>
                             <button class="save-as-new-btn" @click=${this.saveCurrentSceneAsNew} ?disabled=${this.iframeUrl === 'about:blank'}>
-                                Save as new
+                                ${t('files.saveAsNew')}
                             </button>
                             <button class="close-iframe-btn" @click=${this.closeIframe}>
-                                Close viewer
+                                ${t('files.closeViewer')}
                             </button>
                         </div>
                     </div>
@@ -1704,7 +1705,7 @@ export class FileManager extends LitElement {
                         ${this.viewerLoading ? html`
                             <div class="loading-state ${this.iframeUrl !== 'about:blank' ? 'loading-overlay' : ''}">
                                 <div class="viewer-loading">
-                                    <div class="viewer-spinner" role="status" aria-label="Loading viewer"></div>
+                                    <div class="viewer-spinner" role="status" aria-label=${t('files.loadingViewer')}></div>
                                     <p>${this.viewerLoadingMessage}</p>
                                 </div>
                             </div>
@@ -1716,44 +1717,44 @@ export class FileManager extends LitElement {
             ${this.showShareDialog ? html`
                 <div class="share-dialog-overlay" @click=${(e) => { if (e.target === e.currentTarget) this.closeShareDialog(); }}>
                     <div class="share-dialog">
-                        <h3>Create Share Link</h3>
-                        <div><strong>File:</strong> ${this.shareTargetFile?.originalName || ''}</div>
+                        <h3>${t('files.createShareLink')}</h3>
+                        <div><strong>${t('files.fileLabel')}</strong> ${this.shareTargetFile?.originalName || ''}</div>
                         ${this.shareDialogError ? html`
                             <page-content-message variant="error" .message=${this.shareDialogError}></page-content-message>
                         ` : ''}
                         <div class="share-field">
-                            <label for="shareMode">Share mode</label>
+                            <label for="shareMode">${t('files.shareMode')}</label>
                             <dropdown-select
                                 id="shareMode"
                                 fullwidth
                                 .value=${this.shareMode}
                                 .options=${[
-                                    { value: 'whole_file', label: 'Open with whole file' },
-                                    { value: 'current_view', label: 'Open with my current view' }
+                                    { value: 'whole_file', label: t('files.shareModeWholeFile') },
+                                    { value: 'current_view', label: t('files.shareModeCurrentView') }
                                 ]}
                                 aria-label="Share mode"
                                 @change=${(e) => { this.shareMode = e.target.value; }}
                             ></dropdown-select>
                         </div>
                         <div class="share-field">
-                            <label for="shareDuration">Link duration</label>
+                            <label for="shareDuration">${t('files.linkDuration')}</label>
                             <dropdown-select
                                 id="shareDuration"
                                 fullwidth
                                 .value=${String(this.shareDurationHours)}
                                 .options=${[
-                                    { value: '1', label: '1 hour' },
-                                    { value: '24', label: '24 hours' },
-                                    { value: '72', label: '3 days' },
-                                    { value: '168', label: '7 days' },
-                                    { value: '720', label: '30 days' }
+                                    { value: '1', label: t('files.duration1h') },
+                                    { value: '24', label: t('files.duration24h') },
+                                    { value: '72', label: t('files.duration3d') },
+                                    { value: '168', label: t('files.duration7d') },
+                                    { value: '720', label: t('files.duration30d') }
                                 ]}
                                 aria-label="Link duration"
                                 @change=${(e) => { this.shareDurationHours = Number(e.target.value); }}
                             ></dropdown-select>
                         </div>
                         <div class="share-field">
-                            <label for="shareEmails">Restrict to users (optional, comma-separated emails)</label>
+                            <label for="shareEmails">${t('files.restrictToUsers')}</label>
                             <input
                                 id="shareEmails"
                                 type="text"
@@ -1761,12 +1762,12 @@ export class FileManager extends LitElement {
                                 @input=${(e) => { this.shareAllowedEmails = e.target.value; }}
                                 placeholder="alice@example.com, bob@example.com"
                             />
-                            <div class="share-help">Leave empty for anyone with the link. If set, recipients must sign in.</div>
+                            <div class="share-help">${t('files.shareHelpText')}</div>
                         </div>
                         <div class="share-dialog-actions">
-                            <button class="secondary-button" @click=${this.closeShareDialog}>Cancel</button>
+                            <button class="secondary-button" @click=${this.closeShareDialog}>${t('common.cancel')}</button>
                             <button class="primary-button" @click=${this.createShareLink} ?disabled=${this.sharingFileId === this.shareTargetFile?.id}>
-                                ${this.sharingFileId === this.shareTargetFile?.id ? 'Creating...' : 'Create link'}
+                                ${this.sharingFileId === this.shareTargetFile?.id ? t('files.creatingLink') : t('files.createLink')}
                             </button>
                         </div>
                     </div>

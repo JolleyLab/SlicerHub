@@ -6,6 +6,7 @@
 
 import config from '../config/index.js';
 import { ForbiddenError } from '../utils/errors.js';
+import { msg } from '../i18n/index.js';
 
 function parseOrigin(value) {
     if (!value || typeof value !== 'string') return null;
@@ -45,5 +46,5 @@ export function requireAllowedWebOrigin(req, res, next) {
         return next();
     }
 
-    return next(new ForbiddenError('Request origin is not allowed'));
+    return next(new ForbiddenError(msg('auth.origin_not_allowed'), null, 'auth.origin_not_allowed'));
 }

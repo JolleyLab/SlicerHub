@@ -15,6 +15,7 @@ import {
     linkIdentity,
     storeProviderTokens
 } from '../identityStore.js';
+import { msg } from '../../i18n/index.js';
 
 const PROVIDER = 'directus';
 
@@ -30,7 +31,7 @@ function linkPolicy() {
 async function directusJson(path, options = {}) {
     const base = directusBaseUrl();
     if (!base) {
-        throw new AppError('Directus auth is not configured (DIRECTUS_URL)', 503);
+        throw new AppError(msg('directus.auth_not_configured'), 503, null, 'directus.auth_not_configured');
     }
 
     const res = await fetch(`${base}${path}`, {
@@ -87,7 +88,7 @@ async function resolveLocalUser(directusUser) {
 
     const email = pickDirectusEmail(directusUser);
     if (!email) {
-        throw new ValidationError('Directus account has no email; cannot map to application user');
+        throw new ValidationError(msg('directus.account_no_email'), null, 'directus.account_no_email');
     }
 
     const existingLink = findLink(PROVIDER, externalId);
@@ -95,8 +96,9 @@ async function resolveLocalUser(directusUser) {
         const user = User.findById(existingLink.user_id);
         if (!user) {
             throw new ForbiddenError(
-                'Linked product account is missing. Contact an administrator.',
-                'ACCOUNT_LINK_BROKEN'
+                msg('auth.account_link_broken'),
+                'ACCOUNT_LINK_BROKEN',
+                'auth.account_link_broken'
             );
         }
         if (user.is_active === 0 || user.is_active === false) {
@@ -118,8 +120,9 @@ async function resolveLocalUser(directusUser) {
                 return User.findById(emailOwner.id);
             }
             throw new ForbiddenError(
-                'This email is already linked to a different Directus account. Contact an administrator.',
-                'ACCOUNT_LINK_CONFLICT'
+                msg('auth.account_link_conflict'),
+                'ACCOUNT_LINK_CONFLICT',
+                'auth.account_link_conflict'
             );
         }
 
@@ -128,8 +131,9 @@ async function resolveLocalUser(directusUser) {
         // the local user is already linked to a different Directus id (above).
         if (policy === 'email' && !emailLooksVerified(directusUser)) {
             throw new ForbiddenError(
-                'Email must be verified before this account can be linked.',
-                'EMAIL_NOT_VERIFIED'
+                msg('auth.email_not_verified'),
+                'EMAIL_NOT_VERIFIED',
+                'auth.email_not_verified'
             );
         }
         linkIdentity(emailOwner.id, PROVIDER, externalId);
@@ -155,7 +159,7 @@ async function sessionFromAccessToken(accessToken, extraTokens = {}) {
     });
 
     if (!me.res.ok) {
-        throw new AppError('Failed to load Directus user profile', 502);
+        throw new AppError(msg('directus.profile_load_failed'), 502, null, 'directus.profile_load_failed');
     }
 
     const directusUser = me.body?.data || me.body;
@@ -183,7 +187,7 @@ export const directusProvider = {
     async login({ identity, password, otp }) {
         const email = String(identity || '').trim();
         if (!email.includes('@')) {
-            throw new ValidationError('Email is required when using Directus login');
+            throw new ValidationError(msg('auth.directus_email_required'), null, 'auth.directus_email_required');
         }
 
         const payload = {
@@ -203,25 +207,26 @@ export const directusProvider = {
         if (res.status === 401 || res.status === 400) {
             if (!otp && looksLikeOtpRequired(body, res.status)) {
                 throw new UnauthorizedError(
-                    'Additional verification required',
-                    'OTP_REQUIRED'
+                    msg('auth.otp_required'),
+                    'OTP_REQUIRED',
+                    'auth.otp_required'
                 );
             }
             return null;
         }
 
         if (!res.ok) {
-            const msg = body?.errors?.[0]?.message || body?.message || 'Directus login failed';
+            const errMsg = body?.errors?.[0]?.message || body?.message || 'Directus login failed';
             if (looksLikeOtpRequired(body, res.status)) {
-                throw new UnauthorizedError('Additional verification required', 'OTP_REQUIRED');
+                throw new UnauthorizedError(msg('auth.otp_required'), 'OTP_REQUIRED', 'auth.otp_required');
             }
-            throw new AppError(msg, res.status >= 500 ? 502 : res.status);
+            throw new AppError(errMsg, res.status >= 500 ? 502 : res.status);
         }
 
         const data = body?.data || body;
         const accessToken = data?.access_token;
         if (!accessToken) {
-            throw new AppError('Directus login response missing access_token', 502);
+            throw new AppError(msg('directus.login_missing_token'), 502, null, 'directus.login_missing_token');
         }
 
         return sessionFromAccessToken(accessToken, {

@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit-element';
 import { render } from 'lit-html';
 import { initializeTheme } from './theme.js';
+import { t } from '../i18n/index.js';
 
 const MENU_MIN_WIDTH = 220;
 const MENU_GAP_PX = 4;
@@ -219,7 +220,7 @@ export class AttachmentOpenMenu extends LitElement {
                 <span class="check ${isDefault ? '' : 'is-empty'}" aria-hidden="true">✓</span>
                 <span class="item-label">
                     ${label}
-                    ${isDefault ? html`<span class="hint">Default</span>` : ''}
+                    ${isDefault ? html`<span class="hint">${t('viewers.defaultHint')}</span>` : ''}
                 </span>
             </button>
         `;
@@ -237,12 +238,12 @@ export class AttachmentOpenMenu extends LitElement {
                 style="top:${top}px;left:${left}px;"
             >
                 ${this.menuItemTemplate({
-                    label: 'Full Slicer',
+                    label: t('viewers.fullSlicer'),
                     simplified: false,
                     isDefault: !preferSimplified
                 })}
                 ${this.menuItemTemplate({
-                    label: 'Simplified viewer',
+                    label: t('viewers.simplified'),
                     simplified: true,
                     isDefault: preferSimplified
                 })}
@@ -277,8 +278,8 @@ export class AttachmentOpenMenu extends LitElement {
             <button
                 class="trigger"
                 type="button"
-                title="Open with…"
-                aria-label="Open with"
+                title=${t('viewers.openWith')}
+                aria-label=${t('viewers.openWith')}
                 aria-expanded=${this.open ? 'true' : 'false'}
                 aria-haspopup="menu"
                 ?disabled=${this.disabled}

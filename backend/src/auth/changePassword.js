@@ -13,13 +13,14 @@ import {
 import { ValidationError, UnauthorizedError, AppError } from '../utils/errors.js';
 import bcrypt from 'bcrypt';
 import db from '../db/database.js';
+import { msg } from '../i18n/index.js';
 
 const minLen = () => config.security?.passwordMinLength || 8;
 
 async function verifyDirectusPassword(email, password) {
     const base = (config.directus.url || '').trim().replace(/\/+$/, '');
     if (!base) {
-        throw new AppError('Directus is not configured', 503);
+        throw new AppError(msg('directus.not_configured'), 503, null, 'directus.not_configured');
     }
 
     const res = await fetch(`${base}/auth/login`, {
@@ -41,19 +42,19 @@ async function verifyDirectusPassword(email, password) {
 export async function changePasswordForUser({ userId, currentPassword, newPassword }) {
     const user = User.findById(userId);
     if (!user) {
-        throw new ValidationError('User not found');
+        throw new ValidationError(msg('user.not_found'), null, 'user.not_found');
     }
 
     const next = String(newPassword || '');
     const current = String(currentPassword || '');
     if (next.length < minLen()) {
-        throw new ValidationError(`New password must be at least ${minLen()} characters`);
+        throw new ValidationError(msg('auth.password_min_length_short', { min: minLen() }), null, 'auth.password_min_length_short');
     }
     if (!current) {
-        throw new ValidationError('Current password is required');
+        throw new ValidationError(msg('auth.current_password_required'), null, 'auth.current_password_required');
     }
     if (next === current) {
-        throw new ValidationError('New password must differ from current password');
+        throw new ValidationError(msg('auth.password_must_differ'), null, 'auth.password_must_differ');
     }
 
     const link = findDirectusLinkForUser(userId);
@@ -61,7 +62,7 @@ export async function changePasswordForUser({ userId, currentPassword, newPasswo
     if (link && isDirectusConfigured()) {
         const ok = await verifyDirectusPassword(user.email, current);
         if (!ok) {
-            throw new UnauthorizedError('Current password is incorrect');
+            throw new UnauthorizedError(msg('auth.current_password_incorrect'), null, 'auth.current_password_incorrect');
         }
         await updateDirectusUserPassword(link.external_id, next);
         User.clearMustChangePassword(userId);
@@ -71,11 +72,11 @@ export async function changePasswordForUser({ userId, currentPassword, newPasswo
     // Local-account path (no Directus link): update SQLite password_hash
     const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId);
     if (!row?.password_hash) {
-        throw new AppError('Cannot change password for this account', 400);
+        throw new AppError(msg('auth.password_change_not_allowed'), 400, null, 'auth.password_change_not_allowed');
     }
     const valid = await bcrypt.compare(current, row.password_hash);
     if (!valid) {
-        throw new UnauthorizedError('Current password is incorrect');
+        throw new UnauthorizedError(msg('auth.current_password_incorrect'), null, 'auth.current_password_incorrect');
     }
 
     const hash = await bcrypt.hash(next, config.security.bcryptRounds);

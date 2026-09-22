@@ -33,6 +33,7 @@ import {
 } from '../sessions/index.js';
 import { normalizeViewerReleaseMode } from '../sessions/config.js';
 import { patchSessionMetadata } from '../sessions/leaseRegistry.js';
+import { msg } from '../i18n/index.js';
 
 const TRAME_SERVICE_URL = process.env.TRAME_SERVICE_URL || 'http://localhost:8090';
 
@@ -186,7 +187,7 @@ function publicShareFilePayload(file) {
 async function resolveShareLinkOrThrow(token) {
     const share = ShareLink.findByToken(token);
     if (!share || ShareLink.isExpired(share)) {
-        throw new NotFoundError('Share link is invalid or expired');
+        throw new NotFoundError(msg('share.invalid_or_expired'), null, 'share.invalid_or_expired');
     }
     return share;
 }
@@ -196,10 +197,10 @@ async function authorizeShareAccess(req, share) {
     const allowedUserIds = ShareLink.getAllowedUserIds(share);
     if (allowedUserIds.length > 0) {
         if (!requester) {
-            throw new ForbiddenError('This shared file requires sign in');
+            throw new ForbiddenError(msg('share.sign_in_required'), null, 'share.sign_in_required');
         }
         if (!allowedUserIds.includes(Number(requester.id))) {
-            throw new ForbiddenError('You are not permitted to open this shared file');
+            throw new ForbiddenError(msg('share.not_permitted'), null, 'share.not_permitted');
         }
     }
     return requester;
@@ -208,28 +209,28 @@ async function authorizeShareAccess(req, share) {
 const createShareLinkRateLimit = createRateLimiter({
     windowMs: 60 * 1000,
     max: 20,
-    message: 'Too many share-link creation requests. Please wait and try again.',
+    message: msg('share.create_rate_limit'),
     getKey: (req) => `share-create:user:${req.user?.id || 'unknown'}`
 });
 
 const launchShareLinkPerIpRateLimit = createRateLimiter({
     windowMs: 60 * 1000,
     max: 60,
-    message: 'Too many shared-link launch attempts from this IP. Please try again shortly.',
+    message: msg('share.launch_ip_rate_limit'),
     getKey: (req) => `share-launch:ip:${getRateLimitClientIp(req)}`
 });
 
 const launchShareLinkPerTokenAndIpRateLimit = createRateLimiter({
     windowMs: 60 * 1000,
     max: 15,
-    message: 'This shared link is being opened too frequently. Please wait and try again.',
+    message: msg('share.launch_token_rate_limit'),
     getKey: (req) => `share-launch:token:${req.params.token || 'unknown'}:ip:${getRateLimitClientIp(req)}`
 });
 
 const replayShareLinkPerTokenAndIpRateLimit = createRateLimiter({
     windowMs: 60 * 1000,
     max: 30,
-    message: 'Too many view-state replay requests for this link. Please wait and try again.',
+    message: msg('share.replay_rate_limit'),
     getKey: (req) => `share-replay:token:${req.params.token || 'unknown'}:ip:${getRateLimitClientIp(req)}`
 });
 
@@ -257,22 +258,22 @@ export default function fileRoutes(app) {
      */
     app.post('/api/files/upload', authenticateToken, upload.single('file'), asyncHandler(async (req, res) => {
         if (!req.file) {
-            throw new ValidationError('No file uploaded');
+            throw new ValidationError(msg('file.no_upload'), null, 'file.no_upload');
         }
 
         let projectId = null;
         if (typeof req.body?.projectId !== 'undefined' && req.body.projectId !== '') {
             const parsedProjectId = Number(req.body.projectId);
             if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
-                throw new ValidationError('Invalid project id');
+                throw new ValidationError(msg('project.invalid_id'), null, 'project.invalid_id');
             }
 
             const project = Project.findForUser({ projectId: parsedProjectId, userId: req.user.id });
             if (!project) {
-                throw new ValidationError('Project not found or inaccessible');
+                throw new ValidationError(msg('project.not_found_or_inaccessible'), null, 'project.not_found_or_inaccessible');
             }
             if (project.userRole !== 'admin' && project.userRole !== 'collaborator') {
-                throw new ForbiddenError('Only admins and collaborators can add files to this project');
+                throw new ForbiddenError(msg('file.project_upload_forbidden'), null, 'file.project_upload_forbidden');
             }
 
             projectId = parsedProjectId;
@@ -366,7 +367,7 @@ export default function fileRoutes(app) {
         const file = File.findById(fileId);
 
         if (!file) {
-            throw new NotFoundError('File not found');
+            throw new NotFoundError(msg('file.not_found'), null, 'file.not_found');
         }
 
         const isOwner = File.isOwner(fileId, req.user.id);
@@ -374,19 +375,19 @@ export default function fileRoutes(app) {
         const canAccess = isOwner || projectRole === 'admin' || projectRole === 'collaborator' || projectRole === 'observer';
 
         if (!canAccess) {
-            throw new ForbiddenError('You do not have permission to access this file');
+            throw new ForbiddenError(msg('file.access_forbidden'), null, 'file.access_forbidden');
         }
 
         const objectKey = objectStorage.normalizeKey(file.file_path);
         if (!(await objectStorage.exists(objectKey))) {
-            throw new NotFoundError('File not found in storage');
+            throw new NotFoundError(msg('file.not_in_storage'), null, 'file.not_in_storage');
         }
 
         res.setHeader('Content-Disposition', `attachment; filename="${file.original_name}"`);
         const stream = await objectStorage.openReadStream(objectKey);
         stream.on('error', () => {
             if (!res.headersSent) {
-                res.status(500).json({ error: { message: 'Failed to read file' } });
+                res.status(500).json({ error: { message: msg('file.read_failed') } });
             }
         });
         stream.pipe(res);
@@ -402,7 +403,7 @@ export default function fileRoutes(app) {
         const file = File.findById(fileId);
 
         if (!file) {
-            throw new NotFoundError('File not found');
+            throw new NotFoundError(msg('file.not_found'), null, 'file.not_found');
         }
 
         const isOwner = File.isOwner(fileId, req.user.id);
@@ -410,7 +411,7 @@ export default function fileRoutes(app) {
         const canDelete = isOwner || projectRole === 'admin' || projectRole === 'collaborator';
 
         if (!canDelete) {
-            throw new ForbiddenError('You do not have permission to delete this file');
+            throw new ForbiddenError(msg('file.delete_forbidden'), null, 'file.delete_forbidden');
         }
 
         const objectKey = objectStorage.normalizeKey(file.file_path);
@@ -431,19 +432,19 @@ export default function fileRoutes(app) {
         const fileId = parseInt(req.params.id, 10);
         const file = File.findById(fileId);
         if (!file) {
-            throw new NotFoundError('File not found');
+            throw new NotFoundError(msg('file.not_found'), null, 'file.not_found');
         }
 
         const isOwner = File.isOwner(fileId, req.user.id);
         const projectRole = getProjectRoleForFile(file, req.user.id);
         const canShare = isOwner || projectRole === 'admin' || projectRole === 'collaborator';
         if (!canShare) {
-            throw new ForbiddenError('You do not have permission to share this file');
+            throw new ForbiddenError(msg('file.share_forbidden'), null, 'file.share_forbidden');
         }
 
         const expiresInHours = Number(req.body?.expiresInHours);
         if (!Number.isFinite(expiresInHours) || expiresInHours < 1 || expiresInHours > 24 * 30) {
-            throw new ValidationError('expiresInHours must be between 1 and 720');
+            throw new ValidationError(msg('share.expires_invalid'), null, 'share.expires_invalid');
         }
         const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString();
         const allowedUserIds = parseAllowedUserIds(req.body?.allowedUserIds);
@@ -457,11 +458,11 @@ export default function fileRoutes(app) {
         if (viewerKind === SHARE_VIEWER_KINDS.SLICER_GUI) {
             shareMode = 'whole_file';
             if (!isMrbFileName(file.original_name)) {
-                throw new ValidationError('Simplified Viewer share links are only supported for MRB files');
+                throw new ValidationError(msg('share.simplified_viewer_mrb_only'), null, 'share.simplified_viewer_mrb_only');
             }
         }
         if (shareMode === 'current_view' && !viewState) {
-            throw new ValidationError('viewState is required when shareMode is current_view');
+            throw new ValidationError(msg('share.view_state_required'), null, 'share.view_state_required');
         }
 
         const share = ShareLink.create({
@@ -503,7 +504,7 @@ export default function fileRoutes(app) {
         asyncHandler(async (req, res) => {
         const token = (req.params.token || '').trim();
         if (!token) {
-            throw new ValidationError('Share token is required');
+            throw new ValidationError(msg('share.token_required'), null, 'share.token_required');
         }
 
         const share = await resolveShareLinkOrThrow(token);
@@ -513,11 +514,11 @@ export default function fileRoutes(app) {
 
         const file = File.findById(Number(share.file_id));
         if (!file) {
-            throw new NotFoundError('Shared file no longer exists');
+            throw new NotFoundError(msg('share.file_gone'), null, 'share.file_gone');
         }
         const objectKey = objectStorage.normalizeKey(file.file_path);
         if (!(await objectStorage.exists(objectKey))) {
-            throw new NotFoundError('Shared file not found in storage');
+            throw new NotFoundError(msg('share.file_not_in_storage'), null, 'share.file_not_in_storage');
         }
 
         const sessionUserId = `share-${share.id}`;
@@ -536,7 +537,7 @@ export default function fileRoutes(app) {
                 });
             } catch (err) {
                 throw new ValidationError(
-                    err.message || 'Unable to start Simplified Viewer for this share link'
+                    err.message || msg('share.simplified_viewer_start_failed')
                 );
             }
             const seatId = session.seatId || 1;
@@ -637,12 +638,12 @@ export default function fileRoutes(app) {
             const share = await resolveShareLinkOrThrow(token);
             await authorizeShareAccess(req, share);
             if (ShareLink.getViewerKind(share) !== SHARE_VIEWER_KINDS.SLICER_GUI) {
-                throw new ValidationError('This share link does not use Simplified Viewer');
+                throw new ValidationError(msg('share.not_simplified_viewer'), null, 'share.not_simplified_viewer');
             }
 
             const sessionToken = String(req.body?.sessionToken || '').trim();
             if (!sessionToken) {
-                throw new ValidationError('sessionToken is required');
+                throw new ValidationError(msg('session.token_required'), null, 'session.token_required');
             }
 
             const lease = touchSlicerGuiSessionHeartbeat({
@@ -652,7 +653,7 @@ export default function fileRoutes(app) {
             });
             if (!lease) {
                 return res.status(404).json({
-                    error: { message: 'Full Slicer session not found or expired' }
+                    error: { message: msg('slicer_gui.session_not_found') }
                 });
             }
 
@@ -671,12 +672,12 @@ export default function fileRoutes(app) {
             const share = await resolveShareLinkOrThrow(token);
             await authorizeShareAccess(req, share);
             if (ShareLink.getViewerKind(share) !== SHARE_VIEWER_KINDS.SLICER_GUI) {
-                throw new ValidationError('This share link does not use Simplified Viewer');
+                throw new ValidationError(msg('share.not_simplified_viewer'), null, 'share.not_simplified_viewer');
             }
 
             const sessionToken = String(req.body?.sessionToken || '').trim();
             if (!sessionToken) {
-                throw new ValidationError('sessionToken is required');
+                throw new ValidationError(msg('session.token_required'), null, 'session.token_required');
             }
 
             const mode = normalizeViewerReleaseMode(req.body?.mode, { supportsSoft: true });
@@ -702,12 +703,12 @@ export default function fileRoutes(app) {
         asyncHandler(async (req, res) => {
         const token = (req.params.token || '').trim();
         if (!token) {
-            throw new ValidationError('Share token is required');
+            throw new ValidationError(msg('share.token_required'), null, 'share.token_required');
         }
 
         const share = ShareLink.findByToken(token);
         if (!share || ShareLink.isExpired(share)) {
-            throw new NotFoundError('Share link is invalid or expired');
+            throw new NotFoundError(msg('share.invalid_or_expired'), null, 'share.invalid_or_expired');
         }
         if (ShareLink.getViewerKind(share) === SHARE_VIEWER_KINDS.SLICER_GUI) {
             return res.json({ applied: true, skipped: true, reason: 'slicer_gui_no_view_state' });

@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit-element';
+import { t } from '../i18n/index.js';
 import '../components/page-layout-template.js';
 import '../components/add-button.js';
 import '../components/page-content-message.js';
@@ -125,7 +126,7 @@ export class MyProjectsLandingPage extends LitElement {
 
     constructor() {
         super();
-        this.username = 'Guest';
+        this.username = t('common.guest');
         this.projects = [];
         this.loading = false;
         this.loadingMore = false;
@@ -173,7 +174,7 @@ export class MyProjectsLandingPage extends LitElement {
             this.hasMore = !!data.pagination?.hasMore;
             this.offset = this.projects.length;
         } catch (error) {
-            this.error = error.message || 'Unable to load projects.';
+            this.error = error.message || t('projects.loadFailed');
             this.projects = [];
             this.hasMore = false;
             this.offset = 0;
@@ -193,16 +194,16 @@ export class MyProjectsLandingPage extends LitElement {
             this.hasMore = !!data.pagination?.hasMore;
             this.offset = this.projects.length;
         } catch (error) {
-            this.error = error.message || 'Unable to load more projects.';
+            this.error = error.message || t('projects.loadMoreFailed');
         } finally {
             this.loadingMore = false;
         }
     }
 
     roleLabel(role) {
-        if (role === 'admin') return 'Admin';
-        if (role === 'collaborator') return 'Collaborator';
-        return 'Observer';
+        if (role === 'admin') return t('roles.admin');
+        if (role === 'collaborator') return t('roles.collaborator');
+        return t('roles.observer');
     }
 
     render() {
@@ -212,8 +213,8 @@ export class MyProjectsLandingPage extends LitElement {
                 selectedMenuKey="my-projects"
                 homeHref="/file-manager"
                 homeLabel="Home"
-                pageTitle="My Projects"
-                pageDescription="A place to view and manage your projects."
+                pageTitle=${t('projects.title')}
+                pageDescription=${t('projects.description')}
                 @menu-selection-change=${this.handleMenuSelectionChange}
             >
                 ${this.loading ? html`
@@ -234,8 +235,8 @@ export class MyProjectsLandingPage extends LitElement {
                                 @click=${() => this.handleProjectSelected(project)}
                             >
                                 <div class="project-name">${project.name}</div>
-                                <div class="project-meta">Role: ${this.roleLabel(project.role)}</div>
-                                ${project.isCreator ? html`<div class="creator-badge">Creator</div>` : ''}
+                                <div class="project-meta">${t('projects.roleLine', { role: this.roleLabel(project.role) })}</div>
+                                ${project.isCreator ? html`<div class="creator-badge">${t('projects.creator')}</div>` : ''}
                             </button>
                         `)}
                     </div>
@@ -247,13 +248,13 @@ export class MyProjectsLandingPage extends LitElement {
                             ?disabled=${this.loadingMore}
                             @click=${() => this.loadMoreProjects()}
                         >
-                            ${this.loadingMore ? 'Loading...' : 'Load more'}
+                            ${this.loadingMore ? t('projects.loadingMore') : t('projects.loadMore')}
                         </button>
                     ` : ''}
                 ` : ''}
                 <add-button
                     slot="content"
-                    title="Create New Project"
+                    title=${t('projects.createNew')}
                     @add-button-click=${() => this.handleCreateProjectRequest()}
                 ></add-button>
             </page-layout-template>

@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit-element';
+import { t } from '../i18n/index.js';
 import {
     normalizeLocalSlicerViewerOptions
 } from '../utils/localSlicerViewerOptions.js';
@@ -214,7 +215,7 @@ export class LocalSlicerViewerOptions extends LitElement {
                         ?disabled=${this.disabled}
                         @change=${(e) => this.handleFullSlicerChange(e)}
                     />
-                    Use Full Slicer
+                    ${t('viewers.useFullSlicer')}
                 </label>
                 ${useFullSlicer ? html`
                     <div class="nested">
@@ -225,10 +226,10 @@ export class LocalSlicerViewerOptions extends LitElement {
                                 ?disabled=${this.disabled}
                                 @change=${(e) => this.handleSimplifiedViewerChange(e)}
                             />
-                            Use simplified viewer
+                            ${t('viewers.useSimplifiedViewer')}
                         </label>
                         <div class="hint">
-                            Opens Full Slicer with the Simplified Viewer UI instead of full Slicer.
+                            ${t('viewers.simplifiedHint')}
                         </div>
                     </div>
                 ` : ''}
@@ -238,11 +239,11 @@ export class LocalSlicerViewerOptions extends LitElement {
 
     renderReadonly() {
         const { useFullSlicer, useSimplifiedViewer } = this.normalized;
-        let summary = 'Local Trame viewer';
+        let summary = t('viewers.localTrame');
         if (useFullSlicer && useSimplifiedViewer) {
-            summary = 'Full Slicer with simplified viewer (read-only).';
+            summary = t('viewers.readonlySimplified');
         } else if (useFullSlicer) {
-            summary = 'Full Slicer viewer (read-only) opens in a new tab.';
+            summary = t('viewers.readonlyFull');
         }
 
         return html`

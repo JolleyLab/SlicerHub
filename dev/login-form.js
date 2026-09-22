@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit-element';
 import { API_URL } from './config.js';
 import { loadAppFeatures, getAppFeatures } from './services/features.js';
 import { authFormStyleText } from './styles/auth-form-shared.js';
+import { t } from './i18n/index.js';
 
 const loginExtras = css`
   .dev-banner {
@@ -55,8 +56,8 @@ export class LoginForm extends LitElement {
         this.loading = false;
         this.error = '';
         this.success = '';
-        this.identityLabel = 'Username or email';
-        this.identityPlaceholder = 'Username or email';
+        this.identityLabel = t('auth.login.identityDefault');
+        this.identityPlaceholder = t('auth.login.identityDefault');
         this.registrationEnabled = true;
     }
 
@@ -101,12 +102,12 @@ export class LoginForm extends LitElement {
         this.success = '';
 
         if (!this.identity || !this.password) {
-            this.error = 'Please enter your credentials';
+            this.error = t('auth.login.needCredentials');
             return;
         }
 
         if (this.otpRequired && !this.otp) {
-            this.error = 'Enter the authentication code from your authenticator app';
+            this.error = t('auth.login.needOtp');
             return;
         }
 
@@ -131,10 +132,10 @@ export class LoginForm extends LitElement {
 
             const data = await response.json();
             const errCode = data.error?.code;
-            const errMsg = data.error?.message || data.error || data.message || 'Login failed';
+            const errMsg = data.error?.message || data.error || data.message || t('auth.login.failed');
 
             if (response.ok) {
-                this.success = 'Login successful!';
+                this.success = t('auth.login.success');
                 this.otpRequired = false;
                 this.otp = '';
                 this.dispatchEvent(new CustomEvent('login-success', {
@@ -154,13 +155,13 @@ export class LoginForm extends LitElement {
             } else if (response.status === 429 || errCode === 'ACCOUNT_COOLDOWN') {
                 this.error = typeof errMsg === 'string'
                     ? errMsg
-                    : 'Too many failed sign-in attempts. Please wait and try again.';
+                    : t('auth.login.cooldownGeneric');
             } else {
-                this.error = typeof errMsg === 'string' ? errMsg : 'Login failed';
+                this.error = typeof errMsg === 'string' ? errMsg : t('auth.login.failed');
             }
         } catch (err) {
             console.error('Login error:', err);
-            this.error = 'Network error. Please try again.';
+            this.error = t('common.networkError');
         } finally {
             this.loading = false;
         }
@@ -185,7 +186,7 @@ export class LoginForm extends LitElement {
         return html`
       <style>${authFormStyleText(loginExtras)}</style>
       <div class="auth-card">
-        <h2>${this.otpRequired ? 'Verification' : 'Login'}</h2>
+        <h2>${this.otpRequired ? t('auth.login.verificationTitle') : t('auth.login.title')}</h2>
         ${this.error ? html`
           <div class="auth-alert auth-alert--error" role="alert">${this.error}</div>
         ` : ''}
@@ -193,13 +194,13 @@ export class LoginForm extends LitElement {
           <div class="auth-alert auth-alert--success" role="status">${this.success}</div>
         ` : ''}
         ${this.devRelaxed && !this.otpRequired ? html`
-          <div class="dev-banner">Dev relaxed mode: longer session + softer rate limits</div>
+          <div class="dev-banner">${t('auth.login.devRelaxedBanner')}</div>
         ` : ''}
         <form @submit=${this.handleSubmit} autocomplete="on">
           ${this.otpRequired ? html`
-          <p class="hint">Enter the one-time code from your authenticator app.</p>
+          <p class="hint">${t('auth.login.otpHint')}</p>
           <div class="form-group">
-            <label for="otp">Authentication code</label>
+            <label for="otp">${t('auth.login.otpLabel')}</label>
             <input
               id="otp"
               name="otp"
@@ -209,7 +210,7 @@ export class LoginForm extends LitElement {
               .value=${this.otp}
               @input=${(e) => this.otp = e.target.value}
               ?disabled=${this.loading}
-              placeholder="6-digit code"
+              placeholder=${t('auth.login.otpPlaceholder')}
             />
           </div>
           ` : html`
@@ -228,7 +229,7 @@ export class LoginForm extends LitElement {
           </div>
 
           <div class="form-group">
-            <label for="password">Password</label>
+            <label for="password">${t('auth.login.password')}</label>
             <input
               id="password"
               name="password"
@@ -237,27 +238,27 @@ export class LoginForm extends LitElement {
               .value=${this.password}
               @input=${(e) => this.password = e.target.value}
               ?disabled=${this.loading}
-              placeholder="Enter your password"
+              placeholder=${t('auth.login.passwordPlaceholder')}
             />
           </div>
           `}
 
           <button type="submit" ?disabled=${this.loading}>
             ${this.loading
-                ? html`<span class="spinner"></span>${this.otpRequired ? 'Verifying...' : 'Logging in...'}`
-                : (this.otpRequired ? 'Verify' : 'Login')}
+                ? html`<span class="spinner"></span>${this.otpRequired ? t('auth.login.verifying') : t('auth.login.submitting')}`
+                : (this.otpRequired ? t('auth.login.verify') : t('auth.login.submit'))}
           </button>
 
           ${this.otpRequired ? html`
           <button type="button" class="secondary" @click=${this.handleBackFromOtp} ?disabled=${this.loading}>
-            Back
+            ${t('auth.login.back')}
           </button>
           ` : ''}
         </form>
 
         ${!this.otpRequired && this.registrationEnabled ? html`
         <div class="switch-link">
-          Don't have an account? <a @click=${this.handleRegisterClick}>Register here</a>
+          ${t('auth.login.noAccount')} <a @click=${this.handleRegisterClick}>${t('auth.login.registerHere')}</a>
         </div>
         ` : ''}
       </div>

@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit-element';
+import { t } from './i18n/index.js';
 import './components/page-layout-template.js';
 import './components/theme-toggle.js';
 import './components/local-slicer-viewer-options.js';
@@ -99,10 +100,10 @@ export class UserSettingsPage extends LitElement {
 
     constructor() {
         super();
-        this.username = 'Guest';
+        this.username = t('common.guest');
         this.errorMessage = '';
         this.saveState = 'idle';
-        this.saveStatusMessage = 'Changes save automatically.';
+        this.saveStatusMessage = t('settings.autoSave');
         this._saveTimer = null;
         this._savedClearTimer = null;
         this._persistGeneration = 0;
@@ -137,7 +138,7 @@ export class UserSettingsPage extends LitElement {
             clearTimeout(this._saveTimer);
         }
         this.saveState = 'saving';
-        this.saveStatusMessage = 'Saving…';
+        this.saveStatusMessage = t('common.saving');
         this.errorMessage = '';
         this._saveTimer = setTimeout(() => {
             this._saveTimer = null;
@@ -148,7 +149,7 @@ export class UserSettingsPage extends LitElement {
     async persist(patch) {
         const generation = ++this._persistGeneration;
         this.saveState = 'saving';
-        this.saveStatusMessage = 'Saving…';
+        this.saveStatusMessage = t('common.saving');
         this.errorMessage = '';
         try {
             const next = await saveUserPreferences(patch);
@@ -159,12 +160,12 @@ export class UserSettingsPage extends LitElement {
             this.useFullSlicer = next.useFullSlicer;
             this.useSimplifiedViewer = next.useSimplifiedViewer;
             this.saveState = 'saved';
-            this.saveStatusMessage = 'Saved to your account.';
+            this.saveStatusMessage = t('settings.saved');
             if (this._savedClearTimer) clearTimeout(this._savedClearTimer);
             this._savedClearTimer = setTimeout(() => {
                 if (this.saveState === 'saved') {
                     this.saveState = 'idle';
-                    this.saveStatusMessage = 'Changes save automatically.';
+                    this.saveStatusMessage = t('settings.autoSave');
                 }
                 this._savedClearTimer = null;
             }, 2000);
@@ -173,8 +174,8 @@ export class UserSettingsPage extends LitElement {
                 return;
             }
             this.saveState = 'error';
-            this.saveStatusMessage = 'Could not save.';
-            this.errorMessage = error.message || 'Unable to save settings.';
+            this.saveStatusMessage = t('settings.saveFailed');
+            this.errorMessage = error.message || t('settings.unableToSave');
         }
     }
 
@@ -205,9 +206,9 @@ export class UserSettingsPage extends LitElement {
                 .username=${this.username}
                 selectedMenuKey=""
                 homeHref="/file-manager"
-                homeLabel="Home"
-                pageTitle="Settings"
-                pageDescription="Appearance and Local Viewer preferences for your account. Changes save automatically."
+                homeLabel=${t('common.home')}
+                pageTitle=${t('settings.title')}
+                pageDescription=${t('settings.description')}
                 @menu-selection-change=${this.handleMenuSelectionChange}
             >
                 ${this.errorMessage ? html`
@@ -224,9 +225,9 @@ export class UserSettingsPage extends LitElement {
                     </div>
 
                     <section class="settings-section">
-                        <h2 class="section-title">Appearance</h2>
+                        <h2 class="section-title">${t('settings.appearance')}</h2>
                         <p class="section-description">
-                            Choose light or dark mode for the app shell.
+                            ${t('settings.appearanceHint')}
                         </p>
                         <theme-toggle
                             .theme=${this.theme}
@@ -235,10 +236,9 @@ export class UserSettingsPage extends LitElement {
                     </section>
 
                     <section class="settings-section">
-                        <h2 class="section-title">Local Viewer</h2>
+                        <h2 class="section-title">${t('settings.localViewer')}</h2>
                         <p class="section-description">
-                            Controls which local viewer opens from My Projects when the active GPU provider is Local.
-                            Settings follow your account across devices.
+                            ${t('settings.localViewerHintFull')}
                         </p>
                         <local-slicer-viewer-options
                             .useFullSlicer=${this.useFullSlicer}

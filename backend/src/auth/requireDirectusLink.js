@@ -7,6 +7,7 @@
 import config from '../config/index.js';
 import { ForbiddenError } from '../utils/errors.js';
 import { findDirectusLinkForUser } from './identityStore.js';
+import { msg } from '../i18n/index.js';
 
 export function isDirectusLinkRequired() {
     if (config.auth?.requireDirectusLink === true) return true;
@@ -25,15 +26,15 @@ export function requireDirectusLink(req, res, next) {
 
     const userId = req.user?.id;
     if (!userId) {
-        return next(new ForbiddenError('Authentication required', 'AUTH_REQUIRED'));
+        return next(new ForbiddenError(msg('auth.authentication_required'), 'AUTH_REQUIRED', 'auth.authentication_required'));
     }
 
     const link = findDirectusLinkForUser(userId);
     if (!link) {
         return next(new ForbiddenError(
-            'This account is not linked to Directus. Sign in with your Directus credentials '
-            + '(or complete account setup) so collaboration features can act as you.',
-            'DIRECTUS_LINK_REQUIRED'
+            msg('directus.link_required'),
+            'DIRECTUS_LINK_REQUIRED',
+            'directus.link_required'
         ));
     }
 

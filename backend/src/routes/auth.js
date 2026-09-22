@@ -36,11 +36,12 @@ import { requireAllowedWebOrigin } from '../auth/originCheck.js';
 import { recordAuthEvent } from '../auth/auditLog.js';
 import { changePasswordForUser } from '../auth/changePassword.js';
 import config from '../config/index.js';
+import { msg } from '../i18n/index.js';
 
 const registerPerIpRateLimit = createRateLimiter({
     windowMs: 60 * 1000,
     max: 10,
-    message: 'Too many registration attempts. Please wait and try again.',
+    message: msg('auth.register_rate_limit'),
     getKey: (req) => `register:ip:${getRateLimitClientIp(req)}`
 });
 
@@ -113,22 +114,22 @@ export default function authRoutes(app) {
         asyncHandler(async (req, res) => {
             const authConfig = getPublicAuthConfig();
             if (!authConfig.registrationEnabled) {
-                throw new ValidationError('Registration is disabled on this server');
+                throw new ValidationError(msg('auth.registration_disabled'), null, 'auth.registration_disabled');
             }
 
             const { username, email, password, theme, preferences } = req.body;
 
             if (!username || !email || !password) {
-                throw new ValidationError('Username, email, and password are required');
+                throw new ValidationError(msg('auth.register_fields_required'), null, 'auth.register_fields_required');
             }
 
             const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
             if (!emailRegex.test(email)) {
-                throw new ValidationError('Invalid email format');
+                throw new ValidationError(msg('auth.invalid_email'), null, 'auth.invalid_email');
             }
 
             if (password.length < 8) {
-                throw new ValidationError('Password must be at least 8 characters long');
+                throw new ValidationError(msg('auth.password_min_length', { min: 8 }), null, 'auth.password_min_length');
             }
 
             const prefsPatch = {
@@ -207,7 +208,7 @@ export default function authRoutes(app) {
                     identity,
                     detail: 'invalid_credentials'
                 });
-                throw new UnauthorizedError('Invalid credentials');
+                throw new UnauthorizedError(msg('auth.invalid_credentials'), null, 'auth.invalid_credentials');
             }
 
             recordLoginSuccess(req);
@@ -240,10 +241,10 @@ export default function authRoutes(app) {
             const { currentPassword, newPassword } = req.body || {};
             const min = config.security.passwordMinLength || 8;
             if (!currentPassword || !newPassword) {
-                throw new ValidationError('currentPassword and newPassword are required');
+                throw new ValidationError(msg('auth.change_password_fields_required'), null, 'auth.change_password_fields_required');
             }
             if (String(newPassword).length < min) {
-                throw new ValidationError(`Password must be at least ${min} characters long`);
+                throw new ValidationError(msg('auth.password_min_length', { min }), null, 'auth.password_min_length');
             }
 
             const user = await changePasswordForUser({
@@ -283,7 +284,7 @@ export default function authRoutes(app) {
         const user = User.findById(req.user.id);
 
         if (!user) {
-            throw new NotFoundError('User not found');
+            throw new NotFoundError(msg('user.not_found'), null, 'user.not_found');
         }
 
         const directusLink = findDirectusLinkForUser(user.id);
@@ -345,7 +346,7 @@ export default function authRoutes(app) {
     app.put('/api/auth/preferences', authenticateToken, asyncHandler(async (req, res) => {
         const before = User.getPreferences(req.user.id);
         if (!before) {
-            throw new NotFoundError('User not found');
+            throw new NotFoundError(msg('user.not_found'), null, 'user.not_found');
         }
 
         const patch = {};
@@ -361,7 +362,7 @@ export default function authRoutes(app) {
 
         const preferences = User.updatePreferences(req.user.id, patch);
         if (!preferences) {
-            throw new NotFoundError('User not found');
+            throw new NotFoundError(msg('user.not_found'), null, 'user.not_found');
         }
 
         const { viewerModeChanged } = await import('../gpu/userPreferences.js');
@@ -384,7 +385,7 @@ export default function authRoutes(app) {
         const user = User.findById(req.user.id);
 
         if (!user) {
-            throw new NotFoundError('User not found');
+            throw new NotFoundError(msg('user.not_found'), null, 'user.not_found');
         }
 
         // Provider tokens are keyed by app session jti — migrate them on rotate

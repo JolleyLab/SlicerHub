@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit-element';
+import { t } from './i18n/index.js';
 import './components/page-layout-template.js';
 import './components/page-content-message.js';
 import './components/file-list-row.js';
@@ -44,26 +45,26 @@ import {
 } from './utils/viewerActivity.js';
 
 const CASE_INVITE_ROLE_OPTIONS = Object.freeze([
-    Object.freeze({ value: '', label: 'Select role', disabled: true }),
-    Object.freeze({ value: 'collaborator', label: 'Collaborator' }),
-    Object.freeze({ value: 'read_only', label: 'Read only' })
+    Object.freeze({ value: '', label: t('roles.selectRole'), disabled: true }),
+    Object.freeze({ value: 'collaborator', label: t('roles.collaborator') }),
+    Object.freeze({ value: 'read_only', label: t('roles.readOnly') })
 ]);
 
 const LIST_SORT_OPTIONS = Object.freeze([
     Object.freeze({
         value: 'newest',
-        label: 'Date · newest first',
-        ariaLabel: 'Sort by date, newest first'
+        label: t('cases.sortNewest'),
+        ariaLabel: t('cases.sortNewestAria')
     }),
     Object.freeze({
         value: 'oldest',
-        label: 'Date · oldest first',
-        ariaLabel: 'Sort by date, oldest first'
+        label: t('cases.sortOldest'),
+        ariaLabel: t('cases.sortOldestAria')
     }),
     Object.freeze({
         value: 'title',
-        label: 'Title · A to Z',
-        ariaLabel: 'Sort by title, A to Z'
+        label: t('cases.sortTitle'),
+        ariaLabel: t('cases.sortTitleAria')
     })
 ]);
 
@@ -501,6 +502,23 @@ export class DirectusCasesPage extends LitElement {
             .quiet-button:disabled {
                 opacity: 0.55;
                 cursor: not-allowed;
+            }
+
+            .people-pending-badge {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-width: 1.25rem;
+                height: 1.25rem;
+                margin-left: 6px;
+                padding: 0 5px;
+                border-radius: 999px;
+                background: var(--color-primary);
+                color: var(--color-on-primary);
+                font-size: 0.7rem;
+                font-weight: 700;
+                line-height: 1;
+                vertical-align: middle;
             }
 
             /* ─── Detail: files panel ───────────────────────────────── */
@@ -1016,13 +1034,15 @@ export class DirectusCasesPage extends LitElement {
             attachmentSearchQuery: { type: String },
             // Cases list sort / search
             caseSortOrder: { type: String },
-            caseSearchQuery: { type: String }
+            caseSearchQuery: { type: String },
+            /** Unresolved invites for the open case (People button badge). */
+            pendingInviteCount: { type: Number }
         };
     }
 
     constructor() {
         super();
-        this.username = 'Guest';
+        this.username = t('common.guest');
         this.loading = false;
         this.errorMessage = '';
         this.cases = [];
@@ -1071,6 +1091,7 @@ export class DirectusCasesPage extends LitElement {
         // Cases list sort / search
         this.caseSortOrder = 'newest';
         this.caseSearchQuery = '';
+        this.pendingInviteCount = 0;
     }
 
     get selectedCase() {
@@ -1240,7 +1261,7 @@ export class DirectusCasesPage extends LitElement {
         } catch (err) {
             this.cases = [];
             this.sessionMeta = null;
-            this.errorMessage = this.userFacingError(err, "Couldn't load cases. Please try again.");
+            this.errorMessage = this.userFacingError(err, t('cases.loadFailed'));
         } finally {
             this.loading = false;
         }
@@ -1252,6 +1273,42 @@ export class DirectusCasesPage extends LitElement {
         const caseRow = this.cases.find((row) => row.id === caseId);
         if (caseRow) this.markCaseCommentsSeen(caseRow);
         history.pushState({ caseId }, '', this._buildCaseUrl(caseId));
+        this.refreshPendingInviteCount(caseId);
+    }
+
+    /**
+     * Open case People dialog (used by notification deep-links).
+     * Retries briefly if the case list has not finished loading.
+     */
+    async openPeopleForCaseId(caseId) {
+        const id = String(caseId || '').trim();
+        if (!id) return;
+        this.openCase(id);
+        for (let i = 0; i < 20; i += 1) {
+            const caseRow = this.cases.find((row) => String(row.id) === id);
+            if (caseRow) {
+                await this.updateComplete;
+                await this.openPeopleDialog(caseRow);
+                return;
+            }
+            await new Promise((r) => setTimeout(r, 100));
+        }
+    }
+
+    async refreshPendingInviteCount(caseId = this.selectedCaseId) {
+        const id = String(caseId || '').trim();
+        if (!id) {
+            this.pendingInviteCount = 0;
+            return;
+        }
+        try {
+            const invites = await listDirectusCaseInvites(id);
+            this.pendingInviteCount = Array.isArray(invites)
+                ? invites.filter((inv) => inv && inv.status !== 'expired').length
+                : 0;
+        } catch {
+            this.pendingInviteCount = 0;
+        }
     }
 
     caseLastModifiedAt(caseRow) {
@@ -1285,7 +1342,7 @@ export class DirectusCasesPage extends LitElement {
             && !hasNestedActivity
             && (!Number.isFinite(updatedMs) || updatedMs <= createdMs);
 
-        return onlyCreateStamp ? `Created ${formatted}` : `Modified ${formatted}`;
+        return onlyCreateStamp ? t('cases.created', { date: formatted }) : t('cases.modified', { date: formatted });
     }
 
     getCaseCommentSeenAt(caseId) {
@@ -1331,6 +1388,7 @@ export class DirectusCasesPage extends LitElement {
     }
 
     backToCaseList() {
+        this.pendingInviteCount = 0;
         this.closeListFilterMenus();
         this.attachmentSearchQuery = '';
         this.selectedCaseId = '';
@@ -1430,6 +1488,7 @@ export class DirectusCasesPage extends LitElement {
             pendingInvites = [];
         }
         await dialog.open(this.buildPeopleMembers(caseRow), { pendingInvites });
+        this.pendingInviteCount = pendingInvites.filter((inv) => inv && inv.status !== 'expired').length;
     }
 
     closePeopleDialog() {
@@ -1459,6 +1518,7 @@ export class DirectusCasesPage extends LitElement {
             const next = this.cases.find((r) => r.id === caseRow.id) || caseRow;
             dialog.members = dialog.sortMembers(this.buildPeopleMembers(next));
             dialog.pendingInvites = pendingInvites;
+            this.pendingInviteCount = pendingInvites.filter((inv) => inv && inv.status !== 'expired').length;
         }
         invalidateNotifications();
     }
@@ -1605,7 +1665,7 @@ export class DirectusCasesPage extends LitElement {
 
         const title = this.newCaseTitle.trim();
         if (!title) {
-            this.newCaseError = 'Title is required.';
+            this.newCaseError = t('cases.titleRequired');
             return;
         }
 
@@ -1683,7 +1743,7 @@ export class DirectusCasesPage extends LitElement {
         if (this.savingCaseEdit) return;
         if (!this.canEditCaseContent(caseRow)) return;
         const title = this.editCaseTitle.trim();
-        if (!title) { this.caseEditError = 'Title is required.'; return; }
+        if (!title) { this.caseEditError = t('cases.titleRequired'); return; }
 
         this.savingCaseEdit = true;
         this.caseEditError = '';
@@ -1708,7 +1768,7 @@ export class DirectusCasesPage extends LitElement {
     async handleDeleteAttachment(caseRow, attachment) {
         if (!attachment?.id || this.deletingAttachmentId) return;
         if (!this.canEditCaseContent(caseRow)) return;
-        if (!confirm(`Delete "${attachment.name || attachment.filenameDownload}"? This cannot be undone.`)) return;
+        if (!confirm(t('cases.confirmDeleteAttachment', { name: attachment.name || attachment.filenameDownload }))) return;
 
         this.deletingAttachmentId = attachment.id;
         this.uploadError = '';
@@ -1743,7 +1803,7 @@ export class DirectusCasesPage extends LitElement {
 
         this.uploadingFile = true;
         this.uploadError = '';
-        this.uploadStatusText = `Uploading ${file.name}…`;
+        this.uploadStatusText = t('cases.uploadingFile', { name: file.name });
         try {
             const data = await uploadDirectusCaseAttachment(caseRow.id, file);
             const attachment = data.attachment;
@@ -1754,7 +1814,7 @@ export class DirectusCasesPage extends LitElement {
                 if (attachment?.id) attachments.push(attachment);
                 return { ...row, attachments };
             });
-            this.uploadStatusText = `${file.name} uploaded.`;
+            this.uploadStatusText = t('cases.uploadComplete', { name: file.name });
             // Clear the success message after 4 s
             setTimeout(() => {
                 this.uploadStatusText = '';
@@ -1892,7 +1952,7 @@ export class DirectusCasesPage extends LitElement {
     }
 
     caseTitle(caseRow) {
-        return String(caseRow?.title || '(untitled)');
+        return String(caseRow?.title || t('cases.untitled'));
     }
 
     filterCases(cases = [], query = this.caseSearchQuery) {
@@ -1966,10 +2026,10 @@ export class DirectusCasesPage extends LitElement {
             const label = viewerDisplayName(VIEWER_KINDS.SLICER_GUI, {
                 simplified: this.accountPrefersSimplifiedViewer()
             });
-            return `Open in ${label} (default)`;
+            return t('cases.openInDefault', { viewer: label });
         }
-        if (attachment?.canPreviewInBrowser) return 'Browser preview coming soon';
-        return 'This file type cannot be opened here yet';
+        if (attachment?.canPreviewInBrowser) return t('cases.browserPreviewSoon');
+        return t('cases.fileTypeUnsupported');
     }
 
     attachmentCanActivate(attachment) {
@@ -1996,7 +2056,7 @@ export class DirectusCasesPage extends LitElement {
         if (this.openingAttachmentId) return;
 
         if (attachment?.canPreviewInBrowser && !attachment?.canOpenInSlicer) {
-            this.errorMessage = 'Browser preview for documents and images is not available yet.';
+            this.errorMessage = t('cases.browserPreviewNote');
             return;
         }
         if (!attachment?.canOpenInSlicer) return;
@@ -2013,8 +2073,8 @@ export class DirectusCasesPage extends LitElement {
         this.viewerSimplified = useSimplified;
         this.viewerLoading = true;
         this.viewerLoadingDetail = attachment.filesize && attachment.filesize > 50 * 1024 * 1024
-            ? `Preparing ${this.currentFileName} (~${Math.round(attachment.filesize / (1024 * 1024))} MB). First open can take several minutes.`
-            : `Preparing ${this.currentFileName}…`;
+            ? t('cases.preparingFileLarge', { name: this.currentFileName, mb: Math.round(attachment.filesize / (1024 * 1024)) })
+            : t('cases.preparingFile', { name: this.currentFileName });
         this.showIframe = true;
         this.iframeUrl = 'about:blank';
 
@@ -2043,7 +2103,7 @@ export class DirectusCasesPage extends LitElement {
             markViewerActivity();
             this.startHeartbeat();
             this.viewerLoading = true;
-            this.viewerLoadingDetail = `Opening ${viewerLabel} — scene will load when Slicer is ready…`;
+            this.viewerLoadingDetail = t('cases.openingViewerReady', { viewer: viewerLabel });
             this.openingAttachmentId = '';
 
             this._viewerPushedState = true;
@@ -2075,16 +2135,16 @@ export class DirectusCasesPage extends LitElement {
                 @menu-selection-change=${this.handleMenuSelectionChange}
             >
                 <div slot="content" class="page-header-row">
-                    <h1 class="page-heading">My Cases</h1>
+                    <h1 class="page-heading">${t('cases.title')}</h1>
                     <div class="page-header-actions">
                         ${this.cases.length > 0 && !this.showNewCaseForm ? html`
                             <list-filter-tools
                                 .searchQuery=${this.caseSearchQuery}
                                 .sortOrder=${this.caseSortOrder}
                                 .sortOptions=${LIST_SORT_OPTIONS}
-                                searchLabel="Search cases"
-                                sortLabel="Sort cases"
-                                searchPlaceholder="Filter by title or description…"
+                                searchLabel=${t('cases.searchAria')}
+                                sortLabel=${t('cases.sortAria')}
+                                searchPlaceholder=${t('cases.filterPlaceholder')}
                                 @search-change=${(e) => this.handleCaseSearchChange(e)}
                                 @sort-change=${(e) => this.handleCaseSortChange(e)}
                             ></list-filter-tools>
@@ -2095,13 +2155,13 @@ export class DirectusCasesPage extends LitElement {
                             ?disabled=${this.loading || this.creatingCase}
                             @click=${() => this.showNewCaseForm ? this.handleCancelNewCase() : this.openNewCaseForm()}
                         >
-                            ${this.showNewCaseForm ? 'Cancel' : 'New Case'}
+                            ${this.showNewCaseForm ? t('common.cancel') : t('cases.newCase')}
                         </button>
                     </div>
                 </div>
 
                 ${this.loading ? html`
-                    <div slot="content" class="status-note">Loading cases…</div>
+                    <div slot="content" class="status-note">${t('cases.loading')}</div>
                 ` : ''}
 
                 ${this.errorMessage ? html`
@@ -2114,15 +2174,15 @@ export class DirectusCasesPage extends LitElement {
 
                 ${this.showNewCaseForm ? html`
                     <form slot="content" class="new-case-form" @submit=${(e) => this.handleNewCaseSubmit(e)} novalidate>
-                        <h3>New Case</h3>
+                        <h3>${t('cases.newCase')}</h3>
 
                         <div class="form-group">
-                            <label class="form-label" for="new-case-title">Title *</label>
+                            <label class="form-label" for="new-case-title">${t('cases.createTitle')}</label>
                             <input
                                 id="new-case-title"
                                 class="form-input"
                                 type="text"
-                                placeholder="Case title"
+                                placeholder=${t('cases.titlePlaceholder')}
                                 .value=${this.newCaseTitle}
                                 @input=${(e) => { this.newCaseTitle = e.target.value; }}
                                 ?disabled=${this.creatingCase}
@@ -2132,11 +2192,11 @@ export class DirectusCasesPage extends LitElement {
                         </div>
 
                         <div class="form-group">
-                            <label class="form-label" for="new-case-desc">Description</label>
+                            <label class="form-label" for="new-case-desc">${t('cases.description')}</label>
                             <textarea
                                 id="new-case-desc"
                                 class="form-textarea"
-                                placeholder="Optional description"
+                                placeholder=${t('cases.descriptionPlaceholder')}
                                 .value=${this.newCaseDescription}
                                 @input=${(e) => { this.newCaseDescription = e.target.value; }}
                                 ?disabled=${this.creatingCase}
@@ -2153,7 +2213,7 @@ export class DirectusCasesPage extends LitElement {
                                 type="submit"
                                 ?disabled=${this.creatingCase}
                             >
-                                ${this.creatingCase ? 'Creating…' : 'Create Case'}
+                                ${this.creatingCase ? t('cases.creating') : t('cases.create')}
                             </button>
                         </div>
                     </form>
@@ -2163,7 +2223,7 @@ export class DirectusCasesPage extends LitElement {
                     <page-content-message
                         slot="content"
                         variant="empty"
-                        message="No cases yet. Create the first one."
+                        message=${t('cases.empty')}
                     ></page-content-message>
                 ` : ''}
 
@@ -2184,14 +2244,14 @@ export class DirectusCasesPage extends LitElement {
                                     @click=${() => this.openCase(row.id)}
                                 >
                                     <div class="case-card-title-row">
-                                        <span class="case-card-title">${row.title || '(untitled)'}</span>
+                                        <span class="case-card-title">${row.title || t('cases.untitled')}</span>
                                         ${newCommentCount > 0 ? html`
                                             <span
                                                 class="case-card-new-badge"
                                                 title=${newCommentCount === 1
-                                                    ? '1 new comment'
-                                                    : `${newCommentCount} new comments`}
-                                            >${newCommentCount === 1 ? 'New' : `${newCommentCount} new`}</span>
+                                                    ? t('cases.oneNewComment')
+                                                    : t('cases.nNewComments', { n: newCommentCount })}
+                                            >${newCommentCount === 1 ? t('cases.badgeNew') : t('cases.badgeNNew', { n: newCommentCount })}</span>
                                         ` : ''}
                                     </div>
                                     ${row.description ? html`
@@ -2203,7 +2263,7 @@ export class DirectusCasesPage extends LitElement {
                                         </div>
                                     ` : ''}
                                     ${isArchived ? html`
-                                        <span class="status-chip">Archived</span>
+                                        <span class="status-chip">${t('cases.archived')}</span>
                                     ` : ''}
                                 </button>
                             `;
@@ -2224,6 +2284,10 @@ export class DirectusCasesPage extends LitElement {
         const canManage = this.canManageCollaborators(caseRow);
         const canComment = this.canCommentOnCase(caseRow);
         const peopleCount = this.casePeopleCount(caseRow);
+        const pendingInvites = Number(this.pendingInviteCount) || 0;
+        const peopleLabel = peopleCount
+            ? t('cases.people', { n: peopleCount })
+            : t('cases.peopleLabel');
         return html`
             <page-layout-template
                 .username=${this.username}
@@ -2235,7 +2299,7 @@ export class DirectusCasesPage extends LitElement {
                 <div slot="content" class="case-detail">
                     <div class="detail-toolbar">
                         <button class="back-link" type="button" @click=${() => this.backToCaseList()}>
-                            ← My Cases
+                            ${t('cases.backToList')}
                         </button>
                         <div class="detail-toolbar-actions">
                             <button
@@ -2244,7 +2308,9 @@ export class DirectusCasesPage extends LitElement {
                                 ?disabled=${this.savingCollaborators}
                                 @click=${() => this.openPeopleDialog(caseRow)}
                             >
-                                People${peopleCount ? ` (${peopleCount})` : ''}
+                                ${peopleLabel}${pendingInvites
+                                    ? html` <span class="people-pending-badge" title=${t('people.pendingInvites')}>${pendingInvites}</span>`
+                                    : ''}
                             </button>
                             ${canEdit && !this.editingCase ? html`
                                 <button
@@ -2252,7 +2318,7 @@ export class DirectusCasesPage extends LitElement {
                                     type="button"
                                     ?disabled=${this.archivingCase}
                                     @click=${() => this.startEditCase(caseRow)}
-                                >Edit details</button>
+                                >${t('cases.editDetails')}</button>
                             ` : ''}
                         </div>
                     </div>
@@ -2260,7 +2326,7 @@ export class DirectusCasesPage extends LitElement {
                     ${this.editingCase ? html`
                         <form class="new-case-form" @submit=${(e) => { e.preventDefault(); this.saveEditCase(caseRow); }} novalidate>
                             <div class="form-group">
-                                <label class="form-label" for="edit-case-title">Title</label>
+                                <label class="form-label" for="edit-case-title">${t('cases.createTitle').replace(' *', '')}</label>
                                 <input
                                     id="edit-case-title"
                                     class="form-input"
@@ -2273,7 +2339,7 @@ export class DirectusCasesPage extends LitElement {
                                 />
                             </div>
                             <div class="form-group">
-                                <label class="form-label" for="edit-case-desc">Description</label>
+                                <label class="form-label" for="edit-case-desc">${t('cases.description')}</label>
                                 <textarea
                                     id="edit-case-desc"
                                     class="form-textarea"
@@ -2290,18 +2356,18 @@ export class DirectusCasesPage extends LitElement {
                                         type="button"
                                         ?disabled=${this.savingCaseEdit || this.archivingCase}
                                         @click=${() => this.handleArchiveCase(caseRow)}
-                                    >${this.archivingCase ? 'Archiving…' : 'Archive case'}</button>
+                                    >${this.archivingCase ? t('cases.archiving') : t('cases.archive')}</button>
                                 ` : html`<span class="form-actions-spacer"></span>`}
-                                <button class="secondary-button" type="button" ?disabled=${this.savingCaseEdit} @click=${() => this.cancelEditCase()}>Cancel</button>
+                                <button class="secondary-button" type="button" ?disabled=${this.savingCaseEdit} @click=${() => this.cancelEditCase()}>${t('common.cancel')}</button>
                                 <button class="primary-button" type="submit" ?disabled=${this.savingCaseEdit}>
-                                    ${this.savingCaseEdit ? 'Saving…' : 'Save'}
+                                    ${this.savingCaseEdit ? t('common.saving') : t('common.save')}
                                 </button>
                             </div>
                         </form>
                     ` : html`
                         <div class="detail-header">
                             <div class="detail-title-row">
-                                <h2 class="detail-title">${caseRow.title || 'Untitled case'}</h2>
+                                <h2 class="detail-title">${caseRow.title || t('cases.untitledCase')}</h2>
                                 ${caseRow.status && caseRow.status !== 'active' ? html`
                                     <span class="status-chip">${caseRow.status}</span>
                                 ` : ''}
@@ -2323,7 +2389,7 @@ export class DirectusCasesPage extends LitElement {
                         <div class="files-panel">
                             <div class="panel-header">
                                 <div class="panel-header-start">
-                                    <h3 class="panel-title">Attachments</h3>
+                                    <h3 class="panel-title">${t('cases.attachments')}</h3>
                                     <span
                                         class="panel-count"
                                         title=${searchActive
@@ -2338,9 +2404,9 @@ export class DirectusCasesPage extends LitElement {
                                         .searchQuery=${this.attachmentSearchQuery}
                                         .sortOrder=${this.attachmentSortOrder}
                                         .sortOptions=${LIST_SORT_OPTIONS}
-                                        searchLabel="Search attachments"
-                                        sortLabel="Sort attachments"
-                                        searchPlaceholder="Filter by name…"
+                                        searchLabel=${t('cases.searchAttachments')}
+                                        sortLabel=${t('cases.sortAttachments')}
+                                        searchPlaceholder=${t('listFilter.filterPlaceholder')}
                                         @search-change=${(e) => this.handleAttachmentSearchChange(e)}
                                         @sort-change=${(e) => this.handleAttachmentSortChange(e)}
                                     ></list-filter-tools>
@@ -2348,7 +2414,7 @@ export class DirectusCasesPage extends LitElement {
                             </div>
                             <div class="files-body">
                                 ${allAttachments.length === 0 ? html`
-                                    <div class="empty-note">No files attached yet.</div>
+                                    <div class="empty-note">${t('cases.noFiles')}</div>
                                 ` : attachments.length === 0 ? html`
                                     <div class="empty-note">No attachments match “${this.attachmentSearchQuery.trim()}”.</div>
                                 ` : html`
@@ -2380,8 +2446,8 @@ export class DirectusCasesPage extends LitElement {
                                                         slot="actions"
                                                         class="file-icon-button"
                                                         type="button"
-                                                        title="Remove file"
-                                                        aria-label="Remove file"
+                                                        title=${t('cases.removeFile')}
+                                                        aria-label=${t('cases.removeFile')}
                                                         ?disabled=${!!this.deletingAttachmentId || this.uploadingFile}
                                                         @click=${() => this.handleDeleteAttachment(caseRow, attachment)}
                                                     >
@@ -2415,7 +2481,7 @@ export class DirectusCasesPage extends LitElement {
                                             ?disabled=${this.uploadingFile || !!this.openingAttachmentId}
                                             @click=${() => this.triggerFileUpload()}
                                         >
-                                            ${this.uploadingFile ? 'Uploading…' : 'Add file'}
+                                            ${this.uploadingFile ? t('cases.uploading') : t('cases.addFile')}
                                         </button>
                                     </div>
                                 ` : ''}
@@ -2425,9 +2491,9 @@ export class DirectusCasesPage extends LitElement {
                         <comments-panel
                             .comments=${comments}
                             emptyMessage=${this.sessionMeta?.comments?.loaded === false
-                                ? 'Comments could not be loaded. Check Directus Comments Read permission for this role.'
-                                : 'No comments yet.'}
-                            placeholder="Write a comment…"
+                                ? t('cases.commentsLoadFailed')
+                                : t('cases.noComments')}
+                            placeholder=${t('cases.writeComment')}
                             ?posting=${this.postingComment}
                             ?allowCompose=${canComment}
                             @post-comment=${(e) => this.handlePostComment(e, caseRow)}
@@ -2447,7 +2513,7 @@ export class DirectusCasesPage extends LitElement {
             <div class="iframe-overlay">
                 <div class="iframe-header">
                     <div class="iframe-title">
-                        ${viewerLabel}: ${this.currentFileName || 'Loading…'}
+                        ${viewerLabel}: ${this.currentFileName || t('common.loading')}
                     </div>
                     <div class="iframe-header-actions">
                         <button
@@ -2455,7 +2521,7 @@ export class DirectusCasesPage extends LitElement {
                             type="button"
                             @click=${() => this.closeViewer()}
                         >
-                            Close
+                            ${t('common.close')}
                         </button>
                     </div>
                 </div>
@@ -2474,7 +2540,7 @@ export class DirectusCasesPage extends LitElement {
                     ${this.viewerLoading ? html`
                         <div class="loading-overlay">
                             <div class="viewer-loading">
-                                <p>${this.viewerLoadingDetail || 'Loading viewer…'}</p>
+                                <p>${this.viewerLoadingDetail || t('cases.loadingViewer')}</p>
                             </div>
                         </div>
                     ` : ''}
@@ -2490,7 +2556,7 @@ export class DirectusCasesPage extends LitElement {
             ${this.renderViewerOverlay()}
             <people-dialog
                 id="case-people-dialog"
-                title="People"
+                title=${t('cases.peopleDialog')}
                 @people-save=${(e) => this.handlePeopleSave(e)}
                 @people-cancel=${() => this.closePeopleDialog()}
                 @people-invited=${(e) => this.handlePeopleInvited(e)}

@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit-element';
+import { t } from '../i18n/index.js';
 import { API_URL } from '../config.js';
 import '../components/page-layout-template.js';
 import '../components/add-button.js';
@@ -1397,16 +1398,17 @@ export class ProjectReviewPage extends LitElement {
         }, 3000);
     }
 
-    showErrorAlert(message, { title = 'Something went wrong', force = false, kind = null } = {}) {
+    showErrorAlert(message, { title = null, force = false, kind = null } = {}) {
+        const resolvedTitle = title || t('common.somethingWentWrong');
         const text = String(message || '').trim();
         if (!text) return;
 
-        const key = `${title}\0${text}`;
+        const key = `${resolvedTitle}\0${text}`;
         if (!force && key === this._lastErrorAlertKey) {
             return;
         }
         this._lastErrorAlertKey = key;
-        this.errorAlertTitle = title;
+        this.errorAlertTitle = resolvedTitle;
         this.errorAlertMessage = text;
         this._errorAlertKind = kind;
         this.requestUpdate();
@@ -1462,10 +1464,10 @@ export class ProjectReviewPage extends LitElement {
             this.remoteProvision = null;
             this.clearErrorAlertDedupe();
             if (data.status === 'stopping') {
-                this.showToast('Removing GPU instance…');
+                this.showToast(t('common.working'));
                 this.maybeStartGpuPolling();
             } else {
-                this.showToast('GPU error cleared.');
+                this.showToast(t('gpu.statusIdle'));
             }
             await this.loadProjectGpu();
         } catch (error) {
@@ -1797,7 +1799,7 @@ export class ProjectReviewPage extends LitElement {
                     : `Loading ${sceneTitle}… First launch can take 1–2 minutes.`);
             this.iframeUrl = url;
             markViewerActivity();
-            this.showToast(`Launched ${sceneTitle} in ${viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified: this.viewerSimplified })}`);
+            this.showToast(t('files.launchedIn', { title: sceneTitle, viewer: viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified: this.viewerSimplified }) }));
             this.startTrameHeartbeat();
         } catch (error) {
             this.showIframe = false;
@@ -1926,26 +1928,26 @@ export class ProjectReviewPage extends LitElement {
 
     getRemoteGpuLaunchBlockMessage() {
         if (this.gpuSaving) {
-            return 'GPU provider is updating. Try again in a moment.';
+            return t('gpu.updating');
         }
         if (!this.projectId || !this.usesRemoteGpuProvider()) return null;
         if (this.isRemoteGpuRunning()) return null;
 
         const status = this.gpuInstance?.status || 'idle';
         if (status === 'provisioning') {
-            return 'GPU is still starting. Wait until it shows “Ready to open files,” then try again.';
+            return t('gpu.startInProgress');
         }
         if (status === 'stopping') {
-            return 'GPU is shutting down. Try again in a moment.';
+            return t('gpu.shutdownInProgress');
         }
         if (status === 'error') {
             return this.gpuInstance?.errorMessage
-                || 'GPU billing is unavailable. Start billing again or contact the project admin.';
+                || t('gpu.billingUnavailable');
         }
         if (!this.canManageGpu) {
-            return 'GPU billing is not running. Ask the project admin to start billing before opening files.';
+            return t('gpu.billingNotRunning');
         }
-        return 'Start GPU billing on this project before opening files.';
+        return t('gpu.startBillingFirst');
     }
 
     getFileLaunchTitle(file) {
@@ -2090,7 +2092,7 @@ export class ProjectReviewPage extends LitElement {
 
             const data = await response.json();
             if (response.ok) {
-                this.showToast('File uploaded to project successfully.');
+                this.showToast(t('files.uploadFile'));
                 this.selectedFile = null;
                 const input = this.renderRoot?.querySelector('#project-upload-input');
                 if (input) input.value = '';
@@ -2160,7 +2162,7 @@ export class ProjectReviewPage extends LitElement {
             ) {
                 const label = (this.configuredProviders.find((p) => p.id === nextProviderId) || {}).label
                     || nextProviderId;
-                this.showToast(`GPU provider is now ${label}.`);
+                this.showToast(t('gpu.providerSwitched', { label }));
             }
 
             const gpuErr = this.pickGpuStatusError(data, prevStatus);
@@ -2228,7 +2230,7 @@ export class ProjectReviewPage extends LitElement {
                     }
                     if (data.ownershipTransferred && data.billingOwnership?.youOwnBilling) {
                         this._billingReceivedViaTransfer = true;
-                        this.showToast('You now own GPU billing on this project.');
+                        this.showToast(t('gpu.billingStillActive'));
                     }
                     if (data.billingStopped) {
                         this.gpuInstance = data.instance || this.gpuInstance;
@@ -2305,52 +2307,52 @@ export class ProjectReviewPage extends LitElement {
     get gpuStatusLabel() {
         const status = this.gpuInstance?.status || 'idle';
         const labels = {
-            idle: 'Not running',
-            provisioning: 'Provisioning GPU…',
-            running: 'Billing active',
-            stopping: 'Stopping…',
-            error: 'Error'
+            idle: t('gpu.statusIdle'),
+            provisioning: t('gpu.statusProvisioning'),
+            running: t('gpu.statusRunning'),
+            stopping: t('gpu.statusStopping'),
+            error: t('gpu.statusError')
         };
         return labels[status] || status;
     }
 
     get localViewerFriendlyLabel() {
         if (!this.useLocalFullSlicer) {
-            return 'Standard viewer';
+            return t('viewers.trame');
         }
         if (this.useLocalSimplifiedViewer) {
-            return 'Simplified viewer';
+            return t('viewers.simplified');
         }
-        return 'Full Slicer';
+        return t('viewers.fullSlicer');
     }
 
     get gpuFriendlySummary() {
         if (this.savedGpuProviderId === 'local') {
-            return 'Local';
+            return t('viewers.local');
         }
         const status = this.gpuInstance?.status || 'idle';
         if (!this.canStartBilling && status === 'idle') {
-            return 'GPU not running — ask admin or collaborator';
+            return t('gpu.notRunning');
         }
         if (status === 'provisioning') {
             if (this.remoteProvision?.failure) {
-                return 'GPU start failed on Vast';
+                return t('gpu.startFailed');
             }
             if (this.remoteProvision?.statusMessage) {
                 return this.remoteProvision.statusMessage;
             }
-            return 'Starting GPU…';
+            return t('gpu.starting');
         }
         if (status === 'error' && this.gpuInstance?.errorMessage) {
             return this.gpuInstance.errorMessage;
         }
         const labels = {
-            idle: 'GPU not running',
-            running: 'Ready to open files',
-            stopping: 'Shutting down…',
-            error: 'GPU unavailable'
+            idle: t('gpu.gpuNotRunning'),
+            running: t('gpu.readyToOpen'),
+            stopping: t('gpu.shutdownStatus'),
+            error: t('gpu.gpuUnavailable')
         };
-        return labels[status] || 'GPU status unknown';
+        return labels[status] || t('gpu.statusUnknown');
     }
 
     get showGpuInfoButton() {
@@ -2549,7 +2551,7 @@ export class ProjectReviewPage extends LitElement {
             && becameOwner
             && this.gpuInstance?.status === 'running'
         ) {
-            this.showToast('You now own GPU billing on this project.');
+            this.showToast(t('gpu.billingStillActive'));
         }
     }
 
@@ -2576,7 +2578,7 @@ export class ProjectReviewPage extends LitElement {
             if (!dialog) return;
             dialog.lightDismiss = true;
             dialog.showDefaultCloseButton = true;
-            dialog.title = 'You own this GPU session';
+            dialog.title = t('projects.youOwnSession');
             dialog.openDialog();
             const native = dialog.nativeDialog;
             if (native && !native._ownerPromptCloseBound) {
@@ -2599,7 +2601,7 @@ export class ProjectReviewPage extends LitElement {
                 if (!dialog) return;
                 dialog.lightDismiss = false;
                 dialog.showDefaultCloseButton = true;
-                dialog.title = 'Remember to stop billing';
+                dialog.title = t('projects.rememberStopBilling');
                 dialog.openDialog();
             });
             return;
@@ -2623,7 +2625,7 @@ export class ProjectReviewPage extends LitElement {
             if (!dialog) return;
             dialog.lightDismiss = false;
             dialog.showDefaultCloseButton = true;
-            dialog.title = 'Remember to stop billing';
+            dialog.title = t('projects.rememberStopBilling');
             dialog.openDialog();
         });
     }
@@ -2646,7 +2648,7 @@ export class ProjectReviewPage extends LitElement {
             }
             this._billingReceivedViaTransfer = false;
             this.closeOwnerBillingPrompt();
-            this.showToast('Stopping GPU billing…');
+            this.showToast(t('gpu.statusStopping'));
             this.maybeStartGpuPolling();
         } catch (error) {
             this.showErrorAlert(error.message || 'Unable to stop GPU billing.', {
@@ -2698,12 +2700,12 @@ export class ProjectReviewPage extends LitElement {
             this.canStopBilling = true;
             this._billingReceivedViaTransfer = false;
             this.clearErrorAlertDedupe();
-            this.showToast('GPU provisioning started.');
+            this.showToast(t('gpu.statusProvisioning'));
             this.maybeStartGpuPolling();
         } catch (error) {
             if (error.status === 409) {
                 await this.loadProjectGpu().catch(() => {});
-                this.showToast(error.message || 'GPU billing was already started on this project.');
+                this.showToast(error.message || t('gpu.billingAlreadyStarted'));
                 return;
             }
             this.showErrorAlert(error.message || 'Unable to start GPU billing.', {
@@ -2724,7 +2726,7 @@ export class ProjectReviewPage extends LitElement {
             if (data.billingOwnership) {
                 this.applyBillingOwnership(data.billingOwnership);
             }
-            this.showToast('Stopping GPU billing…');
+            this.showToast(t('gpu.statusStopping'));
             this.maybeStartGpuPolling();
         } catch (error) {
             if (error.status === 409 && error.code === 'billing_stop_impact') {
@@ -2759,7 +2761,7 @@ export class ProjectReviewPage extends LitElement {
                 this.applyBillingOwnership(data.billingOwnership);
             }
             this.closeStopBillingDialog();
-            this.showToast('Stopping GPU billing…');
+            this.showToast(t('gpu.statusStopping'));
             this.maybeStartGpuPolling();
         } catch (error) {
             this.showErrorAlert(error.message || 'Unable to stop GPU billing.', {
@@ -2783,9 +2785,9 @@ export class ProjectReviewPage extends LitElement {
             this.closeStopBillingDialog();
             if (data.transferred) {
                 const name = data.owner?.username || 'another user';
-                this.showToast(`GPU billing transferred to ${name}.`);
+                this.showToast(t('gpu.billingTransferred', { name }));
             } else if (data.stopped) {
-                this.showToast('No active users to transfer to — stopping billing.');
+                this.showToast(t('gpu.statusStopping'));
                 this.maybeStartGpuPolling();
             }
         } catch (error) {
@@ -2881,7 +2883,7 @@ export class ProjectReviewPage extends LitElement {
             this.viewerLoadingDetail = `Loading ${sceneTitle}…`;
             this.iframeUrl = url;
             markViewerActivity();
-            this.showToast(`Launched ${sceneTitle}`);
+            this.showToast(t('files.launched', { title: sceneTitle }));
             this.startTrameHeartbeat();
         } catch (error) {
             this.showIframe = false;
@@ -3130,7 +3132,7 @@ export class ProjectReviewPage extends LitElement {
 
     async handleViewerInactivityTimeout() {
         if (!this.showIframe) return;
-        this.showToast('Viewer closed after inactivity');
+        this.showToast(t('gpu.viewerClosedInactivity'));
         // Walk-away with an open viewer: tear down the seat (do not leave warm forever).
         await this.closeIframe({ releaseMode: VIEWER_RELEASE_MODES.HARD, skipOwnerBillingPrompt: true });
         if (
@@ -3145,7 +3147,7 @@ export class ProjectReviewPage extends LitElement {
                 if (data.billingOwnership) {
                     this.applyBillingOwnership(data.billingOwnership);
                 }
-                this.showToast('GPU billing stopped after inactivity');
+                this.showToast(t('projects.stopBilling'));
                 this.maybeStartGpuPolling();
             } catch (error) {
                 console.warn('GPU billing stop after idle failed:', error.message);
@@ -3186,7 +3188,7 @@ export class ProjectReviewPage extends LitElement {
         this._onSlicerViewerMessage = (event) => {
             if (event?.origin && event.origin !== window.location.origin) return;
             if (event?.data?.type === 'slicer-viewer-disconnected') {
-                this.showToast('Viewer disconnected — reconnecting may be needed (common after Edge sleeps the tab)');
+                this.showToast(t('common.networkError'));
             }
             if (event?.data?.type === 'slicer-viewer-superseded') {
                 this.handleViewerSupersededElsewhere();
@@ -3456,7 +3458,7 @@ export class ProjectReviewPage extends LitElement {
                     : entry
             ));
             this.closeEditFileTitleDialog();
-            this.showToast('Scene title updated.');
+            this.showToast(t('projects.editSceneTitle'));
         } catch (error) {
             this.showErrorAlert(error.message || 'Unable to update file title.', {
                 title: 'Unable to save',
@@ -3567,13 +3569,13 @@ export class ProjectReviewPage extends LitElement {
 
             const shareUrl = data?.shareLink?.url;
             if (!shareUrl) {
-                this.shareDialogError = 'Share link was created but no URL was returned';
+                this.shareDialogError = t('files.shareNoUrl');
                 return;
             }
 
             if (navigator.clipboard?.writeText) {
                 await navigator.clipboard.writeText(shareUrl);
-                this.showToast(`Simplified Viewer share link copied for ${this.displayTitleForFile(file)}`);
+                this.showToast(t('files.simplifiedShareCopied', { name: this.displayTitleForFile(file) }));
             } else {
                 this.showToast(`Share link: ${shareUrl}`);
             }
@@ -3608,7 +3610,7 @@ export class ProjectReviewPage extends LitElement {
             }
 
             await this.loadProjectFiles();
-            this.showToast('File deleted successfully.');
+            this.showToast(t('files.deleteFile'));
         } catch (error) {
             this.showErrorAlert(error.message || 'Unable to delete file.', {
                 title: 'Delete failed',
@@ -3668,7 +3670,7 @@ export class ProjectReviewPage extends LitElement {
             }));
             await updateProjectCollaborators(this.projectId, payload);
             this.originalCollaborators = this.sortCollaborators(this.collaborators.map((entry) => ({ ...entry })));
-            this.showToast('Collaborators updated.');
+            this.showToast(t('projects.collaborators', { n: this.collaborators.length }));
         } catch (error) {
             this.showErrorAlert(error.message || 'Unable to save collaborator changes.', {
                 title: 'Unable to save',
@@ -3700,12 +3702,12 @@ export class ProjectReviewPage extends LitElement {
                             @toggle=${(e) => this.handleCollaboratorsPanelToggle(e)}
                         >
                             <summary class="collaborators-summary">
-                                <span class="collaborators-title">Collaborators (${this.collaborators.length})</span>
+                                <span class="collaborators-title">${t('projects.collaborators', { n: this.collaborators.length })}</span>
                                 <span class="collaborators-chevron" aria-hidden="true">▸</span>
                             </summary>
                             <div class="collaborators-body">
                                 ${this.collaborators.length === 0 ? html`
-                                    <div class="empty-note">No collaborators yet.</div>
+                                    <div class="empty-note">${t('projects.noCollaborators')}</div>
                                 ` : html`
                                     <div class="collaborators-list">
                                         ${this.collaborators.map((entry) => html`
@@ -3726,7 +3728,7 @@ export class ProjectReviewPage extends LitElement {
                                 `}
                                 ${this.canEditCollaborators ? html`
                                     <add-button
-                                        title="Add collaborators"
+                                        title=${t('projects.addCollaborators')}
                                         @add-button-click=${() => this.openCollaboratorDialog()}
                                     ></add-button>
                                 ` : ''}
@@ -3738,7 +3740,7 @@ export class ProjectReviewPage extends LitElement {
                                             ?disabled=${this.saving}
                                             @click=${() => this.handleCancelCollaboratorChanges()}
                                         >
-                                            Cancel
+                                            ${t('common.cancel')}
                                         </button>
                                         <button
                                             class="primary-button"
@@ -3746,7 +3748,7 @@ export class ProjectReviewPage extends LitElement {
                                             ?disabled=${this.saving}
                                             @click=${() => this.handleSaveCollaborators()}
                                         >
-                                            ${this.saving ? 'Saving...' : 'Save'}
+                                            ${this.saving ? t('common.saving') : t('common.save')}
                                         </button>
                                     </div>
                                 ` : ''}
@@ -3761,23 +3763,23 @@ export class ProjectReviewPage extends LitElement {
                                 @toggle=${(e) => this.handleGpuPanelToggle(e)}
                             >
                                 <summary>
-                                    <span class="gpu-panel-summary-label">GPU Provider</span>
+                                    <span class="gpu-panel-summary-label">${t('projects.gpuProvider')}</span>
                                     <span class="gpu-panel-chevron" aria-hidden="true">▸</span>
                                     <span class="gpu-panel-summary-meta">${this.gpuPanelSummaryMeta}</span>
                                 </summary>
                                 <div class="gpu-panel-body">
                                     ${this.canManageGpu ? html`
                                         <div class="gpu-title-row">
-                                            <div class="gpu-title" style="margin-bottom: 0;">Providers</div>
+                                            <div class="gpu-title" style="margin-bottom: 0;">${t('projects.addProvider')}s</div>
                                             <add-button
-                                                title="Add provider"
+                                                title=${t('projects.addProvider')}
                                                 @add-button-click=${() => this.openGpuProviderDialog()}
                                             ></add-button>
                                         </div>
                                     ` : ''}
                                     ${this.canManageGpu ? html`
                                         <div class="gpu-field">
-                                            <label for="gpu-provider">GPU provider to use:</label>
+                                            <label for="gpu-provider">${t('projects.gpuProviderToUse')}</label>
                                             <dropdown-select
                                                 id="gpu-provider"
                                                 fullwidth
@@ -3787,7 +3789,7 @@ export class ProjectReviewPage extends LitElement {
                                                     label: provider.label
                                                 }))}
                                                 ?disabled=${this.gpuSaving}
-                                                aria-label="GPU provider to use"
+                                                aria-label=${t('projects.gpuProviderToUse')}
                                                 @change=${(e) => this.handleGpuProviderChange(e)}
                                             ></dropdown-select>
                                         </div>
@@ -3818,8 +3820,8 @@ export class ProjectReviewPage extends LitElement {
                                             <button
                                                 class="gpu-info-button"
                                                 type="button"
-                                                aria-label="GPU details"
-                                                title="GPU details"
+                                                aria-label=${t('gpu.gpuDetails')}
+                                                title=${t('gpu.gpuDetails')}
                                                 aria-expanded=${this.gpuDetailsOpen ? 'true' : 'false'}
                                                 @click=${() => this.toggleGpuDetails()}
                                             >
@@ -3853,7 +3855,7 @@ export class ProjectReviewPage extends LitElement {
                                         ?disabled=${!this.canStartGpuBilling}
                                         @click=${() => this.handleStartGpuBilling()}
                                     >
-                                        ${this.gpuBillingBusy && this.gpuInstance?.status !== 'running' ? 'Working…' : 'Start billing'}
+                                        ${this.gpuBillingBusy && this.gpuInstance?.status !== 'running' ? t('common.working') : t('projects.startBilling')}
                                     </button>
                                     <button
                                         class="secondary-button"
@@ -3861,19 +3863,19 @@ export class ProjectReviewPage extends LitElement {
                                         ?disabled=${!this.canStopGpuBilling}
                                         @click=${() => this.handleStopGpuBilling()}
                                     >
-                                        Stop billing
+                                        ${t('projects.stopBilling')}
                                     </button>
                                 </div>
                             ` : ''}
                         </div>
                     </div>
                     <div slot="content" class="files-panel">
-                        <div class="files-title">Project Files</div>
+                        <div class="files-title">${t('projects.projectFiles')}</div>
                         ${this.loadingProjectFiles ? html`
-                            <div class="empty-note">Loading project files...</div>
+                            <div class="empty-note">${t('projects.loadingProjectFiles')}</div>
                         ` : ''}
                         ${!this.loadingProjectFiles && this.projectFiles.length === 0 ? html`
-                            <div class="empty-note">No files have been added to this project yet.</div>
+                            <div class="empty-note">${t('projects.noProjectFiles')}</div>
                         ` : ''}
                         ${this.projectFiles.length > 0 ? html`
                             <div class="file-list">
@@ -3894,8 +3896,8 @@ export class ProjectReviewPage extends LitElement {
                                             slot="actions"
                                             class="file-icon-button"
                                             type="button"
-                                            aria-label="Download file"
-                                            title="Download file"
+                                            aria-label=${t('files.download')}
+                                            title=${t('files.download')}
                                             @click=${() => this.handleDownloadFile(file)}
                                         >
                                             <svg class="file-action-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -3907,8 +3909,8 @@ export class ProjectReviewPage extends LitElement {
                                                 slot="actions"
                                                 class="file-icon-button"
                                                 type="button"
-                                                aria-label="Create Simplified Viewer share link"
-                                                title="Share Simplified Viewer link"
+                                                aria-label=${t('files.shareSimplifiedAria')}
+                                                title=${t('files.shareSimplifiedTitle')}
                                                 ?disabled=${this.sharingFileId === file.id}
                                                 @click=${() => this.openShareDialog(file)}
                                             >
@@ -3922,8 +3924,8 @@ export class ProjectReviewPage extends LitElement {
                                                 slot="actions"
                                                 class="file-icon-button"
                                                 type="button"
-                                                aria-label="Delete file"
-                                                title="Delete file"
+                                                aria-label=${t('files.deleteFile')}
+                                                title=${t('files.deleteFile')}
                                                 @click=${() => this.handleDeleteFile(file)}
                                             >
                                                 <svg class="file-action-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -3937,19 +3939,19 @@ export class ProjectReviewPage extends LitElement {
                         ` : ''}
                         ${this.canUploadFiles ? html`
                             <add-button
-                                title="Add files"
+                                title=${t('projects.addFiles')}
                                 @add-button-click=${() => this.openFileUploadDialog()}
                             ></add-button>
                         ` : ''}
                     </div>
                     <div slot="content" class="section-actions">
                         <button class="secondary-button" type="button" @click=${() => this.handleBackToProjects()}>
-                            Back to My Projects
+                            ${t('projects.backToProjects')}
                         </button>
                     </div>
                 ` : ''}
             </page-layout-template>
-            <app-dialog id="error-alert-dialog" title=${this.errorAlertTitle || 'Something went wrong'}>
+            <app-dialog id="error-alert-dialog" title=${this.errorAlertTitle || t('common.somethingWentWrong')}>
                 <p class="error-alert-message">${this.errorAlertMessage}</p>
                 <button
                     slot="actions"
@@ -3960,19 +3962,19 @@ export class ProjectReviewPage extends LitElement {
                     ${this.errorAlertDismissLabel}
                 </button>
             </app-dialog>
-            <app-dialog id="collaborator-dialog" title="Add Collaborators">
+            <app-dialog id="collaborator-dialog" title=${t('projects.addCollaboratorsTitle')}>
                 <collaborator-search
                     @collaborators-cancel=${() => this.closeCollaboratorDialog()}
                     @collaborators-done=${(event) => this.handleCollaboratorsDone(event)}
                 ></collaborator-search>
             </app-dialog>
-            <app-dialog id="file-upload-dialog" title="Add Files to Project">
+            <app-dialog id="file-upload-dialog" title=${t('projects.addFilesToProject')}>
                 <div class="upload-area ${this.dragOver ? 'drag-over' : ''}"
                     @dragover=${this.handleDragOver}
                     @dragleave=${this.handleDragLeave}
                     @drop=${this.handleDrop}
                 >
-                    <div class="upload-message">Drag and drop a file here, or choose a file to upload.</div>
+                    <div class="upload-message">${t('files.dragDrop')}</div>
                     <input
                         type="file"
                         id="project-upload-input"
@@ -3985,7 +3987,7 @@ export class ProjectReviewPage extends LitElement {
                         ?disabled=${this.uploading}
                         @click=${() => this.renderRoot?.querySelector('#project-upload-input')?.click()}
                     >
-                        Choose file
+                        ${t('files.chooseFile')}
                     </button>
                     ${this.selectedFile ? html`
                         <div class="upload-file-info">
@@ -3998,7 +4000,7 @@ export class ProjectReviewPage extends LitElement {
                                 ?disabled=${this.uploading}
                                 @click=${() => this.uploadFileToProject()}
                             >
-                                ${this.uploading ? 'Uploading...' : 'Upload file'}
+                                ${this.uploading ? t('files.uploading') : t('files.uploadFile')}
                             </button>
                             <button
                                 class="upload-button secondary"
@@ -4006,16 +4008,16 @@ export class ProjectReviewPage extends LitElement {
                                 ?disabled=${this.uploading}
                                 @click=${() => this.closeFileUploadDialog()}
                             >
-                                Cancel
+                                ${t('common.cancel')}
                             </button>
                         </div>
                     ` : ''}
                 </div>
             </app-dialog>
-            <app-dialog id="edit-file-title-dialog" title="Edit Scene Title">
+            <app-dialog id="edit-file-title-dialog" title=${t('projects.editSceneTitle')}>
                 <div class="gpu-dialog-form">
                     <div class="gpu-field">
-                        <label for="edit-file-title-input">Title</label>
+                        <label for="edit-file-title-input">${t('files.editTitle')}</label>
                         <input
                             id="edit-file-title-input"
                             type="text"
@@ -4041,7 +4043,7 @@ export class ProjectReviewPage extends LitElement {
                             ?disabled=${this.savingFileTitleId === this.editTitleFileId}
                             @click=${() => this.closeEditFileTitleDialog()}
                         >
-                            Cancel
+                            ${t('common.cancel')}
                         </button>
                         <button
                             class="primary-button"
@@ -4049,7 +4051,7 @@ export class ProjectReviewPage extends LitElement {
                             ?disabled=${this.savingFileTitleId === this.editTitleFileId}
                             @click=${() => this.handleSaveFileTitle()}
                         >
-                            ${this.savingFileTitleId === this.editTitleFileId ? 'Saving…' : 'Save'}
+                            ${this.savingFileTitleId === this.editTitleFileId ? t('common.saving') : t('common.save')}
                         </button>
                     </div>
                 </div>
@@ -4057,7 +4059,7 @@ export class ProjectReviewPage extends LitElement {
             <app-dialog id="gpu-provider-dialog" title=${this.gpuProviderDialogTitle}>
                 <div class="gpu-dialog-form">
                     <div class="gpu-field">
-                        <label for="gpu-dialog-provider">Provider</label>
+                        <label for="gpu-dialog-provider">${t('projects.gpuProvider')}</label>
                         <dropdown-select
                             id="gpu-dialog-provider"
                             fullwidth
@@ -4086,7 +4088,7 @@ export class ProjectReviewPage extends LitElement {
                             .checked=${this.gpuDialogUseNow}
                             @change=${(e) => this.handleGpuDialogUseNowChange(e)}
                         />
-                        Use now
+                        ${t('common.default')}
                     </label>
                     <div class="gpu-dialog-actions">
                         <button
@@ -4095,7 +4097,7 @@ export class ProjectReviewPage extends LitElement {
                             ?disabled=${this.gpuDialogSaving}
                             @click=${() => this.closeGpuProviderDialog()}
                         >
-                            Cancel
+                            ${t('common.cancel')}
                         </button>
                         <button
                             class="primary-button"
@@ -4103,16 +4105,16 @@ export class ProjectReviewPage extends LitElement {
                             ?disabled=${this.gpuDialogSaving}
                             @click=${() => this.handleSaveGpuProviderDialog()}
                         >
-                            ${this.gpuDialogSaving ? 'Saving…' : 'Save'}
+                            ${this.gpuDialogSaving ? t('common.saving') : t('common.save')}
                         </button>
                     </div>
                 </div>
             </app-dialog>
-            <app-dialog id="gpu-stop-billing-dialog" title="Stop GPU billing?">
+            <app-dialog id="gpu-stop-billing-dialog" title=${t('projects.stopGpuBilling')}>
                 <div class="gpu-dialog-form">
                     <p class="error-alert-message">
                         Stopping billing will impact
-                        ${this.stopBillingImpactNames || 'other active users'}
+                        ${this.stopBillingImpactNames || t('projects.stopBillingImpactDefault')}
                         and end their GPU sessions.
                     </p>
                     <div class="dialog-actions" style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; flex-wrap: wrap;">
@@ -4122,7 +4124,7 @@ export class ProjectReviewPage extends LitElement {
                             ?disabled=${this.gpuBillingBusy}
                             @click=${() => this.closeStopBillingDialog()}
                         >
-                            Cancel
+                            ${t('common.cancel')}
                         </button>
                         <button
                             class="secondary-button"
@@ -4138,20 +4140,20 @@ export class ProjectReviewPage extends LitElement {
                             ?disabled=${this.gpuBillingBusy}
                             @click=${() => this.handleConfirmStopBillingAnyway()}
                         >
-                            ${this.gpuBillingBusy ? 'Working…' : 'Stop anyway'}
+                            ${this.gpuBillingBusy ? t('common.working') : t('gpu.stopAnyway')}
                         </button>
                     </div>
                 </div>
             </app-dialog>
             <app-dialog
                 id="gpu-owner-billing-prompt"
-                title=${this.ownerBillingPromptStep === 'remind' ? 'Remember to stop billing' : 'You own this GPU session'}
+                title=${this.ownerBillingPromptStep === 'remind' ? t('projects.rememberStopBilling') : t('projects.youOwnSession')}
                 .lightDismiss=${this.ownerBillingPromptStep !== 'remind'}
             >
                 <div class="gpu-dialog-form">
                     ${this.ownerBillingPromptStep === 'remind' ? html`
                         <p class="error-alert-message">
-                            Okay. Remember to stop billing when you’re done so the project isn’t charged longer than needed.
+                            ${t('projects.rememberStopMessage')}
                         </p>
                         <div class="dialog-actions" style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;">
                             <button
@@ -4159,13 +4161,12 @@ export class ProjectReviewPage extends LitElement {
                                 type="button"
                                 @click=${() => this.acknowledgeOwnerBillingReminder()}
                             >
-                                Okay
+                                ${t('projects.okay')}
                             </button>
                         </div>
                     ` : html`
                         <p class="error-alert-message">
-                            Billing ownership was transferred to you, and nobody else is actively using this GPU right now.
-                            Are you done for now — should we stop billing?
+                            ${t('projects.transferredOwnershipMessage')}
                         </p>
                         <div class="dialog-actions" style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; flex-wrap: wrap;">
                             <button
@@ -4174,7 +4175,7 @@ export class ProjectReviewPage extends LitElement {
                                 ?disabled=${this.gpuBillingBusy}
                                 @click=${() => this.handleOwnerBillingPromptKeepRunning()}
                             >
-                                Not yet
+                                ${t('projects.notYet')}
                             </button>
                             <button
                                 class="primary-button"
@@ -4182,7 +4183,7 @@ export class ProjectReviewPage extends LitElement {
                                 ?disabled=${this.gpuBillingBusy}
                                 @click=${() => this.handleOwnerBillingPromptStop()}
                             >
-                                ${this.gpuBillingBusy ? 'Stopping…' : 'Yes, stop billing'}
+                                ${this.gpuBillingBusy ? t('gpu.statusStopping') : t('projects.yesStopBilling')}
                             </button>
                         </div>
                     `}
@@ -4203,8 +4204,8 @@ export class ProjectReviewPage extends LitElement {
                                 <button
                                     class="iframe-more-button"
                                     type="button"
-                                    aria-label="Viewer options"
-                                    title="Viewer options"
+                                    aria-label=${t('projects.viewerOptions')}
+                                    title=${t('projects.viewerOptions')}
                                     aria-haspopup="menu"
                                     aria-expanded=${this.viewerMenuOpen ? 'true' : 'false'}
                                     ?disabled=${this.iframeUrl === 'about:blank'}
@@ -4224,7 +4225,7 @@ export class ProjectReviewPage extends LitElement {
                                             role="menuitem"
                                             @click=${(e) => this.handleViewerMenuAction('fullscreen', e)}
                                         >
-                                            ${this.viewerFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                                            ${this.viewerFullscreen ? t('projects.exitFullscreen') : t('projects.fullscreen')}
                                         </button>
                                         <button
                                             class="iframe-more-item"
@@ -4232,7 +4233,7 @@ export class ProjectReviewPage extends LitElement {
                                             role="menuitem"
                                             @click=${(e) => this.handleViewerMenuAction('new-window', e)}
                                         >
-                                            Open in new window
+                                            ${t('projects.openNewWindow')}
                                         </button>
                                     </div>
                                 ` : ''}
@@ -4244,17 +4245,17 @@ export class ProjectReviewPage extends LitElement {
                                 type="button"
                                 @click=${() => this.closeIframe()}
                             >
-                                Close ${this.viewerChromeLabel}
+                                ${t('projects.viewerClosedTitle', { viewer: this.viewerChromeLabel })}
                             </button>
                         </div>
                     </div>
                     <button
                         class="iframe-fs-exit"
                         type="button"
-                        aria-label="Exit fullscreen"
+                        aria-label=${t('projects.exitFullscreen')}
                         @click=${() => this.exitViewerFullscreen()}
                     >
-                        Exit fullscreen
+                        ${t('projects.exitFullscreen')}
                     </button>
                     ${this.showFullscreenTip ? html`
                         <div
@@ -4270,12 +4271,12 @@ export class ProjectReviewPage extends LitElement {
                                 aria-labelledby="fullscreen-tip-title"
                                 @click=${(e) => e.stopPropagation()}
                             >
-                                <h2 class="fullscreen-tip-title" id="fullscreen-tip-title">Leaving fullscreen</h2>
+                                <h2 class="fullscreen-tip-title" id="fullscreen-tip-title">${t('projects.leavingFullscreen')}</h2>
                                 <p class="fullscreen-tip-body">
-                                    Press Esc to exit fullscreen and restore the viewer controls.
+                                    ${t('projects.pressEscHint')}
                                 </p>
                                 <p class="fullscreen-tip-body">
-                                    On phones and tablets, use Exit fullscreen at the bottom of the screen.
+                                    ${t('projects.touchFullscreenHint')}
                                 </p>
                                 <label class="fullscreen-tip-check">
                                     <input

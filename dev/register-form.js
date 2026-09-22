@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit-element';
 import { API_URL } from './config.js';
 import { resolvePreferredThemeForNewAccount } from './utils/userPreferences.js';
 import { authFormStyleText } from './styles/auth-form-shared.js';
+import { t } from './i18n/index.js';
 
 const registerExtras = css`
   .password-hint {
@@ -49,25 +50,24 @@ export class RegisterForm extends LitElement {
         this.error = '';
         this.success = '';
 
-        // Validation
         if (!this.username || !this.email || !this.password || !this.confirmPassword) {
-            this.error = 'Please fill in all fields';
+            this.error = t('auth.register.fillAll');
             return;
         }
 
         if (this.password.length < 8) {
-            this.error = 'Password must be at least 8 characters long';
+            this.error = t('auth.register.passwordMin');
             return;
         }
 
         if (this.password !== this.confirmPassword) {
-            this.error = 'Passwords do not match';
+            this.error = t('auth.register.passwordMismatch');
             return;
         }
 
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(this.email)) {
-            this.error = 'Please enter a valid email address';
+            this.error = t('auth.register.invalidEmail');
             return;
         }
 
@@ -79,7 +79,7 @@ export class RegisterForm extends LitElement {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                credentials: 'include', // Send/receive cookies
+                credentials: 'include',
                 body: JSON.stringify({
                     username: this.username,
                     email: this.email,
@@ -91,28 +91,24 @@ export class RegisterForm extends LitElement {
             const data = await response.json();
 
             if (response.ok) {
-                this.success = 'Registration successful! Logging you in...';
+                this.success = t('auth.register.success');
 
-                // Cookie is automatically stored by browser
-                // Dispatch custom event for parent component
                 this.dispatchEvent(new CustomEvent('register-success', {
                     detail: { user: data.user },
                     bubbles: true,
                     composed: true
                 }));
 
-                // Clear form
                 this.username = '';
                 this.email = '';
                 this.password = '';
                 this.confirmPassword = '';
             } else {
-                // Handle different error response formats
-                this.error = data.error?.message || data.error || data.message || 'Registration failed';
+                this.error = data.error?.message || data.error || data.message || t('auth.register.failed');
             }
         } catch (err) {
             console.error('Registration error:', err);
-            this.error = 'Network error. Please try again.';
+            this.error = t('common.networkError');
         } finally {
             this.loading = false;
         }
@@ -130,7 +126,7 @@ export class RegisterForm extends LitElement {
         return html`
       <style>${authFormStyleText(registerExtras)}</style>
       <div class="auth-card">
-        <h2>Create Account</h2>
+        <h2>${t('auth.register.title')}</h2>
         ${this.error ? html`
           <div class="auth-alert auth-alert--error" role="alert">${this.error}</div>
         ` : ''}
@@ -139,7 +135,7 @@ export class RegisterForm extends LitElement {
         ` : ''}
         <form @submit=${this.handleSubmit} autocomplete="on">
           <div class="form-group">
-            <label for="username">Username</label>
+            <label for="username">${t('auth.register.username')}</label>
             <input
               id="username"
               name="username"
@@ -148,12 +144,12 @@ export class RegisterForm extends LitElement {
               .value=${this.username}
               @input=${(e) => this.username = e.target.value}
               ?disabled=${this.loading}
-              placeholder="Choose a username"
+              placeholder=${t('auth.register.usernamePlaceholder')}
             />
           </div>
 
           <div class="form-group">
-            <label for="email">Email</label>
+            <label for="email">${t('auth.register.email')}</label>
             <input
               id="email"
               name="email"
@@ -162,12 +158,12 @@ export class RegisterForm extends LitElement {
               .value=${this.email}
               @input=${(e) => this.email = e.target.value}
               ?disabled=${this.loading}
-              placeholder="your@email.com"
+              placeholder=${t('auth.register.emailPlaceholder')}
             />
           </div>
 
           <div class="form-group">
-            <label for="password">Password</label>
+            <label for="password">${t('auth.register.password')}</label>
             <input
               id="password"
               name="password"
@@ -176,13 +172,13 @@ export class RegisterForm extends LitElement {
               .value=${this.password}
               @input=${(e) => this.password = e.target.value}
               ?disabled=${this.loading}
-              placeholder="Create a password"
+              placeholder=${t('auth.register.passwordPlaceholder')}
             />
-            <div class="password-hint">Must be at least 8 characters</div>
+            <div class="password-hint">${t('auth.register.passwordHint')}</div>
           </div>
 
           <div class="form-group">
-            <label for="confirmPassword">Confirm password</label>
+            <label for="confirmPassword">${t('auth.register.confirmPassword')}</label>
             <input
               id="confirmPassword"
               name="confirmPassword"
@@ -191,17 +187,19 @@ export class RegisterForm extends LitElement {
               .value=${this.confirmPassword}
               @input=${(e) => this.confirmPassword = e.target.value}
               ?disabled=${this.loading}
-              placeholder="Confirm your password"
+              placeholder=${t('auth.register.confirmPasswordPlaceholder')}
             />
           </div>
 
           <button type="submit" ?disabled=${this.loading}>
-            ${this.loading ? html`<span class="spinner"></span>Creating account...` : 'Register'}
+            ${this.loading
+                ? html`<span class="spinner"></span>${t('auth.register.submitting')}`
+                : t('auth.register.submit')}
           </button>
         </form>
 
         <div class="switch-link">
-          Already have an account? <a @click=${this.handleLoginClick}>Log in here</a>
+          ${t('auth.register.haveAccount')} <a @click=${this.handleLoginClick}>${t('auth.register.loginHere')}</a>
         </div>
       </div>
     `;

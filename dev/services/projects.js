@@ -1,4 +1,5 @@
 import { API_URL } from '../config.js';
+import { t } from '../i18n/index.js';
 
 export async function createProject({ name, collaborators }) {
     const response = await fetch(`${API_URL}/api/projects`, {
@@ -18,7 +19,7 @@ export async function createProject({ name, collaborators }) {
     }
 
     if (!response.ok) {
-        const message = data.error?.message || data.message || 'Failed to create project';
+        const message = data.error?.message || data.message || t('errors.createProjectFailed');
         const err = new Error(message);
         err.status = response.status;
         throw err;
@@ -41,7 +42,7 @@ export async function listMyProjects({ limit = 20, offset = 0 } = {}) {
     }
 
     if (!response.ok) {
-        const message = data.error?.message || data.message || 'Failed to load projects';
+        const message = data.error?.message || data.message || t('errors.loadProjectsFailed');
         const err = new Error(message);
         err.status = response.status;
         throw err;
@@ -64,7 +65,7 @@ export async function getProjectById(projectId) {
     }
 
     if (!response.ok) {
-        const message = data.error?.message || data.message || 'Failed to load project';
+        const message = data.error?.message || data.message || t('errors.loadProjectFailed');
         const err = new Error(message);
         err.status = response.status;
         throw err;
@@ -91,7 +92,7 @@ export async function updateProjectCollaborators(projectId, collaborators) {
     }
 
     if (!response.ok) {
-        const message = data.error?.message || data.message || 'Failed to update collaborators';
+        const message = data.error?.message || data.message || t('errors.updateCollaboratorsFailed');
         const err = new Error(message);
         err.status = response.status;
         throw err;
@@ -114,7 +115,7 @@ export async function listProjectFiles(projectId) {
     }
 
     if (!response.ok) {
-        const message = data.error?.message || data.message || 'Failed to load project files';
+        const message = data.error?.message || data.message || t('errors.loadProjectFilesFailed');
         const err = new Error(message);
         err.status = response.status;
         throw err;
@@ -141,7 +142,7 @@ export async function updateProjectFileTitle(projectId, fileId, displayTitle) {
     }
 
     if (!response.ok) {
-        const message = data.error?.message || data.message || 'Failed to update file title';
+        const message = data.error?.message || data.message || t('errors.updateFileTitleFailed');
         const err = new Error(message);
         err.status = response.status;
         throw err;

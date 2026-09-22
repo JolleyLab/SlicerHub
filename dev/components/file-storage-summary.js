@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
+import { t } from '../i18n/index.js';
 
 export class FileStorageSummary extends LitElement {
     static get styles() {
@@ -51,8 +52,8 @@ export class FileStorageSummary extends LitElement {
     render() {
         return html`
             <div class="summary">
-                <div class="meta"><strong>Storage used</strong> ${this.megabytesUsed} MB</div>
-                <div class="meta"><strong>Files</strong> ${this.fileCount}</div>
+                <div class="meta"><strong>${t('storage.used')}</strong> ${this.megabytesUsed} MB</div>
+                <div class="meta"><strong>${t('storage.files')}</strong> ${this.fileCount}</div>
             </div>
         `;
     }

@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
+import { t } from '../i18n/index.js';
 import { getAppMenuItems, DEFAULT_MENU_KEY } from './app-menu.js';
 import { loadAppFeatures } from '../services/features.js';
 import './navigation-header.js';
@@ -240,14 +241,14 @@ export class PageShellTemplate extends LitElement {
     constructor() {
         super();
         initializeTheme();
-        this.username = 'Guest';
+        this.username = t('common.guest');
         this.displayName = '';
         this.selectedMenuKey = DEFAULT_MENU_KEY;
         this.pageTitle = '';
         this.pageDescription = '';
         this.menuItems = getAppMenuItems();
         this.homeHref = '/file-manager';
-        this.homeLabel = 'Home';
+        this.homeLabel = t('common.home');
         this.compactNavOpen = false;
         this._compactMq = null;
         this._onCompactMqChange = () => {
@@ -330,7 +331,7 @@ export class PageShellTemplate extends LitElement {
                     <button
                         class="hamburger-button"
                         type="button"
-                        aria-label=${this.compactNavOpen ? 'Close navigation menu' : 'Open navigation menu'}
+                        aria-label=${this.compactNavOpen ? t('nav.closeMenu') : t('nav.openMenu')}
                         aria-expanded=${this.compactNavOpen ? 'true' : 'false'}
                         aria-controls="compact-nav-panel"
                         @click=${() => this.toggleCompactNav()}
@@ -339,7 +340,7 @@ export class PageShellTemplate extends LitElement {
                             <span></span><span></span><span></span>
                         </span>
                     </button>
-                    <span class="compact-nav-label">Menu</span>
+                    <span class="compact-nav-label">${t('common.menu')}</span>
                 </div>
                 <div
                     id="compact-nav-panel"

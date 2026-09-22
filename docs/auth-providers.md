@@ -90,6 +90,11 @@ later KMS envelope can replace the body without touching routes.
 
 Service `DIRECTUS_TOKEN` is for **system** Cases / jobs only — never for interactive login.
 
+Schema / data-model bootstrap is a **separate** CLI concern: interactive Directus
+Administrator login (or a one-run pasted token) — not a long-lived admin token in
+`.env`, and not a product HTTP route. Case admins must not get Directus
+Administrator. See `docs/directus-schema-setup.md`.
+
 ## Module map
 
 ```

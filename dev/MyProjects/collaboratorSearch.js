@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit-element';
+import { t } from '../i18n/index.js';
 import { lookupUserByEmailExact } from '../services/users.js';
 import { initializeTheme } from '../components/theme.js';
 import './collaboratorResultRow.js';
@@ -231,7 +232,7 @@ export class CollaboratorSearch extends LitElement {
         this.matchedUser = null;
 
         if (!email) {
-            this.message = 'Enter a full email address to search.';
+            this.message = t('collaborators.enterFullEmail');
             this.messageType = 'error';
             return;
         }
@@ -246,13 +247,13 @@ export class CollaboratorSearch extends LitElement {
             this.matchedUser = user;
         } catch (error) {
             if (error.status === 404) {
-                this.message = 'No results found for that exact email.';
+                this.message = t('collaborators.noResults');
                 this.messageType = 'error';
             } else if (error.status === 400) {
-                this.message = 'Enter a valid full email address.';
+                this.message = t('collaborators.invalidEmail');
                 this.messageType = 'error';
             } else {
-                this.message = 'Unable to search right now. Please try again.';
+                this.message = t('collaborators.searchFailed');
                 this.messageType = 'error';
             }
         } finally {
@@ -265,7 +266,7 @@ export class CollaboratorSearch extends LitElement {
         const alreadyAdded = this.addedCollaborators.some((entry) => entry.user.id === user.id);
 
         if (alreadyAdded) {
-            this.message = 'That user has already been added.';
+            this.message = t('collaborators.alreadyAdded');
             this.messageType = 'error';
             return;
         }
@@ -317,7 +318,7 @@ export class CollaboratorSearch extends LitElement {
 
         return html`
             <div class="search-wrapper">
-                <label class="field-label" for="collaborator-search-input">Search collaborators</label>
+                <label class="field-label" for="collaborator-search-input">${t('collaborators.searchTitle')}</label>
                 <form @submit=${(event) => this.handleSearchSubmit(event)}>
                     <div class="search-form-row">
                         <input
@@ -325,12 +326,12 @@ export class CollaboratorSearch extends LitElement {
                             class="search-input"
                             type="email"
                             .value=${this.emailQuery}
-                            placeholder="Enter full email address"
+                            placeholder=${t('collaborators.emailPlaceholder')}
                             @input=${(event) => { this.emailQuery = event.target.value; }}
                         />
                         <div class="search-actions">
                             <button class="search-button" type="submit" ?disabled=${this.loading}>
-                                ${this.loading ? 'Searching...' : 'Find user'}
+                                ${this.loading ? t('collaborators.searching') : t('collaborators.findUser')}
                             </button>
                         </div>
                     </div>
@@ -346,13 +347,13 @@ export class CollaboratorSearch extends LitElement {
                             ?hideRoles=${this.hideRoles}
                             .roleOptions=${this.roleOptions}
                             .isAddDisabled=${matchedUserAlreadyAdded}
-                            addDisabledTooltip="This collaborator has already been added."
+                            addDisabledTooltip=${t('collaborators.alreadyAddedTooltip')}
                             @add-collaborator=${(event) => this.handleAddCollaborator(event)}
                         ></collaborator-result-row>
                     </div>
                 ` : ''}
                 ${this.addedCollaborators.length > 0 ? html`
-                    <div class="section-title">Selected Collaborators</div>
+                    <div class="section-title">${t('collaborators.selected')}</div>
                     <div class="selected-list">
                         ${this.addedCollaborators.map((entry) => {
                             const locked = this.isLockedUser(entry.user?.id);
@@ -375,14 +376,14 @@ export class CollaboratorSearch extends LitElement {
                     </div>
                 ` : ''}
                 <div class="dialog-actions">
-                    <button class="secondary-button" type="button" @click=${() => this.handleCancel()}>Cancel</button>
+                    <button class="secondary-button" type="button" @click=${() => this.handleCancel()}>${t('common.cancel')}</button>
                     <button
                         class="primary-button"
                         type="button"
                         ?disabled=${!this.allowEmptyDone && this.addedCollaborators.length === 0}
                         @click=${() => this.handleDone()}
                     >
-                        Done
+                        ${t('collaborators.done')}
                     </button>
                 </div>
             </div>

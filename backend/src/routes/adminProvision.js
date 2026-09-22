@@ -11,11 +11,12 @@ import { provisionUsersBulk } from '../services/userProvision.js';
 import { createRateLimiter, getRateLimitClientIp } from '../middleware/rateLimit.js';
 import User from '../models/User.js';
 import { ValidationError, NotFoundError } from '../utils/errors.js';
+import { msg } from '../i18n/index.js';
 
 const provisionRateLimit = createRateLimiter({
     windowMs: 60 * 1000,
     max: 10,
-    message: 'Too many provision requests. Please wait and try again.',
+    message: msg('admin.provision_rate_limit'),
     getKey: (req) => `admin-provision:ip:${getRateLimitClientIp(req)}:user:${req.user?.id || 'anon'}`
 });
 
@@ -72,13 +73,21 @@ export default function adminProvisionRoutes(app) {
             } else {
                 const emails = Array.isArray(req.body?.emails) ? req.body.emails : [];
                 if (!emails.length) {
-                    throw new ValidationError('emails array or allLinked:true is required');
+                    throw new ValidationError(
+                        msg('admin.require_password_change_body'),
+                        null,
+                        'admin.require_password_change_body'
+                    );
                 }
                 for (const raw of emails) {
                     const email = String(raw || '').trim();
                     const u = User.findByEmail(email);
                     if (!u) {
-                        throw new NotFoundError(`No user for ${email}`);
+                        throw new NotFoundError(
+                            msg('user.not_found_for_email', { email }),
+                            null,
+                            'user.not_found_for_email'
+                        );
                     }
                     User.setMustChangePassword(u.id, true);
                     updated.push({ id: u.id, email: u.email, mustChangePassword: true });

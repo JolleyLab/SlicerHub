@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
+import { t } from '../i18n/index.js';
 import './user-menu.js';
 import './notification-bell.js';
 
@@ -157,10 +158,10 @@ export class NavigationHeader extends LitElement {
     constructor() {
         super();
         initializeTheme();
-        this.username = 'Guest';
+        this.username = t('common.guest');
         this.displayName = '';
         this.homeHref = '/file-manager';
-        this.homeLabel = 'Home';
+        this.homeLabel = t('common.home');
     }
 
     handleHomeClick(event) {
@@ -179,7 +180,7 @@ export class NavigationHeader extends LitElement {
                 <a
                     class="home-link"
                     href=${this.homeHref}
-                    aria-label="Go to home page"
+                    aria-label=${t('nav.goHome')}
                     @click=${this.handleHomeClick}
                 >
                     <span class="home-icon" aria-hidden="true">

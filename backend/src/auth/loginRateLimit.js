@@ -14,6 +14,7 @@ import crypto from 'crypto';
 import config from '../config/index.js';
 import { TooManyRequestsError } from '../utils/errors.js';
 import { getRateLimitClientIp } from '../middleware/rateLimit.js';
+import { msg } from '../i18n/index.js';
 
 const IP_WINDOW_MS = 15 * 60 * 1000;
 
@@ -168,12 +169,12 @@ function retryAfterForAccount(state) {
 function cooldownMessage(retryAfterSec) {
     const minutes = Math.max(1, Math.ceil(retryAfterSec / 60));
     if (minutes === 1) {
-        return 'Too many failed sign-in attempts. Try again in 1 minute.';
+        return msg('auth.login_account_cooldown_1m');
     }
-    return `Too many failed sign-in attempts. Try again in ${minutes} minutes.`;
+    return msg('auth.login_account_cooldown_nm', { minutes });
 }
 
-const IP_LIMIT_MESSAGE = 'Too many login attempts. Please wait and try again.';
+const IP_LIMIT_MESSAGE = () => msg('auth.login_ip_limit');
 
 /**
  * Middleware: reject if account cool-down or IP budgets are exhausted.
@@ -188,7 +189,7 @@ export function loginRateLimitMiddleware(req, res, next) {
         if (account?.lockedUntil && account.lockedUntil > nowMs()) {
             const retry = retryAfterForAccount(account);
             res.set('Retry-After', String(retry));
-            return next(new TooManyRequestsError(cooldownMessage(retry), 'ACCOUNT_COOLDOWN'));
+            return next(new TooManyRequestsError(cooldownMessage(retry), 'ACCOUNT_COOLDOWN', 'auth.login_account_cooldown_nm'));
         }
     }
 
@@ -198,13 +199,13 @@ export function loginRateLimitMiddleware(req, res, next) {
     if (isOver(ipKey(ip), maxAttempts) || isOver(failIpKey(ip), maxFailIp)) {
         const retry = Math.max(retryAfterFor(ipKey(ip)), retryAfterFor(failIpKey(ip)));
         res.set('Retry-After', String(retry));
-        return next(new TooManyRequestsError(IP_LIMIT_MESSAGE));
+        return next(new TooManyRequestsError(IP_LIMIT_MESSAGE(), null, 'auth.login_ip_limit'));
     }
 
     const attempts = increment(ipKey(ip));
     if (attempts.count > maxAttempts) {
         res.set('Retry-After', String(retryAfterFor(ipKey(ip))));
-        return next(new TooManyRequestsError(IP_LIMIT_MESSAGE));
+        return next(new TooManyRequestsError(IP_LIMIT_MESSAGE(), null, 'auth.login_ip_limit'));
     }
 
     return next();
@@ -265,5 +266,5 @@ export function throwIfAccountCooldown(req, res, failureOutcome) {
     if (!failureOutcome?.locked) return false;
     const retry = failureOutcome.retryAfterSec || 1;
     res.set('Retry-After', String(retry));
-    throw new TooManyRequestsError(cooldownMessage(retry), 'ACCOUNT_COOLDOWN');
+    throw new TooManyRequestsError(cooldownMessage(retry), 'ACCOUNT_COOLDOWN', 'auth.login_account_cooldown_nm');
 }

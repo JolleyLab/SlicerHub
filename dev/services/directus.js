@@ -1,4 +1,5 @@
 import { API_URL } from '../config.js';
+import { t } from '../i18n/index.js';
 
 async function parseJson(response) {
     try {
@@ -27,7 +28,7 @@ export function friendlyCasesError(raw, fallback = 'Something went wrong. Please
         || code === 'CASE_OWNER_JUNCTION_MISSING'
         || code === 'CASE_COLLABORATOR_JUNCTION_NOT_FOUND'
     ) {
-        return "Couldn't update people on this case. Please try again.";
+        return t('errors.peopleSaveFailed');
     }
 
     if (
@@ -39,46 +40,46 @@ export function friendlyCasesError(raw, fallback = 'Something went wrong. Please
     }
 
     if (status === 401 || /unauthorized|session expired|jwt expired/i.test(lower)) {
-        return 'Your session expired. Please sign in again.';
+        return t('errors.sessionExpired');
     }
     if (
         status === 403
         || /permission|forbidden|access fields|access collection|not allowed to|denied|directus:/i.test(lower)
     ) {
-        return "You don't have access to do that. Contact your administrator if you need help.";
+        return t('errors.noPermission');
     }
     if (/no (directus )?user found with that email/i.test(lower)) {
-        return 'No account found with that email.';
+        return t('errors.noAccountWithEmail');
     }
     if (status === 404 || /\bnot found\b/i.test(lower)) {
-        return 'That item could not be found. It may have been removed.';
+        return t('errors.itemNotFound');
     }
     if (status === 413 || /file too large|payload too large|entity too large/i.test(lower)) {
-        return 'That file is too large to upload.';
+        return t('errors.fileTooLarge');
     }
     if (/network|failed to fetch|load failed|econnrefused|timed out|timeout/i.test(lower)) {
-        return "Couldn't reach the server. Check your connection and try again.";
+        return t('errors.serverUnreachable');
     }
     if (/slicer-gui|container|docker|image built|vnc|seat/i.test(lower)) {
-        return "Couldn't start the viewer. Please try again in a moment.";
+        return t('errors.viewerStartFailed');
     }
     if (/sessionToken|session not found|session.*expired|heartbeat/i.test(lower)) {
-        return 'The viewer session ended. Open the file again to continue.';
+        return t('errors.viewerSessionEnded');
     }
     if (/multipart|file field is required/i.test(lower)) {
-        return 'Please choose a file to upload.';
+        return t('errors.chooseFile');
     }
     if (/title.*(required|empty)|case title is required/i.test(lower)) {
-        return 'Please enter a title.';
+        return t('errors.titleRequired');
     }
     if (/browser preview/i.test(lower)) {
-        return 'Browser preview for documents and images is not available yet.';
+        return t('errors.browserPreviewUnavailable');
     }
     if (/cannot be opened in full slicer|file type cannot/i.test(lower)) {
-        return "This file type can't be opened in the viewer yet.";
+        return t('errors.fileTypeNotSupported');
     }
     if (/couldn't update people|could not update people/i.test(lower)) {
-        return "Couldn't update people on this case. Please try again.";
+        return t('errors.peopleSaveFailed');
     }
     if (/directus|collection |queried in|invalid payload|unknown field|filter\[|case_directus|INTERNAL_SERVER/i.test(lower)) {
         return fallback;
@@ -108,7 +109,7 @@ export async function listDirectusCases({ limit = 50 } = {}) {
     });
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, "Couldn't load cases. Please try again.");
+        throwApiError(response, data, t('errors.loadCasesFailed'));
     }
     return data;
 }
@@ -122,7 +123,7 @@ export async function createDirectusCase({ title, description, status } = {}) {
     });
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, "Couldn't create the case. Please try again.");
+        throwApiError(response, data, t('errors.createCaseFailed'));
     }
     return data;
 }
@@ -139,7 +140,7 @@ export async function updateDirectusCase(caseId, updates = {}) {
     );
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, "Couldn't update the case. Please try again.");
+        throwApiError(response, data, t('errors.updateCaseFailed'));
     }
     return data;
 }
@@ -156,7 +157,7 @@ export async function createDirectusCaseComment(caseId, comment) {
     );
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, "Couldn't send your comment. Please try again.");
+        throwApiError(response, data, t('errors.sendCommentFailed'));
     }
     return data;
 }
@@ -174,7 +175,7 @@ export async function uploadDirectusCaseAttachment(caseId, file) {
     );
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, "Couldn't upload that file. Please try again.");
+        throwApiError(response, data, t('errors.uploadFileFailed'));
     }
     return data;
 }
@@ -189,7 +190,7 @@ export async function deleteDirectusCaseAttachment(caseId, attachmentId) {
     );
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, "Couldn't remove that file. Please try again.");
+        throwApiError(response, data, t('errors.deleteFileFailed'));
     }
     return data;
 }
@@ -201,7 +202,7 @@ export async function lookupDirectusUserByEmail(email) {
     );
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, "Couldn't find that person. Check the email and try again.");
+        throwApiError(response, data, t('errors.lookupUserFailed'));
     }
     return data.user;
 }
@@ -218,7 +219,7 @@ export async function updateDirectusCaseCollaborators(caseId, collaborators) {
     );
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, "Couldn't update people on this case. Please try again.");
+        throwApiError(response, data, t('errors.updatePeopleFailed'));
     }
     return data;
 }
@@ -235,7 +236,7 @@ export async function inviteDirectusCaseUser(caseId, { email, role = 'collaborat
     );
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, "Couldn't send that invite.");
+        throwApiError(response, data, t('errors.sendInviteFailed'));
     }
     return data;
 }
@@ -247,7 +248,7 @@ export async function listDirectusCaseInvites(caseId) {
     );
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, "Couldn't load pending invites.");
+        throwApiError(response, data, t('errors.loadInvitesFailed'));
     }
     return data.invites || [];
 }
@@ -264,7 +265,7 @@ export async function approveDirectusCaseInvite(caseId, inviteId, { kind } = {})
     );
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, "Couldn't approve that invite.");
+        throwApiError(response, data, t('errors.approveInviteFailed'));
     }
     return data;
 }
@@ -281,7 +282,7 @@ export async function rejectDirectusCaseInvite(caseId, inviteId, { kind } = {}) 
     );
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, "Couldn't reject that invite.");
+        throwApiError(response, data, t('errors.rejectInviteFailed'));
     }
     return data;
 }
@@ -293,7 +294,7 @@ export async function previewSignupInvite(token) {
     );
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, 'This invite link is invalid or expired.');
+        throwApiError(response, data, t('errors.invalidInviteLink'));
     }
     return data;
 }
@@ -310,7 +311,7 @@ export async function acceptSignupInvite(token, { password, username, firstName,
     );
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, "Couldn't create your account from this invite.");
+        throwApiError(response, data, t('errors.createAccountFailed'));
     }
     return data;
 }
@@ -346,7 +347,7 @@ export async function openDirectusAttachmentFullSlicer(caseId, attachmentId, {
 
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, "Couldn't open the viewer. Please try again.");
+        throwApiError(response, data, t('errors.openViewerFailed'));
     }
     return data;
 }
@@ -364,7 +365,7 @@ export async function directusFullSlicerHeartbeat(sessionToken, { seatId } = {})
     });
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, 'The viewer session ended. Open the file again to continue.');
+        throwApiError(response, data, t('errors.viewerSessionEnded'));
     }
     return data;
 }
@@ -382,7 +383,7 @@ export async function stopDirectusFullSlicer(sessionToken, { mode = 'soft', seat
     });
     const data = await parseJson(response);
     if (!response.ok) {
-        throwApiError(response, data, "Couldn't stop the viewer.");
+        throwApiError(response, data, t('errors.stopViewerFailed'));
     }
     return data;
 }

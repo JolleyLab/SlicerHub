@@ -1,4 +1,5 @@
 import { TooManyRequestsError } from '../utils/errors.js';
+import { msg } from '../i18n/index.js';
 
 const counters = new Map();
 
@@ -28,7 +29,7 @@ setInterval(pruneExpired, 60 * 1000);
 export function createRateLimiter({
     windowMs,
     max,
-    message = 'Too many requests',
+    message = msg('rate_limit.generic'),
     getKey
 }) {
     if (!Number.isInteger(windowMs) || windowMs <= 0) {

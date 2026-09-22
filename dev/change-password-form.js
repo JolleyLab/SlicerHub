@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit-element';
 import { API_URL } from './config.js';
 import { authFormSharedStyles } from './styles/auth-form-shared.js';
+import { t } from './i18n/index.js';
 
 /**
  * Forced / voluntary password change after admin provision (Pattern A).
@@ -45,11 +46,11 @@ export class ChangePasswordForm extends LitElement {
     const confirmPassword = form.confirmPassword?.value || '';
 
     if (newPassword !== confirmPassword) {
-      this.error = 'New passwords do not match';
+      this.error = t('auth.changePassword.mismatch');
       return;
     }
     if (newPassword.length < 8) {
-      this.error = 'New password must be at least 8 characters';
+      this.error = t('auth.changePassword.minLength');
       return;
     }
 
@@ -63,7 +64,8 @@ export class ChangePasswordForm extends LitElement {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data.message || data.error || 'Could not update password');
+        const serverMsg = data.error?.message || data.message || data.error;
+        throw new Error(typeof serverMsg === 'string' ? serverMsg : t('auth.changePassword.failed'));
       }
       this.success = true;
       this.dispatchEvent(new CustomEvent('password-changed', {
@@ -72,7 +74,7 @@ export class ChangePasswordForm extends LitElement {
         composed: true
       }));
     } catch (err) {
-      this.error = err.message || 'Could not update password';
+      this.error = err.message || t('auth.changePassword.failed');
     } finally {
       this.loading = false;
     }
@@ -81,26 +83,26 @@ export class ChangePasswordForm extends LitElement {
   render() {
     return html`
       <div class="auth-card">
-        <h2>Set a new password</h2>
-        <p class="hint">Your account was provisioned with a temporary password. Choose a new one to continue.</p>
+        <h2>${t('auth.changePassword.title')}</h2>
+        <p class="hint">${t('auth.changePassword.hint')}</p>
         ${this.error ? html`
           <div class="auth-alert auth-alert--error" role="alert">${this.error}</div>
         ` : ''}
         <form @submit=${this.handleSubmit}>
           <div class="form-group">
-            <label for="currentPassword">Current (temporary) password</label>
+            <label for="currentPassword">${t('auth.changePassword.current')}</label>
             <input id="currentPassword" name="currentPassword" type="password" required autocomplete="current-password" />
           </div>
           <div class="form-group">
-            <label for="newPassword">New password</label>
+            <label for="newPassword">${t('auth.changePassword.newPassword')}</label>
             <input id="newPassword" name="newPassword" type="password" required minlength="8" autocomplete="new-password" />
           </div>
           <div class="form-group">
-            <label for="confirmPassword">Confirm new password</label>
+            <label for="confirmPassword">${t('auth.changePassword.confirm')}</label>
             <input id="confirmPassword" name="confirmPassword" type="password" required minlength="8" autocomplete="new-password" />
           </div>
           <button type="submit" ?disabled=${this.loading}>
-            ${this.loading ? 'Updating…' : 'Update password'}
+            ${this.loading ? t('auth.changePassword.submitting') : t('auth.changePassword.submit')}
           </button>
         </form>
       </div>

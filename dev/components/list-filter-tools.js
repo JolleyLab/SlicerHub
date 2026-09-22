@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
+import { t } from '../i18n/index.js';
 
 /**
  * Icon → popover search + sort controls for list/toolbars.
@@ -239,11 +240,11 @@ export class ListFilterTools extends LitElement {
         this.sortOptions = [];
         this.showSearch = true;
         this.showSort = true;
-        this.searchLabel = 'Search';
-        this.sortLabel = 'Sort';
-        this.searchPlaceholder = 'Filter by name…';
-        this.searchHeading = 'Search';
-        this.sortHeading = 'Sort by';
+        this.searchLabel = t('listFilter.search');
+        this.sortLabel = t('listFilter.sort');
+        this.searchPlaceholder = t('listFilter.filterPlaceholder');
+        this.searchHeading = t('listFilter.search');
+        this.sortHeading = t('listFilter.sortBy');
         this.searchOpen = false;
         this.sortOpen = false;
         this._outsideHandler = null;
@@ -438,7 +439,7 @@ export class ListFilterTools extends LitElement {
                                 type="button"
                                 ?disabled=${!active}
                                 @click=${() => this.clearSearch()}
-                            >Clear</button>
+                            >${t('listFilter.clear')}</button>
                         </div>
                     </div>
                 ` : ''}

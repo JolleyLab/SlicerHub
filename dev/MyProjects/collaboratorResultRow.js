@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit-element';
+import { t } from '../i18n/index.js';
 import '../components/dropdown-select.js';
 
 export class CollaboratorResultRow extends LitElement {
@@ -195,10 +196,10 @@ export class CollaboratorResultRow extends LitElement {
             return this.roleOptions;
         }
         return [
-            { value: '', label: 'Select role', disabled: true },
-            { value: 'admin', label: 'Admin' },
-            { value: 'collaborator', label: 'Collaborator' },
-            { value: 'observer', label: 'Observer' }
+            { value: '', label: t('roles.selectRole'), disabled: true },
+            { value: 'admin', label: t('roles.admin') },
+            { value: 'collaborator', label: t('roles.collaborator') },
+            { value: 'observer', label: t('roles.observer') }
         ];
     }
 
@@ -242,7 +243,7 @@ export class CollaboratorResultRow extends LitElement {
         const addDisabled = this.isAddDisabled || (!this.hideRoles && !this.selectedRole);
         const addButtonTooltip = this.isAddDisabled
             ? this.addDisabledTooltip
-            : (!this.hideRoles && !this.selectedRole ? 'You must assign a role' : 'Add collaborator');
+            : (!this.hideRoles && !this.selectedRole ? t('collaborators.assignRoleRequired') : t('collaborators.addCollaborator'));
 
         return html`
             <div class="result-row">
@@ -257,7 +258,7 @@ export class CollaboratorResultRow extends LitElement {
                         <dropdown-select
                             .value=${roleValue}
                             .options=${this.effectiveRoleOptions}
-                            aria-label="Assign collaborator role"
+                            aria-label=${t('collaborators.assignRoleAria')}
                             ?disabled=${!this.isRoleEditable}
                             @change=${(event) => this.handleRoleChange(event)}
                         ></dropdown-select>
@@ -271,7 +272,7 @@ export class CollaboratorResultRow extends LitElement {
                                 aria-describedby=${addDisabled ? 'pending-tooltip' : ''}
                                 @click=${() => this.emitAdd()}
                             >
-                                Add
+                                ${t('collaborators.addCollaborator')}
                             </button>
                             ${addDisabled ? html`
                                 <div id="pending-tooltip" class="tooltip-bubble">${addButtonTooltip}</div>
@@ -282,8 +283,8 @@ export class CollaboratorResultRow extends LitElement {
                         <button
                             class="remove-icon-button"
                             type="button"
-                            aria-label="Remove collaborator"
-                            title="Remove collaborator"
+                            aria-label=${t('collaborators.removeAria')}
+                            title=${t('collaborators.removeAria')}
                             @click=${() => this.emitRemove()}
                         >
                             <svg class="remove-icon" viewBox="0 0 24 24" aria-hidden="true">

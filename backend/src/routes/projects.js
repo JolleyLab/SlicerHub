@@ -5,6 +5,7 @@ import { authenticateToken } from '../middleware/authMiddleware.js';
 import { ValidationError } from '../utils/errors.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { flushDatabase } from '../db/database.js';
+import { msg } from '../i18n/index.js';
 
 export default function projectRoutes(app) {
     app.get('/api/projects', authenticateToken, asyncHandler(async (req, res) => {
@@ -33,13 +34,13 @@ export default function projectRoutes(app) {
         const projectName = typeof name === 'string' ? name.trim() : '';
 
         if (!projectName) {
-            throw new ValidationError('Project name is required');
+            throw new ValidationError(msg('project.name_required'), null, 'project.name_required');
         }
         if (projectName.length > 250) {
-            throw new ValidationError('Project name must be 250 characters or less');
+            throw new ValidationError(msg('project.name_too_long'), null, 'project.name_too_long');
         }
         if (!Array.isArray(collaborators)) {
-            throw new ValidationError('Collaborators must be an array');
+            throw new ValidationError(msg('project.collaborators_must_be_array'), null, 'project.collaborators_must_be_array');
         }
 
         const normalized = [];
@@ -49,16 +50,16 @@ export default function projectRoutes(app) {
             const role = entry?.role;
 
             if (!Number.isInteger(userId) || userId <= 0) {
-                throw new ValidationError('Each collaborator must include a valid userId');
+                throw new ValidationError(msg('project.collaborator_invalid_user_id'), null, 'project.collaborator_invalid_user_id');
             }
             if (!Object.prototype.hasOwnProperty.call(ROLE_ENUM, role)) {
-                throw new ValidationError('Each collaborator must include a valid role');
+                throw new ValidationError(msg('project.collaborator_invalid_role'), null, 'project.collaborator_invalid_role');
             }
             if (seenUserIds.has(userId)) continue;
 
             const user = User.findById(userId);
             if (!user) {
-                throw new ValidationError(`Collaborator user ${userId} does not exist`);
+                throw new ValidationError(msg('project.collaborator_user_not_found', { userId }), null, 'project.collaborator_user_not_found');
             }
 
             seenUserIds.add(userId);
@@ -96,12 +97,12 @@ export default function projectRoutes(app) {
     app.get('/api/projects/:projectId', authenticateToken, asyncHandler(async (req, res) => {
         const projectId = Number(req.params.projectId);
         if (!Number.isInteger(projectId) || projectId <= 0) {
-            throw new ValidationError('Invalid project id');
+            throw new ValidationError(msg('project.invalid_id'), null, 'project.invalid_id');
         }
 
         const project = Project.findForUser({ projectId, userId: req.user.id });
         if (!project) {
-            throw new ValidationError('Project not found or inaccessible');
+            throw new ValidationError(msg('project.not_found_or_inaccessible'), null, 'project.not_found_or_inaccessible');
         }
 
         const collaborators = Project.listCollaborators(projectId);
@@ -120,23 +121,23 @@ export default function projectRoutes(app) {
     app.put('/api/projects/:projectId/collaborators', authenticateToken, asyncHandler(async (req, res) => {
         const projectId = Number(req.params.projectId);
         if (!Number.isInteger(projectId) || projectId <= 0) {
-            throw new ValidationError('Invalid project id');
+            throw new ValidationError(msg('project.invalid_id'), null, 'project.invalid_id');
         }
 
         const project = Project.findForUser({ projectId, userId: req.user.id });
         if (!project) {
-            throw new ValidationError('Project not found or inaccessible');
+            throw new ValidationError(msg('project.not_found_or_inaccessible'), null, 'project.not_found_or_inaccessible');
         }
         if (project.userRole !== 'admin') {
-            throw new ValidationError('Only project admins can update collaborators');
+            throw new ValidationError(msg('project.admin_only_update_collaborators'), null, 'project.admin_only_update_collaborators');
         }
 
         const collaborators = req.body?.collaborators;
         if (!Array.isArray(collaborators)) {
-            throw new ValidationError('Collaborators must be an array');
+            throw new ValidationError(msg('project.collaborators_must_be_array'), null, 'project.collaborators_must_be_array');
         }
         if (collaborators.length === 0) {
-            throw new ValidationError('Project must include at least one collaborator');
+            throw new ValidationError(msg('project.min_one_collaborator'), null, 'project.min_one_collaborator');
         }
 
         const normalized = [];
@@ -148,16 +149,16 @@ export default function projectRoutes(app) {
             const role = entry?.role;
 
             if (!Number.isInteger(userId) || userId <= 0) {
-                throw new ValidationError('Each collaborator must include a valid userId');
+                throw new ValidationError(msg('project.collaborator_invalid_user_id'), null, 'project.collaborator_invalid_user_id');
             }
             if (!Object.prototype.hasOwnProperty.call(ROLE_ENUM, role)) {
-                throw new ValidationError('Each collaborator must include a valid role');
+                throw new ValidationError(msg('project.collaborator_invalid_role'), null, 'project.collaborator_invalid_role');
             }
             if (seenUserIds.has(userId)) continue;
 
             const user = User.findById(userId);
             if (!user) {
-                throw new ValidationError(`Collaborator user ${userId} does not exist`);
+                throw new ValidationError(msg('project.collaborator_user_not_found', { userId }), null, 'project.collaborator_user_not_found');
             }
 
             if (role === 'admin') {
@@ -169,10 +170,10 @@ export default function projectRoutes(app) {
         }
 
         if (normalized.length === 0) {
-            throw new ValidationError('Project must include at least one collaborator');
+            throw new ValidationError(msg('project.min_one_collaborator'), null, 'project.min_one_collaborator');
         }
         if (adminCount === 0) {
-            throw new ValidationError('Project must include at least one admin');
+            throw new ValidationError(msg('project.min_one_admin'), null, 'project.min_one_admin');
         }
 
         Project.replaceCollaborators({ projectId, collaborators: normalized });
@@ -190,12 +191,12 @@ export default function projectRoutes(app) {
     app.get('/api/projects/:projectId/files', authenticateToken, asyncHandler(async (req, res) => {
         const projectId = Number(req.params.projectId);
         if (!Number.isInteger(projectId) || projectId <= 0) {
-            throw new ValidationError('Invalid project id');
+            throw new ValidationError(msg('project.invalid_id'), null, 'project.invalid_id');
         }
 
         const project = Project.findForUser({ projectId, userId: req.user.id });
         if (!project) {
-            throw new ValidationError('Project not found or inaccessible');
+            throw new ValidationError(msg('project.not_found_or_inaccessible'), null, 'project.not_found_or_inaccessible');
         }
 
         const files = File.findByProjectId(projectId).map((file) => ({
@@ -217,20 +218,20 @@ export default function projectRoutes(app) {
         const projectId = Number(req.params.projectId);
         const fileId = Number(req.params.fileId);
         if (!Number.isInteger(projectId) || projectId <= 0 || !Number.isInteger(fileId) || fileId <= 0) {
-            throw new ValidationError('Invalid project or file id');
+            throw new ValidationError(msg('project.invalid_project_or_file_id'), null, 'project.invalid_project_or_file_id');
         }
 
         const project = Project.findForUser({ projectId, userId: req.user.id });
         if (!project) {
-            throw new ValidationError('Project not found or inaccessible');
+            throw new ValidationError(msg('project.not_found_or_inaccessible'), null, 'project.not_found_or_inaccessible');
         }
         if (project.userRole !== 'admin' && project.userRole !== 'collaborator') {
-            throw new ValidationError('Only project admins or collaborators can edit file titles');
+            throw new ValidationError(msg('project.collaborator_edit_file_title'), null, 'project.collaborator_edit_file_title');
         }
 
         const file = File.findById(fileId);
         if (!file || Number(file.project_id) !== projectId) {
-            throw new ValidationError('File not found in this project');
+            throw new ValidationError(msg('project.file_not_in_project'), null, 'project.file_not_in_project');
         }
 
         const rawTitle = typeof req.body?.displayTitle === 'string' ? req.body.displayTitle : '';

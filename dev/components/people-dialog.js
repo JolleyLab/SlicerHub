@@ -1,13 +1,14 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
+import { t } from '../i18n/index.js';
 import './app-dialog.js';
 import './dropdown-select.js';
 
 const DEFAULT_ROLE_OPTIONS = Object.freeze([
-    Object.freeze({ value: '', label: 'Select role', disabled: true }),
-    Object.freeze({ value: 'admin', label: 'Admin' }),
-    Object.freeze({ value: 'collaborator', label: 'Collaborator' }),
-    Object.freeze({ value: 'read_only', label: 'Read only' })
+    Object.freeze({ value: '', label: t('roles.selectRole'), disabled: true }),
+    Object.freeze({ value: 'admin', label: t('roles.admin') }),
+    Object.freeze({ value: 'collaborator', label: t('roles.collaborator') }),
+    Object.freeze({ value: 'read_only', label: t('roles.readOnly') })
 ]);
 
 function inviteKind(invite) {
@@ -19,9 +20,9 @@ function inviteKind(invite) {
 
 function roleLabel(role) {
     const key = String(role || '').toLowerCase();
-    if (key === 'admin') return 'Admin';
-    if (key === 'read_only' || key === 'observer') return 'Read only';
-    return 'Collaborator';
+    if (key === 'admin') return t('roles.admin');
+    if (key === 'read_only' || key === 'observer') return t('roles.readOnly');
+    return t('roles.collaborator');
 }
 
 function personFullName(person) {
@@ -57,7 +58,7 @@ function hasMeaningfulLabel(person) {
 function displayName(person, ctx = {}) {
     const id = person?.id != null ? String(person.id) : '';
     if (ctx.currentUserId && id && id === String(ctx.currentUserId)) {
-        return 'Me';
+        return t('common.me');
     }
     if (hasPersonName(person)) return personFullName(person);
     const username = String(person?.username || '').trim();
@@ -65,7 +66,7 @@ function displayName(person, ctx = {}) {
         return username;
     }
     if (ctx.unknownLabels?.has(id)) return ctx.unknownLabels.get(id);
-    return 'Unknown user';
+    return t('people.unknownUser');
 }
 
 function buildUnknownLabels(members = [], currentUserId = null) {
@@ -77,7 +78,7 @@ function buildUnknownLabels(members = [], currentUserId = null) {
         if (!id || (me && id === me)) continue;
         if (hasMeaningfulLabel(member)) continue;
         n += 1;
-        labels.set(id, `Unknown user ${n}`);
+        labels.set(id, t('people.unknownUserN', { n }));
     }
     return labels;
 }
@@ -435,7 +436,7 @@ export class PeopleDialog extends LitElement {
     constructor() {
         super();
         initializeTheme();
-        this.title = 'People';
+        this.title = t('people.title');
         this.error = '';
         this.saving = false;
         this.canInvite = false;
@@ -558,11 +559,11 @@ export class PeopleDialog extends LitElement {
         this.matchedUser = null;
         this.unknownEmail = '';
         if (!email) {
-            this.lookupMessage = 'Enter a full email address.';
+            this.lookupMessage = t('people.enterEmail');
             return;
         }
         if (typeof this.lookupFn !== 'function') {
-            this.lookupMessage = 'Lookup is not available.';
+            this.lookupMessage = t('people.lookupUnavailable');
             return;
         }
 
@@ -570,7 +571,7 @@ export class PeopleDialog extends LitElement {
         try {
             const user = await this.lookupFn(email);
             if (this.members.some((m) => String(m.id) === String(user.id))) {
-                this.lookupMessage = 'That person is already on the list.';
+                this.lookupMessage = t('people.alreadyOnList');
                 return;
             }
             this.matchedUser = user;
@@ -579,11 +580,11 @@ export class PeopleDialog extends LitElement {
             if (error.status === 404) {
                 this.unknownEmail = email;
                 this.inviteRole = '';
-                this.lookupMessage = 'No account yet — you can invite them to create one.';
+                this.lookupMessage = t('people.noAccountYet');
             } else if (error.status === 400) {
-                this.lookupMessage = 'Enter a valid full email address.';
+                this.lookupMessage = t('collaborators.invalidEmail');
             } else {
-                this.lookupMessage = 'Unable to search right now.';
+                this.lookupMessage = t('collaborators.searchFailed');
             }
         } finally {
             this.lookingUp = false;
@@ -596,7 +597,7 @@ export class PeopleDialog extends LitElement {
             this.matchedUser?.email || this.unknownEmail || this.emailQuery || ''
         ).trim();
         if (!email) {
-            this.lookupMessage = 'That person has no email on file.';
+            this.lookupMessage = t('people.noEmailOnFile');
             return;
         }
 
@@ -612,12 +613,12 @@ export class PeopleDialog extends LitElement {
                 if (result?.status === 'signup_invite' && result?.inviteUrl) {
                     this.lastInviteUrl = result.inviteUrl;
                     this.lookupMessage = result.emailSent
-                        ? 'Invite email sent. You can still copy the link below.'
-                        : 'Invite link ready — copy and send it (email was not sent).';
+                        ? t('people.inviteEmailSent')
+                        : t('people.inviteLinkReady');
                 } else if (result?.status === 'pending' || result?.status === 'pending_approval') {
-                    this.lookupMessage = 'Invite sent — waiting for a case admin to approve.';
+                    this.lookupMessage = t('people.invitePending');
                 } else {
-                    this.lookupMessage = 'Person added and notified.';
+                    this.lookupMessage = t('people.personAdded');
                 }
                 this.dispatchEvent(new CustomEvent('people-invited', {
                     detail: result || {},
@@ -625,7 +626,7 @@ export class PeopleDialog extends LitElement {
                     composed: true
                 }));
             } catch (err) {
-                this.error = err?.message || 'Could not send invite.';
+                this.error = err?.message || t('people.inviteFailed');
             } finally {
                 this.inviting = false;
             }
@@ -656,9 +657,9 @@ export class PeopleDialog extends LitElement {
         if (!url) return;
         try {
             await navigator.clipboard.writeText(url);
-            this.lookupMessage = 'Invite link copied.';
+            this.lookupMessage = t('people.inviteLinkCopied');
         } catch {
-            this.lookupMessage = 'Could not copy — select the link and copy manually.';
+            this.lookupMessage = t('people.copyFailed');
         }
     }
 
@@ -699,14 +700,14 @@ export class PeopleDialog extends LitElement {
                         <dropdown-select
                             .value=${member.role || 'collaborator'}
                             .options=${this.effectiveRoleOptions.filter((o) => o.value)}
-                            aria-label="Role for ${name}"
+                            aria-label=${t('people.roleForPerson', { name })}
                             @change=${(e) => this.handleRoleChange(member.id, e)}
                         ></dropdown-select>
                         <button
                             class="icon-button"
                             type="button"
-                            title="Remove"
-                            aria-label="Remove ${name}"
+                            title=${t('common.remove')}
+                            aria-label=${t('people.removePerson', { name })}
                             ?disabled=${this.saving}
                             @click=${() => this.handleRemove(member.id)}
                         >
@@ -734,7 +735,7 @@ export class PeopleDialog extends LitElement {
                     <input
                         class="invite-input"
                         type="email"
-                        placeholder="Invite by email…"
+                        placeholder=${t('people.inviteByEmail')}
                         .value=${this.emailQuery}
                         ?disabled=${this.lookingUp || this.saving || this.inviting}
                         @input=${(e) => { this.emailQuery = e.target.value; }}
@@ -744,7 +745,7 @@ export class PeopleDialog extends LitElement {
                         type="submit"
                         ?disabled=${this.lookingUp || this.saving || this.inviting}
                     >
-                        ${this.lookingUp ? 'Finding…' : 'Find'}
+                        ${this.lookingUp ? t('people.finding') : t('people.find')}
                     </button>
                 </form>
                 ${this.lookupMessage ? html`
@@ -754,7 +755,7 @@ export class PeopleDialog extends LitElement {
                     <div class="invite-link-row">
                         <input class="invite-input" type="text" readonly .value=${this.lastInviteUrl} />
                         <button class="secondary-button" type="button" @click=${() => this.copyInviteUrl()}>
-                            Copy link
+                            ${t('people.copyLink')}
                         </button>
                     </div>
                 ` : ''}
@@ -766,14 +767,14 @@ export class PeopleDialog extends LitElement {
                                 ? displayName(this.matchedUser, this.nameContext)
                                 : this.unknownEmail}</span>
                             ${target.email ? html`
-                                <span class="email">${target.email}${this.unknownEmail ? ' · new account' : ''}</span>
+                                <span class="email">${target.email}${this.unknownEmail ? ` · ${t('people.newAccount')}` : ''}</span>
                             ` : ''}
                         </div>
                         <div class="meta">
                             <dropdown-select
                                 .value=${this.inviteRole}
                                 .options=${this.effectiveRoleOptions}
-                                aria-label="Role for new person"
+                                aria-label=${t('people.roleForNew')}
                                 @change=${(e) => { this.inviteRole = e.target?.value || e.detail?.value || ''; }}
                             ></dropdown-select>
                             <button
@@ -781,7 +782,7 @@ export class PeopleDialog extends LitElement {
                                 type="button"
                                 ?disabled=${addDisabled}
                                 @click=${() => this.handleAddMatched()}
-                            >${this.inviting ? 'Sending…' : (this.unknownEmail ? 'Invite to create' : 'Invite')}</button>
+                            >${this.inviting ? t('people.sending') : (this.unknownEmail ? t('people.inviteToCreate') : t('people.invite'))}</button>
                         </div>
                     </div>
                 ` : ''}
@@ -790,19 +791,21 @@ export class PeopleDialog extends LitElement {
     }
 
     renderPending() {
-        const pending = Array.isArray(this.pendingInvites) ? this.pendingInvites : [];
+        const pending = (Array.isArray(this.pendingInvites) ? this.pendingInvites : [])
+            .filter((invite) => invite && invite.status !== 'expired');
         if (!pending.length) return html``;
         return html`
             <div class="pending-block">
-                <p class="pending-heading">Pending invites</p>
+                <p class="pending-heading">${t('people.pendingInvites')}</p>
                 ${pending.map((invite) => {
                     const isSignup = invite.kind === 'signup';
                     const needsApproval = invite.status === 'pending'
                         || invite.status === 'pending_approval';
                     const awaitingSignup = invite.status === 'pending_signup';
-                    const statusLine = awaitingSignup
-                        ? `${roleLabel(invite.proposedRole)} · awaiting signup`
-                        : `${roleLabel(invite.proposedRole)} · awaiting approval${isSignup ? ' (new account)' : ''}`;
+                    const statusSuffix = awaitingSignup
+                        ? t('people.awaitingSignup')
+                        : `${t('people.awaitingApproval')}${isSignup ? ` (${t('people.newAccount')})` : ''}`;
+                    const statusLine = `${roleLabel(invite.proposedRole)} · ${statusSuffix}`;
                     return html`
                     <div class="row">
                         <div class="identity">
@@ -821,7 +824,7 @@ export class PeopleDialog extends LitElement {
                                             bubbles: true,
                                             composed: true
                                         }))}
-                                    >Approve</button>
+                                    >${t('people.approve')}</button>
                                 ` : ''}
                                 <button
                                     class="secondary-button"
@@ -832,9 +835,9 @@ export class PeopleDialog extends LitElement {
                                         bubbles: true,
                                         composed: true
                                     }))}
-                                >${awaitingSignup ? 'Cancel' : 'Reject'}</button>
-                            </div>
-                        ` : html`<span class="badge">${awaitingSignup ? 'Link sent' : 'Pending'}</span>`}
+                >${awaitingSignup ? t('common.cancel') : t('people.reject')}</button>
+                    </div>
+                        ` : html`<span class="badge">${awaitingSignup ? t('people.linkSent') : t('people.pending')}</span>`}
                     </div>
                 `;
                 })}
@@ -854,7 +857,7 @@ export class PeopleDialog extends LitElement {
                     <div class="list">
                         <div class="list-scroll">
                             ${this.members.length === 0 ? html`
-                                <p class="empty">No people yet.</p>
+                                <p class="empty">${t('people.noPeople')}</p>
                             ` : this.members.map((m) => this.renderMemberRow(m))}
                         </div>
                         ${this.renderInvite()}
@@ -862,7 +865,7 @@ export class PeopleDialog extends LitElement {
 
                     ${this.renderPending()}
 
-                    ${this.saving ? html`<p class="saving">Saving…</p>` : ''}
+                    ${this.saving ? html`<p class="saving">${t('common.saving')}</p>` : ''}
                 </div>
 
                 ${this.canManage ? html`
@@ -872,21 +875,21 @@ export class PeopleDialog extends LitElement {
                         type="button"
                         ?disabled=${this.saving}
                         @click=${() => this.handleCancel()}
-                    >Cancel</button>
+                    >${t('common.cancel')}</button>
                     <button
                         slot="actions"
                         class="primary-button"
                         type="button"
                         ?disabled=${this.saving}
                         @click=${() => this.handleSave()}
-                    >Save</button>
+                    >${t('common.save')}</button>
                 ` : html`
                     <button
                         slot="actions"
                         class="secondary-button"
                         type="button"
                         @click=${() => this.handleCancel()}
-                    >Close</button>
+                    >${t('common.close')}</button>
                 `}
             </app-dialog>
         `;

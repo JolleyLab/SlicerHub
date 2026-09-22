@@ -40,8 +40,10 @@ import {
     listNotificationsForUser,
     markNotificationRead,
     markAllNotificationsRead,
+    deleteNotificationForUser,
     unreadNotificationCount
 } from '../services/notifications.js';
+import { msg } from '../i18n/index.js';
 
 // 500 MB cap — large MRB / imaging files are expected. Adjust via env if needed.
 const upload = multer({
@@ -94,7 +96,7 @@ async function ensureLocalFullSlicerSeat(req, { failureMessage, requireSlicerUiR
         return { launcherUserId, useSimplifiedViewer, session };
     } catch (err) {
         console.warn('Full Slicer seat failed:', err.message || err);
-        throw new ValidationError(failureMessage || "Couldn't start the viewer. Please try again in a moment.");
+        throw new ValidationError(failureMessage || msg('viewer.start_failed'));
     }
 }
 
@@ -165,7 +167,7 @@ export default function directusRoutes(app) {
      */
     app.patch('/api/directus/cases/:caseId', ...collabAuth, asyncHandler(async (req, res) => {
         const caseId = String(req.params.caseId || '').trim();
-            if (!caseId) throw new ValidationError('Case is required.');
+            if (!caseId) throw new ValidationError(msg('case.id_required'), null, 'case.id_required');
 
         const updates = {};
         if (req.body?.title !== undefined) updates.title = req.body.title;
@@ -204,14 +206,14 @@ export default function directusRoutes(app) {
      */
     app.post('/api/directus/cases/:caseId/invites', ...collabAuth, asyncHandler(async (req, res) => {
         const caseId = String(req.params.caseId || '').trim();
-        if (!caseId) throw new ValidationError('Case is required.');
+        if (!caseId) throw new ValidationError(msg('case.id_required'), null, 'case.id_required');
         const email = String(req.body?.email || '').trim();
-        if (!email) throw new ValidationError('Email is required.');
+        if (!email) throw new ValidationError(msg('case.email_required'), null, 'case.email_required');
 
         const actorDirectusUserId = req.directusIdentity?.externalId
             || (await fetchDirectusViewer(req.directusAccessToken))?.id;
         if (!actorDirectusUserId) {
-            throw new ValidationError('Could not confirm your account for this session. Please sign in again.');
+        throw new ValidationError(msg('directus.session_confirm_failed'), null, 'directus.session_confirm_failed');
         }
 
         const result = await inviteExistingUserToCase({
@@ -235,23 +237,32 @@ export default function directusRoutes(app) {
         });
     }));
 
-    /** Pending invites for a case (existing users + signup emails). */
-    app.get('/api/directus/cases/:caseId/invites', ...collabAuth, asyncHandler(async (req, res) => {
-        const caseId = String(req.params.caseId || '').trim();
-        if (!caseId) throw new ValidationError('Case is required.');
-        const invites = [
-            ...listPendingInvitesForCase(caseId),
-            ...listSignupInvitesForCase(caseId)
-        ].sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
-        res.set('Cache-Control', 'no-store');
-        res.json({ invites });
-    }));
+    /**
+     * Pending invites for a case (existing users + signup emails).
+     * Local SQLite only — do not require a live Directus access token
+     * (force-refresh 403s were noisy/spurious when dx_link refresh expired).
+     */
+    app.get(
+        '/api/directus/cases/:caseId/invites',
+        authenticateToken,
+        requireDirectusLink,
+        asyncHandler(async (req, res) => {
+            const caseId = String(req.params.caseId || '').trim();
+            if (!caseId) throw new ValidationError(msg('case.id_required'), null, 'case.id_required');
+            const invites = [
+                ...listPendingInvitesForCase(caseId),
+                ...listSignupInvitesForCase(caseId)
+            ].sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+            res.set('Cache-Control', 'no-store');
+            res.json({ invites });
+        })
+    );
 
     app.post('/api/directus/cases/:caseId/invites/:inviteId/approve', ...collabAuth, asyncHandler(async (req, res) => {
         const actorDirectusUserId = req.directusIdentity?.externalId
             || (await fetchDirectusViewer(req.directusAccessToken))?.id;
         if (!actorDirectusUserId) {
-            throw new ValidationError('Could not confirm your account for this session. Please sign in again.');
+        throw new ValidationError(msg('directus.session_confirm_failed'), null, 'directus.session_confirm_failed');
         }
         const caseId = String(req.params.caseId || '').trim();
         const inviteId = req.params.inviteId;
@@ -295,7 +306,7 @@ export default function directusRoutes(app) {
             if (!result) result = await trySignup();
         }
         if (!result) {
-            throw new NotFoundError('Pending invite not found');
+            throw new NotFoundError(msg('case.invite_pending_not_found'), null, 'case.invite_pending_not_found');
         }
         res.json(result);
     }));
@@ -304,7 +315,7 @@ export default function directusRoutes(app) {
         const actorDirectusUserId = req.directusIdentity?.externalId
             || (await fetchDirectusViewer(req.directusAccessToken))?.id;
         if (!actorDirectusUserId) {
-            throw new ValidationError('Could not confirm your account for this session. Please sign in again.');
+        throw new ValidationError(msg('directus.session_confirm_failed'), null, 'directus.session_confirm_failed');
         }
         const caseId = String(req.params.caseId || '').trim();
         const inviteId = req.params.inviteId;
@@ -347,7 +358,7 @@ export default function directusRoutes(app) {
             if (!result) result = await trySignup();
         }
         if (!result) {
-            throw new NotFoundError('Pending invite not found');
+            throw new NotFoundError(msg('case.invite_pending_not_found'), null, 'case.invite_pending_not_found');
         }
         res.json(result);
     }));
@@ -392,6 +403,16 @@ export default function directusRoutes(app) {
         res.json({ ok: true, unreadCount: unreadNotificationCount(req.user.id) });
     }));
 
+    /** Remove from inbox only — does not cancel pending invites / work. */
+    app.delete('/api/notifications/:id', authenticateToken, asyncHandler(async (req, res) => {
+        const removed = deleteNotificationForUser(req.user.id, req.params.id);
+        res.json({
+            ok: true,
+            removed,
+            unreadCount: unreadNotificationCount(req.user.id)
+        });
+    }));
+
     app.post('/api/notifications/read-all', authenticateToken, asyncHandler(async (req, res) => {
         const updated = markAllNotificationsRead(req.user.id);
         res.json({ ok: true, updated, unreadCount: 0 });
@@ -404,17 +425,17 @@ export default function directusRoutes(app) {
      */
     app.put('/api/directus/cases/:caseId/collaborators', ...collabAuth, asyncHandler(async (req, res) => {
         const caseId = String(req.params.caseId || '').trim();
-            if (!caseId) throw new ValidationError('Case is required.');
+            if (!caseId) throw new ValidationError(msg('case.id_required'), null, 'case.id_required');
 
         const actorDirectusUserId = req.directusIdentity?.externalId
             || (await fetchDirectusViewer(req.directusAccessToken))?.id;
         if (!actorDirectusUserId) {
-            throw new ValidationError('Could not confirm your account for this session. Please sign in again.');
+        throw new ValidationError(msg('directus.session_confirm_failed'), null, 'directus.session_confirm_failed');
         }
 
         const raw = req.body?.collaborators;
         if (!Array.isArray(raw)) {
-            throw new ValidationError('People list is invalid. Please try again.');
+            throw new ValidationError(msg('case.people_list_invalid'), null, 'case.people_list_invalid');
         }
         const collaborators = raw.map((entry) => {
             if (!entry || typeof entry !== 'object') return null;
@@ -450,8 +471,8 @@ export default function directusRoutes(app) {
         upload.single('file'),
         asyncHandler(async (req, res) => {
             const caseId = String(req.params.caseId || '').trim();
-            if (!caseId) throw new ValidationError('Case is required.');
-            if (!req.file) throw new ValidationError('Please choose a file to upload.');
+            if (!caseId) throw new ValidationError(msg('case.id_required'), null, 'case.id_required');
+            if (!req.file) throw new ValidationError(msg('case.upload_file_required'), null, 'case.upload_file_required');
 
             const originalName = req.file.originalname || 'upload';
             const displayName = String(req.body?.name || '').trim() || originalName;
@@ -493,7 +514,7 @@ export default function directusRoutes(app) {
             const caseId = String(req.params.caseId || '').trim();
             const attachmentId = String(req.params.attachmentId || '').trim();
             if (!caseId || !attachmentId) {
-                throw new ValidationError('Case and file are required.');
+                throw new ValidationError(msg('case.case_and_file_required'), null, 'case.case_and_file_required');
             }
 
             await deleteCaseAttachment(caseId, attachmentId, {
@@ -539,7 +560,7 @@ export default function directusRoutes(app) {
             const caseId = String(req.params.caseId || '').trim();
             const attachmentId = String(req.params.attachmentId || '').trim();
             if (!caseId || !attachmentId) {
-                throw new ValidationError('Case and file are required.');
+                throw new ValidationError(msg('case.case_and_file_required'), null, 'case.case_and_file_required');
             }
 
             const attachment = await getCaseAttachment(caseId, attachmentId, {
@@ -547,7 +568,9 @@ export default function directusRoutes(app) {
             });
             if (!canOpenAttachmentInSlicer(attachment)) {
                 throw new ValidationError(
-                    "This file type can't be opened in the viewer yet."
+                    msg('viewer.file_type_unsupported'),
+                    null,
+                    'viewer.file_type_unsupported'
                 );
             }
 
@@ -623,7 +646,7 @@ export default function directusRoutes(app) {
     app.post('/api/directus/full-slicer-heartbeat', authenticateToken, asyncHandler(async (req, res) => {
         const sessionToken = String(req.body?.sessionToken || '').trim();
         if (!sessionToken) {
-            throw new ValidationError('Viewer session is missing. Open the file again.');
+            throw new ValidationError(msg('viewer.session_token_missing'), null, 'viewer.session_token_missing');
         }
 
         const userId = String(req.user.id);
@@ -634,7 +657,7 @@ export default function directusRoutes(app) {
         });
         if (!lease) {
             return res.status(404).json({
-                error: { message: 'The viewer session ended. Open the file again to continue.' }
+                error: { message: msg('viewer.session_ended') }
             });
         }
 
@@ -649,7 +672,7 @@ export default function directusRoutes(app) {
     app.post('/api/directus/full-slicer-stop', authenticateToken, asyncHandler(async (req, res) => {
         const sessionToken = String(req.body?.sessionToken || '').trim();
         if (!sessionToken) {
-            throw new ValidationError('Viewer session is missing. Open the file again.');
+            throw new ValidationError(msg('viewer.session_token_missing'), null, 'viewer.session_token_missing');
         }
 
         const mode = normalizeViewerReleaseMode(req.body?.mode, { supportsSoft: true });

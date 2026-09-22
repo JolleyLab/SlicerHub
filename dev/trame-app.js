@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit-element';
 import { API_URL } from './config.js';
+import { t } from './i18n/index.js';
 import {
   APP_VIEWS,
   DEFAULT_APP_VIEW,
@@ -39,7 +40,7 @@ import {
 } from './services/projectGpu.js';
 
 function userDisplayName(user) {
-  if (!user) return 'Guest';
+  if (!user) return t('common.guest');
   const first = String(user.firstName || user.first_name || '').trim();
   const last = String(user.lastName || user.last_name || '').trim();
   const full = `${first} ${last}`.trim();
@@ -49,7 +50,7 @@ function userDisplayName(user) {
   if (user.email) return String(user.email).trim();
   if (display) return display;
   if (user.username) return String(user.username).trim();
-  return 'Guest';
+  return t('common.guest');
 }
 
 export class TrameApp extends LitElement {
@@ -432,6 +433,11 @@ export class TrameApp extends LitElement {
   handleNotificationOpen(e) {
     const caseId = e.detail?.caseId;
     if (!caseId || !isDirectusCasesEnabled()) return;
+    const inviteId = e.detail?.inviteId || null;
+    const type = String(e.detail?.type || '');
+    const openPeople = Boolean(inviteId)
+      || type === 'case_invite_pending'
+      || type === 'case_invite_accepted';
     this.selectedProjectId = null;
     this.currentView = APP_VIEWS.CASES;
     const url = new URL(window.location.href);
@@ -440,8 +446,12 @@ export class TrameApp extends LitElement {
     history.pushState({ caseId: String(caseId) }, '', `${url.pathname}?${url.searchParams}`);
     this.updateComplete.then(() => {
       const page = this.renderRoot?.querySelector('directus-cases-page');
-      if (page && typeof page.openCase === 'function') {
+      if (!page) return;
+      if (typeof page.openCase === 'function') {
         page.openCase(String(caseId));
+      }
+      if (openPeople && typeof page.openPeopleForCaseId === 'function') {
+        page.openPeopleForCaseId(String(caseId));
       }
     });
   }
@@ -657,7 +667,7 @@ export class TrameApp extends LitElement {
     if (!secs || this.logoutBillingBusy) return '';
     const action = this.logoutBillingMode === 'transfer'
       ? (this.logoutTransferSession?.transferTarget ? 'transfer ownership' : 'stop billing')
-      : 'stop billing and log out';
+      : t('gpu.stopBillingAndLogOutAction');
     const time = secs >= 60
       ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
       : `${secs}s`;
@@ -687,13 +697,13 @@ export class TrameApp extends LitElement {
 
   get logoutTransferImpactNames() {
     const users = this.logoutTransferSession?.activeUsers || [];
-    return users.map((u) => u.username || `User ${u.userId}`).join(', ');
+    return users.map((u) => u.username || t('gpu.userId', { id: u.userId })).join(', ');
   }
 
   get logoutTransferLabel() {
     const target = this.logoutTransferSession?.transferTarget;
-    if (!target) return 'Transfer ownership';
-    return `Transfer to ${target.username || `User ${target.userId}`}`;
+    if (!target) return t('gpu.transferOwnership');
+    return t('gpu.transferTo', { user: target.username || t('gpu.userId', { id: target.userId }) });
   }
 
   async handleLogoutTransfer() {
@@ -713,7 +723,7 @@ export class TrameApp extends LitElement {
       console.error('Logout transfer failed:', err);
       this.logoutBillingBusy = false;
       this.startLogoutBillingAutoTimer();
-      window.alert(err.message || 'Unable to transfer GPU billing.');
+      window.alert(err.message || t('gpu.unableTransfer'));
     }
   }
 
@@ -734,7 +744,7 @@ export class TrameApp extends LitElement {
       console.error('Logout stop billing failed:', err);
       this.logoutBillingBusy = false;
       this.startLogoutBillingAutoTimer();
-      window.alert(err.message || 'Unable to stop GPU billing.');
+      window.alert(err.message || t('gpu.unableStop'));
     }
   }
 
@@ -756,7 +766,7 @@ export class TrameApp extends LitElement {
     } catch (err) {
       console.error('Logout stop project failed:', err);
       this.startLogoutBillingAutoTimer();
-      window.alert(err.message || 'Unable to stop GPU billing.');
+      window.alert(err.message || t('gpu.unableStop'));
     } finally {
       this.logoutBillingBusy = false;
     }
@@ -780,7 +790,7 @@ export class TrameApp extends LitElement {
     this.logoutBillingBusy = false;
     if (remaining.length) {
       this.startLogoutBillingAutoTimer();
-      window.alert('Some GPU sessions could not be stopped. You can retry or log out anyway.');
+      window.alert(t('gpu.someCouldNotStop'));
       return;
     }
     this.closeLogoutBillingDialog();
@@ -876,7 +886,7 @@ export class TrameApp extends LitElement {
 
   async handleViewerInactivityTimeout() {
     if (!this.showIframe) return;
-    this.output = 'Viewer closed after inactivity';
+    this.output = t('gpu.viewerClosedInactivity');
     await this.closeIframe();
   }
 
@@ -919,7 +929,7 @@ export class TrameApp extends LitElement {
   render() {
     if (this.shareToken) {
       if (this.shareLoading) {
-        return html`<div class="auth-container">Loading shared viewer...</div>`;
+        return html`<div class="auth-container">${t('share.loadingViewer')}</div>`;
       }
       if (this.shareError) {
         const requiresSignIn = this.shareErrorStatus === 403 && this.shareError.toLowerCase().includes('sign in');
@@ -928,7 +938,7 @@ export class TrameApp extends LitElement {
           <div class="auth-container">
             <status-card
               tone="error"
-              title="Unable to open shared file"
+              title=${t('share.unableOpen')}
               .message=${this.shareError}
             >
               ${requiresSignIn ? html`
@@ -960,8 +970,8 @@ export class TrameApp extends LitElement {
         <div class="header">
           <div class="user-info">
             <span class="user-name">${this.shareViewerKind === VIEWER_KINDS.SLICER_GUI
-              ? `Shared Simplified Viewer: ${this.shareFileName || 'File'}`
-              : `Shared Read-Only Viewer: ${this.shareFileName || 'File'}`}</span>
+              ? t('share.simplifiedHeader', { file: this.shareFileName || t('share.fileFallback') })
+              : t('share.readonlyHeader', { file: this.shareFileName || t('share.fileFallback') })}</span>
             ${this.shareReplayStatus ? html`<span style="margin-left:10px; color:#666; font-size:12px;">${this.shareReplayStatus}</span>` : ''}
           </div>
         </div>
@@ -1095,8 +1105,8 @@ export class TrameApp extends LitElement {
       <app-dialog
         id="logout-billing-dialog"
         title=${this.logoutBillingMode === 'transfer'
-          ? 'GPU billing is still active'
-          : 'Stop GPU billing before logout?'}
+          ? t('gpu.billingStillActive')
+          : t('gpu.stopBeforeLogout')}
         .lightDismiss=${false}
       >
         ${this.logoutBillingMode === 'transfer' && this.logoutTransferSession ? html`
@@ -1184,7 +1194,7 @@ export class TrameApp extends LitElement {
                 ?disabled=${this.logoutBillingBusy}
                 @click=${() => this.handleLogoutLeaveBillingRunning()}
               >
-                Log out without stopping
+                ${t('gpu.logOutWithoutStopping')}
               </button>
               <button
                 class="primary-button"
@@ -1192,7 +1202,7 @@ export class TrameApp extends LitElement {
                 ?disabled=${this.logoutBillingBusy || !this.logoutSoleSessions.length}
                 @click=${() => this.handleLogoutStopAllSole()}
               >
-                ${this.logoutBillingBusy ? 'Working…' : 'Stop all & log out'}
+                ${this.logoutBillingBusy ? t('common.working') : t('gpu.stopAllAndLogOut')}
               </button>
             </div>
           </div>
@@ -1338,13 +1348,13 @@ export class TrameApp extends LitElement {
         this.shareErrorStatus = response.status;
         const backendMessage = data?.error?.message || data?.message || '';
         if (response.status === 404) {
-          this.shareError = 'This share link is invalid, expired, or the file is no longer available.';
+          this.shareError = t('share.invalidExpired');
         } else if (response.status === 403 && backendMessage.toLowerCase().includes('sign in')) {
-          this.shareError = 'This shared file is restricted. Please sign in with an allowed account.';
+          this.shareError = t('share.restrictedSignIn');
         } else if (response.status === 403) {
-          this.shareError = 'Your account is not allowed to access this shared file.';
+          this.shareError = t('share.accessDenied');
         } else {
-          this.shareError = backendMessage || 'Failed to open shared file.';
+          this.shareError = backendMessage || t('share.failedOpen');
         }
         return;
       }
@@ -1360,7 +1370,7 @@ export class TrameApp extends LitElement {
 
       if (this.shareViewerKind === VIEWER_KINDS.SLICER_GUI) {
         if (!data?.vncPath || !data?.sessionToken) {
-          this.shareError = 'Unable to open shared Simplified Viewer';
+          this.shareError = t('share.unableSimplified');
           return;
         }
         this.shareIframeUrl = buildSlicerGuiLoaderUrl({
@@ -1379,14 +1389,14 @@ export class TrameApp extends LitElement {
 
       const url = data?.frontendUrl;
       if (!url) {
-        this.shareError = 'Unable to open shared viewer';
+        this.shareError = t('share.unableViewer');
         return;
       }
 
       this.shareIframeUrl = url;
     } catch (err) {
       console.error('Shared viewer launch error:', err);
-      this.shareError = 'Failed to load shared viewer';
+      this.shareError = t('share.failedLoad');
       this.shareErrorStatus = 0;
     } finally {
       this.shareLoading = false;
@@ -1404,7 +1414,7 @@ export class TrameApp extends LitElement {
     this.stopSharedReplayPolling();
     this.shareReplayAttempts = 0;
     this.shareReplayInFlight = false;
-    this.shareReplayStatus = 'Applying shared view...';
+    this.shareReplayStatus = t('share.applyingView');
 
     const scheduleNext = (delayMs) => {
       this.shareReplayPollTimer = setTimeout(() => {
@@ -1431,28 +1441,28 @@ export class TrameApp extends LitElement {
           throw new Error(data?.error?.message || data?.message || 'Replay request failed');
         }
         if (data?.applied) {
-          this.shareReplayStatus = 'Shared view applied';
+          this.shareReplayStatus = t('share.viewApplied');
           this.stopSharedReplayPolling();
           setTimeout(() => {
-            if (this.shareReplayStatus === 'Shared view applied') this.shareReplayStatus = '';
+            if (this.shareReplayStatus === t('share.viewApplied')) this.shareReplayStatus = '';
           }, 3000);
           return;
         }
 
         if (this.shareReplayAttempts >= 24) {
-          this.shareReplayStatus = data?.error || 'Could not apply shared view';
+          this.shareReplayStatus = data?.error || t('share.viewFailed');
           this.stopSharedReplayPolling();
         } else {
-          this.shareReplayStatus = `Applying shared view... (${this.shareReplayAttempts}/24)`;
+          this.shareReplayStatus = t('share.applyingProgress', { n: this.shareReplayAttempts });
           scheduleNext(5000);
         }
       } catch (err) {
         console.error('Shared replay error:', err);
         if (this.shareReplayAttempts >= 24) {
-          this.shareReplayStatus = 'Could not apply shared view';
+          this.shareReplayStatus = t('share.viewFailed');
           this.stopSharedReplayPolling();
         } else {
-          this.shareReplayStatus = `Applying shared view... (${this.shareReplayAttempts}/24)`;
+          this.shareReplayStatus = t('share.applyingProgress', { n: this.shareReplayAttempts });
           // Back off slightly more on transient failures.
           scheduleNext(7000);
         }

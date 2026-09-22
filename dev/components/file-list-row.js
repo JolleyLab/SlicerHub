@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
+import { t } from '../i18n/index.js';
 
 const NAME_CLICK_DELAY_MS = 280;
 const LONG_PRESS_MS = 550;
@@ -218,11 +219,11 @@ export class FileListRow extends LitElement {
         initializeTheme();
         this.fileName = '';
         this.metaLine = '';
-        this.nameButtonTitle = 'Launch file';
+        this.nameButtonTitle = t('files.launchFile');
         this.nameButtonDisabled = false;
         this.showEditTitle = false;
         this.editTitleDisabled = false;
-        this.editTitleLabel = 'Edit title';
+        this.editTitleLabel = t('files.editTitle');
         this._nameClickTimer = null;
         this._longPressTimer = null;
         this._longPressTriggered = false;

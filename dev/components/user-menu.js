@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
+import { t } from '../i18n/index.js';
 
 export class UserMenu extends LitElement {
     static get styles() {
@@ -157,13 +158,13 @@ export class UserMenu extends LitElement {
     constructor() {
         super();
         initializeTheme();
-        this.username = 'Guest';
+        this.username = t('common.guest');
         this.displayName = '';
         this.open = false;
     }
 
     #getDisplayLabel() {
-        return String(this.displayName || this.username || '').trim() || 'Guest';
+        return String(this.displayName || this.username || '').trim() || t('common.guest');
     }
 
     #getUNFirstLetter() {
@@ -207,10 +208,10 @@ export class UserMenu extends LitElement {
             </button>
             ${this.open ? html`
                 <div class="menu">
-                    <div class="menu-title ${nameIsLong ? 'is-long' : ''}">Signed in as <strong>${label}</strong></div>
+                    <div class="menu-title ${nameIsLong ? 'is-long' : ''}">${t('nav.signedInAs')} <strong>${label}</strong></div>
                     <hr>
-                    <button class="menu-item" @click=${this.requestSettings}>Settings</button>
-                    <button class="menu-item" @click=${this.requestLogout}>Log out</button>
+                    <button class="menu-item" @click=${this.requestSettings}>${t('nav.settings')}</button>
+                    <button class="menu-item" @click=${this.requestLogout}>${t('nav.logOut')}</button>
                 </div>
             ` : ''}
         `;

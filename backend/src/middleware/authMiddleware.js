@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import db from '../db/database.js';
 import config from '../config/index.js';
 import { UnauthorizedError, ForbiddenError } from '../utils/errors.js';
+import { msg } from '../i18n/index.js';
 
 /**
  * Intentionally a no-op for single-session expiry.
@@ -51,7 +52,7 @@ export function authenticateToken(req, res, next) {
         const token = authHeader && authHeader.split(' ')[1] || req.cookies?.token;
 
         if (!token) {
-            throw new UnauthorizedError('Access token required');
+            throw new UnauthorizedError(msg('auth.access_token_required'), null, 'auth.access_token_required');
         }
 
         // Verify token
@@ -63,7 +64,7 @@ export function authenticateToken(req, res, next) {
 
         if (!session) {
             scheduleLocalViewerCleanup(decoded.userId, 'invalid-session');
-            throw new UnauthorizedError('Invalid or expired session');
+            throw new UnauthorizedError(msg('auth.session_invalid'), null, 'auth.session_invalid');
         }
 
         // Enforce idle timeout server-side.
@@ -72,7 +73,7 @@ export function authenticateToken(req, res, next) {
         if (!lastActivityMs || (Date.now() - lastActivityMs) > idleLimitMs) {
             db.prepare('DELETE FROM sessions WHERE token_jti = ?').run(decoded.jti);
             scheduleLocalViewerCleanup(decoded.userId, 'idle-timeout');
-            throw new UnauthorizedError('Session expired due to inactivity');
+            throw new UnauthorizedError(msg('auth.session_inactivity_timeout'), null, 'auth.session_inactivity_timeout');
         }
 
         // Sliding activity window: refresh activity timestamp on each valid request.
@@ -100,9 +101,9 @@ export function authenticateToken(req, res, next) {
                 deleteSession(decoded.jti);
             }
             scheduleLocalViewerCleanup(decoded?.userId, 'token-expired');
-            next(new UnauthorizedError('Token expired'));
+            next(new UnauthorizedError(msg('auth.token_expired'), null, 'auth.token_expired'));
         } else if (error.name === 'JsonWebTokenError') {
-            next(new UnauthorizedError('Session expired — please sign in again'));
+            next(new UnauthorizedError(msg('auth.session_expired'), null, 'auth.session_expired'));
         } else {
             next(error);
         }
@@ -114,7 +115,7 @@ export function authenticateToken(req, res, next) {
  */
 export function requireAdmin(req, res, next) {
     if (!req.user || req.user.role !== 'admin') {
-        return next(new ForbiddenError('Admin access required'));
+        return next(new ForbiddenError(msg('auth.admin_required'), null, 'auth.admin_required'));
     }
     next();
 }

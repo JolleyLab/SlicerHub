@@ -2,6 +2,7 @@ import bcrypt from 'bcrypt';
 import db, { flushDatabase } from '../db/database.js';
 import config from '../config/index.js';
 import { ConflictError } from '../utils/errors.js';
+import { msg } from '../i18n/index.js';
 import {
     mergeUserPreferences,
     parseUserPreferencesJson,
@@ -47,7 +48,7 @@ class User {
             .get(username, email);
 
         if (existing) {
-            throw new ConflictError('Username or email already exists');
+            throw new ConflictError(msg('user.username_or_email_exists'), null, 'user.username_or_email_exists');
         }
 
         // Hash password

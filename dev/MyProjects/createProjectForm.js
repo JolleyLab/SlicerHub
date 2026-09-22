@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit-element';
+import { t } from '../i18n/index.js';
 import '../components/page-layout-template.js';
 import '../components/add-button.js';
 import '../components/toggle-switch.js';
@@ -225,7 +226,7 @@ export class CreateProjectForm extends LitElement {
 
     constructor() {
         super();
-        this.username = 'Guest';
+        this.username = t('common.guest');
         this.isPublic = false;
         this.collaborators = [];
         this.projectName = '';
@@ -300,7 +301,7 @@ export class CreateProjectForm extends LitElement {
         this.formError = '';
         const name = this.projectName.trim();
         if (!name) {
-            this.formError = 'Project name is required.';
+            this.formError = t('projects.nameRequired');
             return;
         }
 
@@ -313,7 +314,7 @@ export class CreateProjectForm extends LitElement {
             await createProject({ name, collaborators: collaboratorsPayload });
             this.redirectToMyProjects();
         } catch (error) {
-            this.formError = error.message || 'Unable to save project. Please try again.';
+            this.formError = error.message || t('projects.saveFailed');
         } finally {
             this.saving = false;
         }
@@ -326,46 +327,46 @@ export class CreateProjectForm extends LitElement {
                 selectedMenuKey="my-projects"
                 homeHref="/file-manager"
                 homeLabel="Home"
-                pageTitle="Create New Project"
+                pageTitle=${t('projects.createTitle')}
                 @menu-selection-change=${this.handleMenuSelectionChange}
             >
                 <div slot="content">
                     <div class="form-group">
-                        <label class="field-label" for="project-name">Project name</label>
+                        <label class="field-label" for="project-name">${t('projects.nameLabel')}</label>
                         <input
                             class="text-input"
                             type="text"
                             id="project-name"
                             name="project-name"
                             .value=${this.projectName}
-                            placeholder="Name"
+                            placeholder=${t('projects.namePlaceholder')}
                             @input=${(event) => { this.projectName = event.target.value; }}
                         />
                     </div>
                     <div class="visibility-toggle-control">
-                        <label class="field-label" for="visibility-toggle">Who can view this project?</label>
+                        <label class="field-label" for="visibility-toggle">${t('projects.visibility')}</label>
                         <toggle-switch
                             .checked=${this.isPublic}
-                            trueLabel="Public"
-                            falseLabel="Private"
-                            aria-label="Toggle project visibility"
+                            trueLabel=${t('projects.public')}
+                            falseLabel=${t('projects.private')}
+                            aria-label=${t('projects.toggleVisibility')}
                             @toggle-change=${(event) => { this.isPublic = event.detail.checked; }}
                         ></toggle-switch>
                     </div>
                 </div>
                 ${this.collaborators.length === 0 ? html`
                     <div slot="content" class="information-note">
-                       You haven't invited any collaborators yet. <br>
+                       ${t('projects.noCollaboratorsYet')} <br>
                        <add-button
                            slot="content"
-                           title="Add collaborators"
+                           title=${t('projects.addCollaborators')}
                            @add-button-click=${() => this.openCollaboratorDialog()}
                         ></add-button>
                     </div>
                 ` : html`
                     <div slot="content" class="collaborators-panel">
                         <details open>
-                            <summary>Collaborators (${this.collaborators.length})</summary>
+                            <summary>${t('projects.collaborators', { n: this.collaborators.length })}</summary>
                             <div class="collaborators-list">
                                 ${this.collaborators.map((entry) => html`
                                     <div class="collaborator-row">
@@ -382,7 +383,7 @@ export class CreateProjectForm extends LitElement {
                         </details>
                         <add-button
                             slot="content"
-                            title="Add collaborators"
+                            title=${t('projects.addCollaborators')}
                             @add-button-click=${() => this.openCollaboratorDialog()}
                         ></add-button>
                     </div>
@@ -394,15 +395,15 @@ export class CreateProjectForm extends LitElement {
                         ?disabled=${this.saving}
                         @click=${() => this.handleSave()}
                     >
-                        ${this.saving ? 'Saving...' : 'Save'}
+                        ${this.saving ? t('common.saving') : t('common.save')}
                     </button>
                     <button class="secondary-button" type="button" @click=${() => this.handleCancel()}>
-                        Cancel
+                        ${t('common.cancel')}
                     </button>
                 </div>
                 ${this.formError ? html`<div slot="content" class="form-error">${this.formError}</div>` : ''}
             </page-layout-template>
-            <app-dialog id="collaborator-dialog" title="Add Collaborators">
+            <app-dialog id="collaborator-dialog" title=${t('projects.addCollaboratorsTitle')}>
                 <collaborator-search
                     @collaborators-cancel=${() => this.closeCollaboratorDialog()}
                     @collaborators-done=${(event) => this.handleCollaboratorsDone(event)}

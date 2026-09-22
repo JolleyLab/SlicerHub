@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
+import { t } from '../i18n/index.js';
 
 /**
  * Reusable comments list + optional compose box (chat-style).
@@ -326,11 +327,11 @@ export class CommentsPanel extends LitElement {
         super();
         initializeTheme();
         this.comments = [];
-        this.title = 'Comments';
-        this.emptyMessage = 'No comments yet.';
-        this.placeholder = 'Write a message…';
-        this.submitLabel = 'Send';
-        this.postingLabel = 'Sending…';
+        this.title = t('comments.title');
+        this.emptyMessage = t('comments.empty');
+        this.placeholder = t('comments.placeholder');
+        this.submitLabel = t('comments.send');
+        this.postingLabel = t('comments.sending');
         this.allowCompose = true;
         this.posting = false;
         this.draft = '';
@@ -341,7 +342,7 @@ export class CommentsPanel extends LitElement {
     }
 
     authorName(comment) {
-        return comment?.author?.name || 'Unknown';
+        return comment?.author?.name || t('comments.unknownAuthor');
     }
 
     authorInitials(name) {

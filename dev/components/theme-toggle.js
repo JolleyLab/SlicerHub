@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit-element';
 import { applyTheme, initializeTheme } from './theme.js';
+import { t } from '../i18n/index.js';
 
 /**
  * Reusable light/dark theme control.
@@ -146,7 +147,7 @@ export class ThemeToggle extends LitElement {
         super();
         initializeTheme();
         this.theme = document.documentElement.getAttribute('data-theme') || 'light';
-        this.label = 'Theme';
+        this.label = t('theme.label');
         this.disabled = false;
     }
 
@@ -181,8 +182,8 @@ export class ThemeToggle extends LitElement {
             <div class="theme-toggle-row">
                 <span class="theme-label">${this.label}</span>
                 <div class="theme-toggle-control">
-                    <span class="theme-icon ${isDarkTheme ? '' : 'active'}" title="Light mode" aria-hidden="true">☀</span>
-                    <label class="switch" aria-label="Toggle theme">
+                    <span class="theme-icon ${isDarkTheme ? '' : 'active'}" title=${t('theme.light')} aria-hidden="true">☀</span>
+                    <label class="switch" aria-label=${t('theme.toggle')}>
                         <input
                             type="checkbox"
                             .checked=${isDarkTheme}
@@ -191,7 +192,7 @@ export class ThemeToggle extends LitElement {
                         >
                         <span class="slider"></span>
                     </label>
-                    <span class="theme-icon ${isDarkTheme ? 'active' : ''}" title="Dark mode" aria-hidden="true">🌙</span>
+                    <span class="theme-icon ${isDarkTheme ? 'active' : ''}" title=${t('theme.dark')} aria-hidden="true">🌙</span>
                 </div>
             </div>
         `;

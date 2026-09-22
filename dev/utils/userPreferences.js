@@ -1,4 +1,5 @@
 import { API_URL } from '../config.js';
+import { t } from '../i18n/index.js';
 import { applyTheme, getSystemColorScheme } from '../components/theme.js';
 import {
     DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS,
@@ -92,8 +93,8 @@ async function parseResponse(response) {
         data = {};
     }
     if (!response.ok) {
-        const message = data.error?.message || data.message || 'Request failed';
-        const err = new Error(typeof message === 'string' ? message : 'Request failed');
+        const message = data.error?.message || data.message || t('common.requestFailed');
+        const err = new Error(typeof message === 'string' ? message : t('common.requestFailed'));
         err.status = response.status;
         throw err;
     }

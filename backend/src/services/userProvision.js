@@ -16,6 +16,7 @@ import {
     DirectusUnavailableError
 } from './directus.js';
 import { ValidationError } from '../utils/errors.js';
+import { msg } from '../i18n/index.js';
 
 const PROVIDER = 'directus';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -27,7 +28,9 @@ function resolveMode(requestMethod) {
     if (requested === 'invite_email') return 'invite_email';
     if (requested === 'temp_password') return 'temp_password';
     throw new ValidationError(
-        `Unknown provision method "${requested}". Use temp_password or invite_email.`
+        msg('admin.provision_unknown_method', { method: requested }),
+        null,
+        'admin.provision_unknown_method'
     );
 }
 
@@ -41,7 +44,7 @@ function passwordForUser(sharedFromRequest) {
         || String(config.userProvision?.defaultTemporaryPassword || '').trim();
     if (shared) {
         if (shared.length < 8) {
-            throw new ValidationError('temporaryPassword / USER_PROVISION_DEFAULT_PASSWORD must be at least 8 characters');
+            throw new ValidationError(msg('admin.provision_password_too_short'), null, 'admin.provision_password_too_short');
         }
         return { password: shared, generated: false };
     }
@@ -66,16 +69,12 @@ export async function provisionOneUser(item, options = {}) {
     }
 
     if (!isDirectusConfigured()) {
-        throw new DirectusUnavailableError(
-            'User provision requires DIRECTUS_URL and DIRECTUS_TOKEN'
-        );
+        throw new DirectusUnavailableError(msg('admin.provision_directus_required'));
     }
 
     const roleId = String(config.directus.defaultRoleId || '').trim();
     if (!roleId) {
-        throw new ValidationError(
-            'DIRECTUS_DEFAULT_ROLE_ID is required before provisioning users'
-        );
+        throw new ValidationError(msg('admin.provision_role_required'), null, 'admin.provision_role_required');
     }
 
     const email = String(item?.email || '').trim().toLowerCase();
@@ -175,10 +174,10 @@ export async function provisionOneUser(item, options = {}) {
 export async function provisionUsersBulk(body = {}) {
     const raw = Array.isArray(body.users) ? body.users : null;
     if (!raw || raw.length === 0) {
-        throw new ValidationError('users array is required (e.g. [{ email }])');
+        throw new ValidationError(msg('admin.provision_users_required'), null, 'admin.provision_users_required');
     }
     if (raw.length > 200) {
-        throw new ValidationError('Batch size limited to 200 users');
+        throw new ValidationError(msg('admin.provision_batch_limit'), null, 'admin.provision_batch_limit');
     }
 
     const method = body.method;

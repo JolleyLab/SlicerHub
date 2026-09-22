@@ -28,6 +28,7 @@ import { clearProviderTokens, clearProviderTokensForUser } from './identityStore
 import { setDirectusLinkCookie, clearDirectusLinkCookie } from './directusLinkCookie.js';
 import { isDirectusLinkRequired } from './requireDirectusLink.js';
 import { deleteAllUserSessions } from '../middleware/authMiddleware.js';
+import { msg } from '../i18n/index.js';
 
 const PROVIDERS = {
     local: localProvider,
@@ -94,14 +95,14 @@ export async function loginWithProvider(req, res, credentials) {
     const otp = credentials?.otp != null ? String(credentials.otp) : undefined;
 
     if (!identity || !password) {
-        throw new ValidationError('Identity and password are required');
+        throw new ValidationError(msg('auth.identity_password_required'), null, 'auth.identity_password_required');
     }
 
     const providerName = getAuthProviderName();
     const provider = getAuthProvider();
 
     if (typeof provider.login !== 'function') {
-        throw new ValidationError(`Auth provider "${providerName}" cannot login`);
+        throw new ValidationError(msg('auth.provider_cannot_login', { provider: providerName }), null, 'auth.provider_cannot_login');
     }
 
     const result = await provider.login({

@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
+import { t } from '../i18n/index.js';
 
 /**
  * Desktop left-rail section menu.
@@ -134,8 +135,8 @@ export class SideMenu extends LitElement {
         super();
         initializeTheme();
         this.items = [
-            { key: 'my-projects', label: 'My Projects' },
-            { key: 'my-files', label: 'My Files' }
+            { key: 'my-projects', label: t('nav.myProjects') },
+            { key: 'my-files', label: t('nav.myFiles') }
         ];
         this.selectedKey = 'my-projects';
         this._boundHandleViewportChange = this.updateVisibleHeight.bind(this);
@@ -184,7 +185,7 @@ export class SideMenu extends LitElement {
 
     render() {
         return html`
-            <nav aria-label="Section navigation">
+            <nav aria-label=${t('nav.sectionNav')}>
                 <ul class="menu-list">
                     ${this.items.map((item) => {
                         const isSelected = item.key === this.selectedKey;

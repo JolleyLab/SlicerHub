@@ -21,6 +21,7 @@ import {
     NotFoundError,
     ConflictError
 } from '../utils/errors.js';
+import { msg } from '../i18n/index.js';
 
 function normalizeRole(role, { allowAdmin }) {
     const raw = String(role || '').trim().toLowerCase();
@@ -80,7 +81,7 @@ function insertPendingInvite({
         LIMIT 1
     `).get(String(caseId), String(inviteeDirectusUserId));
     if (existing) {
-        throw new ConflictError('That person already has a pending invite on this case');
+        throw new ConflictError(msg('case.invite_pending_exists'), null, 'case.invite_pending_exists');
     }
 
     const result = db.prepare(`
@@ -180,15 +181,15 @@ export async function inviteExistingUserToCase({
     });
 
     if (!ctx.actorCanInvite) {
-        throw new ForbiddenError('Only case admins and collaborators can invite users');
+        throw new ForbiddenError(msg('case.invite_forbidden'), null, 'case.invite_forbidden');
     }
 
     const inviteeId = String(person.id);
     if (inviteeId === String(ctx.ownerId)) {
-        throw new ValidationError('The case owner is already on this case');
+        throw new ValidationError(msg('case.owner_already_member'), null, 'case.owner_already_member');
     }
     if (ctx.existingList.some((c) => String(c.id) === inviteeId)) {
-        throw new ConflictError('That person is already on this case');
+        throw new ConflictError(msg('case.member_already_exists'), null, 'case.member_already_exists');
     }
 
     const proposedRole = normalizeRole(role, { allowAdmin: ctx.actorIsAdmin });
@@ -249,7 +250,7 @@ export async function approveCaseInvite({
 }) {
     const row = db.prepare('SELECT * FROM case_invites WHERE id = ?').get(Number(inviteId));
     if (!row || row.status !== 'pending') {
-        throw new NotFoundError('Pending invite not found');
+        throw new NotFoundError(msg('case.invite_pending_not_found'), null, 'case.invite_pending_not_found');
     }
 
     const ctx = await getCaseCollabActorContext(row.case_id, {
@@ -257,7 +258,7 @@ export async function approveCaseInvite({
         actorDirectusUserId
     });
     if (!ctx.actorIsAdmin) {
-        throw new ForbiddenError('Only case admins can approve invites');
+        throw new ForbiddenError(msg('case.invite_approve_admin_only'), null, 'case.invite_approve_admin_only');
     }
 
     const already = ctx.existingList.some(
@@ -305,7 +306,7 @@ export async function rejectCaseInvite({
 }) {
     const row = db.prepare('SELECT * FROM case_invites WHERE id = ?').get(Number(inviteId));
     if (!row || row.status !== 'pending') {
-        throw new NotFoundError('Pending invite not found');
+        throw new NotFoundError(msg('case.invite_pending_not_found'), null, 'case.invite_pending_not_found');
     }
 
     const ctx = await getCaseCollabActorContext(row.case_id, {
@@ -313,7 +314,7 @@ export async function rejectCaseInvite({
         actorDirectusUserId
     });
     if (!ctx.actorIsAdmin) {
-        throw new ForbiddenError('Only case admins can reject invites');
+        throw new ForbiddenError(msg('case.invite_reject_admin_only'), null, 'case.invite_reject_admin_only');
     }
 
     db.prepare(`

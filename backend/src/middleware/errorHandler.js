@@ -1,5 +1,6 @@
 import config from '../config/index.js';
 import { AppError } from '../utils/errors.js';
+import { msg } from '../i18n/index.js';
 
 /**
  * Centralized error handling middleware
@@ -28,13 +29,17 @@ export function errorHandler(err, req, res, next) {
     // Build error response
     const errorResponse = {
         error: {
-            message: isOperationalError ? err.message : 'Internal server error',
+            message: isOperationalError ? err.message : msg('http.internal_error'),
             status: statusCode
         }
     };
 
     if (isOperationalError && err.code) {
         errorResponse.error.code = err.code;
+    }
+
+    if (isOperationalError && err.messageKey) {
+        errorResponse.error.key = err.messageKey;
     }
 
     // In development, add more details to help debugging
@@ -53,7 +58,7 @@ export function errorHandler(err, req, res, next) {
 export function notFoundHandler(req, res, next) {
     res.status(404).json({
         error: {
-            message: `Route ${req.method} ${req.path} not found`,
+            message: msg('http.route_not_found', { method: req.method, path: req.path }),
             status: 404
         }
     });

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import storage from '../storage/index.js';
 import { ValidationError } from '../utils/errors.js';
+import { msg } from '../i18n/index.js';
 import {
     ensureSlicerGuiUserDir,
     requestFilePath,
@@ -47,7 +48,7 @@ export async function stageProjectFileForSlicerGui({
     seatId = 1
 }) {
     if (!(await storage.exists(file.file_path))) {
-        throw new ValidationError('File not found on server');
+        throw new ValidationError(msg('file.not_on_server'), null, 'file.not_on_server');
     }
 
     const safeName = path.basename(file.original_name || file.file_path);
@@ -195,12 +196,12 @@ export async function stageCachedFileForSlicerGui({
 }) {
     const src = String(sourcePath || '').trim();
     if (!src || !fs.existsSync(src)) {
-        throw new ValidationError('Cached file not found on server');
+        throw new ValidationError(msg('file.cache_not_on_server'), null, 'file.cache_not_on_server');
     }
 
     const key = String(stagedKey || '').trim();
     if (!key) {
-        throw new ValidationError('stagedKey is required');
+        throw new ValidationError(msg('file.staged_key_required'), null, 'file.staged_key_required');
     }
 
     const safeName = path.basename(fileName || src);

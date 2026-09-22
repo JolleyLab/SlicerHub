@@ -3,6 +3,7 @@
  */
 
 import { API_URL } from '../config.js';
+import { t } from '../i18n/index.js';
 import { resolveTramePageUrl } from './trameViewerUrl.js';
 
 export const VIEWER_KINDS = Object.freeze({
@@ -195,7 +196,7 @@ export function buildSlicerGuiLoaderUrl({
 
 export function viewerDisplayName(kind, { simplified = false } = {}) {
     if (kind === VIEWER_KINDS.SLICER_GUI) {
-        return simplified ? 'Simplified viewer' : 'Full Slicer';
+        return simplified ? t('viewers.simplified') : t('viewers.fullSlicer');
     }
-    return 'Trame';
+    return t('viewers.trame');
 }

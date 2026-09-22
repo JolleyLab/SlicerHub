@@ -8,6 +8,7 @@ import { prestageProjectFilesBackground } from './prestage.js';
 import { isVastFullSlicerMode } from './remoteFullSlicer.js';
 import { isBillingCancelledError, isInvalidApiKeyError } from './providers/vast/client.js';
 import { ConflictError } from '../utils/errors.js';
+import { msg } from '../i18n/index.js';
 import { formatGpuError, GPU_ERROR_SOURCES } from './errors.js';
 import { shouldAutoStopBilling, shouldStopBillingWithoutViewer } from './billingPolicy.js';
 import { probeRemoteTrameActivity } from './remoteActivity.js';
@@ -167,10 +168,10 @@ export async function reportRemoteProvisionFailure({
 export async function startBilling({ projectId, userId }) {
     const existing = activeJobs.get(projectId);
     if (existing?.type === 'destroy') {
-        throw new ConflictError('GPU billing is stopping — try again shortly');
+        throw new ConflictError(msg('gpu.billing_stopping'), null, 'gpu.billing_stopping');
     }
     if (existing?.type === 'provision') {
-        throw new ConflictError('GPU billing operation already in progress for this project');
+        throw new ConflictError(msg('gpu.billing_operation_in_progress'), null, 'gpu.billing_operation_in_progress');
     }
 
     const settings = ProjectGpu.getSettings(projectId);
@@ -184,10 +185,10 @@ export async function startBilling({ projectId, userId }) {
         return ProjectGpu.getInstance(projectId);
     }
     if (instance?.status === 'provisioning') {
-        throw new ConflictError('GPU is already provisioning');
+        throw new ConflictError(msg('gpu.already_provisioning'), null, 'gpu.already_provisioning');
     }
     if (instance?.status === 'stopping') {
-        throw new ConflictError('GPU billing is stopping — try again shortly');
+        throw new ConflictError(msg('gpu.billing_stopping'), null, 'gpu.billing_stopping');
     }
 
     const credentials = ProjectGpu.getCredentials(projectId);
