@@ -60,7 +60,10 @@ export class UserMenu extends LitElement {
                 top: calc(100% + 10px);
                 right: 0;
                 justify-content: space-around;
-                width: 220px;
+                width: max-content;
+                min-width: 220px;
+                /* Fit "Signed in as " + up to 35 name chars; longer names wrap inside this cap. */
+                max-width: min(92vw, calc(24px + 14ch + 35ch));
                 background-color: var(--color-panel, var(--color-surface, var(--color-background)));
                 border: 1px solid var(--color-border);
                 border-radius: var(--radius-lg);
@@ -121,6 +124,17 @@ export class UserMenu extends LitElement {
                 color: var(--color-text-secondary);
                 padding: 10px 12px;
                 font-weight: 300;
+                white-space: nowrap;
+            }
+
+            .menu-title strong {
+                color: var(--color-text-primary);
+                font-weight: 650;
+            }
+
+            .menu-title.is-long {
+                white-space: normal;
+                overflow-wrap: break-word;
             }
 
             hr {
@@ -134,6 +148,8 @@ export class UserMenu extends LitElement {
     static get properties() {
         return {
             username: { type: String },
+            /** Preferred label: "First Last" or email (Directus-era accounts). */
+            displayName: { type: String },
             open: { type: Boolean }
         };
     }
@@ -142,11 +158,20 @@ export class UserMenu extends LitElement {
         super();
         initializeTheme();
         this.username = 'Guest';
+        this.displayName = '';
         this.open = false;
     }
 
+    #getDisplayLabel() {
+        return String(this.displayName || this.username || '').trim() || 'Guest';
+    }
+
     #getUNFirstLetter() {
-        return this.username.charAt(0).toUpperCase();
+        const label = this.#getDisplayLabel();
+        // Prefer letter from name; for email use local-part initial.
+        const source = label.includes('@') ? label.split('@')[0] : label;
+        const ch = source.charAt(0);
+        return ch ? ch.toUpperCase() : '?';
     }
 
     toggleMenu() {
@@ -174,13 +199,15 @@ export class UserMenu extends LitElement {
     }
 
     render() {
+        const label = this.#getDisplayLabel();
+        const nameIsLong = label.length > 35;
         return html`
             <button class="user-menu-button" @click=${this.toggleMenu}>
                 ${this.#getUNFirstLetter()}
             </button>
             ${this.open ? html`
                 <div class="menu">
-                    <div class="menu-title">Signed in as ${this.username}</div>
+                    <div class="menu-title ${nameIsLong ? 'is-long' : ''}">Signed in as <strong>${label}</strong></div>
                     <hr>
                     <button class="menu-item" @click=${this.requestSettings}>Settings</button>
                     <button class="menu-item" @click=${this.requestLogout}>Log out</button>

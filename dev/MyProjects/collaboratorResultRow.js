@@ -169,7 +169,10 @@ export class CollaboratorResultRow extends LitElement {
             isAddDisabled: { type: Boolean },
             addDisabledTooltip: { type: String },
             isRoleEditable: { type: Boolean },
-            showRemoveButton: { type: Boolean }
+            showRemoveButton: { type: Boolean },
+            hideRoles: { type: Boolean },
+            /** Optional override for role dropdown options */
+            roleOptions: { type: Array }
         };
     }
 
@@ -183,6 +186,20 @@ export class CollaboratorResultRow extends LitElement {
         this.addDisabledTooltip = '';
         this.isRoleEditable = true;
         this.showRemoveButton = false;
+        this.hideRoles = false;
+        this.roleOptions = null;
+    }
+
+    get effectiveRoleOptions() {
+        if (Array.isArray(this.roleOptions) && this.roleOptions.length) {
+            return this.roleOptions;
+        }
+        return [
+            { value: '', label: 'Select role', disabled: true },
+            { value: 'admin', label: 'Admin' },
+            { value: 'collaborator', label: 'Collaborator' },
+            { value: 'observer', label: 'Observer' }
+        ];
     }
 
     handleRoleChange(event) {
@@ -195,9 +212,13 @@ export class CollaboratorResultRow extends LitElement {
     }
 
     emitAdd() {
-        if (!this.selectedRole || !this.user) return;
+        if (!this.user) return;
+        const role = this.hideRoles
+            ? (this.selectedRole || this.role || 'collaborator')
+            : this.selectedRole;
+        if (!this.hideRoles && !role) return;
         this.dispatchEvent(new CustomEvent('add-collaborator', {
-            detail: { user: this.user, role: this.selectedRole },
+            detail: { user: this.user, role },
             bubbles: true,
             composed: true
         }));
@@ -215,32 +236,32 @@ export class CollaboratorResultRow extends LitElement {
     render() {
         if (!this.user) return html``;
 
-        const firstInitial = (this.user.username || '?').charAt(0).toUpperCase();
+        const displayName = this.user.username || this.user.email || '?';
+        const firstInitial = displayName.charAt(0).toUpperCase();
         const roleValue = this.selectedRole || this.role || '';
-        const addDisabled = this.isAddDisabled || !this.selectedRole;
+        const addDisabled = this.isAddDisabled || (!this.hideRoles && !this.selectedRole);
         const addButtonTooltip = this.isAddDisabled
             ? this.addDisabledTooltip
-            : (!this.selectedRole ? 'You must assign a role' : 'Add collaborator');
+            : (!this.hideRoles && !this.selectedRole ? 'You must assign a role' : 'Add collaborator');
 
         return html`
             <div class="result-row">
                 <div class="result-user">
                     <div class="user-initial">${firstInitial}</div>
-                    <div class="user-name">${this.user.username}</div>
+                    <div class="user-name">${displayName}${this.user.email && this.user.email !== displayName
+                        ? html`<div style="font-size:0.85em;opacity:0.75;font-weight:400">${this.user.email}</div>`
+                        : ''}</div>
                 </div>
                 <div class="result-actions">
-                    <dropdown-select
-                        .value=${roleValue}
-                        .options=${[
-                            { value: '', label: 'Select role', disabled: true },
-                            { value: 'admin', label: 'Admin' },
-                            { value: 'collaborator', label: 'Collaborator' },
-                            { value: 'observer', label: 'Observer' }
-                        ]}
-                        aria-label="Assign collaborator role"
-                        ?disabled=${!this.isRoleEditable}
-                        @change=${(event) => this.handleRoleChange(event)}
-                    ></dropdown-select>
+                    ${!this.hideRoles ? html`
+                        <dropdown-select
+                            .value=${roleValue}
+                            .options=${this.effectiveRoleOptions}
+                            aria-label="Assign collaborator role"
+                            ?disabled=${!this.isRoleEditable}
+                            @change=${(event) => this.handleRoleChange(event)}
+                        ></dropdown-select>
+                    ` : ''}
                     ${this.mode === 'search' ? html`
                         <div class="add-button-wrapper ${addDisabled ? 'show-tooltip' : ''}">
                             <button

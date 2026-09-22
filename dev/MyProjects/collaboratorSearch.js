@@ -162,7 +162,14 @@ export class CollaboratorSearch extends LitElement {
             message: { type: String },
             messageType: { type: String },
             matchedUser: { type: Object },
-            addedCollaborators: { type: Array }
+            addedCollaborators: { type: Array },
+            /** Optional async (email) => user; defaults to SQLite /api/users/lookup */
+            lookupFn: { attribute: false },
+            hideRoles: { type: Boolean },
+            allowEmptyDone: { type: Boolean },
+            /** When true, members present at startSession cannot be removed or re-roled (invite-only). */
+            lockExisting: { type: Boolean },
+            roleOptions: { type: Array }
         };
     }
 
@@ -175,6 +182,12 @@ export class CollaboratorSearch extends LitElement {
         this.messageType = '';
         this.matchedUser = null;
         this.addedCollaborators = [];
+        this.lookupFn = null;
+        this.hideRoles = false;
+        this.allowEmptyDone = false;
+        this.lockExisting = false;
+        this._lockedUserIds = new Set();
+        this.roleOptions = null;
     }
 
     getRoleSortValue(role) {
@@ -194,11 +207,19 @@ export class CollaboratorSearch extends LitElement {
     }
 
     startSession(collaborators = []) {
-        this.addedCollaborators = this.sortCollaborators(collaborators.map((entry) => ({ ...entry })));
+        const seed = collaborators.map((entry) => ({ ...entry }));
+        this.addedCollaborators = this.sortCollaborators(seed);
+        this._lockedUserIds = this.lockExisting
+            ? new Set(seed.map((entry) => String(entry?.user?.id || '')).filter(Boolean))
+            : new Set();
         this.emailQuery = '';
         this.message = '';
         this.messageType = '';
         this.matchedUser = null;
+    }
+
+    isLockedUser(userId) {
+        return this.lockExisting && this._lockedUserIds.has(String(userId || ''));
     }
 
     async handleSearchSubmit(event) {
@@ -218,7 +239,10 @@ export class CollaboratorSearch extends LitElement {
         this.loading = true;
 
         try {
-            const user = await lookupUserByEmailExact(email);
+            const lookup = typeof this.lookupFn === 'function'
+                ? this.lookupFn
+                : lookupUserByEmailExact;
+            const user = await lookup(email);
             this.matchedUser = user;
         } catch (error) {
             if (error.status === 404) {
@@ -246,9 +270,19 @@ export class CollaboratorSearch extends LitElement {
             return;
         }
 
-        this.addedCollaborators = this.sortCollaborators([...this.addedCollaborators, { user, role }]);
+        const nextRole = this.hideRoles ? (role || 'collaborator') : role;
+        this.addedCollaborators = this.sortCollaborators([
+            ...this.addedCollaborators,
+            { user, role: nextRole }
+        ]);
         this.emailQuery = '';
         this.matchedUser = null;
+    }
+
+    handleRemoveSelected(event) {
+        const userId = event.detail?.user?.id;
+        if (!userId || this.isLockedUser(userId)) return;
+        this.addedCollaborators = this.addedCollaborators.filter((entry) => entry.user.id !== userId);
     }
 
     handleCancel() {
@@ -259,7 +293,7 @@ export class CollaboratorSearch extends LitElement {
     }
 
     handleDone() {
-        if (this.addedCollaborators.length === 0) return;
+        if (!this.allowEmptyDone && this.addedCollaborators.length === 0) return;
 
         this.dispatchEvent(new CustomEvent('collaborators-done', {
             detail: { collaborators: this.addedCollaborators },
@@ -270,6 +304,7 @@ export class CollaboratorSearch extends LitElement {
 
     handleSelectedCollaboratorRoleChange(event) {
         const { user, role } = event.detail;
+        if (this.isLockedUser(user?.id)) return;
         this.addedCollaborators = this.sortCollaborators(this.addedCollaborators.map((entry) => (
             entry.user.id === user.id ? { ...entry, role } : entry
         )));
@@ -308,6 +343,8 @@ export class CollaboratorSearch extends LitElement {
                         <collaborator-result-row
                             .user=${this.matchedUser}
                             mode="search"
+                            ?hideRoles=${this.hideRoles}
+                            .roleOptions=${this.roleOptions}
                             .isAddDisabled=${matchedUserAlreadyAdded}
                             addDisabledTooltip="This collaborator has already been added."
                             @add-collaborator=${(event) => this.handleAddCollaborator(event)}
@@ -317,16 +354,24 @@ export class CollaboratorSearch extends LitElement {
                 ${this.addedCollaborators.length > 0 ? html`
                     <div class="section-title">Selected Collaborators</div>
                     <div class="selected-list">
-                        ${this.addedCollaborators.map((entry) => html`
+                        ${this.addedCollaborators.map((entry) => {
+                            const locked = this.isLockedUser(entry.user?.id);
+                            return html`
                             <div class="search-result">
                                 <collaborator-result-row
                                     .user=${entry.user}
                                     mode="selected"
                                     .role=${entry.role}
+                                    ?hideRoles=${this.hideRoles}
+                                    .roleOptions=${this.roleOptions}
+                                    ?showRemoveButton=${!locked}
+                                    .isRoleEditable=${!this.hideRoles && !locked}
                                     @role-change=${(event) => this.handleSelectedCollaboratorRoleChange(event)}
+                                    @remove-collaborator=${(event) => this.handleRemoveSelected(event)}
                                 ></collaborator-result-row>
                             </div>
-                        `)}
+                        `;
+                        })}
                     </div>
                 ` : ''}
                 <div class="dialog-actions">
@@ -334,7 +379,7 @@ export class CollaboratorSearch extends LitElement {
                     <button
                         class="primary-button"
                         type="button"
-                        ?disabled=${this.addedCollaborators.length === 0}
+                        ?disabled=${!this.allowEmptyDone && this.addedCollaborators.length === 0}
                         @click=${() => this.handleDone()}
                     >
                         Done

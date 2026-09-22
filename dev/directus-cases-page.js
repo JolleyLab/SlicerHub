@@ -6,16 +6,35 @@ import './components/comments-panel.js';
 import {
     listDirectusCases,
     openDirectusAttachmentFullSlicer,
-    createDirectusCaseComment
+    createDirectusCaseComment,
+    createDirectusCase,
+    updateDirectusCase,
+    uploadDirectusCaseAttachment,
+    deleteDirectusCaseAttachment,
+    lookupDirectusUserByEmail,
+    updateDirectusCaseCollaborators,
+    inviteDirectusCaseUser,
+    listDirectusCaseInvites,
+    approveDirectusCaseInvite,
+    rejectDirectusCaseInvite,
+    invalidateNotifications,
+    friendlyCasesError
 } from './services/directus.js';
+import './components/people-dialog.js';
+import './components/list-filter-tools.js';
+import './components/attachment-open-menu.js';
 import {
     VIEWER_KINDS,
     VIEWER_RELEASE_MODES,
+    VIEWER_SESSION_SCOPES,
     defaultReleaseModeForClose,
     getViewerSessionEndpoints,
     buildViewerStopBody,
-    buildSlicerGuiLoaderUrl
+    buildSlicerGuiLoaderUrl,
+    viewerDisplayName
 } from './utils/viewerLaunch.js';
+import { getCachedLocalSlicerViewerOptions } from './utils/userPreferences.js';
+import { resolveSimplifiedViewerChoice } from './utils/localSlicerViewerOptions.js';
 import { sendTrameContainerHeartbeat } from './utils/trameHeartbeat.js';
 import { stopViewerSession } from './utils/viewerSessionLifecycle.js';
 import {
@@ -23,6 +42,30 @@ import {
     markViewerActivity,
     resetViewerActivity
 } from './utils/viewerActivity.js';
+
+const CASE_INVITE_ROLE_OPTIONS = Object.freeze([
+    Object.freeze({ value: '', label: 'Select role', disabled: true }),
+    Object.freeze({ value: 'collaborator', label: 'Collaborator' }),
+    Object.freeze({ value: 'read_only', label: 'Read only' })
+]);
+
+const LIST_SORT_OPTIONS = Object.freeze([
+    Object.freeze({
+        value: 'newest',
+        label: 'Date · newest first',
+        ariaLabel: 'Sort by date, newest first'
+    }),
+    Object.freeze({
+        value: 'oldest',
+        label: 'Date · oldest first',
+        ariaLabel: 'Sort by date, oldest first'
+    }),
+    Object.freeze({
+        value: 'title',
+        label: 'Title · A to Z',
+        ariaLabel: 'Sort by title, A to Z'
+    })
+]);
 
 function formatBytes(bytes) {
     const n = Number(bytes);
@@ -33,98 +76,248 @@ function formatBytes(bytes) {
     return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+function formatDateTime(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+const CASE_COMMENT_SEEN_STORAGE_KEY = 'slicer.caseCommentSeen.v1';
+
+function readCaseCommentSeenMap() {
+    try {
+        const raw = localStorage.getItem(CASE_COMMENT_SEEN_STORAGE_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_) {
+        return {};
+    }
+}
+
+function writeCaseCommentSeenMap(map) {
+    try {
+        localStorage.setItem(CASE_COMMENT_SEEN_STORAGE_KEY, JSON.stringify(map || {}));
+    } catch (_) {
+        /* ignore quota / private mode */
+    }
+}
+
 /**
- * PoC Cases UI styled like My Projects / Project Review.
- * Landing = case cards; detail = attachments file list (no collaborators/GPU).
+ * Cases UI: case cards landing, detail with attachments + comments + people.
  */
 export class DirectusCasesPage extends LitElement {
     static get styles() {
         return css`
+            :host {
+                display: block;
+                width: 100%;
+                min-width: 0;
+                box-sizing: border-box;
+            }
+
+            /* ─── Base ─────────────────────────────────────────────── */
             .status-note {
-                margin-top: 14px;
+                color: var(--color-text-secondary);
+                font-size: 0.9rem;
+                padding: 8px 0;
+            }
+
+            /* ─── Landing: page header ──────────────────────────────── */
+            .page-header-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 16px;
+                margin-bottom: 20px;
+                padding-bottom: 16px;
+                border-bottom: 1px solid var(--color-border);
+            }
+
+            .page-header-actions {
+                display: inline-flex;
+                align-items: center;
+                gap: 10px;
+                flex-shrink: 0;
+            }
+
+            .page-heading {
+                margin: 0;
+                font-size: 1.15rem;
+                font-weight: 650;
+                color: var(--color-text-primary);
+                letter-spacing: -0.01em;
+            }
+
+            .page-header-row .primary-button::before {
+                content: '+';
+                margin-right: 5px;
+                font-weight: 300;
+                font-size: 1.15em;
+                line-height: 1;
+            }
+
+            .page-header-row .primary-button.is-cancel::before {
+                content: none;
+            }
+
+            .cases-empty-filter {
+                margin: 0;
+                color: var(--color-text-secondary);
+                font-size: 0.9rem;
+            }
+
+            /* ─── Landing: case grid ────────────────────────────────── */
+            .case-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+                gap: 10px;
+                width: 100%;
+                min-width: 0;
+            }
+
+            .case-card {
+                position: relative;
+                border: 1px solid var(--color-border);
+                border-left: 3px solid var(--color-primary);
+                border-radius: 8px;
+                background: var(--color-surface, var(--color-background));
+                padding: 14px 16px;
+                display: flex;
+                flex-direction: column;
+                gap: 5px;
+                cursor: pointer;
+                transition: box-shadow 0.14s ease, transform 0.14s ease, border-color 0.14s ease;
+                text-align: left;
+                font: inherit;
+                color: inherit;
+                width: 100%;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+                appearance: none;
+                -webkit-appearance: none;
+            }
+
+            .case-card.is-archived {
+                border-left-color: var(--color-text-secondary);
+                opacity: 0.7;
+            }
+
+            .case-card:hover {
+                transform: translateY(-1px);
+                box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+                border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+                border-left-color: var(--color-primary);
+            }
+
+            .case-card.is-archived:hover {
+                border-left-color: var(--color-text-secondary);
+                border-color: var(--color-border);
+            }
+
+            .case-card:focus-visible {
+                outline: 2px solid var(--color-primary);
+                outline-offset: 2px;
+                box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary) 18%, transparent);
+            }
+
+            .case-card-title-row {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 10px;
+            }
+
+            .case-card-title {
+                font-size: 0.925rem;
+                font-weight: 600;
+                color: var(--color-text-primary);
+                line-height: 1.3;
+                min-width: 0;
+            }
+
+            .case-card-new-badge {
+                flex-shrink: 0;
+                display: inline-flex;
+                align-items: center;
+                font-size: 0.68rem;
+                font-weight: 700;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+                padding: 2px 7px;
+                border-radius: 4px;
+                border: 1px solid color-mix(in srgb, var(--color-secondary) 45%, var(--color-border));
+                background: color-mix(in srgb, var(--color-secondary) 16%, transparent);
+                color: var(--color-primary);
+                line-height: 1.3;
+            }
+
+            :host-context([data-theme='dark']) .case-card-new-badge {
+                border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+                background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+                color: var(--color-text-primary);
+            }
+
+            .case-card-desc {
+                font-size: 0.85rem;
+                color: var(--color-text-secondary);
+                line-height: 1.45;
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+                margin: 0;
+            }
+
+            .case-card-meta-row {
+                display: flex;
+                align-items: center;
+                gap: 0;
+                margin-top: 6px;
+                flex-wrap: wrap;
+            }
+
+            .case-card-meta-item {
+                font-size: 0.78rem;
                 color: var(--color-text-secondary);
             }
 
+            .case-card-meta-item + .case-card-meta-item::before {
+                content: '·';
+                margin: 0 5px;
+                opacity: 0.45;
+            }
+
+            /* ─── Status chip ───────────────────────────────────────── */
+            .status-chip {
+                display: inline-flex;
+                align-items: center;
+                font-size: 0.7rem;
+                font-weight: 650;
+                letter-spacing: 0.05em;
+                text-transform: uppercase;
+                padding: 2px 7px;
+                border-radius: 4px;
+                border: 1px solid var(--color-border);
+                background: color-mix(in srgb, var(--color-border) 18%, transparent);
+                color: var(--color-text-secondary);
+            }
+
+            /* ─── Detail: layout ────────────────────────────────────── */
             .case-detail {
                 display: flex;
                 flex-direction: column;
-                gap: 16px;
-                margin-top: 4px;
-            }
-
-            .case-summary {
-                display: flex;
-                flex-wrap: wrap;
-                align-items: flex-start;
-                justify-content: space-between;
-                gap: 12px 16px;
-                padding: 14px 16px;
-                border: 1px solid var(--color-border);
-                border-radius: var(--radius-lg);
-                background:
-                    linear-gradient(
-                        135deg,
-                        color-mix(in srgb, var(--color-primary) 92%, #1a2a6e),
-                        color-mix(in srgb, var(--color-secondary) 70%, #2a3a9a)
-                    );
-                color: var(--color-on-primary);
-                box-shadow: 0 4px 14px color-mix(in srgb, var(--color-primary) 22%, transparent);
-            }
-
-            :host-context([data-theme='dark']) .case-summary {
-                background:
-                    linear-gradient(
-                        135deg,
-                        color-mix(in srgb, var(--color-primary) 88%, #0c1020),
-                        color-mix(in srgb, var(--color-primary) 70%, #151c32)
-                    );
-                border-color: color-mix(in srgb, var(--color-border) 80%, var(--color-primary));
-                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-                color: var(--color-on-primary);
-            }
-
-            :host-context([data-theme='dark']) .case-summary-description {
-                color: var(--color-on-primary);
-                opacity: 0.95;
-            }
-
-            .case-summary-main {
-                display: flex;
-                flex-direction: column;
-                gap: 6px;
+                gap: 18px;
+                width: 100%;
                 min-width: 0;
-                flex: 1;
-            }
-
-            .case-summary-label {
-                font-size: 0.98rem;
-                font-weight: 650;
-                letter-spacing: 0.01em;
-            }
-
-            .case-summary-description {
-                margin: 0;
-                font-size: 0.98rem;
-                line-height: 1.45;
-                opacity: 0.92;
-            }
-
-            .case-summary .status-badge {
-                align-self: flex-start;
-                font-size: 0.78rem;
-                font-weight: 650;
-                color: var(--color-on-primary);
-                border: 1px solid color-mix(in srgb, var(--color-on-primary) 35%, transparent);
-                border-radius: var(--radius-md);
-                padding: 4px 10px;
-                background: color-mix(in srgb, #000 22%, transparent);
-                text-transform: capitalize;
-            }
-
-            :host-context([data-theme='light']) .case-summary .status-badge {
-                color: var(--color-text-primary);
-                background: var(--color-accent);
-                border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
+                max-width: 100%;
+                box-sizing: border-box;
             }
 
             .case-detail-grid {
@@ -132,263 +325,580 @@ export class DirectusCasesPage extends LitElement {
                 grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
                 gap: 16px;
                 align-items: stretch;
+                width: 100%;
+                min-width: 0;
+                /* Shared pane height: both panels fill and scroll internally. */
+                height: min(560px, 60vh);
+                min-height: 380px;
+            }
+
+            .case-detail-grid .files-panel {
+                order: 1;
+                min-width: 0;
+                min-height: 0;
+                height: 100%;
+                max-height: 100%;
             }
 
             .case-detail-grid comments-panel {
                 --comments-panel-height: 100%;
-                --comments-panel-max-height: none;
-                min-height: 360px;
+                --comments-panel-max-height: 100%;
+                min-height: 0;
+                height: 100%;
+                order: 2;
+                min-width: 0;
             }
 
-            @media (max-width: 980px) {
+            /* Stacked when content column is narrow (tablet / DevTools), set via ResizeObserver */
+            .case-detail[data-stack] .case-detail-grid {
+                grid-template-columns: 1fr;
+                align-items: start;
+                height: auto;
+                min-height: 0;
+            }
+
+            .case-detail[data-stack] .case-detail-grid .files-panel {
+                height: auto;
+                max-height: none;
+                min-height: 0;
+                width: 100%;
+            }
+
+            .case-detail[data-stack] .case-detail-grid comments-panel {
+                --comments-panel-height: auto;
+                --comments-panel-max-height: min(420px, 55vh);
+                height: auto;
+                min-height: 260px;
+                width: 100%;
+            }
+
+            @media (max-width: 1100px) {
                 .case-detail-grid {
                     grid-template-columns: 1fr;
+                    align-items: start;
+                    height: auto;
+                    min-height: 0;
+                }
+
+                .case-detail-grid .files-panel {
+                    height: auto;
+                    max-height: none;
+                    min-height: 0;
+                    width: 100%;
                 }
 
                 .case-detail-grid comments-panel {
                     --comments-panel-height: auto;
-                    --comments-panel-max-height: 560px;
+                    --comments-panel-max-height: min(420px, 55vh);
+                    height: auto;
+                    min-height: 260px;
+                    width: 100%;
                 }
             }
 
-            .case-grid {
-                margin-top: 16px;
-                display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-                gap: 14px;
-                padding: 2px;
+            /* ─── Detail: toolbar + header ──────────────────────────── */
+            .detail-toolbar {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                flex-wrap: wrap;
             }
 
-            .case-card {
-                border: 1px solid var(--color-border);
-                border-radius: var(--radius-lg);
-                background: var(--color-panel, var(--color-surface, var(--color-background)));
-                padding: 14px;
+            .back-link {
+                border: none;
+                background: transparent;
+                padding: 4px 0;
+                margin: 0;
+                font: inherit;
+                font-size: 0.875rem;
+                font-weight: 600;
+                color: var(--color-secondary);
+                cursor: pointer;
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+            }
+
+            .back-link:hover,
+            .back-link:focus-visible {
+                color: var(--color-primary);
+            }
+
+            .back-link:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
+                border-radius: 4px;
+            }
+
+            .detail-toolbar-actions {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: wrap;
+            }
+
+            .detail-header {
                 display: flex;
                 flex-direction: column;
                 gap: 8px;
-                cursor: pointer;
-                transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
-                text-align: left;
-                font: inherit;
-                color: inherit;
-                width: 100%;
-                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-                appearance: none;
-                -webkit-appearance: none;
-            }
-
-            .case-card:hover {
-                box-shadow: 0 6px 14px var(--color-shadow, rgba(0, 0, 0, 0.12));
-                transform: translateY(-1px);
-                border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
-            }
-
-            .case-card:focus-visible {
-                outline: 3px solid var(--color-focus, #0057c2);
-                outline-offset: 2px;
-                border-color: var(--color-focus, #0057c2);
-                box-shadow: var(--focus-ring-shadow, 0 0 0 2px #fff, 0 0 0 5px #0057c2);
-                transform: translateY(-1px);
-            }
-
-            :host-context([data-theme='dark']) .case-card {
-                background: var(--color-panel);
-                border-color: var(--color-border);
-                box-shadow: 0 3px 14px rgba(0, 0, 0, 0.32);
-            }
-
-            :host-context([data-theme='dark']) .case-card:hover {
-                border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
-                background: color-mix(in srgb, var(--color-primary) 8%, var(--color-panel));
-                box-shadow: 0 6px 16px rgba(0, 0, 0, 0.38);
-            }
-
-            :host-context([data-theme='dark']) .case-card:focus-visible {
-                outline: 3px solid var(--color-focus, #8fa3d4);
-                outline-offset: 2px;
-                border-color: var(--color-focus, #8fa3d4);
-                box-shadow:
-                    0 0 0 3px var(--color-focus, #8fa3d4),
-                    0 6px 14px rgba(0, 0, 0, 0.32);
-            }
-
-            .case-name {
-                color: var(--color-text-primary);
-                font-weight: 600;
-            }
-
-            .case-meta {
-                color: var(--color-text-secondary);
-                font-size: 0.92rem;
-            }
-
-            .status-badge {
-                align-self: flex-start;
-                font-size: 0.78rem;
-                color: var(--color-text-secondary);
-                border: 1px solid var(--color-border);
-                border-radius: var(--radius-md);
-                padding: 3px 8px;
-                background: color-mix(in srgb, var(--color-primary) 10%, transparent);
-                text-transform: capitalize;
-            }
-
-            :host-context([data-theme='dark']) .status-badge {
-                color: var(--color-on-secondary);
-                background: var(--color-secondary);
-                border-color: color-mix(in srgb, var(--color-secondary) 70%, #fff);
-                font-weight: 650;
-            }
-
-            .files-panel {
+                padding: 14px 16px 16px;
                 border: 1px solid var(--color-border);
                 border-radius: var(--radius-lg);
-                background: var(--color-panel, var(--color-surface, var(--color-background)));
-                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-                padding: 0;
-                overflow: hidden;
+                background: var(--color-panel, #fff);
+                box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+                border-left: 4px solid var(--color-primary);
+            }
+
+            .detail-title-row {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+
+            .detail-title {
+                margin: 0;
+                font-size: 1.4rem;
+                font-weight: 700;
+                color: var(--color-primary);
+                letter-spacing: -0.02em;
+                line-height: 1.25;
+            }
+
+            .detail-desc {
+                margin: 0;
+                font-size: 0.95rem;
+                color: var(--color-text-secondary);
+                line-height: 1.55;
+                max-width: 46rem;
+            }
+
+            .quiet-button {
+                border: 1px solid var(--color-border);
+                border-radius: 6px;
+                padding: 6px 12px;
+                font: inherit;
+                font-size: 0.8rem;
+                font-weight: 600;
+                background: var(--color-panel, #fff);
+                color: var(--color-text-primary);
+                cursor: pointer;
+            }
+
+            .quiet-button:hover:not(:disabled),
+            .quiet-button:focus-visible {
+                color: var(--color-on-secondary);
+                background: var(--color-secondary);
+                border-color: var(--color-secondary);
+            }
+
+            .quiet-button:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
+            }
+
+            .quiet-button:disabled {
+                opacity: 0.55;
+                cursor: not-allowed;
+            }
+
+            /* ─── Detail: files panel ───────────────────────────────── */
+            .files-panel {
+                border: 1px solid var(--color-border);
+                border-left: 4px solid var(--color-primary);
+                border-radius: var(--radius-lg);
+                background: var(--color-panel, #fff);
                 display: flex;
                 flex-direction: column;
                 min-height: 360px;
+                overflow: hidden;
+                box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
             }
 
-            :host-context([data-theme='dark']) .files-panel {
-                border-color: var(--color-border);
-                box-shadow: 0 3px 14px rgba(0, 0, 0, 0.32);
+            .panel-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                min-height: 44px;
+                padding: 0 16px;
+                border-bottom: 1px solid var(--color-border);
+                background: var(--color-panel, #fff);
+                box-sizing: border-box;
+                flex-shrink: 0;
             }
 
-            .files-title {
+            .panel-header-start {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                min-width: 0;
+            }
+
+            .panel-title {
                 margin: 0;
-                font-weight: 650;
-                font-size: 0.98rem;
-                color: var(--color-on-primary);
-                padding: 12px 14px;
-                background: var(--color-primary);
-                letter-spacing: 0.01em;
+                font-size: 0.72rem;
+                font-weight: 700;
+                letter-spacing: 0.07em;
+                text-transform: uppercase;
+                color: var(--color-text-secondary);
             }
 
-            :host-context([data-theme='dark']) .files-title {
-                background: color-mix(in srgb, var(--color-primary) 82%, #0c1020);
-                color: var(--color-on-primary);
-                border-bottom: 1px solid color-mix(in srgb, var(--color-border) 70%, var(--color-primary));
+            .panel-count {
+                font-size: 0.72rem;
+                font-weight: 650;
+                color: var(--color-text-secondary);
+                background: color-mix(in srgb, var(--color-border) 16%, transparent);
+                border: 1px solid var(--color-border);
+                border-radius: 999px;
+                padding: 2px 8px;
+                line-height: 1.3;
             }
 
             .files-body {
-                padding: 12px 14px 14px;
+                padding: 12px 16px;
                 display: flex;
                 flex-direction: column;
-                gap: 10px;
+                gap: 8px;
                 flex: 1;
+                min-height: 0;
+                overflow: hidden;
+                background: color-mix(in srgb, var(--color-background) 55%, var(--color-panel, #fff));
             }
 
             .file-list {
                 display: flex;
                 flex-direction: column;
-                gap: 8px;
+                gap: 6px;
+                flex: 1;
+                min-height: 0;
+                overflow-y: auto;
+            }
+
+            .files-panel file-list-row {
+                --file-row-accent: var(--color-primary);
             }
 
             .empty-note {
                 color: var(--color-text-secondary);
-                font-size: 0.95rem;
+                font-size: 0.875rem;
+                font-style: italic;
             }
 
-            :host-context([data-theme='dark']) .empty-note,
-            :host-context([data-theme='dark']) .status-note {
+            /* ─── File upload ───────────────────────────────────────── */
+            .upload-action-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                min-height: 56px;
+                margin: 0 -16px -12px;
+                padding: 10px 16px;
+                border-top: 1px solid var(--color-border);
+                background: var(--color-panel, #fff);
+                box-sizing: border-box;
+                flex-shrink: 0;
+            }
+
+            .upload-action-row .secondary-button {
+                min-height: 36px;
+            }
+
+            .upload-status {
+                color: var(--color-text-secondary);
+                font-size: 0.85rem;
+                flex: 1;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .upload-error {
+                color: #c62828;
+                font-size: 0.85rem;
+                flex: 1;
+            }
+
+            /* ─── New Case form ─────────────────────────────────────── */
+            .new-case-form {
+                border: 1px solid var(--color-border);
+                border-radius: 8px;
+                background: var(--color-surface, var(--color-background));
+                padding: 18px 20px 16px;
+                display: flex;
+                flex-direction: column;
+                gap: 14px;
+            }
+
+            .form-group {
+                display: flex;
+                flex-direction: column;
+                gap: 5px;
+            }
+
+            .form-label {
+                font-size: 0.72rem;
+                font-weight: 650;
+                letter-spacing: 0.06em;
+                text-transform: uppercase;
                 color: var(--color-text-secondary);
             }
 
-            :host-context([data-theme='dark']) .secondary-button {
-                background: transparent;
-                border-color: var(--color-border);
+            .form-input,
+            .form-textarea {
+                border: 1px solid var(--color-border);
+                border-radius: 6px;
+                padding: 9px 12px;
+                font: inherit;
+                font-size: 0.925rem;
+                background: var(--color-background);
+                color: var(--color-text-primary);
+                width: 100%;
+                box-sizing: border-box;
+                transition: border-color 0.14s, box-shadow 0.14s;
             }
 
-            :host-context([data-theme='dark']) .secondary-button:hover:not(:disabled) {
-                background: color-mix(in srgb, var(--color-primary) 12%, var(--color-panel));
-                border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
+            .form-input:focus,
+            .form-textarea:focus {
+                outline: none;
+                border-color: var(--color-primary);
+                box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 16%, transparent);
             }
 
-            :host-context([data-theme='dark']) .primary-button {
-                background: var(--color-primary);
-                color: var(--color-on-primary);
-                border-color: color-mix(in srgb, var(--color-primary) 70%, var(--color-border));
+            .form-textarea {
+                resize: vertical;
+                min-height: 76px;
             }
 
-            :host-context([data-theme='dark']) .primary-button:hover:not(:disabled) {
-                background: color-mix(in srgb, var(--color-primary) 78%, var(--color-secondary));
+            .form-error-msg {
+                color: #c62828;
+                font-size: 0.875rem;
             }
 
-            .section-actions {
+            .form-actions {
                 display: flex;
                 justify-content: flex-end;
-                gap: 12px;
-                padding: 2px 0;
+                align-items: center;
+                gap: 8px;
+                padding-top: 6px;
+                border-top: 1px solid var(--color-border);
             }
 
-            .secondary-button,
-            .primary-button {
-                border: 1px solid var(--color-border);
-                border-radius: var(--radius-md);
-                min-height: 40px;
-                padding: 8px 14px;
+            .form-actions-spacer {
+                margin-right: auto;
+            }
+
+            /* ─── Buttons ───────────────────────────────────────────── */
+            .primary-button,
+            .secondary-button {
+                border-radius: 6px;
+                padding: 8px 18px;
                 font: inherit;
+                font-size: 0.875rem;
                 font-weight: 600;
                 cursor: pointer;
-            }
-
-            .secondary-button {
-                background: var(--color-surface, transparent);
-                color: var(--color-text-primary);
-            }
-
-            .secondary-button:hover:not(:disabled) {
-                border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
-                background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface, var(--color-background)));
-            }
-
-            .secondary-button:focus-visible,
-            .primary-button:focus-visible {
-                outline: 3px solid var(--color-focus, #0057c2);
-                outline-offset: 2px;
-                box-shadow: var(--focus-ring-shadow, 0 0 0 2px #fff, 0 0 0 5px #0057c2);
+                transition: opacity 0.14s, box-shadow 0.14s, background 0.14s;
+                display: inline-flex;
+                align-items: center;
+                line-height: 1.2;
+                white-space: nowrap;
             }
 
             .primary-button {
                 background: var(--color-primary);
                 color: var(--color-on-primary);
+                border: 1px solid transparent;
             }
 
             .primary-button:hover:not(:disabled) {
-                background: color-mix(in srgb, var(--color-primary) 78%, #5b7cff);
+                opacity: 0.87;
+                box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 32%, transparent);
+            }
+
+            .secondary-button {
+                background: transparent;
+                color: var(--color-text-primary);
+                border: 1px solid var(--color-border);
+            }
+
+            .secondary-button:hover:not(:disabled) {
+                background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface, var(--color-background)));
+                border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+            }
+
+            .primary-button:focus-visible,
+            .secondary-button:focus-visible {
+                outline: 2px solid var(--color-primary);
+                outline-offset: 2px;
             }
 
             .primary-button:disabled,
             .secondary-button:disabled {
-                opacity: 0.6;
+                opacity: 0.42;
                 cursor: not-allowed;
             }
 
-            .form-error {
-                margin-top: 12px;
-                color: #c62828;
+            /* ─── Dark mode overrides ──────────────────────────────── */
+
+            /* Cards: lift them above the page background using --color-panel */
+            :host-context([data-theme='dark']) .case-card {
+                background: var(--color-panel);
+                border-left-color: var(--color-accent);
             }
 
-            file-list-row .file-action-icon {
-                width: 16px;
-                height: 16px;
-                display: block;
+            :host-context([data-theme='dark']) .case-card.is-archived {
+                border-left-color: var(--color-text-secondary);
+                opacity: 0.55;
             }
 
+            :host-context([data-theme='dark']) .case-card:hover {
+                background: color-mix(in srgb, var(--color-panel) 80%, var(--color-accent));
+                border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+                border-left-color: var(--color-accent);
+            }
+
+            /* Panels: lift above page background */
+            :host-context([data-theme='dark']) .files-panel,
+            :host-context([data-theme='dark']) .new-case-form,
+            :host-context([data-theme='dark']) .detail-header {
+                background: var(--color-panel);
+                border-color: var(--color-border);
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+            }
+
+            :host-context([data-theme='dark']) .detail-header {
+                border-left-color: var(--color-accent);
+            }
+
+            :host-context([data-theme='dark']) .detail-title {
+                color: var(--color-text-primary);
+            }
+
+            :host-context([data-theme='dark']) .panel-header {
+                background: var(--color-panel);
+                border-bottom-color: var(--color-border);
+            }
+
+            :host-context([data-theme='dark']) .files-panel {
+                border-left-color: var(--color-accent);
+            }
+
+            :host-context([data-theme='dark']) .panel-title,
+            :host-context([data-theme='dark']) .panel-count {
+                color: var(--color-text-secondary);
+            }
+
+            :host-context([data-theme='dark']) .panel-count {
+                background: color-mix(in srgb, var(--color-border) 40%, transparent);
+                border-color: var(--color-border);
+            }
+
+            :host-context([data-theme='dark']) .files-body {
+                background: var(--color-background);
+            }
+
+            :host-context([data-theme='dark']) .upload-action-row {
+                background: var(--color-panel);
+                border-top-color: var(--color-border);
+            }
+
+            :host-context([data-theme='dark']) .quiet-button {
+                color: var(--color-text-primary);
+                border-color: var(--color-border);
+                background: var(--color-panel);
+            }
+
+            :host-context([data-theme='dark']) .quiet-button:hover:not(:disabled),
+            :host-context([data-theme='dark']) .quiet-button:focus-visible {
+                color: var(--color-on-secondary);
+                background: var(--color-accent);
+                border-color: var(--color-accent);
+            }
+
+            :host-context([data-theme='dark']) .back-link {
+                color: var(--color-accent);
+            }
+
+            :host-context([data-theme='dark']) .back-link:hover,
+            :host-context([data-theme='dark']) .back-link:focus-visible {
+                color: var(--color-text-primary);
+            }
+
+            /* Inputs: sunken below the panel surface for legibility */
+            :host-context([data-theme='dark']) .form-input,
+            :host-context([data-theme='dark']) .form-textarea {
+                background: var(--color-background);
+                border-color: color-mix(in srgb, var(--color-border) 140%, transparent);
+                color: var(--color-text-primary);
+            }
+
+            :host-context([data-theme='dark']) .form-input:focus,
+            :host-context([data-theme='dark']) .form-textarea:focus {
+                border-color: var(--color-accent);
+                box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent);
+            }
+
+            /* Primary button: use the brighter accent so it doesn't vanish */
+            :host-context([data-theme='dark']) .primary-button {
+                background: var(--color-secondary);
+                color: var(--color-on-primary);
+            }
+
+            :host-context([data-theme='dark']) .primary-button:hover:not(:disabled) {
+                opacity: 0.85;
+                box-shadow: 0 2px 10px color-mix(in srgb, var(--color-accent) 30%, transparent);
+            }
+
+            /* Secondary button: visible ghost on dark panel */
+            :host-context([data-theme='dark']) .secondary-button {
+                color: var(--color-text-primary);
+                border-color: var(--color-border);
+            }
+
+            :host-context([data-theme='dark']) .secondary-button:hover:not(:disabled) {
+                background: color-mix(in srgb, var(--color-accent) 10%, var(--color-panel));
+                border-color: color-mix(in srgb, var(--color-accent) 50%, var(--color-border));
+            }
+
+            /* Status chip */
+            :host-context([data-theme='dark']) .status-chip {
+                border-color: var(--color-border);
+                background: color-mix(in srgb, var(--color-border) 35%, transparent);
+                color: var(--color-text-secondary);
+            }
+
+            /* Detail header separator */
+            :host-context([data-theme='dark']) .detail-header {
+                border-bottom-color: var(--color-border);
+            }
+
+            /* Page header separator */
+            :host-context([data-theme='dark']) .page-header-row {
+                border-bottom-color: var(--color-border);
+            }
+
+            /* Upload row separator */
+            :host-context([data-theme='dark']) .upload-action-row {
+                border-top-color: var(--color-border);
+            }
+
+            /* Form actions separator */
+            :host-context([data-theme='dark']) .form-actions {
+                border-top-color: var(--color-border);
+            }
+
+            /* ─── Viewer overlay (edge-to-edge; header is the only chrome) ── */
             .iframe-overlay {
                 position: fixed;
                 inset: 0;
                 z-index: 1000;
                 display: flex;
                 flex-direction: column;
-                gap: 12px;
-                padding: 16px;
+                gap: 0;
+                padding: 0;
                 box-sizing: border-box;
-                background: var(--color-background);
+                background: #090b14;
                 color: var(--color-text-primary);
                 font-family: var(--font-family-base);
                 font-feature-settings: var(--font-feature-defaults);
@@ -400,21 +910,23 @@ export class DirectusCasesPage extends LitElement {
                 align-items: center;
                 gap: 16px;
                 flex-shrink: 0;
-                padding: 12px 16px;
-                border: 1px solid var(--color-border);
-                border-radius: var(--radius-lg);
-                background: var(--color-primary);
-                color: var(--color-on-primary);
-                box-shadow: 0 6px 18px var(--color-shadow, rgba(0, 0, 0, 0.08));
+                padding: 10px 14px;
+                border: none;
+                border-bottom: 1px solid var(--color-border);
+                border-radius: 0;
+                background: var(--color-surface, var(--color-background));
+                color: var(--color-text-primary);
+                box-shadow: none;
             }
 
             .iframe-title {
                 min-width: 0;
-                font-size: 1rem;
+                font-size: 0.925rem;
                 font-weight: 600;
                 overflow: hidden;
                 text-overflow: ellipsis;
                 white-space: nowrap;
+                color: var(--color-text-primary);
             }
 
             .iframe-header-actions {
@@ -424,44 +936,23 @@ export class DirectusCasesPage extends LitElement {
                 align-items: center;
             }
 
-            .iframe-header .primary-button {
-                background: var(--color-secondary);
-                color: var(--color-on-secondary);
-                border-color: color-mix(in srgb, var(--color-secondary) 70%, var(--color-border));
-            }
-
-            .iframe-header .primary-button:hover:not(:disabled) {
-                background: color-mix(in srgb, var(--color-secondary) 82%, #fff);
-                color: var(--color-on-secondary);
-            }
-
-            :host-context([data-theme='light']) .iframe-header .primary-button {
-                background: var(--color-background);
-                color: var(--color-primary);
-                border-color: var(--color-border);
-            }
-
-            :host-context([data-theme='light']) .iframe-header .primary-button:hover:not(:disabled) {
-                background: var(--color-accent);
-                color: var(--color-text-primary);
-            }
-
             .iframe-container {
                 flex: 1;
                 display: flex;
                 position: relative;
                 min-height: 0;
                 overflow: hidden;
-                border: 1px solid var(--color-border);
-                border-radius: var(--radius-lg);
-                background: var(--color-surface, var(--color-background));
+                border: none;
+                border-radius: 0;
+                background: #090b14;
             }
 
             .trame-iframe {
+                flex: 1;
                 width: 100%;
                 height: 100%;
                 border: 0;
-                background: #000;
+                background: #090b14;
             }
 
             .loading-overlay {
@@ -477,6 +968,8 @@ export class DirectusCasesPage extends LitElement {
             .viewer-loading {
                 text-align: center;
                 padding: 16px;
+                color: var(--color-text-secondary);
+                font-size: 0.9rem;
             }
         `;
     }
@@ -487,6 +980,8 @@ export class DirectusCasesPage extends LitElement {
             loading: { type: Boolean },
             errorMessage: { type: String },
             cases: { type: Array },
+            sessionMeta: { type: Object },
+            savingCollaborators: { type: Boolean },
             selectedCaseId: { type: String },
             openingAttachmentId: { type: String },
             postingComment: { type: Boolean },
@@ -494,7 +989,34 @@ export class DirectusCasesPage extends LitElement {
             iframeUrl: { type: String },
             viewerLoading: { type: Boolean },
             viewerLoadingDetail: { type: String },
-            currentFileName: { type: String }
+            viewerSimplified: { type: Boolean },
+            currentFileName: { type: String },
+            // New Case form
+            showNewCaseForm: { type: Boolean },
+            newCaseTitle: { type: String },
+            newCaseDescription: { type: String },
+            creatingCase: { type: Boolean },
+            newCaseError: { type: String },
+            // Archive
+            archivingCase: { type: Boolean },
+            // Inline case edit
+            editingCase: { type: Boolean },
+            editCaseTitle: { type: String },
+            editCaseDesc: { type: String },
+            savingCaseEdit: { type: Boolean },
+            caseEditError: { type: String },
+            // File upload
+            uploadingFile: { type: Boolean },
+            uploadError: { type: String },
+            uploadStatusText: { type: String },
+            // Attachment delete
+            deletingAttachmentId: { type: String },
+            // Attachment sort / search
+            attachmentSortOrder: { type: String },
+            attachmentSearchQuery: { type: String },
+            // Cases list sort / search
+            caseSortOrder: { type: String },
+            caseSearchQuery: { type: String }
         };
     }
 
@@ -504,6 +1026,8 @@ export class DirectusCasesPage extends LitElement {
         this.loading = false;
         this.errorMessage = '';
         this.cases = [];
+        this.sessionMeta = null;
+        this.savingCollaborators = false;
         this.selectedCaseId = '';
         this.openingAttachmentId = '';
         this.postingComment = false;
@@ -511,25 +1035,106 @@ export class DirectusCasesPage extends LitElement {
         this.iframeUrl = '';
         this.viewerLoading = false;
         this.viewerLoadingDetail = '';
+        this.viewerSimplified = false;
         this.currentFileName = '';
         this._viewerSessionToken = null;
         this._viewerSeatId = null;
         this._heartbeatInterval = null;
         this._handleBeforeUnload = null;
+        this._popStateHandler = null;
+        this._viewerPushedState = false;
+        this._detailLayoutRo = null;
+        this._detailLayoutEl = null;
+        // New Case form
+        this.showNewCaseForm = false;
+        this.newCaseTitle = '';
+        this.newCaseDescription = '';
+        this.creatingCase = false;
+        this.newCaseError = '';
+        // Archive
+        this.archivingCase = false;
+        // Inline case edit
+        this.editingCase = false;
+        this.editCaseTitle = '';
+        this.editCaseDesc = '';
+        this.savingCaseEdit = false;
+        this.caseEditError = '';
+        // File upload
+        this.uploadingFile = false;
+        this.uploadError = '';
+        this.uploadStatusText = '';
+        // Attachment delete
+        this.deletingAttachmentId = '';
+        // Attachment sort / search
+        this.attachmentSortOrder = 'newest';
+        this.attachmentSearchQuery = '';
+        // Cases list sort / search
+        this.caseSortOrder = 'newest';
+        this.caseSearchQuery = '';
     }
 
     get selectedCase() {
         return this.cases.find((row) => row.id === this.selectedCaseId) || null;
     }
 
+    // ── URL / history helpers ──────────────────────────────────────────────
+    _getCaseIdFromUrl() {
+        return new URLSearchParams(location.search).get('case') || '';
+    }
+
+    _buildCaseUrl(caseId) {
+        const url = new URL(location.href);
+        if (caseId) {
+            url.searchParams.set('case', caseId);
+        } else {
+            url.searchParams.delete('case');
+        }
+        url.searchParams.delete('viewer');
+        return url.toString();
+    }
+
+    _buildViewerUrl() {
+        const url = new URL(location.href);
+        url.searchParams.set('case', this.selectedCaseId);
+        url.searchParams.set('viewer', '1');
+        return url.toString();
+    }
+
+    _handlePopState(event) {
+        const newHasViewer = event.state?.viewer === true
+            || new URLSearchParams(location.search).has('viewer');
+
+        // If the viewer was open and we've navigated away from it, close it cleanly.
+        // _doCloseViewer handles the stop request; history has already moved.
+        if (this.showIframe && !newHasViewer) {
+            this._viewerPushedState = false;
+            this._doCloseViewer();
+        }
+
+        const caseId = event.state?.caseId ?? this._getCaseIdFromUrl();
+        this.selectedCaseId = caseId || '';
+        this.errorMessage = '';
+    }
+
     connectedCallback() {
         super.connectedCallback();
         installViewerActivityListeners();
+
+        // Restore case from URL; strip ?viewer — the container is gone after a reload
+        const initialCaseId = this._getCaseIdFromUrl();
+        if (initialCaseId) this.selectedCaseId = initialCaseId;
+        if (new URLSearchParams(location.search).has('viewer')) {
+            history.replaceState({ caseId: initialCaseId }, '', this._buildCaseUrl(initialCaseId));
+        }
+
+        this._popStateHandler = (e) => this._handlePopState(e);
+        window.addEventListener('popstate', this._popStateHandler);
+
         this._handleBeforeUnload = () => {
             if (!this.showIframe || !this._viewerSessionToken) return;
             const { stopUrl } = getViewerSessionEndpoints({
                 kind: VIEWER_KINDS.SLICER_GUI,
-                sessionScope: 'directus'
+                sessionScope: VIEWER_SESSION_SCOPES.DIRECTUS
             });
             stopViewerSession({
                 stopUrl,
@@ -550,8 +1155,60 @@ export class DirectusCasesPage extends LitElement {
     disconnectedCallback() {
         window.removeEventListener('beforeunload', this._handleBeforeUnload);
         this._handleBeforeUnload = null;
-        this.stopHeartbeat();
+        if (this._popStateHandler) {
+            window.removeEventListener('popstate', this._popStateHandler);
+            this._popStateHandler = null;
+        }
+        this.closeListFilterMenus();
+        this.teardownDetailLayoutObserver();
+        // Stop the container if the user navigates away via the side menu
+        if (this.showIframe && this._viewerSessionToken) {
+            this._doCloseViewer(); // fire-and-forget
+        } else {
+            this.stopHeartbeat();
+        }
         super.disconnectedCallback();
+    }
+
+    updated(changed) {
+        if (changed.has('selectedCaseId') || this.selectedCaseId) {
+            this.syncDetailLayoutObserver();
+        }
+    }
+
+    /** Stack attachments/comments when the case content column is tablet-narrow. */
+    syncDetailLayoutObserver() {
+        const el = this.renderRoot?.querySelector('.case-detail');
+        if (!el) {
+            this.teardownDetailLayoutObserver();
+            return;
+        }
+        if (this._detailLayoutEl === el && this._detailLayoutRo) {
+            this.applyDetailStackState(el);
+            return;
+        }
+        this.teardownDetailLayoutObserver();
+        this._detailLayoutEl = el;
+        this._detailLayoutRo = new ResizeObserver((entries) => {
+            const entry = entries[0];
+            const width = entry?.contentRect?.width ?? el.getBoundingClientRect().width;
+            el.toggleAttribute('data-stack', width > 0 && width < 720);
+        });
+        this._detailLayoutRo.observe(el);
+        this.applyDetailStackState(el);
+    }
+
+    applyDetailStackState(el) {
+        const width = el.getBoundingClientRect().width;
+        el.toggleAttribute('data-stack', width > 0 && width < 720);
+    }
+
+    teardownDetailLayoutObserver() {
+        if (this._detailLayoutRo) {
+            this._detailLayoutRo.disconnect();
+            this._detailLayoutRo = null;
+        }
+        this._detailLayoutEl = null;
     }
 
     handleMenuSelectionChange(event) {
@@ -562,6 +1219,10 @@ export class DirectusCasesPage extends LitElement {
         }));
     }
 
+    userFacingError(err, fallback) {
+        return friendlyCasesError(err?.message, fallback, err?.status, err?.code);
+    }
+
     async loadCases() {
         this.loading = true;
         this.errorMessage = '';
@@ -569,12 +1230,17 @@ export class DirectusCasesPage extends LitElement {
         try {
             const data = await listDirectusCases({ limit: 50 });
             this.cases = Array.isArray(data.cases) ? data.cases : [];
+            this.sessionMeta = data.meta || null;
             if (keepSelected && !this.cases.some((row) => row.id === keepSelected)) {
                 this.selectedCaseId = '';
+            } else if (keepSelected) {
+                const openRow = this.cases.find((row) => row.id === keepSelected);
+                if (openRow) this.markCaseCommentsSeen(openRow);
             }
         } catch (err) {
             this.cases = [];
-            this.errorMessage = err.message || 'Failed to load cases';
+            this.sessionMeta = null;
+            this.errorMessage = this.userFacingError(err, "Couldn't load cases. Please try again.");
         } finally {
             this.loading = false;
         }
@@ -583,33 +1249,521 @@ export class DirectusCasesPage extends LitElement {
     openCase(caseId) {
         this.selectedCaseId = caseId;
         this.errorMessage = '';
+        const caseRow = this.cases.find((row) => row.id === caseId);
+        if (caseRow) this.markCaseCommentsSeen(caseRow);
+        history.pushState({ caseId }, '', this._buildCaseUrl(caseId));
+    }
+
+    caseLastModifiedAt(caseRow) {
+        const times = [];
+        const pushTime = (value) => {
+            const ms = Date.parse(value || '');
+            if (Number.isFinite(ms)) times.push(ms);
+        };
+        pushTime(caseRow?.updatedAt);
+        pushTime(caseRow?.createdAt);
+        for (const comment of caseRow?.comments || []) {
+            pushTime(comment?.updatedAt || comment?.createdAt);
+        }
+        for (const attachment of caseRow?.attachments || []) {
+            pushTime(attachment?.modifiedAt);
+        }
+        if (!times.length) return null;
+        return new Date(Math.max(...times)).toISOString();
+    }
+
+    caseLastModifiedLabel(caseRow) {
+        const at = this.caseLastModifiedAt(caseRow);
+        const formatted = formatDateTime(at);
+        if (!formatted) return '';
+
+        const hasNestedActivity = (caseRow?.comments?.length || 0) > 0
+            || (caseRow?.attachments?.length || 0) > 0;
+        const createdMs = Date.parse(caseRow?.createdAt || '');
+        const updatedMs = Date.parse(caseRow?.updatedAt || '');
+        const onlyCreateStamp = Number.isFinite(createdMs)
+            && !hasNestedActivity
+            && (!Number.isFinite(updatedMs) || updatedMs <= createdMs);
+
+        return onlyCreateStamp ? `Created ${formatted}` : `Modified ${formatted}`;
+    }
+
+    getCaseCommentSeenAt(caseId) {
+        const key = String(caseId || '').trim();
+        if (!key) return null;
+        const value = readCaseCommentSeenMap()[key];
+        if (!value) return null;
+        const ms = Date.parse(value);
+        return Number.isFinite(ms) ? ms : null;
+    }
+
+    markCaseCommentsSeen(caseRow) {
+        const caseId = String(caseRow?.id || '').trim();
+        if (!caseId) return;
+        let latest = Date.now();
+        for (const comment of caseRow?.comments || []) {
+            const ms = Date.parse(comment?.createdAt || comment?.updatedAt || '');
+            if (Number.isFinite(ms) && ms > latest) latest = ms;
+        }
+        const map = readCaseCommentSeenMap();
+        map[caseId] = new Date(latest).toISOString();
+        writeCaseCommentSeenMap(map);
+        this.requestUpdate();
+    }
+
+    countNewCaseComments(caseRow) {
+        const seenAt = this.getCaseCommentSeenAt(caseRow?.id);
+        if (seenAt == null) return 0;
+        const myId = this.currentDirectusUserId
+            ? String(this.currentDirectusUserId).toLowerCase()
+            : '';
+        let count = 0;
+        for (const comment of caseRow?.comments || []) {
+            const createdMs = Date.parse(comment?.createdAt || '');
+            if (!Number.isFinite(createdMs) || createdMs <= seenAt) continue;
+            const authorId = comment?.author?.id
+                ? String(comment.author.id).toLowerCase()
+                : '';
+            if (myId && authorId && authorId === myId) continue;
+            count += 1;
+        }
+        return count;
     }
 
     backToCaseList() {
+        this.closeListFilterMenus();
+        this.attachmentSearchQuery = '';
         this.selectedCaseId = '';
         this.errorMessage = '';
+        history.pushState({}, '', this._buildCaseUrl(''));
+    }
+
+    get currentDirectusUserId() {
+        return this.sessionMeta?.directusViewer?.id
+            || this.sessionMeta?.directusUserId
+            || null;
+    }
+
+    canManageCollaborators(caseRow) {
+        const role = this.myCaseRole(caseRow);
+        return role === 'admin';
+    }
+
+    /** Owner/admin/collaborator can invite; read_only cannot. */
+    canInviteCollaborators(caseRow) {
+        const role = this.myCaseRole(caseRow);
+        return role === 'admin' || role === 'collaborator';
+    }
+
+    myCaseRole(caseRow) {
+        const me = this.currentDirectusUserId;
+        if (!me || !caseRow) return null;
+        if (caseRow.createdBy?.id && String(caseRow.createdBy.id) === String(me)) {
+            return 'admin';
+        }
+        const membership = (caseRow.collaborators || []).find((c) => String(c.id) === String(me));
+        return membership?.role || null;
+    }
+
+    canEditCaseContent(caseRow) {
+        const role = this.myCaseRole(caseRow);
+        return role === 'admin' || role === 'collaborator';
+    }
+
+    /** Any case member (including read_only) may comment. */
+    canCommentOnCase(caseRow) {
+        return Boolean(this.myCaseRole(caseRow));
+    }
+
+    casePeopleCount(caseRow) {
+        return this.buildPeopleMembers(caseRow).length;
+    }
+
+    buildPeopleMembers(caseRow) {
+        const members = [];
+        const ownerId = caseRow?.createdBy?.id ? String(caseRow.createdBy.id) : null;
+        if (caseRow?.createdBy) {
+            members.push({
+                id: caseRow.createdBy.id,
+                email: caseRow.createdBy.email || '',
+                username: caseRow.createdBy.username || '',
+                firstName: caseRow.createdBy.firstName || '',
+                lastName: caseRow.createdBy.lastName || '',
+                role: 'admin',
+                locked: true
+            });
+        }
+        for (const entry of caseRow?.collaborators || []) {
+            if (!entry?.id) continue;
+            if (ownerId && String(entry.id) === ownerId) continue;
+            members.push({
+                id: entry.id,
+                email: entry.email || '',
+                username: entry.username || '',
+                firstName: entry.firstName || '',
+                lastName: entry.lastName || '',
+                role: entry.role || 'collaborator',
+                locked: false
+            });
+        }
+        return members;
+    }
+
+    async openPeopleDialog(caseRow) {
+        const dialog = this.renderRoot?.querySelector('#case-people-dialog');
+        if (!dialog) return;
+
+        const canInvite = this.canInviteCollaborators(caseRow);
+        const canManage = this.canManageCollaborators(caseRow);
+        dialog.canInvite = canInvite;
+        dialog.canManage = canManage;
+        dialog.roleOptions = canManage ? null : CASE_INVITE_ROLE_OPTIONS;
+        dialog.lookupFn = lookupDirectusUserByEmail;
+        dialog.inviteFn = ({ email, role }) => inviteDirectusCaseUser(caseRow.id, { email, role });
+        dialog.currentUserId = this.currentDirectusUserId || '';
+        dialog.saving = this.savingCollaborators;
+        dialog.error = '';
+        let pendingInvites = [];
+        try {
+            pendingInvites = await listDirectusCaseInvites(caseRow.id);
+        } catch {
+            pendingInvites = [];
+        }
+        await dialog.open(this.buildPeopleMembers(caseRow), { pendingInvites });
+    }
+
+    closePeopleDialog() {
+        this.renderRoot?.querySelector('#case-people-dialog')?.close?.();
+    }
+
+    async handlePeopleInvited(event) {
+        const caseRow = this.selectedCase;
+        const detail = event.detail || {};
+        if (!caseRow?.id) return;
+        if (detail.status === 'added' && Array.isArray(detail.collaborators)) {
+            this.cases = this.cases.map((row) => (
+                row.id === caseRow.id ? { ...row, collaborators: detail.collaborators } : row
+            ));
+        }
+        const dialog = this.renderRoot?.querySelector('#case-people-dialog');
+        if (dialog && detail.inviteUrl) {
+            dialog.lastInviteUrl = detail.inviteUrl;
+        }
+        if (dialog && caseRow) {
+            let pendingInvites = [];
+            try {
+                pendingInvites = await listDirectusCaseInvites(caseRow.id);
+            } catch {
+                pendingInvites = [];
+            }
+            const next = this.cases.find((r) => r.id === caseRow.id) || caseRow;
+            dialog.members = dialog.sortMembers(this.buildPeopleMembers(next));
+            dialog.pendingInvites = pendingInvites;
+        }
+        invalidateNotifications();
+    }
+
+    async handlePeopleApproveInvite(event) {
+        const caseRow = this.selectedCase;
+        const inviteId = event.detail?.inviteId;
+        const kind = event.detail?.kind;
+        if (!caseRow?.id || !inviteId || this.savingCollaborators) return;
+        this.savingCollaborators = true;
+        try {
+            const data = await approveDirectusCaseInvite(caseRow.id, inviteId, { kind });
+            if (Array.isArray(data.collaborators)) {
+                this.cases = this.cases.map((row) => (
+                    row.id === caseRow.id ? { ...row, collaborators: data.collaborators } : row
+                ));
+            }
+            await this.handlePeopleInvited({
+                detail: {
+                    status: data.status || 'approved',
+                    inviteUrl: data.inviteUrl || null,
+                    collaborators: data.collaborators
+                }
+            });
+            const dialog = this.renderRoot?.querySelector('#case-people-dialog');
+            if (dialog && data.inviteUrl) {
+                dialog.lookupMessage = data.emailSent
+                    ? 'Invite approved and emailed. You can still copy the link.'
+                    : 'Invite approved — copy the link and send it.';
+            }
+        } catch (err) {
+            const dialog = this.renderRoot?.querySelector('#case-people-dialog');
+            if (dialog) dialog.error = this.userFacingError(err, "Couldn't approve that invite.");
+        } finally {
+            this.savingCollaborators = false;
+        }
+    }
+
+    async handlePeopleRejectInvite(event) {
+        const caseRow = this.selectedCase;
+        const inviteId = event.detail?.inviteId;
+        const kind = event.detail?.kind;
+        if (!caseRow?.id || !inviteId || this.savingCollaborators) return;
+        this.savingCollaborators = true;
+        try {
+            await rejectDirectusCaseInvite(caseRow.id, inviteId, { kind });
+            await this.handlePeopleInvited({ detail: { status: 'rejected' } });
+        } catch (err) {
+            const dialog = this.renderRoot?.querySelector('#case-people-dialog');
+            if (dialog) dialog.error = this.userFacingError(err, "Couldn't reject that invite.");
+        } finally {
+            this.savingCollaborators = false;
+        }
+    }
+
+    async handlePeopleSave(event) {
+        const caseRow = this.selectedCase;
+        if (!caseRow?.id || this.savingCollaborators) return;
+        if (!this.canManageCollaborators(caseRow)) return;
+
+        const members = Array.isArray(event.detail?.members) ? event.detail.members : [];
+        const collaborators = members
+            .map((entry) => ({
+                userId: entry?.userId,
+                role: entry?.role || 'collaborator'
+            }))
+            .filter((entry) => entry.userId);
+
+        this.savingCollaborators = true;
+        const dialog = this.renderRoot?.querySelector('#case-people-dialog');
+        if (dialog) {
+            dialog.saving = true;
+            dialog.error = '';
+        }
+        try {
+            const data = await updateDirectusCaseCollaborators(caseRow.id, collaborators);
+            const next = Array.isArray(data.collaborators) ? data.collaborators : [];
+            this.cases = this.cases.map((row) => (
+                row.id === caseRow.id ? { ...row, collaborators: next } : row
+            ));
+            this.closePeopleDialog();
+        } catch (err) {
+            if (dialog) {
+                dialog.error = this.userFacingError(err, "Couldn't update people. Please try again.");
+            }
+        } finally {
+            this.savingCollaborators = false;
+            if (dialog) dialog.saving = false;
+        }
     }
 
     async handlePostComment(event, caseRow) {
         const text = String(event.detail?.text || '').trim();
         if (!caseRow?.id || !text || this.postingComment) return;
+        if (!this.canCommentOnCase(caseRow)) return;
+
+        // currentTarget is only set during sync dispatch; keep it across await.
+        const panel = event.currentTarget;
 
         this.postingComment = true;
         this.errorMessage = '';
         try {
             const data = await createDirectusCaseComment(caseRow.id, text);
             const created = data.comment;
-            event.target?.clearDraft?.();
+            panel?.clearDraft?.();
             this.cases = this.cases.map((row) => {
                 if (row.id !== caseRow.id) return row;
                 const comments = Array.isArray(row.comments) ? [...row.comments] : [];
                 if (created?.id) comments.push(created);
                 return { ...row, comments };
             });
+            const updated = this.cases.find((row) => row.id === caseRow.id);
+            if (updated) this.markCaseCommentsSeen(updated);
         } catch (err) {
-            this.errorMessage = err.message || 'Failed to post comment';
+            this.errorMessage = this.userFacingError(err, "Couldn't send your comment. Please try again.");
         } finally {
             this.postingComment = false;
+        }
+    }
+
+    // ── New Case form ──────────────────────────────────────────────────────
+    openNewCaseForm() {
+        this.showNewCaseForm = true;
+        this.newCaseTitle = '';
+        this.newCaseDescription = '';
+        this.newCaseError = '';
+        // Focus the title input after render
+        this.updateComplete.then(() => {
+            this.shadowRoot?.querySelector('#new-case-title')?.focus();
+        });
+    }
+
+    handleCancelNewCase() {
+        this.showNewCaseForm = false;
+        this.newCaseTitle = '';
+        this.newCaseDescription = '';
+        this.newCaseError = '';
+        this.creatingCase = false;
+    }
+
+    async handleNewCaseSubmit(e) {
+        e.preventDefault();
+        if (this.creatingCase) return;
+
+        const title = this.newCaseTitle.trim();
+        if (!title) {
+            this.newCaseError = 'Title is required.';
+            return;
+        }
+
+        this.creatingCase = true;
+        this.newCaseError = '';
+        try {
+            const data = await createDirectusCase({
+                title,
+                description: this.newCaseDescription.trim() || undefined,
+                status: 'active'
+            });
+            const created = data.case;
+            // Prepend to list and open immediately
+            this.cases = [created, ...this.cases];
+            this.handleCancelNewCase();
+            this.openCase(created.id);
+        } catch (err) {
+            this.newCaseError = this.userFacingError(err, "Couldn't create the case. Please try again.");
+        } finally {
+            this.creatingCase = false;
+        }
+    }
+
+    mergeCaseUpdate(caseRow, updated = {}) {
+        // updateCase remaps with empty nested collections — keep local arrays.
+        const next = { ...caseRow, ...updated };
+        next.attachments = Array.isArray(caseRow.attachments) ? caseRow.attachments : [];
+        next.comments = Array.isArray(caseRow.comments) ? caseRow.comments : [];
+        next.collaborators = Array.isArray(updated.collaborators)
+            ? updated.collaborators
+            : (Array.isArray(caseRow.collaborators) ? caseRow.collaborators : []);
+        return next;
+    }
+
+    async handleArchiveCase(caseRow) {
+        if (!caseRow?.id || this.archivingCase) return;
+        if (!this.canManageCollaborators(caseRow)) return;
+        this.archivingCase = true;
+        this.errorMessage = '';
+        try {
+            const data = await updateDirectusCase(caseRow.id, { status: 'archived' });
+            const updated = data.case;
+            this.cases = this.cases.map((row) =>
+                row.id === caseRow.id ? this.mergeCaseUpdate(row, updated) : row
+            );
+            this.cancelEditCase();
+        } catch (err) {
+            this.errorMessage = this.userFacingError(err, "Couldn't archive this case. Please try again.");
+        } finally {
+            this.archivingCase = false;
+        }
+    }
+
+    // ── Inline case edit ───────────────────────────────────────────────────
+    startEditCase(caseRow) {
+        if (!this.canEditCaseContent(caseRow)) return;
+        this.editingCase = true;
+        this.editCaseTitle = caseRow.title || '';
+        this.editCaseDesc = caseRow.description || '';
+        this.caseEditError = '';
+        this.updateComplete.then(() => {
+            this.shadowRoot?.querySelector('#edit-case-title')?.focus();
+        });
+    }
+
+    cancelEditCase() {
+        this.editingCase = false;
+        this.editCaseTitle = '';
+        this.editCaseDesc = '';
+        this.caseEditError = '';
+        this.savingCaseEdit = false;
+    }
+
+    async saveEditCase(caseRow) {
+        if (this.savingCaseEdit) return;
+        if (!this.canEditCaseContent(caseRow)) return;
+        const title = this.editCaseTitle.trim();
+        if (!title) { this.caseEditError = 'Title is required.'; return; }
+
+        this.savingCaseEdit = true;
+        this.caseEditError = '';
+        try {
+            const data = await updateDirectusCase(caseRow.id, {
+                title,
+                description: this.editCaseDesc.trim() || null
+            });
+            const updated = data.case;
+            this.cases = this.cases.map((row) =>
+                row.id === caseRow.id ? this.mergeCaseUpdate(row, updated) : row
+            );
+            this.cancelEditCase();
+        } catch (err) {
+            this.caseEditError = this.userFacingError(err, "Couldn't save your changes. Please try again.");
+        } finally {
+            this.savingCaseEdit = false;
+        }
+    }
+
+    // ── Attachment delete ──────────────────────────────────────────────────
+    async handleDeleteAttachment(caseRow, attachment) {
+        if (!attachment?.id || this.deletingAttachmentId) return;
+        if (!this.canEditCaseContent(caseRow)) return;
+        if (!confirm(`Delete "${attachment.name || attachment.filenameDownload}"? This cannot be undone.`)) return;
+
+        this.deletingAttachmentId = attachment.id;
+        this.uploadError = '';
+        try {
+            await deleteDirectusCaseAttachment(caseRow.id, attachment.id);
+            this.cases = this.cases.map((row) => {
+                if (row.id !== caseRow.id) return row;
+                return {
+                    ...row,
+                    attachments: (row.attachments || []).filter((a) => a.id !== attachment.id)
+                };
+            });
+        } catch (err) {
+            this.uploadError = this.userFacingError(err, "Couldn't remove that file. Please try again.");
+        } finally {
+            this.deletingAttachmentId = '';
+        }
+    }
+
+    // ── File upload ────────────────────────────────────────────────────────
+    triggerFileUpload() {
+        this.shadowRoot?.querySelector('#attach-file-input')?.click();
+    }
+
+    async handleFileSelected(event, caseRow) {
+        const file = event.target?.files?.[0];
+        if (!file || !caseRow?.id || this.uploadingFile) return;
+        if (!this.canEditCaseContent(caseRow)) return;
+
+        // Reset input so the same file can be re-selected if needed
+        event.target.value = '';
+
+        this.uploadingFile = true;
+        this.uploadError = '';
+        this.uploadStatusText = `Uploading ${file.name}…`;
+        try {
+            const data = await uploadDirectusCaseAttachment(caseRow.id, file);
+            const attachment = data.attachment;
+            // Append to the case's attachment list in-place
+            this.cases = this.cases.map((row) => {
+                if (row.id !== caseRow.id) return row;
+                const attachments = Array.isArray(row.attachments) ? [...row.attachments] : [];
+                if (attachment?.id) attachments.push(attachment);
+                return { ...row, attachments };
+            });
+            this.uploadStatusText = `${file.name} uploaded.`;
+            // Clear the success message after 4 s
+            setTimeout(() => {
+                this.uploadStatusText = '';
+            }, 4000);
+        } catch (err) {
+            this.uploadError = this.userFacingError(err, "Couldn't upload that file. Please try again.");
+            this.uploadStatusText = '';
+        } finally {
+            this.uploadingFile = false;
         }
     }
 
@@ -617,18 +1771,19 @@ export class DirectusCasesPage extends LitElement {
         this.stopHeartbeat();
         const { heartbeatUrl } = getViewerSessionEndpoints({
             kind: VIEWER_KINDS.SLICER_GUI,
-            sessionScope: 'directus'
+            sessionScope: VIEWER_SESSION_SCOPES.DIRECTUS
         });
         const ping = () => {
             sendTrameContainerHeartbeat({
                 sessionToken: this._viewerSessionToken,
+                seatId: this._viewerSeatId,
                 heartbeatUrl,
                 includeUserActive: false,
-                onIdleTimeout: () => this.closeViewer()
+                onIdleTimeout: () => this._handleViewerIdleTimeout()
             }).catch(() => {});
         };
         ping();
-        this._heartbeatInterval = setInterval(ping, 30000);
+        this._heartbeatInterval = setInterval(ping, 20000);
     }
 
     stopHeartbeat() {
@@ -638,24 +1793,18 @@ export class DirectusCasesPage extends LitElement {
         }
     }
 
-    async closeViewer() {
+    // Internal: cleans up UI + sends stop request. Does NOT touch history.
+    async _doCloseViewer() {
         this.stopHeartbeat();
         resetViewerActivity();
         const token = this._viewerSessionToken;
         const seatId = this._viewerSeatId;
-        this._viewerSessionToken = null;
-        this._viewerSeatId = null;
-        this.showIframe = false;
-        this.iframeUrl = '';
-        this.viewerLoading = false;
-        this.viewerLoadingDetail = '';
-        this.currentFileName = '';
-        this.openingAttachmentId = '';
+        this.clearViewerUiState();
 
         if (!token) return;
         const { stopUrl } = getViewerSessionEndpoints({
             kind: VIEWER_KINDS.SLICER_GUI,
-            sessionScope: 'directus'
+            sessionScope: VIEWER_SESSION_SCOPES.DIRECTUS
         });
         await stopViewerSession({
             stopUrl,
@@ -669,28 +1818,199 @@ export class DirectusCasesPage extends LitElement {
         });
     }
 
-    attachmentMetaLine(attachment) {
-        const parts = [];
-        if (attachment.name && attachment.filenameDownload
-            && attachment.name !== attachment.filenameDownload) {
-            parts.push(attachment.filenameDownload);
-        }
-        const size = formatBytes(attachment.filesize);
-        if (size) parts.push(size);
-        if (attachment.isMrb) {
-            parts.push('Click name to open in Full Slicer');
+    // Public: called by the Close button. Uses history.back() so the browser
+    // back button and the button are indistinguishable to the user.
+    closeViewer() {
+        if (this._viewerPushedState) {
+            this._viewerPushedState = false;
+            history.back(); // popstate fires → _handlePopState → _doCloseViewer
         } else {
-            parts.push(attachment.mimeType || 'Not openable in Full Slicer');
+            this._doCloseViewer();
         }
-        return parts.join(' · ');
     }
 
-    async handleOpenAttachment(caseRow, attachment) {
-        if (!attachment?.isMrb || this.openingAttachmentId) return;
+    // Called by the heartbeat idle timeout: clean up + fix URL in place (no back step).
+    async _handleViewerIdleTimeout() {
+        this._viewerPushedState = false;
+        await this._doCloseViewer();
+        history.replaceState(
+            { caseId: this.selectedCaseId },
+            '',
+            this._buildCaseUrl(this.selectedCaseId)
+        );
+    }
+
+    attachmentMetaLine(attachment) {
+        const originalName = attachment.filenameDownload || '';
+        const size = formatBytes(attachment.filesize);
+        const modified = formatDateTime(attachment.modifiedAt);
+        return [originalName, size, modified].filter(Boolean).join(' - ');
+    }
+
+    attachmentTitle(attachment) {
+        return String(attachment?.name || attachment?.filenameDownload || 'Attachment');
+    }
+
+    filterAttachments(attachments = [], query = this.attachmentSearchQuery) {
+        const needle = String(query || '').trim().toLowerCase();
+        const list = Array.isArray(attachments) ? attachments : [];
+        if (!needle) return [...list];
+        return list.filter((row) => {
+            const title = this.attachmentTitle(row).toLowerCase();
+            const original = String(row?.filenameDownload || '').toLowerCase();
+            return title.includes(needle) || original.includes(needle);
+        });
+    }
+
+    sortAttachments(attachments = [], order = this.attachmentSortOrder) {
+        const list = Array.isArray(attachments) ? [...attachments] : [];
+        const titleOf = (row) => this.attachmentTitle(row).toLowerCase();
+        const timeOf = (row) => {
+            const value = Date.parse(row?.modifiedAt || '');
+            return Number.isFinite(value) ? value : null;
+        };
+
+        if (order === 'title') {
+            return list.sort((a, b) => {
+                const byTitle = titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: 'base' });
+                return byTitle || String(a.id || '').localeCompare(String(b.id || ''));
+            });
+        }
+
+        const newestFirst = order !== 'oldest';
+        return list.sort((a, b) => {
+            const timeA = timeOf(a);
+            const timeB = timeOf(b);
+            if (timeA == null && timeB == null) {
+                return titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: 'base' });
+            }
+            if (timeA == null) return 1;
+            if (timeB == null) return -1;
+            const diff = newestFirst ? timeB - timeA : timeA - timeB;
+            return diff || titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: 'base' });
+        });
+    }
+
+    caseTitle(caseRow) {
+        return String(caseRow?.title || '(untitled)');
+    }
+
+    filterCases(cases = [], query = this.caseSearchQuery) {
+        const needle = String(query || '').trim().toLowerCase();
+        const list = Array.isArray(cases) ? cases : [];
+        if (!needle) return [...list];
+        return list.filter((row) => {
+            const title = this.caseTitle(row).toLowerCase();
+            const description = String(row?.description || '').toLowerCase();
+            return title.includes(needle) || description.includes(needle);
+        });
+    }
+
+    sortCases(cases = [], order = this.caseSortOrder) {
+        const list = Array.isArray(cases) ? [...cases] : [];
+        const titleOf = (row) => this.caseTitle(row).toLowerCase();
+        const timeOf = (row) => {
+            const value = Date.parse(this.caseLastModifiedAt(row) || '');
+            return Number.isFinite(value) ? value : null;
+        };
+
+        if (order === 'title') {
+            return list.sort((a, b) => {
+                const byTitle = titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: 'base' });
+                return byTitle || String(a.id || '').localeCompare(String(b.id || ''));
+            });
+        }
+
+        const newestFirst = order !== 'oldest';
+        return list.sort((a, b) => {
+            const timeA = timeOf(a);
+            const timeB = timeOf(b);
+            if (timeA == null && timeB == null) {
+                return titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: 'base' });
+            }
+            if (timeA == null) return 1;
+            if (timeB == null) return -1;
+            const diff = newestFirst ? timeB - timeA : timeA - timeB;
+            return diff || titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: 'base' });
+        });
+    }
+
+    closeListFilterMenus() {
+        this.renderRoot?.querySelectorAll('list-filter-tools').forEach((el) => {
+            el.closeMenus?.();
+        });
+    }
+
+    handleAttachmentSearchChange(event) {
+        this.attachmentSearchQuery = String(event.detail?.query || '');
+    }
+
+    handleAttachmentSortChange(event) {
+        const order = String(event.detail?.order || '');
+        if (!LIST_SORT_OPTIONS.some((opt) => opt.value === order)) return;
+        this.attachmentSortOrder = order;
+    }
+
+    handleCaseSearchChange(event) {
+        this.caseSearchQuery = String(event.detail?.query || '');
+    }
+
+    handleCaseSortChange(event) {
+        const order = String(event.detail?.order || '');
+        if (!LIST_SORT_OPTIONS.some((opt) => opt.value === order)) return;
+        this.caseSortOrder = order;
+    }
+
+    attachmentOpenTitle(attachment) {
+        if (attachment?.canOpenInSlicer) {
+            const label = viewerDisplayName(VIEWER_KINDS.SLICER_GUI, {
+                simplified: this.accountPrefersSimplifiedViewer()
+            });
+            return `Open in ${label} (default)`;
+        }
+        if (attachment?.canPreviewInBrowser) return 'Browser preview coming soon';
+        return 'This file type cannot be opened here yet';
+    }
+
+    attachmentCanActivate(attachment) {
+        return Boolean(attachment?.canOpenInSlicer || attachment?.canPreviewInBrowser);
+    }
+
+    accountPrefersSimplifiedViewer() {
+        return getCachedLocalSlicerViewerOptions().useSimplifiedViewer === true;
+    }
+
+    clearViewerUiState() {
+        this.showIframe = false;
+        this.iframeUrl = '';
+        this.viewerLoading = false;
+        this.viewerLoadingDetail = '';
+        this.viewerSimplified = false;
+        this.currentFileName = '';
+        this._viewerSessionToken = null;
+        this._viewerSeatId = null;
+        this.openingAttachmentId = '';
+    }
+
+    async handleOpenAttachment(caseRow, attachment, { simplified } = {}) {
+        if (this.openingAttachmentId) return;
+
+        if (attachment?.canPreviewInBrowser && !attachment?.canOpenInSlicer) {
+            this.errorMessage = 'Browser preview for documents and images is not available yet.';
+            return;
+        }
+        if (!attachment?.canOpenInSlicer) return;
+
+        const useSimplified = resolveSimplifiedViewerChoice(
+            simplified,
+            this.accountPrefersSimplifiedViewer()
+        );
+        const viewerLabel = viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified: useSimplified });
 
         this.openingAttachmentId = attachment.id;
         this.errorMessage = '';
-        this.currentFileName = attachment.filenameDownload || attachment.name || 'scene.mrb';
+        this.currentFileName = attachment.filenameDownload || attachment.name || 'attachment';
+        this.viewerSimplified = useSimplified;
         this.viewerLoading = true;
         this.viewerLoadingDetail = attachment.filesize && attachment.filesize > 50 * 1024 * 1024
             ? `Preparing ${this.currentFileName} (~${Math.round(attachment.filesize / (1024 * 1024))} MB). First open can take several minutes.`
@@ -701,40 +2021,40 @@ export class DirectusCasesPage extends LitElement {
         try {
             this.stopHeartbeat();
             const data = await openDirectusAttachmentFullSlicer(caseRow.id, attachment.id, {
-                useSimplifiedViewer: false
+                useSimplifiedViewer: useSimplified
             });
 
             this._viewerSessionToken = data.sessionToken || null;
             this._viewerSeatId = data.seatId != null ? Number(data.seatId) : null;
             this.currentFileName = data.fileName || this.currentFileName;
+            this.viewerSimplified = data.useSimplifiedViewer === true || useSimplified;
 
-            const url = buildSlicerGuiLoaderUrl({
+            this.iframeUrl = buildSlicerGuiLoaderUrl({
                 fileId: data.stagedKey || attachment.fileId,
                 fileName: this.currentFileName,
                 vncPath: data.vncPath || data.slicerGuiUrl || '',
                 sessionToken: this._viewerSessionToken,
                 seatId: this._viewerSeatId,
-                simplified: false,
+                sessionScope: VIEWER_SESSION_SCOPES.DIRECTUS,
+                simplified: this.viewerSimplified,
                 embed: true,
                 quick: false
             });
-
-            this.iframeUrl = url;
             markViewerActivity();
             this.startHeartbeat();
             this.viewerLoading = true;
-            this.viewerLoadingDetail = 'Opening viewer — scene will load when Slicer is ready…';
+            this.viewerLoadingDetail = `Opening ${viewerLabel} — scene will load when Slicer is ready…`;
             this.openingAttachmentId = '';
+
+            this._viewerPushedState = true;
+            history.pushState(
+                { caseId: caseRow.id, viewer: true },
+                '',
+                this._buildViewerUrl()
+            );
         } catch (err) {
-            this.showIframe = false;
-            this.iframeUrl = '';
-            this.viewerLoading = false;
-            this.viewerLoadingDetail = '';
-            this.currentFileName = '';
-            this._viewerSessionToken = null;
-            this._viewerSeatId = null;
-            this.openingAttachmentId = '';
-            this.errorMessage = err.message || 'Unable to open Full Slicer';
+            this.clearViewerUiState();
+            this.errorMessage = this.userFacingError(err, "Couldn't open the viewer. Please try again.");
         }
     }
 
@@ -745,15 +2065,41 @@ export class DirectusCasesPage extends LitElement {
     }
 
     renderLanding() {
+        const filteredCases = this.sortCases(this.filterCases(this.cases));
         return html`
             <page-layout-template
                 .username=${this.username}
                 selectedMenuKey="cases"
                 homeHref="/file-manager"
                 homeLabel="Home"
-                pageTitle="Cases"
                 @menu-selection-change=${this.handleMenuSelectionChange}
             >
+                <div slot="content" class="page-header-row">
+                    <h1 class="page-heading">My Cases</h1>
+                    <div class="page-header-actions">
+                        ${this.cases.length > 0 && !this.showNewCaseForm ? html`
+                            <list-filter-tools
+                                .searchQuery=${this.caseSearchQuery}
+                                .sortOrder=${this.caseSortOrder}
+                                .sortOptions=${LIST_SORT_OPTIONS}
+                                searchLabel="Search cases"
+                                sortLabel="Sort cases"
+                                searchPlaceholder="Filter by title or description…"
+                                @search-change=${(e) => this.handleCaseSearchChange(e)}
+                                @sort-change=${(e) => this.handleCaseSortChange(e)}
+                            ></list-filter-tools>
+                        ` : ''}
+                        <button
+                            class=${this.showNewCaseForm ? 'primary-button is-cancel' : 'primary-button'}
+                            type="button"
+                            ?disabled=${this.loading || this.creatingCase}
+                            @click=${() => this.showNewCaseForm ? this.handleCancelNewCase() : this.openNewCaseForm()}
+                        >
+                            ${this.showNewCaseForm ? 'Cancel' : 'New Case'}
+                        </button>
+                    </div>
+                </div>
+
                 ${this.loading ? html`
                     <div slot="content" class="status-note">Loading cases…</div>
                 ` : ''}
@@ -766,85 +2112,205 @@ export class DirectusCasesPage extends LitElement {
                     ></page-content-message>
                 ` : ''}
 
-                ${!this.loading && !this.errorMessage && this.cases.length === 0 ? html`
+                ${this.showNewCaseForm ? html`
+                    <form slot="content" class="new-case-form" @submit=${(e) => this.handleNewCaseSubmit(e)} novalidate>
+                        <h3>New Case</h3>
+
+                        <div class="form-group">
+                            <label class="form-label" for="new-case-title">Title *</label>
+                            <input
+                                id="new-case-title"
+                                class="form-input"
+                                type="text"
+                                placeholder="Case title"
+                                .value=${this.newCaseTitle}
+                                @input=${(e) => { this.newCaseTitle = e.target.value; }}
+                                ?disabled=${this.creatingCase}
+                                autocomplete="off"
+                                required
+                            />
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="new-case-desc">Description</label>
+                            <textarea
+                                id="new-case-desc"
+                                class="form-textarea"
+                                placeholder="Optional description"
+                                .value=${this.newCaseDescription}
+                                @input=${(e) => { this.newCaseDescription = e.target.value; }}
+                                ?disabled=${this.creatingCase}
+                            ></textarea>
+                        </div>
+
+                        ${this.newCaseError ? html`
+                            <div class="form-error-msg">${this.newCaseError}</div>
+                        ` : ''}
+
+                        <div class="form-actions">
+                            <button
+                                class="primary-button"
+                                type="submit"
+                                ?disabled=${this.creatingCase}
+                            >
+                                ${this.creatingCase ? 'Creating…' : 'Create Case'}
+                            </button>
+                        </div>
+                    </form>
+                ` : ''}
+
+                ${!this.loading && !this.errorMessage && this.cases.length === 0 && !this.showNewCaseForm ? html`
                     <page-content-message
                         slot="content"
                         variant="empty"
-                        message="No cases returned from Directus."
+                        message="No cases yet. Create the first one."
                     ></page-content-message>
                 ` : ''}
 
-                ${!this.loading && this.cases.length > 0 ? html`
+                ${!this.loading && this.cases.length > 0 && filteredCases.length === 0 && !this.showNewCaseForm ? html`
+                    <p slot="content" class="cases-empty-filter">No cases match “${this.caseSearchQuery.trim()}”.</p>
+                ` : ''}
+
+                ${!this.loading && filteredCases.length > 0 ? html`
                     <div slot="content" class="case-grid">
-                        ${this.cases.map((row) => {
-                            const attachments = Array.isArray(row.attachments) ? row.attachments : [];
-                            const comments = Array.isArray(row.comments) ? row.comments : [];
-                            const mrbCount = attachments.filter((a) => a.isMrb).length;
+                        ${filteredCases.map((row) => {
+                            const isArchived = row.status === 'archived';
+                            const modifiedLabel = this.caseLastModifiedLabel(row);
+                            const newCommentCount = this.countNewCaseComments(row);
                             return html`
                                 <button
-                                    class="case-card"
+                                    class=${isArchived ? 'case-card is-archived' : 'case-card'}
                                     type="button"
                                     @click=${() => this.openCase(row.id)}
                                 >
-                                    <span class="case-name">${row.title || '(untitled case)'}</span>
-                                    ${row.status ? html`
-                                        <span class="status-badge">${row.status}</span>
-                                    ` : ''}
-                                    <span class="case-meta">
-                                        ${attachments.length} attachment${attachments.length === 1 ? '' : 's'}
-                                        ${mrbCount ? ` · ${mrbCount} MRB` : ''}
-                                        ${comments.length
-                                            ? ` · ${comments.length} comment${comments.length === 1 ? '' : 's'}`
-                                            : ''}
-                                    </span>
+                                    <div class="case-card-title-row">
+                                        <span class="case-card-title">${row.title || '(untitled)'}</span>
+                                        ${newCommentCount > 0 ? html`
+                                            <span
+                                                class="case-card-new-badge"
+                                                title=${newCommentCount === 1
+                                                    ? '1 new comment'
+                                                    : `${newCommentCount} new comments`}
+                                            >${newCommentCount === 1 ? 'New' : `${newCommentCount} new`}</span>
+                                        ` : ''}
+                                    </div>
                                     ${row.description ? html`
-                                        <span class="case-meta">${row.description}</span>
+                                        <p class="case-card-desc">${row.description}</p>
+                                    ` : ''}
+                                    ${modifiedLabel ? html`
+                                        <div class="case-card-meta-row">
+                                            <span class="case-card-meta-item">${modifiedLabel}</span>
+                                        </div>
+                                    ` : ''}
+                                    ${isArchived ? html`
+                                        <span class="status-chip">Archived</span>
                                     ` : ''}
                                 </button>
                             `;
                         })}
                     </div>
-                    <div slot="content" class="section-actions">
-                        <button
-                            class="secondary-button"
-                            type="button"
-                            ?disabled=${this.loading}
-                            @click=${() => this.loadCases()}
-                        >
-                            Refresh
-                        </button>
-                    </div>
                 ` : ''}
+
             </page-layout-template>
         `;
     }
 
     renderCaseDetail(caseRow) {
-        const attachments = Array.isArray(caseRow.attachments) ? caseRow.attachments : [];
+        const allAttachments = Array.isArray(caseRow.attachments) ? caseRow.attachments : [];
+        const attachments = this.sortAttachments(this.filterAttachments(allAttachments));
+        const searchActive = !!this.attachmentSearchQuery.trim();
         const comments = Array.isArray(caseRow.comments) ? caseRow.comments : [];
+        const canEdit = this.canEditCaseContent(caseRow);
+        const canManage = this.canManageCollaborators(caseRow);
+        const canComment = this.canCommentOnCase(caseRow);
+        const peopleCount = this.casePeopleCount(caseRow);
         return html`
             <page-layout-template
                 .username=${this.username}
                 selectedMenuKey="cases"
                 homeHref="/file-manager"
                 homeLabel="Home"
-                pageTitle=${caseRow.title || 'Case'}
                 @menu-selection-change=${this.handleMenuSelectionChange}
             >
                 <div slot="content" class="case-detail">
-                    ${caseRow.description || caseRow.status ? html`
-                        <div class="case-summary">
-                            <div class="case-summary-main">
-                                <span class="case-summary-label">Case Overview</span>
-                                ${caseRow.description ? html`
-                                    <p class="case-summary-description">${caseRow.description}</p>
-                                ` : ''}
-                            </div>
-                            ${caseRow.status ? html`
-                                <span class="status-badge">${caseRow.status}</span>
+                    <div class="detail-toolbar">
+                        <button class="back-link" type="button" @click=${() => this.backToCaseList()}>
+                            ← My Cases
+                        </button>
+                        <div class="detail-toolbar-actions">
+                            <button
+                                class="quiet-button"
+                                type="button"
+                                ?disabled=${this.savingCollaborators}
+                                @click=${() => this.openPeopleDialog(caseRow)}
+                            >
+                                People${peopleCount ? ` (${peopleCount})` : ''}
+                            </button>
+                            ${canEdit && !this.editingCase ? html`
+                                <button
+                                    class="quiet-button"
+                                    type="button"
+                                    ?disabled=${this.archivingCase}
+                                    @click=${() => this.startEditCase(caseRow)}
+                                >Edit details</button>
                             ` : ''}
                         </div>
-                    ` : ''}
+                    </div>
+
+                    ${this.editingCase ? html`
+                        <form class="new-case-form" @submit=${(e) => { e.preventDefault(); this.saveEditCase(caseRow); }} novalidate>
+                            <div class="form-group">
+                                <label class="form-label" for="edit-case-title">Title</label>
+                                <input
+                                    id="edit-case-title"
+                                    class="form-input"
+                                    type="text"
+                                    .value=${this.editCaseTitle}
+                                    @input=${(e) => { this.editCaseTitle = e.target.value; }}
+                                    ?disabled=${this.savingCaseEdit}
+                                    autocomplete="off"
+                                    required
+                                />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="edit-case-desc">Description</label>
+                                <textarea
+                                    id="edit-case-desc"
+                                    class="form-textarea"
+                                    .value=${this.editCaseDesc}
+                                    @input=${(e) => { this.editCaseDesc = e.target.value; }}
+                                    ?disabled=${this.savingCaseEdit}
+                                ></textarea>
+                            </div>
+                            ${this.caseEditError ? html`<div class="form-error-msg">${this.caseEditError}</div>` : ''}
+                            <div class="form-actions">
+                                ${canManage && caseRow.status !== 'archived' ? html`
+                                    <button
+                                        class="quiet-button form-actions-spacer"
+                                        type="button"
+                                        ?disabled=${this.savingCaseEdit || this.archivingCase}
+                                        @click=${() => this.handleArchiveCase(caseRow)}
+                                    >${this.archivingCase ? 'Archiving…' : 'Archive case'}</button>
+                                ` : html`<span class="form-actions-spacer"></span>`}
+                                <button class="secondary-button" type="button" ?disabled=${this.savingCaseEdit} @click=${() => this.cancelEditCase()}>Cancel</button>
+                                <button class="primary-button" type="submit" ?disabled=${this.savingCaseEdit}>
+                                    ${this.savingCaseEdit ? 'Saving…' : 'Save'}
+                                </button>
+                            </div>
+                        </form>
+                    ` : html`
+                        <div class="detail-header">
+                            <div class="detail-title-row">
+                                <h2 class="detail-title">${caseRow.title || 'Untitled case'}</h2>
+                                ${caseRow.status && caseRow.status !== 'active' ? html`
+                                    <span class="status-chip">${caseRow.status}</span>
+                                ` : ''}
+                            </div>
+                            ${caseRow.description ? html`
+                                <p class="detail-desc">${caseRow.description}</p>
+                            ` : ''}
+                        </div>
+                    `}
 
                     ${this.errorMessage ? html`
                         <page-content-message
@@ -855,48 +2321,117 @@ export class DirectusCasesPage extends LitElement {
 
                     <div class="case-detail-grid">
                         <div class="files-panel">
-                            <h3 class="files-title">Attachments</h3>
+                            <div class="panel-header">
+                                <div class="panel-header-start">
+                                    <h3 class="panel-title">Attachments</h3>
+                                    <span
+                                        class="panel-count"
+                                        title=${searchActive
+                                            ? `${attachments.length} of ${allAttachments.length} shown`
+                                            : `${allAttachments.length} attachments`}
+                                    >${searchActive
+                                        ? `${attachments.length}/${allAttachments.length}`
+                                        : allAttachments.length}</span>
+                                </div>
+                                ${allAttachments.length > 0 ? html`
+                                    <list-filter-tools
+                                        .searchQuery=${this.attachmentSearchQuery}
+                                        .sortOrder=${this.attachmentSortOrder}
+                                        .sortOptions=${LIST_SORT_OPTIONS}
+                                        searchLabel="Search attachments"
+                                        sortLabel="Sort attachments"
+                                        searchPlaceholder="Filter by name…"
+                                        @search-change=${(e) => this.handleAttachmentSearchChange(e)}
+                                        @sort-change=${(e) => this.handleAttachmentSortChange(e)}
+                                    ></list-filter-tools>
+                                ` : ''}
+                            </div>
                             <div class="files-body">
-                                ${attachments.length === 0 ? html`
-                                    <div class="empty-note">No attachments on this case yet.</div>
+                                ${allAttachments.length === 0 ? html`
+                                    <div class="empty-note">No files attached yet.</div>
+                                ` : attachments.length === 0 ? html`
+                                    <div class="empty-note">No attachments match “${this.attachmentSearchQuery.trim()}”.</div>
                                 ` : html`
                                     <div class="file-list">
                                         ${attachments.map((attachment) => html`
                                             <file-list-row
-                                                .fileName=${attachment.name || attachment.filenameDownload || 'Attachment'}
+                                                .fileName=${this.attachmentTitle(attachment)}
                                                 .metaLine=${this.attachmentMetaLine(attachment)}
-                                                .nameButtonDisabled=${!attachment.isMrb || !!this.openingAttachmentId || this.viewerLoading}
-                                                .nameButtonTitle=${attachment.isMrb
-                                                    ? 'Open in Full Slicer'
-                                                    : 'Only MRB attachments can be opened'}
+                                                .nameButtonDisabled=${!this.attachmentCanActivate(attachment)
+                                                    || !!this.openingAttachmentId
+                                                    || this.viewerLoading}
+                                                .nameButtonTitle=${this.attachmentOpenTitle(attachment)}
                                                 @name-click=${() => this.handleOpenAttachment(caseRow, attachment)}
-                                            ></file-list-row>
+                                            >
+                                                ${attachment?.canOpenInSlicer ? html`
+                                                    <attachment-open-menu
+                                                        slot="title-trailing"
+                                                        .preferSimplifiedDefault=${this.accountPrefersSimplifiedViewer()}
+                                                        ?disabled=${!!this.openingAttachmentId || this.viewerLoading}
+                                                        @open-viewer=${(e) => this.handleOpenAttachment(
+                                                            caseRow,
+                                                            attachment,
+                                                            { simplified: e.detail?.simplified === true }
+                                                        )}
+                                                    ></attachment-open-menu>
+                                                ` : ''}
+                                                ${canEdit ? html`
+                                                    <button
+                                                        slot="actions"
+                                                        class="file-icon-button"
+                                                        type="button"
+                                                        title="Remove file"
+                                                        aria-label="Remove file"
+                                                        ?disabled=${!!this.deletingAttachmentId || this.uploadingFile}
+                                                        @click=${() => this.handleDeleteAttachment(caseRow, attachment)}
+                                                    >
+                                                        <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+                                                            <path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                                                        </svg>
+                                                    </button>
+                                                ` : ''}
+                                            </file-list-row>
                                         `)}
                                     </div>
                                 `}
+
+                                <input
+                                    id="attach-file-input"
+                                    type="file"
+                                    hidden
+                                    @change=${(e) => this.handleFileSelected(e, caseRow)}
+                                />
+
+                                ${canEdit ? html`
+                                    <div class="upload-action-row">
+                                        ${this.uploadStatusText ? html`
+                                            <span class="upload-status">${this.uploadStatusText}</span>
+                                        ` : this.uploadError ? html`
+                                            <span class="upload-error">${this.uploadError}</span>
+                                        ` : html`<span></span>`}
+                                        <button
+                                            class="secondary-button"
+                                            type="button"
+                                            ?disabled=${this.uploadingFile || !!this.openingAttachmentId}
+                                            @click=${() => this.triggerFileUpload()}
+                                        >
+                                            ${this.uploadingFile ? 'Uploading…' : 'Add file'}
+                                        </button>
+                                    </div>
+                                ` : ''}
                             </div>
                         </div>
 
                         <comments-panel
                             .comments=${comments}
-                            emptyMessage="No discussion on this case yet. Start the conversation."
+                            emptyMessage=${this.sessionMeta?.comments?.loaded === false
+                                ? 'Comments could not be loaded. Check Directus Comments Read permission for this role.'
+                                : 'No comments yet.'}
+                            placeholder="Write a comment…"
                             ?posting=${this.postingComment}
+                            ?allowCompose=${canComment}
                             @post-comment=${(e) => this.handlePostComment(e, caseRow)}
                         ></comments-panel>
-                    </div>
-
-                    <div class="section-actions">
-                        <button class="secondary-button" type="button" @click=${() => this.backToCaseList()}>
-                            Back to Cases
-                        </button>
-                        <button
-                            class="secondary-button"
-                            type="button"
-                            ?disabled=${this.loading || !!this.openingAttachmentId}
-                            @click=${() => this.loadCases()}
-                        >
-                            Refresh
-                        </button>
                     </div>
                 </div>
             </page-layout-template>
@@ -905,11 +2440,14 @@ export class DirectusCasesPage extends LitElement {
 
     renderViewerOverlay() {
         if (!this.showIframe) return html``;
+        const viewerLabel = viewerDisplayName(VIEWER_KINDS.SLICER_GUI, {
+            simplified: this.viewerSimplified
+        });
         return html`
             <div class="iframe-overlay">
                 <div class="iframe-header">
                     <div class="iframe-title">
-                        Full Slicer: ${this.currentFileName || 'Loading…'}
+                        ${viewerLabel}: ${this.currentFileName || 'Loading…'}
                     </div>
                     <div class="iframe-header-actions">
                         <button
@@ -917,7 +2455,7 @@ export class DirectusCasesPage extends LitElement {
                             type="button"
                             @click=${() => this.closeViewer()}
                         >
-                            Close Full Slicer
+                            Close
                         </button>
                     </div>
                 </div>
@@ -950,6 +2488,15 @@ export class DirectusCasesPage extends LitElement {
         return html`
             ${detail ? this.renderCaseDetail(detail) : this.renderLanding()}
             ${this.renderViewerOverlay()}
+            <people-dialog
+                id="case-people-dialog"
+                title="People"
+                @people-save=${(e) => this.handlePeopleSave(e)}
+                @people-cancel=${() => this.closePeopleDialog()}
+                @people-invited=${(e) => this.handlePeopleInvited(e)}
+                @people-approve-invite=${(e) => this.handlePeopleApproveInvite(e)}
+                @people-reject-invite=${(e) => this.handlePeopleRejectInvite(e)}
+            ></people-dialog>
         `;
     }
 }

@@ -29,6 +29,17 @@ export function normalizeLocalSlicerViewerOptions(input = {}) {
     };
 }
 
+/**
+ * Resolve Full vs Simplified for one open action.
+ * @param {boolean|undefined|null} requested - explicit menu choice; omit to use account default
+ * @param {boolean} accountDefault - Settings → Local viewer → Simplified
+ */
+export function resolveSimplifiedViewerChoice(requested, accountDefault = false) {
+    if (requested === true) return true;
+    if (requested === false) return false;
+    return accountDefault === true;
+}
+
 export function mergeLocalSlicerViewerOptionPatch(current = {}, patch = {}) {
     const base = normalizeLocalSlicerViewerOptions(current);
     const next = {

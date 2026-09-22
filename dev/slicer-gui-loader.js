@@ -2,12 +2,14 @@ import { attachViewerSessionLifecycle } from './utils/viewerSessionLifecycle.js'
 import {
     VIEWER_KINDS,
     VIEWER_RELEASE_MODES,
+    VIEWER_SESSION_SCOPES,
     getViewerSessionEndpoints
 } from './utils/viewerLaunch.js';
 
 const params = new URLSearchParams(window.location.search);
 let projectId = params.get('projectId') || '';
 const shareToken = params.get('shareToken') || '';
+const sessionScope = params.get('sessionScope') || '';
 let fileName = params.get('fileName') || '';
 const simplified = params.get('simplified') === '1';
 const embedded = params.get('embed') === '1';
@@ -25,11 +27,18 @@ const reconnectBtn = document.getElementById('reconnect');
 const viewer = document.getElementById('viewer');
 
 function sessionEndpoints() {
-    if (shareToken) {
+    if (shareToken || sessionScope === VIEWER_SESSION_SCOPES.SHARE) {
         return getViewerSessionEndpoints({
             kind: VIEWER_KINDS.SLICER_GUI,
-            sessionScope: 'share',
+            sessionScope: VIEWER_SESSION_SCOPES.SHARE,
             shareToken,
+            apiUrl: ''
+        });
+    }
+    if (sessionScope === VIEWER_SESSION_SCOPES.DIRECTUS) {
+        return getViewerSessionEndpoints({
+            kind: VIEWER_KINDS.SLICER_GUI,
+            sessionScope: VIEWER_SESSION_SCOPES.DIRECTUS,
             apiUrl: ''
         });
     }
@@ -144,10 +153,10 @@ async function heartbeatSession(token) {
 
 async function reconnectSession() {
     const endpoints = sessionEndpoints();
-    if (!endpoints) return false;
+    if (!endpoints?.reconnectUrl) return false;
     setSplashMessage('Reconnecting…', 'Restoring your Full Slicer session');
     const body = {
-        ...(fileId ? { fileId: Number(fileId) } : {}),
+        ...(fileId && Number(fileId) > 0 ? { fileId: Number(fileId) } : {}),
         useSimplifiedViewer: simplified
     };
     if (seatId) body.seatId = Number(seatId);
@@ -186,11 +195,10 @@ async function reconnectSession() {
 }
 
 async function ensureViewerSession() {
-    if (shareToken) {
+    if (shareToken || sessionScope === VIEWER_SESSION_SCOPES.DIRECTUS) {
         if (sessionToken && await heartbeatSession(sessionToken)) {
             return true;
         }
-        // Share links have no reconnect endpoint; keep going if token was issued.
         return Boolean(sessionToken);
     }
     if (!projectId) {

@@ -32,6 +32,19 @@ export function findDirectusLinkForUser(userId) {
     `).get(userId) || null;
 }
 
+/** App user id for a Directus subject, if linked. */
+export function findAppUserIdByDirectusExternalId(externalId) {
+    const ext = String(externalId || '').trim();
+    if (!ext) return null;
+    const row = db.prepare(`
+        SELECT user_id
+        FROM auth_identity_links
+        WHERE provider = 'directus' AND external_id = ?
+        LIMIT 1
+    `).get(ext);
+    return row?.user_id != null ? Number(row.user_id) : null;
+}
+
 export function hasDirectusIdentity(userId) {
     return Boolean(findDirectusLinkForUser(userId));
 }
@@ -68,8 +81,10 @@ export function linkIdentity(userId, provider, externalId) {
 }
 
 /**
- * Persist IdP tokens encrypted at rest.
+ * Persist IdP tokens encrypted at rest, keyed by app session jti.
  * Columns access_token / refresh_token: access_token holds enc blob; refresh cleared.
+ * Durable Directus refresh across session re-issues lives in an httpOnly cookie
+ * (see directusLinkCookie.js) — not a second SQLite table.
  */
 export function storeProviderTokens(tokenJti, userId, provider, tokens = {}) {
     const access = tokens.accessToken || tokens.access_token || null;

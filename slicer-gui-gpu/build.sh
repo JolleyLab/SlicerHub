@@ -32,6 +32,7 @@ docker build -f Dockerfile \
   --build-arg "SLICER_GUI_BASE_IMAGE=$BASE_IMAGE" \
   --build-arg "SLICER_HEART_VIEWER_REPO=${SLICER_HEART_VIEWER_REPO:-}" \
   --build-arg "SLICER_HEART_VIEWER_REF=${SLICER_HEART_VIEWER_REF:-}" \
+  --build-arg "SLICER_EXTENSIONS=${SLICER_EXTENSIONS:-}" \
   -t "$RUNTIME_IMAGE" .
 
 echo "Done. Runtime image: $RUNTIME_IMAGE"

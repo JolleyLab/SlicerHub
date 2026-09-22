@@ -489,6 +489,126 @@ const migrations = [
             ALTER TABLE users
             ADD COLUMN must_change_password INTEGER DEFAULT 0;
         `
+    },
+    {
+        id: '021_directus_case_timestamps',
+        up: `
+            CREATE TABLE IF NOT EXISTS directus_case_timestamps (
+                case_id TEXT PRIMARY KEY,
+                created_at TEXT,
+                updated_at TEXT,
+                source TEXT,
+                recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        `
+    },
+    {
+        id: '022_drop_directus_case_timestamps',
+        up: `
+            DROP TABLE IF EXISTS directus_case_timestamps;
+        `
+    },
+    {
+        // Was briefly a user-scoped Directus token table; durable refresh is an
+        // httpOnly cookie instead (directusLinkCookie.js). Drop if a prior build created it.
+        id: '023_auth_provider_user_tokens',
+        up: `
+            DROP TABLE IF EXISTS auth_provider_user_tokens;
+        `
+    },
+    {
+        id: '024_drop_auth_provider_user_tokens',
+        up: `
+            DROP TABLE IF EXISTS auth_provider_user_tokens;
+        `
+    },
+    {
+        id: '025_case_invites_notifications',
+        up: `
+            CREATE TABLE IF NOT EXISTS case_invites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id TEXT NOT NULL,
+                case_title TEXT,
+                invitee_directus_user_id TEXT NOT NULL,
+                invitee_email TEXT NOT NULL,
+                proposed_role TEXT NOT NULL DEFAULT 'collaborator',
+                inviter_directus_user_id TEXT NOT NULL,
+                inviter_app_user_id INTEGER,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                resolved_at DATETIME,
+                resolved_by_directus_user_id TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_case_invites_case_status
+                ON case_invites(case_id, status);
+            CREATE INDEX IF NOT EXISTS idx_case_invites_invitee
+                ON case_invites(invitee_directus_user_id, status);
+
+            CREATE TABLE IF NOT EXISTS user_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                body TEXT,
+                case_id TEXT,
+                invite_id INTEGER,
+                read_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_user_notifications_user_unread
+                ON user_notifications(user_id, read_at);
+        `
+    },
+    {
+        id: '026_case_collaborator_roles',
+        up: `
+            CREATE TABLE IF NOT EXISTS case_collaborator_roles (
+                case_id TEXT NOT NULL,
+                directus_user_id TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'collaborator',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (case_id, directus_user_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_case_collaborator_roles_case
+                ON case_collaborator_roles(case_id);
+        `
+    },
+    {
+        id: '027_case_signup_invites',
+        up: `
+            CREATE TABLE IF NOT EXISTS case_signup_invites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id TEXT NOT NULL,
+                case_title TEXT,
+                invitee_email TEXT NOT NULL,
+                proposed_role TEXT NOT NULL DEFAULT 'collaborator',
+                inviter_directus_user_id TEXT NOT NULL,
+                inviter_app_user_id INTEGER,
+                token_hash TEXT,
+                expires_at DATETIME,
+                status TEXT NOT NULL DEFAULT 'pending_signup',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                resolved_at DATETIME,
+                resolved_by_directus_user_id TEXT,
+                accepted_directus_user_id TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_case_signup_invites_case_status
+                ON case_signup_invites(case_id, status);
+            CREATE INDEX IF NOT EXISTS idx_case_signup_invites_email
+                ON case_signup_invites(invitee_email, status);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_case_signup_invites_token
+                ON case_signup_invites(token_hash);
+        `
+    },
+    {
+        // Passkeys + remember-device removed from the product; drop leftover tables.
+        id: '028_drop_passkey_and_trusted_device_tables',
+        up: `
+            DROP TABLE IF EXISTS auth_webauthn_challenges;
+            DROP TABLE IF EXISTS auth_webauthn_credentials;
+            DROP TABLE IF EXISTS auth_trusted_devices;
+        `
     }
 ];
 

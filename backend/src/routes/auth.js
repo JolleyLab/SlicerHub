@@ -18,12 +18,19 @@ import {
     logoutAllSessions
 } from '../auth/index.js';
 import { issueAppSession, rotateAppSession } from '../auth/session.js';
-import { clearProviderTokens } from '../auth/identityStore.js';
-import { findDirectusLinkForUser } from '../auth/identityStore.js';
+import {
+    findDirectusLinkForUser,
+    getProviderTokens,
+    storeProviderTokens,
+    clearProviderTokens
+} from '../auth/identityStore.js';
+import { attachStoredDirectusTokensToSession } from '../auth/directusUserSession.js';
+import { setDirectusLinkCookie } from '../auth/directusLinkCookie.js';
 import {
     loginRateLimitMiddleware,
     recordLoginFailure,
-    recordLoginSuccess
+    recordLoginSuccess,
+    throwIfAccountCooldown
 } from '../auth/loginRateLimit.js';
 import { requireAllowedWebOrigin } from '../auth/originCheck.js';
 import { recordAuthEvent } from '../auth/auditLog.js';
@@ -36,6 +43,27 @@ const registerPerIpRateLimit = createRateLimiter({
     message: 'Too many registration attempts. Please wait and try again.',
     getKey: (req) => `register:ip:${getRateLimitClientIp(req)}`
 });
+
+function noteLoginFailure(req, res, { provider, identity, detail }) {
+    const outcome = recordLoginFailure(req);
+    recordAuthEvent({
+        event: 'login_failure',
+        provider,
+        identity,
+        detail,
+        req
+    });
+    if (outcome.justLocked) {
+        recordAuthEvent({
+            event: 'login_lockout',
+            provider,
+            identity,
+            detail: `cooldown_${outcome.retryAfterSec || 0}s`,
+            req
+        });
+    }
+    throwIfAccountCooldown(req, res, outcome);
+}
 
 function isAuthFailure(err) {
     if (!err) return false;
@@ -50,10 +78,17 @@ function loginIdentity(req) {
 }
 
 function publicUser(user) {
+    const firstName = String(user?.firstName || user?.first_name || '').trim() || null;
+    const lastName = String(user?.lastName || user?.last_name || '').trim() || null;
+    const email = String(user?.email || '').trim() || null;
+    const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
     return {
         id: user.id,
         username: user.username,
-        email: user.email,
+        email,
+        firstName,
+        lastName,
+        displayName: fullName || email || String(user?.username || '').trim() || 'Guest',
         role: user.role,
         mustChangePassword: Boolean(user.mustChangePassword),
         preferences: user.preferences
@@ -81,7 +116,7 @@ export default function authRoutes(app) {
                 throw new ValidationError('Registration is disabled on this server');
             }
 
-            const { username, email, password } = req.body;
+            const { username, email, password, theme, preferences } = req.body;
 
             if (!username || !email || !password) {
                 throw new ValidationError('Username, email, and password are required');
@@ -96,7 +131,17 @@ export default function authRoutes(app) {
                 throw new ValidationError('Password must be at least 8 characters long');
             }
 
-            const user = await User.create({ username, email, password });
+            const prefsPatch = {
+                ...(preferences && typeof preferences === 'object' ? preferences : {}),
+                ...(theme === 'dark' || theme === 'light' ? { theme } : {})
+            };
+
+            const user = await User.create({
+                username,
+                email,
+                password,
+                preferences: prefsPatch
+            });
             const { user: sessionUser } = issueAppSession(req, res, user);
 
             recordAuthEvent({
@@ -139,37 +184,28 @@ export default function authRoutes(app) {
                     throw err;
                 }
                 if (err instanceof ForbiddenError) {
-                    recordLoginFailure(req);
-                    recordAuthEvent({
-                        event: 'login_failure',
+                    noteLoginFailure(req, res, {
                         provider,
                         identity,
-                        detail: err.code || 'forbidden',
-                        req
+                        detail: err.code || 'forbidden'
                     });
                     throw err;
                 }
                 if (isAuthFailure(err)) {
-                    recordLoginFailure(req);
-                    recordAuthEvent({
-                        event: 'login_failure',
+                    noteLoginFailure(req, res, {
                         provider,
                         identity,
-                        detail: err.code || 'unauthorized',
-                        req
+                        detail: err.code || 'unauthorized'
                     });
                 }
                 throw err;
             }
 
             if (!result) {
-                recordLoginFailure(req);
-                recordAuthEvent({
-                    event: 'login_failure',
+                noteLoginFailure(req, res, {
                     provider,
                     identity,
-                    detail: 'invalid_credentials',
-                    req
+                    detail: 'invalid_credentials'
                 });
                 throw new UnauthorizedError('Invalid credentials');
             }
@@ -251,8 +287,51 @@ export default function authRoutes(app) {
         }
 
         const directusLink = findDirectusLinkForUser(user.id);
+        let profile = { ...user };
+        if (directusLink?.external_id) {
+            try {
+                // Prefer service-token read of the linked user — clinician /users/me
+                // often omits first_name/last_name under field ACL.
+                const { findDirectusUserById, fetchDirectusViewer } = await import('../services/directus.js');
+                let firstName = null;
+                let lastName = null;
+                let email = profile.email;
+
+                const linked = await findDirectusUserById(directusLink.external_id);
+                if (linked) {
+                    firstName = String(linked.first_name || '').trim() || null;
+                    lastName = String(linked.last_name || '').trim() || null;
+                    email = linked.email || email;
+                }
+
+                if (!firstName && !lastName) {
+                    try {
+                        const { getDirectusAccessTokenForAppUser } = await import('../auth/directusUserSession.js');
+                        const accessToken = await getDirectusAccessTokenForAppUser(req.user, { req, res });
+                        const viewer = await fetchDirectusViewer(accessToken);
+                        if (viewer) {
+                            firstName = viewer.firstName || null;
+                            lastName = viewer.lastName || null;
+                            if (viewer.name && !firstName && !lastName) {
+                                const parts = String(viewer.name).trim().split(/\s+/);
+                                firstName = parts[0] || null;
+                                lastName = parts.slice(1).join(' ') || null;
+                            }
+                            email = viewer.email || email;
+                        }
+                    } catch (_) {
+                        // keep service-token result
+                    }
+                }
+
+                profile = { ...profile, email, firstName, lastName };
+            } catch (err) {
+                console.warn('auth/me Directus profile enrich skipped:', err.message || err);
+            }
+        }
+
         res.json({
-            user,
+            user: publicUser(profile),
             identity: {
                 directusLinked: Boolean(directusLink),
                 directusUserId: directusLink?.external_id || null
@@ -308,9 +387,29 @@ export default function authRoutes(app) {
             throw new NotFoundError('User not found');
         }
 
-        const { previousJti } = rotateAppSession(req, res, user);
-        if (previousJti) {
-            clearProviderTokens(previousJti);
+        // Provider tokens are keyed by app session jti — migrate them on rotate
+        // so Cases keep working after /api/auth/refresh.
+        const priorJti = req.user.jti;
+        const priorProviderTokens = priorJti ? getProviderTokens(priorJti) : null;
+
+        const rotated = rotateAppSession(req, res, user);
+        if (rotated.previousJti) {
+            clearProviderTokens(rotated.previousJti);
+        }
+        if (priorProviderTokens && rotated.sessionPayload?.jti) {
+            storeProviderTokens(rotated.sessionPayload.jti, user.id, 'directus', {
+                accessToken: priorProviderTokens.access_token,
+                refreshToken: priorProviderTokens.refresh_token,
+                expiresAt: priorProviderTokens.expires_at
+            });
+            setDirectusLinkCookie(res, {
+                userId: user.id,
+                accessToken: priorProviderTokens.access_token,
+                refreshToken: priorProviderTokens.refresh_token,
+                expiresAt: priorProviderTokens.expires_at
+            });
+        } else if (rotated.sessionPayload?.jti) {
+            await attachStoredDirectusTokensToSession(req, res, rotated.sessionPayload.jti, user.id);
         }
 
         res.json({ user: publicUser(user) });

@@ -16,4 +16,7 @@ services:
       - ${SLICER_HEART_VIEWER_LOCAL_PATH}:/opt/slicer-modules/SimplifiedViewer:ro
       - ./slicer-gui-gpu/launch-slicer.sh:/usr/local/bin/launch-slicer.sh:ro
       - ./slicer-gui-gpu/slicer_session.py:/usr/local/bin/slicer_session.py:ro
+      - ./slicer-gui-gpu/slicer_addons.py:/usr/local/bin/slicer_addons.py:ro
       - ./slicer-gui-gpu/install-slicer-extensions.py:/usr/local/bin/install-slicer-extensions.py:ro
+      - ./slicer-gui-gpu/install-slicer-modules.py:/usr/local/bin/install-slicer-modules.py:ro
+      - ./slicer-gui-gpu/slicer-addons.json:/usr/local/share/slicer-web/slicer-addons.json:ro

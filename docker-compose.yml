@@ -68,10 +68,11 @@ services:
       - slicer-backend-data:/app/data
       - ./backend/data:/app/data-seed:ro
       - ./data/slicer-gui:/app/data/slicer-gui
+      - ./data/slicer-addons:/app/data/slicer-addons
       - ./nginx:/nginx
       - /var/run/docker.sock:/var/run/docker.sock
-    # Re-install when a new lockfile dep is missing from the volume (e.g. @simplewebauthn/server)
-    command: ["sh", "-c", "test -d node_modules/@simplewebauthn/server || npm ci; exec node src/server.js"]
+    # Re-install when a new lockfile dep is missing from the volume (e.g. nodemailer)
+    command: ["sh", "-c", "test -d node_modules/nodemailer || npm ci; exec node src/server.js"]
     environment:
       - NODE_ENV=development
       - DB_PATH=/app/data/users.db
@@ -120,11 +121,31 @@ services:
       - VIEWER_SESSION_WATCHDOG_INTERVAL_MS=${VIEWER_SESSION_WATCHDOG_INTERVAL_MS:-30000}
       - SLICER_GUI_WATCHDOG_INTERVAL_MS=${SLICER_GUI_WATCHDOG_INTERVAL_MS:-30000}
       - SLICER_HEART_VIEWER_LOCAL_PATH=${SLICER_HEART_VIEWER_LOCAL_PATH:-}
+      # Daily-synced addons tree (see slicer-gui-gpu/sync-slicer-addons.py). Empty = image bake only.
+      - SLICER_ADDONS_HOST_DIR=${SLICER_ADDONS_HOST_DIR:-}
       - VNC_ALLOW_NO_PASSWORD=${VNC_ALLOW_NO_PASSWORD:-true}
       - SLICER_GUI_DISPLAY_WIDTH=${SLICER_GUI_DISPLAY_WIDTH:-1920}
       - SLICER_GUI_DISPLAY_HEIGHT=${SLICER_GUI_DISPLAY_HEIGHT:-1080}
+      # Outbound invite email (Mailpit in local compose; override for real SMTP).
+      - SMTP_HOST=${SMTP_HOST:-mailpit}
+      - SMTP_PORT=${SMTP_PORT:-1025}
+      - SMTP_SECURE=${SMTP_SECURE:-false}
+      - SMTP_FROM=${SMTP_FROM:-Case Invites <noreply@localhost>}
+      - PUBLIC_APP_URL=${PUBLIC_APP_URL:-http://localhost:8000}
+      - CASE_INVITE_TTL_DAYS=${CASE_INVITE_TTL_DAYS:-7}
     depends_on:
       - trame-job
+      - mailpit
+    networks:
+      - trame-net
+
+  # Catch-all SMTP for local invite email testing (UI: http://localhost:8025).
+  mailpit:
+    image: axllent/mailpit:v1.22
+    container_name: mailpit
+    ports:
+      - "127.0.0.1:8025:8025"
+      - "127.0.0.1:1025:1025"
     networks:
       - trame-net
 
@@ -136,7 +157,7 @@ services:
     volumes:
       - ./dev:/app
       - frontend-node-modules:/app/node_modules
-    command: ["sh", "-c", "test -d node_modules/@simplewebauthn/browser || npm ci; exec npm run serve -- --host"]
+    command: ["sh", "-c", "test -d node_modules/es-dev-server || npm ci; exec npm run serve -- --host"]
     networks:
       - trame-net
 
@@ -199,6 +220,7 @@ services:
         SLICER_GUI_BASE_IMAGE: ${SLICER_GUI_BASE_IMAGE:-slicer-web-slicer-gui-base:local}
         SLICER_HEART_VIEWER_REPO: ${SLICER_HEART_VIEWER_REPO:-}
         SLICER_HEART_VIEWER_REF: ${SLICER_HEART_VIEWER_REF:-}
+        SLICER_EXTENSIONS: ${SLICER_EXTENSIONS:-}
     image: ${SLICER_GUI_IMAGE:-slicer-web-slicer-gui:local}
     container_name: slicer-gui
     profiles:

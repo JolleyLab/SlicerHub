@@ -1,0 +1,15 @@
+{
+  "extensions": [
+    "Sandbox",
+    "SlicerHeart"
+  ],
+  "modules": [
+    {
+      "name": "SimplifiedViewer",
+      "subdir": "SimplifiedViewer",
+      "entry_py": "SimplifiedViewer.py",
+      "repo_env": "SLICER_HEART_VIEWER_REPO",
+      "ref_env": "SLICER_HEART_VIEWER_REF"
+    }
+  ]
+}

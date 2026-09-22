@@ -1,127 +1,19 @@
 import { LitElement, html, css } from 'lit-element';
 import { API_URL } from './config.js';
+import { resolvePreferredThemeForNewAccount } from './utils/userPreferences.js';
+import { authFormStyleText } from './styles/auth-form-shared.js';
+
+const registerExtras = css`
+  .password-hint {
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    margin-top: 3px;
+  }
+`;
 
 export class RegisterForm extends LitElement {
     static get styles() {
-        return css`
-      :host {
-        display: block;
-        max-width: 400px;
-        margin: 0 auto;
-        padding: 20px;
-      }
-
-      .register-container {
-        background: #fff;
-        border-radius: var(--radius-lg);
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        padding: 30px;
-      }
-
-      h2 {
-        margin: 0 0 20px 0;
-        text-align: center;
-        color: #333;
-      }
-
-      .form-group {
-        margin-bottom: 20px;
-      }
-
-      label {
-        display: block;
-        margin-bottom: 5px;
-        color: #555;
-        font-weight: 500;
-      }
-
-      input {
-        width: 100%;
-        padding: 10px;
-        border: 1px solid #ddd;
-        border-radius: var(--radius-sm);
-        font-size: 14px;
-        box-sizing: border-box;
-      }
-
-      input:focus {
-        outline: none;
-        border-color: #2196F3;
-      }
-
-      button {
-        width: 100%;
-        padding: 12px;
-        background: #2196F3;
-        color: white;
-        border: none;
-        border-radius: var(--radius-sm);
-        font-size: 16px;
-        cursor: pointer;
-        transition: background 0.3s;
-      }
-
-      button:hover {
-        background: #0b7dda;
-      }
-
-      button:disabled {
-        background: #ccc;
-        cursor: not-allowed;
-      }
-
-      .error {
-        color: #f44336;
-        font-size: 14px;
-        margin-top: 10px;
-        text-align: center;
-      }
-
-      .success {
-        color: #4CAF50;
-        font-size: 14px;
-        margin-top: 10px;
-        text-align: center;
-      }
-
-      .spinner {
-        display: inline-block;
-        width: 16px;
-        height: 16px;
-        border: 3px solid rgba(255, 255, 255, 0.3);
-        border-top-color: white;
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-        vertical-align: middle;
-        margin-right: 8px;
-      }
-
-      @keyframes spin {
-        to { transform: rotate(360deg); }
-      }
-
-      .switch-link {
-        text-align: center;
-        margin-top: 20px;
-        color: #666;
-      }
-
-      .switch-link a {
-        color: #2196F3;
-        text-decoration: none;
-        cursor: pointer;
-      }
-
-      .switch-link a:hover {
-        text-decoration: underline;
-      }
-
-      .password-hint {
-        font-size: 12px;
-        color: #777;
-        margin-top: 3px;
-      }
-    `;
+        return [registerExtras];
     }
 
     static get properties() {
@@ -134,6 +26,10 @@ export class RegisterForm extends LitElement {
             error: { type: String },
             success: { type: String }
         };
+    }
+
+    createRenderRoot() {
+        return this;
     }
 
     constructor() {
@@ -187,7 +83,8 @@ export class RegisterForm extends LitElement {
                 body: JSON.stringify({
                     username: this.username,
                     email: this.email,
-                    password: this.password
+                    password: this.password,
+                    theme: resolvePreferredThemeForNewAccount()
                 })
             });
 
@@ -231,14 +128,23 @@ export class RegisterForm extends LitElement {
 
     render() {
         return html`
-      <div class="register-container">
+      <style>${authFormStyleText(registerExtras)}</style>
+      <div class="auth-card">
         <h2>Create Account</h2>
-        <form @submit=${this.handleSubmit}>
+        ${this.error ? html`
+          <div class="auth-alert auth-alert--error" role="alert">${this.error}</div>
+        ` : ''}
+        ${this.success ? html`
+          <div class="auth-alert auth-alert--success" role="status">${this.success}</div>
+        ` : ''}
+        <form @submit=${this.handleSubmit} autocomplete="on">
           <div class="form-group">
             <label for="username">Username</label>
             <input
               id="username"
+              name="username"
               type="text"
+              autocomplete="username"
               .value=${this.username}
               @input=${(e) => this.username = e.target.value}
               ?disabled=${this.loading}
@@ -250,7 +156,9 @@ export class RegisterForm extends LitElement {
             <label for="email">Email</label>
             <input
               id="email"
+              name="email"
               type="email"
+              autocomplete="email"
               .value=${this.email}
               @input=${(e) => this.email = e.target.value}
               ?disabled=${this.loading}
@@ -262,7 +170,9 @@ export class RegisterForm extends LitElement {
             <label for="password">Password</label>
             <input
               id="password"
+              name="password"
               type="password"
+              autocomplete="new-password"
               .value=${this.password}
               @input=${(e) => this.password = e.target.value}
               ?disabled=${this.loading}
@@ -275,7 +185,9 @@ export class RegisterForm extends LitElement {
             <label for="confirmPassword">Confirm password</label>
             <input
               id="confirmPassword"
+              name="confirmPassword"
               type="password"
+              autocomplete="new-password"
               .value=${this.confirmPassword}
               @input=${(e) => this.confirmPassword = e.target.value}
               ?disabled=${this.loading}
@@ -286,9 +198,6 @@ export class RegisterForm extends LitElement {
           <button type="submit" ?disabled=${this.loading}>
             ${this.loading ? html`<span class="spinner"></span>Creating account...` : 'Register'}
           </button>
-
-          ${this.error ? html`<div class="error">${this.error}</div>` : ''}
-          ${this.success ? html`<div class="success">${this.success}</div>` : ''}
         </form>
 
         <div class="switch-link">

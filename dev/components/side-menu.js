@@ -1,6 +1,10 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
 
+/**
+ * Desktop left-rail section menu.
+ * Compact / hamburger navigation lives in page-layout-template (≤1024px).
+ */
 export class SideMenu extends LitElement {
     static get styles() {
         return css`
@@ -116,31 +120,6 @@ export class SideMenu extends LitElement {
                 border-color: color-mix(in srgb, var(--color-secondary) 70%, var(--color-border));
                 color: var(--color-on-secondary);
             }
-
-            @media (max-width: 640px) {
-                :host {
-                    max-width: none;
-                    min-height: auto;
-                }
-
-                nav {
-                    padding: 10px;
-                    min-height: auto;
-                }
-
-                nav::after {
-                    display: none;
-                }
-
-                .menu-list {
-                    flex-direction: row;
-                    flex-wrap: wrap;
-                }
-
-                .menu-item {
-                    flex: 1 1 150px;
-                }
-            }
         `;
     }
 
@@ -178,6 +157,11 @@ export class SideMenu extends LitElement {
     }
 
     updateVisibleHeight() {
+        // Only stretch the desktop rail. Compact nav is handled by page-layout.
+        if (window.matchMedia('(max-width: 1024px)').matches) {
+            this.style.setProperty('--side-menu-visible-height', 'auto');
+            return;
+        }
         const pagePadding = 16;
         const minimumHeight = 120;
         const topOffset = this.getBoundingClientRect().top;
@@ -202,7 +186,7 @@ export class SideMenu extends LitElement {
         return html`
             <nav aria-label="Section navigation">
                 <ul class="menu-list">
-                    ${this.items.map(item => {
+                    ${this.items.map((item) => {
                         const isSelected = item.key === this.selectedKey;
                         return html`
                             <li class="menu-item">

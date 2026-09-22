@@ -5,6 +5,9 @@ import { loadAppFeatures } from '../services/features.js';
 import './navigation-header.js';
 import './side-menu.js';
 
+/** Keep in sync with side-menu desktop/compact split. */
+const COMPACT_NAV_MQ = '(max-width: 1024px)';
+
 export class PageShellTemplate extends LitElement {
     static get styles() {
         return css`
@@ -33,10 +36,25 @@ export class PageShellTemplate extends LitElement {
                 gap: 16px;
                 align-items: start;
                 flex: 1;
+                min-width: 0;
+                width: 100%;
             }
 
             .left-rail {
                 align-self: start;
+                min-width: 0;
+            }
+
+            .main-column {
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                min-width: 0;
+                width: 100%;
+            }
+
+            .compact-nav {
+                display: none;
             }
 
             .content-region {
@@ -46,6 +64,10 @@ export class PageShellTemplate extends LitElement {
                 box-shadow: 0 6px 18px var(--color-shadow, rgba(0, 0, 0, 0.08));
                 padding: 20px;
                 min-height: 320px;
+                min-width: 0;
+                width: 100%;
+                max-width: 100%;
+                box-sizing: border-box;
             }
 
             :host-context([data-theme='dark']) .content-region {
@@ -68,9 +90,134 @@ export class PageShellTemplate extends LitElement {
                 color: var(--color-text-secondary);
             }
 
-            @media (max-width: 900px) {
+            .compact-nav-bar {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+
+            .hamburger-button {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 42px;
+                height: 42px;
+                padding: 0;
+                border: 1px solid var(--color-border);
+                border-radius: var(--radius-md, 8px);
+                background: var(--color-surface, var(--color-background));
+                color: var(--color-text-primary);
+                cursor: pointer;
+                flex-shrink: 0;
+            }
+
+            .hamburger-button:hover,
+            .hamburger-button:focus-visible {
+                background: color-mix(in srgb, var(--color-border) 35%, transparent);
+            }
+
+            .hamburger-button:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
+            }
+
+            .hamburger-button[aria-expanded='true'] {
+                border-color: var(--color-primary);
+                background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+            }
+
+            .hamburger-icon {
+                display: flex;
+                flex-direction: column;
+                gap: 5px;
+                width: 18px;
+            }
+
+            .hamburger-icon span {
+                display: block;
+                height: 2px;
+                width: 100%;
+                border-radius: 1px;
+                background: currentColor;
+            }
+
+            .compact-nav-label {
+                min-width: 0;
+                font-size: 0.95rem;
+                font-weight: 600;
+                color: var(--color-text-primary);
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .compact-nav-panel {
+                border: 1px solid var(--color-border);
+                border-radius: var(--radius-md, 8px);
+                background: var(--color-surface, var(--color-background));
+                padding: 8px;
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+            }
+
+            .compact-menu-list {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                margin: 0;
+                padding: 0;
+                list-style: none;
+            }
+
+            .compact-menu-button {
+                width: 100%;
+                box-sizing: border-box;
+                border: 1px solid var(--color-border);
+                border-radius: var(--radius-md, 8px);
+                background: var(--color-background);
+                color: var(--color-text-primary);
+                padding: 10px 12px;
+                text-align: left;
+                font: inherit;
+                font-weight: 500;
+                cursor: pointer;
+            }
+
+            .compact-menu-button:hover,
+            .compact-menu-button:focus-visible {
+                background: var(--color-accent, color-mix(in srgb, var(--color-border) 40%, transparent));
+                border-color: var(--color-primary);
+            }
+
+            .compact-menu-button:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
+            }
+
+            .compact-menu-button[aria-current='page'] {
+                background: var(--color-primary);
+                border-color: var(--color-primary);
+                color: var(--color-on-primary);
+                cursor: default;
+            }
+
+            /* Compact: hide sidebar, show hamburger — same breakpoint as layout wrap */
+            @media (max-width: 1024px) {
                 .page-layout {
-                    grid-template-columns: 1fr;
+                    grid-template-columns: minmax(0, 1fr);
+                }
+
+                .left-rail {
+                    display: none;
+                }
+
+                .compact-nav {
+                    display: block;
+                }
+
+                .content-region {
+                    width: 100%;
+                    min-height: 240px;
+                    padding: 16px;
                 }
             }
         `;
@@ -84,7 +231,9 @@ export class PageShellTemplate extends LitElement {
             pageDescription: { type: String },
             menuItems: { type: Array },
             homeHref: { type: String },
-            homeLabel: { type: String }
+            homeLabel: { type: String },
+            compactNavOpen: { type: Boolean },
+            displayName: { type: String }
         };
     }
 
@@ -92,12 +241,22 @@ export class PageShellTemplate extends LitElement {
         super();
         initializeTheme();
         this.username = 'Guest';
+        this.displayName = '';
         this.selectedMenuKey = DEFAULT_MENU_KEY;
         this.pageTitle = '';
         this.pageDescription = '';
         this.menuItems = getAppMenuItems();
         this.homeHref = '/file-manager';
         this.homeLabel = 'Home';
+        this.compactNavOpen = false;
+        this._compactMq = null;
+        this._onCompactMqChange = () => {
+            if (!this._compactMq?.matches) {
+                this.compactNavOpen = false;
+            }
+        };
+        this._onDocPointerDown = (event) => this.handleDocPointerDown(event);
+        this._onDocKeyDown = (event) => this.handleDocKeyDown(event);
     }
 
     connectedCallback() {
@@ -106,9 +265,21 @@ export class PageShellTemplate extends LitElement {
             this.menuItems = getAppMenuItems({ directusCasesEnabled: flags.directusCases });
             this.requestUpdate();
         });
+        this._compactMq = window.matchMedia(COMPACT_NAV_MQ);
+        this._compactMq.addEventListener?.('change', this._onCompactMqChange);
+        document.addEventListener('pointerdown', this._onDocPointerDown, true);
+        document.addEventListener('keydown', this._onDocKeyDown, true);
+    }
+
+    disconnectedCallback() {
+        this._compactMq?.removeEventListener?.('change', this._onCompactMqChange);
+        document.removeEventListener('pointerdown', this._onDocPointerDown, true);
+        document.removeEventListener('keydown', this._onDocKeyDown, true);
+        super.disconnectedCallback();
     }
 
     handleMenuSelectionChange(event) {
+        this.compactNavOpen = false;
         this.dispatchEvent(new CustomEvent('menu-selection-change', {
             detail: event.detail,
             bubbles: true,
@@ -116,11 +287,94 @@ export class PageShellTemplate extends LitElement {
         }));
     }
 
+    handleCompactSelect(item) {
+        if (item.key === this.selectedMenuKey) {
+            this.compactNavOpen = false;
+            return;
+        }
+        this.selectedMenuKey = item.key;
+        this.compactNavOpen = false;
+        this.dispatchEvent(new CustomEvent('menu-selection-change', {
+            detail: { selectedKey: item.key, item },
+            bubbles: true,
+            composed: true
+        }));
+    }
+
+    toggleCompactNav() {
+        this.compactNavOpen = !this.compactNavOpen;
+    }
+
+    handleDocPointerDown(event) {
+        if (!this.compactNavOpen) return;
+        const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+        if (path.includes(this)) {
+            const nav = this.renderRoot?.querySelector('.compact-nav');
+            if (nav && path.includes(nav)) return;
+        }
+        this.compactNavOpen = false;
+    }
+
+    handleDocKeyDown(event) {
+        if (!this.compactNavOpen) return;
+        if (event.key === 'Escape') {
+            this.compactNavOpen = false;
+        }
+    }
+
+    renderCompactNav() {
+        const items = Array.isArray(this.menuItems) ? this.menuItems : [];
+        return html`
+            <div class="compact-nav">
+                <div class="compact-nav-bar">
+                    <button
+                        class="hamburger-button"
+                        type="button"
+                        aria-label=${this.compactNavOpen ? 'Close navigation menu' : 'Open navigation menu'}
+                        aria-expanded=${this.compactNavOpen ? 'true' : 'false'}
+                        aria-controls="compact-nav-panel"
+                        @click=${() => this.toggleCompactNav()}
+                    >
+                        <span class="hamburger-icon" aria-hidden="true">
+                            <span></span><span></span><span></span>
+                        </span>
+                    </button>
+                    <span class="compact-nav-label">Menu</span>
+                </div>
+                <div
+                    id="compact-nav-panel"
+                    class="compact-nav-panel"
+                    ?hidden=${!this.compactNavOpen}
+                >
+                    <ul class="compact-menu-list">
+                        ${items.map((item) => {
+                            const selected = item.key === this.selectedMenuKey;
+                            return html`
+                                <li>
+                                    <button
+                                        class="compact-menu-button"
+                                        type="button"
+                                        aria-current=${selected ? 'page' : 'false'}
+                                        ?disabled=${selected}
+                                        @click=${() => this.handleCompactSelect(item)}
+                                    >
+                                        ${item.label}
+                                    </button>
+                                </li>
+                            `;
+                        })}
+                    </ul>
+                </div>
+            </div>
+        `;
+    }
+
     render() {
         return html`
             <div class="app-shell">
                 <navigation-header
                     .username=${this.username}
+                    .displayName=${this.displayName || this.username}
                     .homeHref=${this.homeHref}
                     .homeLabel=${this.homeLabel}
                 ></navigation-header>
@@ -130,15 +384,18 @@ export class PageShellTemplate extends LitElement {
                         <side-menu
                             .items=${this.menuItems}
                             .selectedKey=${this.selectedMenuKey}
-                            @menu-selection-change=${this.handleMenuSelectionChange}
+                            @menu-selection-change=${(e) => this.handleMenuSelectionChange(e)}
                         ></side-menu>
                     </div>
 
-                    <main class="content-region">
-                        ${this.pageTitle ? html`<h1 class="content-title">${this.pageTitle}</h1>` : ''}
-                        ${this.pageDescription ? html`<p class="content-description">${this.pageDescription}</p>` : ''}
-                        <slot name="content"></slot>
-                    </main>
+                    <div class="main-column">
+                        ${this.renderCompactNav()}
+                        <main class="content-region">
+                            ${this.pageTitle ? html`<h1 class="content-title">${this.pageTitle}</h1>` : ''}
+                            ${this.pageDescription ? html`<p class="content-description">${this.pageDescription}</p>` : ''}
+                            <slot name="content"></slot>
+                        </main>
+                    </div>
                 </div>
             </div>
         `;

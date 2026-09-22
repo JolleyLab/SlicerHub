@@ -119,6 +119,19 @@ const config = {
          */
         devRelaxed: process.env.AUTH_DEV_RELAXED === 'true'
             && (process.env.NODE_ENV || 'development') !== 'production',
+        /** Consecutive bad passwords before account cool-down (default 5). */
+        loginMaxFailures: (() => {
+            const n = parseInt(process.env.AUTH_LOGIN_MAX_FAILURES || '5', 10);
+            return Number.isFinite(n) && n > 0 ? n : 5;
+        })(),
+        /**
+         * Cool-down minutes after the failure threshold (default 30).
+         * Soft-lock until email / secondary verification exists.
+         */
+        loginLockoutMinutes: (() => {
+            const n = parseInt(process.env.AUTH_LOGIN_LOCKOUT_MINUTES || '30', 10);
+            return Number.isFinite(n) && n > 0 ? n : 30;
+        })(),
         /**
          * North star: every product user is also a Directus user (auth_identity_links).
          *   directus-linked — collab/Cases require a Directus link (default when Cases on)
@@ -131,27 +144,7 @@ const config = {
          */
         requireDirectusLink: process.env.AUTH_REQUIRE_DIRECTUS_LINK === 'true'
             ? true
-            : (process.env.AUTH_REQUIRE_DIRECTUS_LINK === 'false' ? false : null),
-        webauthn: (() => {
-            const isProd = (process.env.NODE_ENV || 'development') === 'production';
-            const methodsRaw = (process.env.AUTH_METHODS
-                || (isProd ? 'password' : 'password,webauthn')).toLowerCase();
-            const methods = new Set(methodsRaw.split(',').map((s) => s.trim()).filter(Boolean));
-            const rpID = (process.env.WEBAUTHN_RP_ID || 'localhost').trim();
-            const originEnv = (process.env.WEBAUTHN_ORIGIN || '').trim();
-            const origins = originEnv
-                ? originEnv.split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean)
-                : (process.env.CORS_ORIGINS
-                    ? process.env.CORS_ORIGINS.split(',').map((s) => s.trim().replace(/\/+$/, ''))
-                    : ['http://localhost:8000', 'http://localhost:8082']);
-            const enabled = methods.has('webauthn') && Boolean(rpID);
-            return {
-                enabled,
-                rpID,
-                rpName: (process.env.WEBAUTHN_RP_NAME || 'Slicer Web').trim() || 'Slicer Web',
-                origins
-            };
-        })()
+            : (process.env.AUTH_REQUIRE_DIRECTUS_LINK === 'false' ? false : null)
     },
 
     // Directus headless API (service credentials — Cases / system jobs, not user login)
@@ -173,6 +166,35 @@ const config = {
         mode: (process.env.USER_PROVISION_MODE || 'temp_password').trim().toLowerCase(),
         /** Shared temp password for batch (empty → generate per user and return once). */
         defaultTemporaryPassword: (process.env.USER_PROVISION_DEFAULT_PASSWORD || '').trim()
+    },
+
+    /**
+     * Public app origin for invite redeem links (browser URL, not API).
+     * Dev default matches CORS / nginx front door.
+     */
+    publicAppUrl: (process.env.PUBLIC_APP_URL || process.env.APP_PUBLIC_URL || 'http://localhost:8000')
+        .trim()
+        .replace(/\/+$/, ''),
+
+    /** Case signup invite link lifetime (days). */
+    caseInviteTtlDays: Math.max(1, Math.min(30, Number(process.env.CASE_INVITE_TTL_DAYS || 7) || 7)),
+
+    /**
+     * Outbound SMTP. Empty host = disabled (invite copy-link still works).
+     * Local compose defaults to Mailpit (`mailpit:1025`, UI :8025).
+     */
+    mail: {
+        enabled: (() => {
+            if (process.env.SMTP_ENABLED === 'false') return false;
+            if (process.env.SMTP_ENABLED === 'true') return true;
+            return Boolean((process.env.SMTP_HOST || '').trim());
+        })(),
+        host: (process.env.SMTP_HOST || '').trim(),
+        port: Math.max(1, Number(process.env.SMTP_PORT || 587) || 587),
+        secure: process.env.SMTP_SECURE === 'true',
+        user: (process.env.SMTP_USER || '').trim(),
+        pass: (process.env.SMTP_PASS || '').trim(),
+        from: (process.env.SMTP_FROM || 'Case Invites <noreply@localhost>').trim()
     }
 };
 
@@ -204,21 +226,10 @@ if (config.isProduction) {
     if (config.auth.provider === 'directus' && !config.directus.url) {
         throw new Error('FATAL: AUTH_PROVIDER=directus requires DIRECTUS_URL');
     }
-    if (config.auth.webauthn?.enabled) {
-        if (!process.env.WEBAUTHN_RP_ID?.trim() || process.env.WEBAUTHN_RP_ID.trim() === 'localhost') {
-            throw new Error(
-                'FATAL: WebAuthn is enabled in production — set WEBAUTHN_RP_ID to your public hostname '
-                + '(not localhost). Disable via AUTH_METHODS without webauthn if unused.'
-            );
-        }
-        if (!config.auth.webauthn.origins?.length) {
-            throw new Error('FATAL: WebAuthn requires WEBAUTHN_ORIGIN or CORS_ORIGINS');
-        }
-    }
 } else if (config.auth.devRelaxed) {
     console.warn(
-        '⚠️  AUTH_DEV_RELAXED is on — longer idle session, softer login rate limits, '
-        + 'longer device-trust TTL. Never enable in production.'
+        '⚠️  AUTH_DEV_RELAXED is on — longer idle session and softer login rate limits. '
+        + 'Never enable in production.'
     );
 }
 

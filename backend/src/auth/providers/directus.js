@@ -3,10 +3,7 @@
  *
  * Responsible only for: credential check + return local product user.
  * Product session and cookies are owned by auth/session.js.
- *
- * "Remember this device": when password login hits OTP and the browser has a
- * trusted-device cookie from a prior MFA login, we use the stored refresh token
- * instead of prompting for OTP again (password still went to Directus first).
+ * MFA (OTP) is enforced by Directus; the BFF surfaces OTP_REQUIRED to the SPA.
  */
 
 import config from '../../config/index.js';
@@ -18,10 +15,6 @@ import {
     linkIdentity,
     storeProviderTokens
 } from '../identityStore.js';
-import {
-    getTrustedDeviceRefresh,
-    touchTrustedDevice
-} from '../trustedDevices.js';
 
 const PROVIDER = 'directus';
 
@@ -177,49 +170,17 @@ async function sessionFromAccessToken(accessToken, extraTokens = {}) {
             accessToken,
             refreshToken: extraTokens.refreshToken || extraTokens.refresh_token || null,
             expires: extraTokens.expires
-        },
-        usedTrustedDevice: Boolean(extraTokens.usedTrustedDevice)
+        }
     };
-}
-
-/**
- * After password proved but OTP would be required, refresh via trusted device.
- */
-async function tryTrustedDeviceSession(identity, deviceToken) {
-    const trusted = getTrustedDeviceRefresh(PROVIDER, identity, deviceToken);
-    if (!trusted?.refreshToken) return null;
-
-    const { res, body } = await directusJson('/auth/refresh', {
-        method: 'POST',
-        body: JSON.stringify({
-            refresh_token: trusted.refreshToken,
-            mode: 'json'
-        })
-    });
-
-    if (!res.ok) {
-        return null;
-    }
-
-    const data = body?.data || body;
-    const accessToken = data?.access_token;
-    if (!accessToken) return null;
-
-    touchTrustedDevice(trusted.id);
-    return sessionFromAccessToken(accessToken, {
-        refreshToken: data?.refresh_token || trusted.refreshToken,
-        expires: data?.expires,
-        usedTrustedDevice: true
-    });
 }
 
 export const directusProvider = {
     name: PROVIDER,
 
     /**
-     * @param {{ identity: string, password: string, otp?: string, deviceToken?: string }} credentials
+     * @param {{ identity: string, password: string, otp?: string }} credentials
      */
-    async login({ identity, password, otp, deviceToken }) {
+    async login({ identity, password, otp }) {
         const email = String(identity || '').trim();
         if (!email.includes('@')) {
             throw new ValidationError('Email is required when using Directus login');
@@ -241,12 +202,6 @@ export const directusProvider = {
 
         if (res.status === 401 || res.status === 400) {
             if (!otp && looksLikeOtpRequired(body, res.status)) {
-                if (deviceToken) {
-                    const trustedSession = await tryTrustedDeviceSession(email, deviceToken);
-                    if (trustedSession) {
-                        return trustedSession;
-                    }
-                }
                 throw new UnauthorizedError(
                     'Additional verification required',
                     'OTP_REQUIRED'
@@ -258,12 +213,6 @@ export const directusProvider = {
         if (!res.ok) {
             const msg = body?.errors?.[0]?.message || body?.message || 'Directus login failed';
             if (looksLikeOtpRequired(body, res.status)) {
-                if (!otp && deviceToken) {
-                    const trustedSession = await tryTrustedDeviceSession(email, deviceToken);
-                    if (trustedSession) {
-                        return trustedSession;
-                    }
-                }
                 throw new UnauthorizedError('Additional verification required', 'OTP_REQUIRED');
             }
             throw new AppError(msg, res.status >= 500 ? 502 : res.status);

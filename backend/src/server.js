@@ -7,7 +7,6 @@ import config from "./config/index.js";
 
 import containerRoutes from "./routes/containers.js";
 import authRoutes from "./routes/auth.js";
-import webauthnRoutes from "./routes/webauthn.js";
 import adminProvisionRoutes from "./routes/adminProvision.js";
 import fileRoutes from "./routes/files.js";
 import userRoutes from "./routes/users.js";
@@ -82,7 +81,6 @@ app.use(cors({
 
 // Register authentication routes
 authRoutes(app);
-webauthnRoutes(app);
 adminProvisionRoutes(app);
 
 featuresRoutes(app);

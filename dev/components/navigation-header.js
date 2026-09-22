@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
 import './user-menu.js';
+import './notification-bell.js';
 
 export class NavigationHeader extends LitElement {
     static get styles() {
@@ -90,6 +91,7 @@ export class NavigationHeader extends LitElement {
                 margin-left: auto;
                 display: inline-flex;
                 align-items: center;
+                gap: 10px;
             }
 
             /* Dark: solid secondary chip — clinical, not pastel. */
@@ -147,7 +149,8 @@ export class NavigationHeader extends LitElement {
         return {
             username: { type: String },
             homeHref: { type: String },
-            homeLabel: { type: String }
+            homeLabel: { type: String },
+            displayName: { type: String }
         };
     }
 
@@ -155,6 +158,7 @@ export class NavigationHeader extends LitElement {
         super();
         initializeTheme();
         this.username = 'Guest';
+        this.displayName = '';
         this.homeHref = '/file-manager';
         this.homeLabel = 'Home';
     }
@@ -189,7 +193,11 @@ export class NavigationHeader extends LitElement {
                     <span class="home-text">${this.homeLabel}</span>
                 </a>
                 <div class="menu-region">
-                    <user-menu .username=${this.username}></user-menu>
+                    <notification-bell></notification-bell>
+                    <user-menu
+                        .username=${this.username}
+                        .displayName=${this.displayName || this.username}
+                    ></user-menu>
                 </div>
             </header>
         `;

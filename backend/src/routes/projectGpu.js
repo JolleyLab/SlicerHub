@@ -1,7 +1,6 @@
 import Project from '../models/Project.js';
 import ProjectGpu from '../models/ProjectGpu.js';
 import File from '../models/File.js';
-import User from '../models/User.js';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { ValidationError } from '../utils/errors.js';
@@ -53,18 +52,7 @@ import {
     validateRemoteFullSlicerSession,
     remoteFullSlicerViewerPath
 } from '../gpu/remoteFullSlicer.js';
-
-/**
- * Prefer an explicit launch flag, then account prefs.
- * Legacy project GPU viewer flags are ignored (they caused stale Simplified mode).
- */
-function resolveUseSimplifiedViewer({ body, userId }) {
-    if (body?.useSimplifiedViewer !== undefined) {
-        return body.useSimplifiedViewer === true;
-    }
-    const accountPrefs = User.getPreferences(userId);
-    return accountPrefs?.useSimplifiedViewer === true;
-}
+import { resolveUseSimplifiedViewer } from '../slicerGui/viewerPreferences.js';
 
 function requireLocalGpu(projectId, unavailableMessage) {
     const settings = ProjectGpu.getSettings(projectId);

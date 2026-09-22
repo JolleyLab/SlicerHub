@@ -18,7 +18,8 @@ export class FileListRow extends LitElement {
             }
 
             .file-row {
-                border: 1px dashed var(--color-border);
+                border: 1px solid var(--color-border);
+                border-left: 3px solid var(--file-row-accent, var(--color-primary));
                 border-radius: var(--radius-md);
                 padding: 10px 12px;
                 display: flex;
@@ -26,12 +27,21 @@ export class FileListRow extends LitElement {
                 align-items: center;
                 gap: 12px;
                 flex-wrap: wrap;
-                background: transparent;
+                background: var(--color-panel, #fff);
+            }
+
+            .file-row:hover {
+                background: color-mix(in srgb, var(--color-background) 40%, var(--color-panel, #fff));
             }
 
             :host-context([data-theme='dark']) .file-row {
                 border-color: var(--color-border);
-                background: transparent;
+                border-left-color: var(--color-accent);
+                background: var(--color-panel);
+            }
+
+            :host-context([data-theme='dark']) .file-row:hover {
+                background: color-mix(in srgb, var(--color-accent) 10%, var(--color-panel));
             }
 
             :host-context([data-theme='dark']) .file-meta {
@@ -64,6 +74,16 @@ export class FileListRow extends LitElement {
                 -webkit-user-select: none;
                 -webkit-touch-callout: none;
                 touch-action: manipulation;
+            }
+
+            .file-name-button:hover:not(:disabled) {
+                color: var(--color-secondary);
+                text-decoration: underline;
+                text-underline-offset: 2px;
+            }
+
+            :host-context([data-theme='dark']) .file-name-button:hover:not(:disabled) {
+                color: var(--color-accent);
             }
 
             .file-name-button:disabled {
@@ -142,10 +162,6 @@ export class FileListRow extends LitElement {
                 align-items: center;
                 gap: 10px;
                 padding: 2px;
-            }
-
-            .file-name-button:hover {
-                background: color-mix(in srgb, var(--color-primary) 12%, transparent);
             }
 
             .file-name-button:focus-visible {
@@ -330,6 +346,7 @@ export class FileListRow extends LitElement {
                         <button
                             class="file-name-button"
                             type="button"
+                            title=${this.nameButtonTitle || undefined}
                             ?disabled=${this.nameButtonDisabled}
                             @click=${this.handleNameClick}
                             @dblclick=${this.handleNameDblClick}
@@ -341,6 +358,7 @@ export class FileListRow extends LitElement {
                         >
                             ${this.fileName}
                         </button>
+                        <slot name="title-trailing"></slot>
                         ${this.showEditTitle ? html`
                             <button
                                 class="edit-title-button"

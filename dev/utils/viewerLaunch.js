@@ -10,6 +10,12 @@ export const VIEWER_KINDS = Object.freeze({
     SLICER_GUI: 'slicer-gui'
 });
 
+export const VIEWER_SESSION_SCOPES = Object.freeze({
+    PROJECT: 'project',
+    DIRECTUS: 'directus',
+    SHARE: 'share'
+});
+
 /** Soft keeps runtime warm; hard destroys it. Soft is Full Slicer only for now. */
 export const VIEWER_RELEASE_MODES = Object.freeze({
     SOFT: 'soft',
@@ -26,53 +32,47 @@ export function defaultReleaseModeForClose(kind) {
         : VIEWER_RELEASE_MODES.HARD;
 }
 
+function slicerGuiEndpoints(base, { reconnect = false, status = false } = {}) {
+    const isProjectGpu = base.includes('/gpu');
+    return {
+        baseUrl: base,
+        heartbeatUrl: `${base}/full-slicer-heartbeat`,
+        stopUrl: isProjectGpu ? `${base}/stop-full-slicer` : `${base}/full-slicer-stop`,
+        reconnectUrl: reconnect ? `${base}/reconnect-full-slicer` : null,
+        statusUrl: status ? `${base}/full-slicer-status` : null
+    };
+}
+
 /**
- * Heartbeat/stop endpoints for a viewer kind.
- * Remote Full Slicer (Vast) can reuse the same shape with different URL builders later.
- * Directus PoC uses project-less local Full Slicer routes under /api/directus.
+ * Heartbeat / stop / status URLs for a viewer session.
+ * Cases use sessionScope=directus (no project id).
  */
 export function getViewerSessionEndpoints({
     kind,
     projectId = null,
-    sessionScope = 'project',
+    sessionScope = VIEWER_SESSION_SCOPES.PROJECT,
     shareToken = null,
     apiUrl = API_URL
 } = {}) {
     if (kind === VIEWER_KINDS.SLICER_GUI) {
-        if (sessionScope === 'directus') {
-            const base = `${apiUrl}/api/directus`;
-            return {
-                baseUrl: base,
-                heartbeatUrl: `${base}/full-slicer-heartbeat`,
-                stopUrl: `${base}/full-slicer-stop`,
-                reconnectUrl: null,
-                statusUrl: null
-            };
+        if (sessionScope === VIEWER_SESSION_SCOPES.DIRECTUS) {
+            return slicerGuiEndpoints(`${apiUrl}/api/directus`, { status: true });
         }
-        if (sessionScope === 'share') {
+        if (sessionScope === VIEWER_SESSION_SCOPES.SHARE) {
             if (!shareToken) {
                 throw new Error('shareToken is required for share Full Slicer session endpoints');
             }
-            const base = `${apiUrl}/api/share-links/${encodeURIComponent(shareToken)}`;
-            return {
-                baseUrl: base,
-                heartbeatUrl: `${base}/full-slicer-heartbeat`,
-                stopUrl: `${base}/full-slicer-stop`,
-                reconnectUrl: null,
-                statusUrl: null
-            };
+            return slicerGuiEndpoints(
+                `${apiUrl}/api/share-links/${encodeURIComponent(shareToken)}`
+            );
         }
         if (!projectId) {
             throw new Error('projectId is required for Full Slicer session endpoints');
         }
-        const base = `${apiUrl}/api/projects/${encodeURIComponent(projectId)}/gpu`;
-        return {
-            baseUrl: base,
-            heartbeatUrl: `${base}/full-slicer-heartbeat`,
-            stopUrl: `${base}/stop-full-slicer`,
-            reconnectUrl: `${base}/reconnect-full-slicer`,
-            statusUrl: `${base}/full-slicer-status`
-        };
+        return slicerGuiEndpoints(
+            `${apiUrl}/api/projects/${encodeURIComponent(projectId)}/gpu`,
+            { reconnect: true, status: true }
+        );
     }
 
     return {
@@ -105,8 +105,8 @@ export function buildViewerStopBody({
 }
 
 /**
- * Build the Full Slicer loader URL (works in iframe embed or standalone tab).
- * Pass embed=true when parenting the loader; parent owns session release then.
+ * Full Slicer loader URL (iframe embed or standalone tab).
+ * embed=true → parent page owns heartbeat/stop.
  */
 export function buildSlicerGuiLoaderUrl({
     projectId,
@@ -116,6 +116,7 @@ export function buildSlicerGuiLoaderUrl({
     sessionToken = '',
     seatId = null,
     shareToken = '',
+    sessionScope = '',
     simplified = false,
     embed = false,
     quick = false,
@@ -133,6 +134,12 @@ export function buildSlicerGuiLoaderUrl({
     }
     if (fileName) {
         loader.searchParams.set('fileName', fileName);
+    }
+    if (
+        sessionScope === VIEWER_SESSION_SCOPES.DIRECTUS
+        || sessionScope === VIEWER_SESSION_SCOPES.SHARE
+    ) {
+        loader.searchParams.set('sessionScope', sessionScope);
     }
     if (simplified) {
         loader.searchParams.set('simplified', '1');
@@ -157,14 +164,12 @@ export function buildSlicerGuiLoaderUrl({
     let vncParam = rawVnc;
     try {
         const parsed = new URL(rawVnc, baseHref);
-        // Match basename only — "slicer-vnc.html".endsWith("vnc.html") is true.
         const vncPage = parsed.pathname.split('/').pop() || '';
         if (vncPage === 'vnc.html' || vncPage === 'vnc_lite.html') {
             parsed.pathname = parsed.pathname.replace(/\/(?:vnc_lite|vnc)\.html$/, '/slicer-vnc.html');
         }
         parsed.pathname = parsed.pathname.replace(/(?:slicer-)+slicer-vnc\.html$/, 'slicer-vnc.html');
         parsed.pathname = parsed.pathname.replace(/slicer-slicer-vnc\.html$/, 'slicer-vnc.html');
-        // Keep websocket path under the /slicer-gui/... proxy prefix.
         if (!parsed.searchParams.get('path')) {
             const parts = parsed.pathname.split('/').filter(Boolean);
             if (parts[0] === 'slicer-gui') {

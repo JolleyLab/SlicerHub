@@ -7,13 +7,6 @@ import {
     getCachedUserPreferences,
     saveUserPreferences
 } from './utils/userPreferences.js';
-import { loadAppFeatures, getAppFeatures } from './services/features.js';
-import {
-    listPasskeys,
-    registerPasskey,
-    revokePasskey,
-    supportsWebAuthn
-} from './services/webauthn.js';
 
 const AUTOSAVE_DEBOUNCE_MS = 250;
 
@@ -89,62 +82,6 @@ export class UserSettingsPage extends LitElement {
             :host-context([data-theme='dark']) .save-status[data-state='error'] {
                 color: #ff8a80;
             }
-
-            .passkey-list {
-                list-style: none;
-                margin: 0;
-                padding: 0;
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-            }
-
-            .passkey-row {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 12px;
-                padding: 8px 0;
-                border-bottom: 1px solid var(--color-border);
-                font-size: 0.9rem;
-            }
-
-            .passkey-row:last-child {
-                border-bottom: none;
-            }
-
-            .passkey-meta {
-                color: var(--color-text-secondary);
-                font-size: 0.8rem;
-            }
-
-            .passkey-actions {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 8px;
-                margin-top: 8px;
-            }
-
-            .settings-btn {
-                padding: 8px 12px;
-                border-radius: var(--radius-sm);
-                border: 1px solid var(--color-border);
-                background: var(--color-primary, #4CAF50);
-                color: #fff;
-                cursor: pointer;
-                font-size: 0.9rem;
-            }
-
-            .settings-btn:disabled {
-                opacity: 0.5;
-                cursor: not-allowed;
-            }
-
-            .settings-btn.danger {
-                background: transparent;
-                color: #b42318;
-                border-color: #b42318;
-            }
         `;
     }
 
@@ -156,11 +93,7 @@ export class UserSettingsPage extends LitElement {
             useSimplifiedViewer: { type: Boolean },
             saveState: { type: String },
             saveStatusMessage: { type: String },
-            errorMessage: { type: String },
-            webauthnEnabled: { type: Boolean },
-            passkeys: { type: Array },
-            passkeyBusy: { type: Boolean },
-            passkeyMessage: { type: String }
+            errorMessage: { type: String }
         };
     }
 
@@ -177,63 +110,6 @@ export class UserSettingsPage extends LitElement {
         this.theme = prefs.theme;
         this.useFullSlicer = prefs.useFullSlicer;
         this.useSimplifiedViewer = prefs.useSimplifiedViewer;
-        this.webauthnEnabled = false;
-        this.passkeys = [];
-        this.passkeyBusy = false;
-        this.passkeyMessage = '';
-    }
-
-    connectedCallback() {
-        super.connectedCallback();
-        this._loadPasskeySection();
-    }
-
-    async _loadPasskeySection() {
-        try {
-            await loadAppFeatures();
-            const auth = getAppFeatures()?.auth;
-            this.webauthnEnabled = auth?.webauthn?.enabled === true
-                && supportsWebAuthn();
-            if (this.webauthnEnabled) {
-                this.passkeys = await listPasskeys();
-            }
-        } catch {
-            this.webauthnEnabled = false;
-        }
-    }
-
-    async handleAddPasskey() {
-        this.passkeyBusy = true;
-        this.passkeyMessage = '';
-        this.errorMessage = '';
-        try {
-            await registerPasskey({ friendlyName: 'This device' });
-            this.passkeys = await listPasskeys();
-            this.passkeyMessage = 'Passkey added. You can use it on the sign-in screen.';
-        } catch (err) {
-            if (err?.name === 'NotAllowedError') {
-                this.passkeyMessage = 'Passkey setup was cancelled.';
-            } else {
-                this.errorMessage = err.message || 'Could not add passkey.';
-            }
-        } finally {
-            this.passkeyBusy = false;
-        }
-    }
-
-    async handleRemovePasskey(id) {
-        if (!window.confirm('Remove this passkey from your account?')) return;
-        this.passkeyBusy = true;
-        this.passkeyMessage = '';
-        try {
-            await revokePasskey(id);
-            this.passkeys = await listPasskeys();
-            this.passkeyMessage = 'Passkey removed.';
-        } catch (err) {
-            this.errorMessage = err.message || 'Could not remove passkey.';
-        } finally {
-            this.passkeyBusy = false;
-        }
     }
 
     disconnectedCallback() {
@@ -372,53 +248,6 @@ export class UserSettingsPage extends LitElement {
                             @options-change=${(e) => this.handleViewerOptionsChange(e)}
                         ></local-slicer-viewer-options>
                     </section>
-
-                    ${this.webauthnEnabled ? html`
-                    <section class="settings-section">
-                        <h2 class="section-title">Passkeys</h2>
-                        <p class="section-description">
-                            Sign in with Face ID, Windows Hello, or a security key after you register a passkey.
-                            Password (and MFA when required) remains available as a backup.
-                        </p>
-                        ${this.passkeys?.length ? html`
-                        <ul class="passkey-list">
-                            ${this.passkeys.map((pk) => html`
-                            <li class="passkey-row">
-                                <div>
-                                    <div>${pk.friendlyName || 'Passkey'}</div>
-                                    <div class="passkey-meta">
-                                        ${pk.deviceType || 'device'}
-                                        ${pk.createdAt ? ` · added ${pk.createdAt}` : ''}
-                                    </div>
-                                </div>
-                                <button
-                                    type="button"
-                                    class="settings-btn danger"
-                                    ?disabled=${this.passkeyBusy}
-                                    @click=${() => this.handleRemovePasskey(pk.id)}
-                                >Remove</button>
-                            </li>
-                            `)}
-                        </ul>
-                        ` : html`
-                        <p class="section-description">No passkeys on this account yet.</p>
-                        `}
-
-                        <div class="passkey-actions">
-                            <button
-                                type="button"
-                                class="settings-btn"
-                                ?disabled=${this.passkeyBusy}
-                                @click=${() => this.handleAddPasskey()}
-                            >
-                                ${this.passkeyBusy ? 'Working…' : 'Add passkey'}
-                            </button>
-                        </div>
-                        ${this.passkeyMessage ? html`
-                            <p class="section-description">${this.passkeyMessage}</p>
-                        ` : ''}
-                    </section>
-                    ` : ''}
                 </div>
             </page-layout-template>
         `;

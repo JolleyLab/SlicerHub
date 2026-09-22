@@ -4,7 +4,8 @@ import config from '../config/index.js';
 import { ConflictError } from '../utils/errors.js';
 import {
     mergeUserPreferences,
-    parseUserPreferencesJson
+    parseUserPreferencesJson,
+    normalizeUserPreferences
 } from '../gpu/userPreferences.js';
 
 const SALT_ROUNDS = config.security.bcryptRounds;
@@ -35,7 +36,7 @@ class User {
     /**
      * Create a new user
      */
-    static async create({ username, email, password }) {
+    static async create({ username, email, password, preferences } = {}) {
         // Validate input
         if (!username || !email || !password) {
             throw new Error('Username, email, and password are required');
@@ -51,12 +52,13 @@ class User {
 
         // Hash password
         const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+        const prefsJson = JSON.stringify(normalizeUserPreferences(preferences || {}));
 
         // Insert user
         const result = db.prepare(`
-            INSERT INTO users (username, email, password_hash)
-            VALUES (?, ?, ?)
-        `).run(username, email, passwordHash);
+            INSERT INTO users (username, email, password_hash, preferences_json)
+            VALUES (?, ?, ?, ?)
+        `).run(username, email, passwordHash, prefsJson);
 
         console.log('Insert result:', result);
         console.log('lastInsertRowid:', result.lastInsertRowid);

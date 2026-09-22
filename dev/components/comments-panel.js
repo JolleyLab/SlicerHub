@@ -22,51 +22,63 @@ export class CommentsPanel extends LitElement {
                 font-family: var(--font-family-base);
                 font-feature-settings: var(--font-feature-defaults);
                 border: 1px solid var(--color-border);
+                border-left: 4px solid var(--color-primary);
                 border-radius: var(--radius-lg);
-                background: var(--color-panel, var(--color-surface, var(--color-background)));
-                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+                background: var(--color-panel, #fff);
+                box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
                 overflow: hidden;
                 box-sizing: border-box;
             }
 
             :host-context([data-theme='dark']) {
                 border-color: var(--color-border);
-                box-shadow: 0 3px 14px rgba(0, 0, 0, 0.32);
+                border-left-color: var(--color-accent);
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+                background: var(--color-panel);
             }
 
             .chat-header {
                 display: flex;
-                align-items: baseline;
+                align-items: center;
                 justify-content: space-between;
                 gap: 10px;
-                padding: 12px 14px;
-                background: var(--color-primary);
-                color: var(--color-on-primary);
+                min-height: 44px;
+                padding: 0 16px;
+                border-bottom: 1px solid var(--color-border);
+                background: var(--color-panel, #fff);
                 flex-shrink: 0;
+                box-sizing: border-box;
             }
 
             :host-context([data-theme='dark']) .chat-header {
-                background: color-mix(in srgb, var(--color-primary) 82%, #0c1020);
-                color: var(--color-on-primary);
-                border-bottom: 1px solid color-mix(in srgb, var(--color-border) 70%, var(--color-primary));
-            }
-
-            :host-context([data-theme='dark']) .comments-count {
-                color: var(--color-on-primary);
-                opacity: 0.92;
+                background: var(--color-panel);
+                border-bottom-color: var(--color-border);
             }
 
             .comments-title {
                 margin: 0;
-                font-weight: 650;
-                font-size: 0.98rem;
-                letter-spacing: 0.01em;
+                font-size: 0.72rem;
+                font-weight: 700;
+                letter-spacing: 0.07em;
+                text-transform: uppercase;
+                color: var(--color-text-secondary);
             }
 
             .comments-count {
-                font-size: 0.82rem;
-                opacity: 0.85;
-                font-weight: 500;
+                font-size: 0.72rem;
+                font-weight: 650;
+                color: var(--color-text-secondary);
+                background: color-mix(in srgb, var(--color-border) 16%, transparent);
+                border: 1px solid var(--color-border);
+                border-radius: 999px;
+                padding: 2px 8px;
+                line-height: 1.3;
+            }
+
+            :host-context([data-theme='dark']) .comments-count {
+                color: var(--color-text-secondary);
+                background: color-mix(in srgb, var(--color-border) 40%, transparent);
+                border-color: var(--color-border);
             }
 
             .chat-thread {
@@ -76,17 +88,22 @@ export class CommentsPanel extends LitElement {
                 display: flex;
                 flex-direction: column;
                 gap: 12px;
-                padding: 14px;
-                background: transparent;
+                padding: 12px 16px;
+                background: color-mix(in srgb, var(--color-background) 55%, var(--color-panel, #fff));
+            }
+
+            :host-context([data-theme='dark']) .chat-thread {
+                background: var(--color-background);
             }
 
             .empty-note {
                 margin: auto;
                 text-align: center;
                 color: var(--color-text-secondary);
-                font-size: 0.95rem;
+                font-size: 0.875rem;
+                font-style: italic;
                 max-width: 220px;
-                line-height: 1.4;
+                line-height: 1.45;
             }
 
             .comment-row {
@@ -148,13 +165,13 @@ export class CommentsPanel extends LitElement {
             .bubble {
                 border-radius: var(--radius-sm) var(--radius-lg) var(--radius-lg) var(--radius-lg);
                 padding: 8px 12px 10px;
-                background: var(--color-background);
-                border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
-                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+                background: var(--color-panel, #fff);
+                border: 1px solid var(--color-border);
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
             }
 
             :host-context([data-theme='dark']) .bubble {
-                background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface));
+                background: var(--color-panel);
                 border-color: var(--color-border);
                 box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
             }
@@ -165,23 +182,24 @@ export class CommentsPanel extends LitElement {
             }
 
             :host-context([data-theme='dark']) .comment-compose {
-                background: color-mix(in srgb, var(--color-primary) 6%, var(--color-panel));
+                background: var(--color-panel);
                 border-top-color: var(--color-border);
             }
 
             :host-context([data-theme='dark']) .comment-compose textarea {
-                background: var(--color-surface);
+                background: var(--color-background);
                 border-color: var(--color-border);
+                color: var(--color-text-primary);
             }
 
             :host-context([data-theme='dark']) .primary-button {
-                background: var(--color-primary);
+                background: var(--color-accent);
                 color: var(--color-on-primary);
-                border-color: color-mix(in srgb, var(--color-primary) 70%, var(--color-border));
+                border-color: var(--color-accent);
             }
 
             :host-context([data-theme='dark']) .primary-button:hover:not(:disabled) {
-                background: color-mix(in srgb, var(--color-primary) 78%, var(--color-secondary));
+                background: color-mix(in srgb, var(--color-accent) 85%, #ffffff);
                 color: var(--color-on-primary);
             }
 
@@ -227,57 +245,64 @@ export class CommentsPanel extends LitElement {
                 display: grid;
                 grid-template-columns: minmax(0, 1fr) auto;
                 gap: 10px;
-                align-items: end;
-                padding: 12px;
-                border-top: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
-                background: color-mix(in srgb, var(--color-primary) 5%, var(--color-panel, var(--color-surface, var(--color-background))));
+                align-items: center;
+                min-height: 56px;
+                padding: 10px 16px;
+                border-top: 1px solid var(--color-border);
+                background: var(--color-panel, #fff);
+                box-sizing: border-box;
             }
 
             .comment-compose textarea {
                 width: 100%;
-                min-height: 44px;
+                min-height: 36px;
                 max-height: 120px;
                 box-sizing: border-box;
                 border: 1px solid var(--color-border);
-                border-radius: var(--radius-sm);
-                padding: 10px 12px;
+                border-radius: 6px;
+                padding: 8px 12px;
                 font: inherit;
+                font-size: 0.875rem;
                 color: var(--color-text-primary);
                 background: var(--color-background);
                 resize: vertical;
             }
 
             .comment-compose textarea:focus-visible {
-                outline: 3px solid var(--color-focus, #0057c2);
-                outline-offset: 2px;
-                box-shadow: var(--focus-ring-shadow, 0 0 0 2px #fff, 0 0 0 5px #0057c2);
-            }
-
-            .primary-button:focus-visible {
-                outline: 3px solid var(--color-focus, #0057c2);
-                outline-offset: 2px;
-                box-shadow: var(--focus-ring-shadow, 0 0 0 2px #fff, 0 0 0 5px #0057c2);
+                outline: none;
+                border-color: var(--color-primary);
+                box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 16%, transparent);
             }
 
             .primary-button {
-                border: 1px solid var(--color-border);
-                border-radius: var(--radius-lg);
-                min-height: 44px;
-                padding: 8px 16px;
+                border: 1px solid transparent;
+                border-radius: 6px;
+                min-height: 36px;
+                padding: 8px 18px;
                 font: inherit;
-                font-weight: 650;
+                font-size: 0.875rem;
+                font-weight: 600;
                 cursor: pointer;
                 background: var(--color-primary);
                 color: var(--color-on-primary);
                 white-space: nowrap;
+                display: inline-flex;
+                align-items: center;
+                line-height: 1.2;
             }
 
             .primary-button:hover:not(:disabled) {
-                background: color-mix(in srgb, var(--color-primary) 78%, #5b7cff);
+                opacity: 0.87;
+                box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 32%, transparent);
+            }
+
+            .primary-button:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
             }
 
             .primary-button:disabled {
-                opacity: 0.6;
+                opacity: 0.55;
                 cursor: not-allowed;
             }
         `;

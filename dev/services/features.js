@@ -6,9 +6,7 @@ const DEFAULT_AUTH = Object.freeze({
     registrationEnabled: true,
     identityLabel: 'Username or email',
     identityPlaceholder: 'Username or email',
-    devRelaxed: false,
-    rememberDeviceEnabled: false,
-    webauthn: Object.freeze({ enabled: false })
+    devRelaxed: false
 });
 
 let featuresPromise = null;
@@ -31,42 +29,46 @@ export function isDirectusCasesEnabled() {
 }
 
 /**
- * Load public feature flags from the BFF (cached for the page session).
+ * Load public feature flags once (safe to call repeatedly).
  */
 export function loadAppFeatures() {
-    if (!featuresPromise) {
-        featuresPromise = fetch(`${API_URL}/api/features`, { credentials: 'include' })
-            .then((response) => (response.ok ? response.json() : {}))
-            .then((data) => {
-                const authIn = data?.auth && typeof data.auth === 'object' ? data.auth : {};
-                const methods = Array.isArray(authIn.methods) && authIn.methods.length
-                    ? authIn.methods
-                    : ['password'];
-                const auth = {
-                    provider: authIn.provider || DEFAULT_AUTH.provider,
-                    methods,
-                    registrationEnabled: authIn.registrationEnabled !== false,
-                    identityLabel: authIn.identityLabel || DEFAULT_AUTH.identityLabel,
-                    identityPlaceholder: authIn.identityPlaceholder || DEFAULT_AUTH.identityPlaceholder,
-                    devRelaxed: authIn.devRelaxed === true,
-                    rememberDeviceEnabled: authIn.rememberDeviceEnabled === true,
-                    webauthn: Object.freeze({
-                        enabled: authIn.webauthn?.enabled === true,
-                        rpId: authIn.webauthn?.rpId || null
-                    })
-                };
+    if (featuresPromise) return featuresPromise;
 
-                features = Object.freeze({
-                    directusCases: data?.directusCases === true,
-                    auth: Object.freeze(auth)
-                });
-                featuresLoaded = true;
-                return features;
-            })
-            .catch(() => {
-                featuresLoaded = true;
-                return features;
+    featuresPromise = fetch(`${API_URL}/api/features`, {
+        credentials: 'include',
+        cache: 'no-store'
+    })
+        .then(async (res) => {
+            if (!res.ok) throw new Error(`features ${res.status}`);
+            return res.json();
+        })
+        .then((data) => {
+            const authIn = data?.auth || {};
+            const methods = Array.isArray(authIn.methods) && authIn.methods.length
+                ? authIn.methods
+                : ['password'];
+            const auth = {
+                provider: authIn.provider || DEFAULT_AUTH.provider,
+                methods,
+                registrationEnabled: authIn.registrationEnabled !== false,
+                identityLabel: authIn.identityLabel || DEFAULT_AUTH.identityLabel,
+                identityPlaceholder: authIn.identityPlaceholder || DEFAULT_AUTH.identityPlaceholder,
+                devRelaxed: authIn.devRelaxed === true
+            };
+
+            features = Object.freeze({
+                directusCases: data?.directusCases === true,
+                auth: Object.freeze(auth)
             });
-    }
+            featuresLoaded = true;
+            return features;
+        })
+        .catch((err) => {
+            console.warn('loadAppFeatures failed; will retry next call:', err?.message || err);
+            featuresPromise = null;
+            featuresLoaded = false;
+            return features;
+        });
+
     return featuresPromise;
 }

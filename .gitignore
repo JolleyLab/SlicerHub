@@ -11,6 +11,8 @@ userFiles/
 data/
 !data/slicer-gui/
 !data/slicer-gui/.gitkeep
+!data/slicer-addons/
+!data/slicer-addons/.gitkeep
 trame-server/userFiles/
 
 # Environment variables (may contain secrets)

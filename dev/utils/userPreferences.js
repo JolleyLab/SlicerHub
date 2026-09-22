@@ -1,10 +1,5 @@
-/**
- * Account-backed user preferences (theme + Local viewer options).
- * Server is source of truth; localStorage is a short-lived cache for theme flash.
- */
-
 import { API_URL } from '../config.js';
-import { applyTheme } from '../components/theme.js';
+import { applyTheme, getSystemColorScheme } from '../components/theme.js';
 import {
     DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS,
     normalizeLocalSlicerViewerOptions
@@ -71,6 +66,17 @@ function isDefaultPreferences(prefs) {
         && n.useSimplifiedViewer === DEFAULT_USER_PREFERENCES.useSimplifiedViewer;
 }
 
+/** Device theme for seeding a new account (toggle can override later). */
+export function resolvePreferredThemeForNewAccount() {
+    try {
+        const cached = localStorage.getItem(THEME_CACHE_KEY);
+        if (cached === 'dark' || cached === 'light') return cached;
+    } catch (_) {
+        /* ignore */
+    }
+    return getSystemColorScheme();
+}
+
 export function applyUserPreferences(preferences = {}) {
     cachedPreferences = normalizeUserPreferences(preferences);
     applyTheme(cachedPreferences.theme);
@@ -96,26 +102,21 @@ async function parseResponse(response) {
 
 /**
  * Apply preferences from login/me payload. Optionally migrate one-time
- * browser-local viewer options into the account when the server still has defaults.
+ * browser/OS theme (+ legacy viewer options) into the account when still at defaults.
  */
 export async function hydrateUserPreferencesFromUser(user) {
     let preferences = normalizeUserPreferences(user?.preferences || {});
 
     if (isDefaultPreferences(preferences)) {
         const legacy = readLegacyLocalViewerOptions();
-        let themeFromBrowser = null;
-        try {
-            themeFromBrowser = localStorage.getItem(THEME_CACHE_KEY);
-        } catch (_) {
-            themeFromBrowser = null;
-        }
+        const themeFromDevice = resolvePreferredThemeForNewAccount();
 
         const migrationPatch = {};
         if (legacy && (legacy.useFullSlicer || legacy.useSimplifiedViewer)) {
             Object.assign(migrationPatch, legacy);
         }
-        if (themeFromBrowser === 'dark' || themeFromBrowser === 'light') {
-            migrationPatch.theme = themeFromBrowser;
+        if (themeFromDevice === 'dark' || themeFromDevice === 'light') {
+            migrationPatch.theme = themeFromDevice;
         }
 
         if (Object.keys(migrationPatch).length > 0) {

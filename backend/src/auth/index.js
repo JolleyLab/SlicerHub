@@ -12,10 +12,11 @@
  *   AUTH_PROVIDER=directus  → BFF password login to Directus, map to local user
  *
  * Default: Do not persist IdP tokens after login (identity mapping only).
- * Opt in with AUTH_STORE_PROVIDER_TOKENS=true when a feature must call the IdP as the end user.
+ * Opt in with AUTH_STORE_PROVIDER_TOKENS=true when a feature must call the IdP as the end user
+ * (e.g. Cases call-as-user).
  *
- * AUTH_DEV_RELAXED=true (non-production only): softer login rate limits, longer idle default,
- * longer "remember device" TTL — not a full MFA kill-switch (IdP still enforces first OTP).
+ * AUTH_DEV_RELAXED=true (non-production only): softer login rate limits, longer idle default —
+ * not a full MFA kill-switch (IdP still enforces OTP when required).
  */
 
 import config from '../config/index.js';
@@ -24,19 +25,26 @@ import { localProvider } from './providers/local.js';
 import { directusProvider } from './providers/directus.js';
 import { issueAppSession, destroyAppSession, clearAuthCookie } from './session.js';
 import { clearProviderTokens, clearProviderTokensForUser } from './identityStore.js';
+import { setDirectusLinkCookie, clearDirectusLinkCookie } from './directusLinkCookie.js';
 import { isDirectusLinkRequired } from './requireDirectusLink.js';
 import { deleteAllUserSessions } from '../middleware/authMiddleware.js';
-import {
-    DEVICE_COOKIE,
-    upsertTrustedDevice,
-    setDeviceCookie,
-    revokeTrustedDevicesForUser
-} from './trustedDevices.js';
 
 const PROVIDERS = {
     local: localProvider,
     directus: directusProvider
 };
+
+/** Clear leftover remember-device cookies from older builds. */
+function clearLegacyDeviceCookie(res) {
+    const secure = process.env.COOKIE_SECURE === 'true'
+        || (process.env.COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production');
+    res.clearCookie('auth_device', {
+        httpOnly: true,
+        secure,
+        sameSite: 'strict',
+        path: '/'
+    });
+}
 
 export function getAuthProviderName() {
     const raw = String(config.auth?.provider || process.env.AUTH_PROVIDER || 'local')
@@ -60,13 +68,10 @@ export function getPublicAuthConfig() {
     const provider = getAuthProviderName();
     const registrationEnv = process.env.REGISTRATION_ENABLED;
     const registrationEnabled = provider === 'local' && registrationEnv !== 'false';
-    const webauthnOn = config.auth?.webauthn?.enabled === true;
-    const methods = ['password'];
-    if (webauthnOn) methods.push('webauthn');
 
     return {
         provider,
-        methods,
+        methods: ['password'],
         registrationEnabled,
         /** product direction: collab users map 1:1 to Directus */
         identityMode: config.auth?.identityMode || 'directus-linked',
@@ -75,14 +80,7 @@ export function getPublicAuthConfig() {
         identityPlaceholder: provider === 'directus'
             ? 'you@example.com'
             : 'Username or email',
-        devRelaxed: config.auth?.devRelaxed === true,
-        rememberDeviceEnabled: provider === 'directus',
-        webauthn: webauthnOn
-            ? {
-                enabled: true,
-                rpId: config.auth.webauthn.rpID
-            }
-            : { enabled: false }
+        devRelaxed: config.auth?.devRelaxed === true
     };
 }
 
@@ -94,9 +92,6 @@ export async function loginWithProvider(req, res, credentials) {
     const identity = String(credentials?.identity || credentials?.username || credentials?.email || '').trim();
     const password = String(credentials?.password || '');
     const otp = credentials?.otp != null ? String(credentials.otp) : undefined;
-    const rememberDevice = credentials?.rememberDevice === true
-        || credentials?.remember_device === true;
-    const deviceToken = req.cookies?.[DEVICE_COOKIE] || null;
 
     if (!identity || !password) {
         throw new ValidationError('Identity and password are required');
@@ -112,8 +107,7 @@ export async function loginWithProvider(req, res, credentials) {
     const result = await provider.login({
         identity,
         password,
-        otp,
-        deviceToken
+        otp
     });
     if (!result?.user) {
         return null;
@@ -127,24 +121,18 @@ export async function loginWithProvider(req, res, credentials) {
         && typeof provider.storeSessionTokens === 'function'
     ) {
         provider.storeSessionTokens(sessionPayload.jti, result.user.id, result.externalTokens);
-    }
-
-    // Remember device: keep encrypted refresh for MFA re-prompt skip (cookie httpOnly).
-    const refresh = result.externalTokens?.refreshToken || result.externalTokens?.refresh_token;
-    if (providerName === 'directus' && refresh && (rememberDevice || deviceToken || result.usedTrustedDevice)) {
-        try {
-            const raw = upsertTrustedDevice({
-                provider: providerName,
-                identity,
+        if (providerName === 'directus') {
+            setDirectusLinkCookie(res, {
                 userId: result.user.id,
-                refreshToken: refresh,
-                existingRawToken: deviceToken
+                accessToken: result.externalTokens.accessToken || result.externalTokens.access_token,
+                refreshToken: result.externalTokens.refreshToken || result.externalTokens.refresh_token,
+                expiresAt: result.externalTokens.expiresAt || null,
+                expires: result.externalTokens.expires
             });
-            setDeviceCookie(res, raw);
-        } catch (err) {
-            console.warn('Trusted device store failed:', err.message);
         }
     }
+
+    clearLegacyDeviceCookie(res);
 
     return {
         user,
@@ -153,22 +141,25 @@ export async function loginWithProvider(req, res, credentials) {
 }
 
 /**
- * End this browser session (app JWT + any stored provider tokens).
- * Device trust cookie is kept (like a remembered browser).
+ * End this browser session (app JWT + session-scoped provider tokens).
+ * Keeps the Directus link cookie so Cases call-as-user can re-attach on the next
+ * request in this browser until logout-all or cookie expiry.
  */
 export function logoutCurrentSession(req, res) {
     const jti = destroyAppSession(req, res);
     if (jti) {
         clearProviderTokens(jti);
     }
+    clearLegacyDeviceCookie(res);
 }
 
 /**
- * Drop all app sessions for this user (+ provider tokens + trusted devices).
+ * Drop all app sessions for this user (+ provider tokens + Directus link).
  */
 export function logoutAllSessions(userId, res) {
     deleteAllUserSessions(userId);
     clearProviderTokensForUser(userId);
-    revokeTrustedDevicesForUser(userId);
     clearAuthCookie(res);
+    clearDirectusLinkCookie(res);
+    clearLegacyDeviceCookie(res);
 }

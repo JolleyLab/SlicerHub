@@ -42,3 +42,7 @@ Activity is recorded when provisioning completes, a scene is opened, or either h
 ## Adding a provider
 
 Implement `backend/src/gpu/providers/<name>/index.js` and register in `backend/src/gpu/registry.js`.
+
+## Full Slicer (local GPU) addons
+
+Local Full Slicer seats use a **daily host sync** for Extension Index packages and scripted modules (not a new Docker image per update). Setup for current hosts, Hub base, and Azure N-series: [slicer-gui-addons.md](./slicer-gui-addons.md).

@@ -8,9 +8,9 @@ is still open (called out below).
 
 **Direction:** org SSO later via **OIDC in the BFF** (Entra/Okta, or Keycloak only if a self-hosted broker is required). **Directus stays** as content/collab identity (Cases ACLs, comments, call-as-user). Product session stays this app’s httpOnly cookie.
 
-**Do not add new identity features in this repo** (password stores, MFA, reset, federation, user-directory replacement). Use Directus or the future OIDC provider. Glue allowed: provision/link Directus users, session mapping, encrypted server-side IdP tokens for Cases-as-user, `providers/*` plug-ins backed by maintained libraries (`openid-client`, SimpleWebAuthn).
+**Do not add new identity features in this repo** (password stores, MFA, reset, federation, user-directory replacement). Use Directus or the future OIDC provider. Glue allowed: provision/link Directus users, session mapping, encrypted server-side IdP tokens for Cases-as-user, `providers/*` plug-ins backed by maintained libraries (e.g. `openid-client` for OIDC).
 
-**Stop investing in:** SQLite as a production password IdP; expanding Directus password+OTP+remember-device as the long-term SSO story. Local provider is a fallback, not the north star.
+**Stop investing in:** SQLite as a production password IdP; expanding Directus password+OTP as the long-term SSO story. Local provider is a fallback, not the north star.
 
 See also workspace rule `.cursor/rules/identity-no-custom-idp.mdc`.
 
@@ -101,18 +101,15 @@ backend/src/auth/
   loginRateLimit.js  # attempt / failure budgets
   originCheck.js     # CORS-origin gate for cookie mutations
   auditLog.js        # hashed-identity auth events
-  trustedDevices.js  # remember-device (Directus refresh)
-  webauthn/          # passkeys via @simplewebauthn/server
-    challenges.js
-    credentialsStore.js
-    service.js
+  changePassword.js  # provisioned-user password change
+  directusLinkCookie.js / directusUserSession.js  # Cases call-as-user
+  requireDirectusLink.js
   providers/
     local.js
     directus.js
-routes/webauthn.js   # register/login/list/delete passkey APIs
 ```
 
-Public: `GET /api/auth/config` and `GET /api/features` → `auth` including `methods`, `webauthn`.
+Public: `GET /api/auth/config` and `GET /api/features` → `auth` (`methods: ["password"]`, provider flags). Passkeys / remember-device were removed from the tree (SSO/OIDC later).
 
 ## Open decisions (compromise later — keep seams)
 
@@ -169,14 +166,124 @@ When `ENABLE_DIRECTUS_CASES=true`, Cases list/comments/attachments use the signe
 Directus access token (encrypted on the app session via `AUTH_STORE_PROVIDER_TOKENS`, auto-on
 with Cases). **No service-token fallback** for those routes.
 
-- Login with `AUTH_PROVIDER=directus` (email + password) so tokens are stored; passkey-only
-  sessions lack Directus tokens until password re-auth is wired.
+- First connect Cases with `AUTH_PROVIDER=directus` (email + password). That sets an
+  encrypted httpOnly `dx_link` cookie (Directus refresh) and stores tokens on the current
+  session jti. No extra SQLite table — the cookie is the durable bridge.
+- Later passkey logins re-attach by refreshing from `dx_link` onto the new session jti.
+  If attach fails while Cases is on, **passkey login fails closed** (no app session),
+  Directus tokens/`dx_link` for that user are cleared, and the UI asks for password
+  login then auto-offers passkey enrollment.
+  Single logout clears the product session only; **logout-all** also clears `dx_link`
+  (then password login is required again).
 - Directus policies on the clinician role control what each user can see.
 - Service `DIRECTUS_TOKEN` remains for provision + password admin operations only.
 
+#### Case invites (existing Directus users)
+
+- Case **admin** or **collaborator** can invite by email (`POST /api/directus/cases/:id/invites`).
+- If the email already has a Directus user: **admin** adds immediately + in-app notify; **collaborator**
+  creates a pending invite until a case admin approves/rejects.
+- If the email has **no** Directus user yet: BFF creates a `case_signup_invites` row (no Directus user
+  until redeem). **Admin** gets a single-use expiring link (`/?invite=<token>`, default TTL 7 days via
+  `CASE_INVITE_TTL_DAYS`); **collaborator** creates `pending_approval` until an admin approves (then
+  the link is minted). People UI shows **Copy link** — SMTP is not required for this slice.
+- Redeem: `GET /api/invites/signup/:token` (preview) + `POST /api/invites/signup/:token/accept`
+  (creates Directus + local user, applies membership, issues product session + Directus call-as-user
+  tokens). Link is single-use; expired/used tokens are rejected.
+- **Email:** When SMTP is configured (`SMTP_HOST`), minting a signup invite also sends the redeem
+  link. Failures are soft — the invite still succeeds and People keeps **Copy link**.
+  - Local: compose service **Mailpit** (`mailpit:1025`, UI [http://localhost:8025](http://localhost:8025)).
+    Backend defaults `SMTP_HOST=mailpit`. Open Mailpit to read invite mail in dev.
+  - Production: set real `SMTP_HOST` / `SMTP_PORT` / `SMTP_FROM` (and auth if required); or
+    `SMTP_ENABLED=false` for copy-link only.
+- Notifications: `GET /api/notifications` (product user).
+- Membership writes go through Directus as nested `case.collaborators` (and may fall back to
+  `/items/case_directus_users`). **Important:** Directus still enforces permissions on the
+  junction collection for those writes — enabling Update on `case` alone is not enough.
+- **Required Directus ACL (role / people updates):**
+  1. Find the **role of the user that owns `DIRECTUS_TOKEN`** (Settings → Users → that user → Role).
+     Easiest: give that role **Administrator**, or explicitly:
+     Access Control → that role’s policy → collection **`case_directus_users`** → enable
+     **Read + Create + Update** (All items) and allow field **`role`**.
+     This also lets the BFF **backfill case owners** onto the junction as `admin` (needed after
+     migration when `user_created` was never copied into `case_directus_users`).
+  2. Clinician policy on **`case_directus_users`** Update — item filter must allow **owners**
+     even before they appear on the junction:
+     ```json
+     {
+       "_or": [
+         { "case_id": { "user_created": { "_eq": "$CURRENT_USER" } } },
+         {
+           "case_id": {
+             "collaborators": {
+               "_some": {
+                 "_and": [
+                   { "directus_users_id": { "_eq": "$CURRENT_USER" } },
+                   { "role": { "_eq": "admin" } }
+                 ]
+               }
+             }
+           }
+         }
+       ]
+     }
+     ```
+     If the filter is only the second branch, Created By users missing from collaborators
+     cannot change roles until backfill succeeds.
+  3. Save → if you changed the service user role, create a **new static token** and update
+     `DIRECTUS_TOKEN` in the BFF env, then recreate the backend. Clinicians must sign out/in.
+  4. Reload Cases once (triggers owner backfill) or open People / save roles on each case.
+- **Roles:** Membership (who is on the case) lives in Directus `case_directus_users`.
+  Case roles (`admin` / `collaborator` / `read_only`) are written to Directus when that
+  field works; if Directus returns `INTERNAL_SERVER_ERROR` on `role`, the BFF stores the
+  role in SQLite `case_collaborator_roles` (product runtime) and still shows/enforces it
+  in the app. Fix the Directus dropdown later if you want roles mirrored in Studio.
+
+#### Clinician Comments ACL (required for case discussion)
+
+In Directus Studio → **Settings → Access Control** → clinician role / policies:
+
+1. **Comments** (`directus_comments`) — **Read** and **Create**
+2. Allow fields at least: `id`, `collection`, `item`, `comment`, `user_created`
+   (dates `date_created` / `date_updated` optional but useful)
+3. Prefer **no item filter** that hides other users’ comments on shared cases
+   (or filter so comments on `collection = case` items the user can read are visible)
+4. After changing policies, have the clinician **sign out and back in** so the JWT
+   picks up the new accountability
+
+#### Case list dates (Created / Modified)
+
+Studio’s Created time under **Revisions** is stored in Directus **Activity**
+(`directus_activity`), not as a column on `case`. The app already lists cases
+call-as-user; it then loads create/update timestamps from `/activity` for those
+case ids.
+
+Today both the clinician token and the service `DIRECTUS_TOKEN` are denied
+Activity Read — that is why cards have no date even though Studio shows one.
+
+**Fix (Directus-native — pick one):**
+
+1. **Preferred for clinicians staying locked down:** In Access Control, open the
+   **role used by `DIRECTUS_TOKEN`** (service / automation user) → enable
+   **System Collections** → **Activity** → **Read** (fields at least
+   `id`, `action`, `collection`, `item`, `timestamp`). The BFF already falls
+   back to the service token for Activity **only** for case ids the clinician
+   already loaded — it does not list cases as the service user.
+
+2. **Or** grant the clinician role the same Activity Read (also under System
+   Collections — it will not appear in the normal collection list).
+
+3. **Longer-term field on the item:** Data Model → `case` → enable **Date
+   Created** / **Date Updated**. New items then carry dates on the case itself;
+   existing rows may stay empty until touched unless you backfill.
+
+No product SQLite cache is used for these dates.
+
 ---
 
-## Implement plan: passkeys + OIDC (libraries first)
+## Implement plan: OIDC first (passkeys deferred)
+
+Passkey / WebAuthn code was removed from this repo. Prefer hospital SSO (OIDC) before re-adding passkeys. The notes below remain as a future sketch only.
 
 **Goals:** no security compromise; smooth clinical UX; SSO vendor can change without product rewrite.
 

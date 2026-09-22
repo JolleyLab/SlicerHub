@@ -59,6 +59,14 @@ export function issueAppSession(req, res, user) {
             id: user.id,
             username: user.username,
             email: user.email,
+            firstName: user.firstName || user.first_name || null,
+            lastName: user.lastName || user.last_name || null,
+            displayName: (() => {
+                const first = String(user.firstName || user.first_name || '').trim();
+                const last = String(user.lastName || user.last_name || '').trim();
+                const full = `${first} ${last}`.trim();
+                return full || user.email || user.username || 'Guest';
+            })(),
             role: user.role,
             mustChangePassword: Boolean(user.mustChangePassword),
             preferences: user.preferences

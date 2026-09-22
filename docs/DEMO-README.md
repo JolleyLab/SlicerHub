@@ -22,9 +22,11 @@ Local multi-user (My Projects):
 - Viewer tab sends heartbeats; closing the tab stops the container. Orphaned sessions expire after `VIEWER_SESSION_TTL_SECONDS` (default 120s). Trame and Full Slicer share the same backend session lease/watchdog (`backend/src/sessions/`).
 - Logout or auth idle expiry cleans up that user's **local** Trame + Full Slicer containers (Vast billing is unchanged).
 
-Optional Simplified Viewer support for Full Slicer:
-- **Adapter image build** (server/Vast): set `SLICER_HEART_VIEWER_REPO` (+ optional `SLICER_HEART_VIEWER_REF`), then `docker compose --profile slicer-gui build slicer-gui`
-- **Local dev mount** (no rebuild): set `SLICER_HEART_VIEWER_LOCAL_PATH` to your `SimplifiedViewer` folder (backend mounts it into each session container)
+Optional Simplified Viewer / Full Slicer addons:
+- **Setup (daily sync, Hub base, Azure GPU VM):** [docs/slicer-gui-addons.md](./slicer-gui-addons.md)
+- **Adapter image build** (rare): set `SLICER_HEART_VIEWER_REPO` (+ optional `REF`), then `docker compose --profile slicer-gui build slicer-gui`
+- **Daily addons sync** (no image push): `cd slicer-gui-gpu && .\sync-slicer-addons.ps1` → `data/slicer-addons/`
+- **Local dev mount** (no rebuild): `SLICER_HEART_VIEWER_LOCAL_PATH` to your `SimplifiedViewer` folder
 - For the shared debug container only, also use `docker-compose.slicer-gui-dev.yml`
 - In My Projects, enable **Use Full Slicer** + **Use Simplified Viewer**
 

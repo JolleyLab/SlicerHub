@@ -1,8 +1,13 @@
 import Docker from 'dockerode';
 import http from 'http';
+import fs from 'fs';
+import path from 'path';
 import {
     ensureSlicerGuiUserDir,
     hostBindPathForSlicerGuiDir,
+    hostBindPathForSlicerAddonsDir,
+    slicerAddonsHostDir,
+    slicerAddonsSyncReady,
     toDockerBindPath,
     slicerGuiContainerName,
     slicerGuiContainerNameFromSessionKey,
@@ -42,6 +47,18 @@ const docker = new Docker({
 
 const NETWORK = process.env.SLICER_GUI_NETWORK || 'trame-net';
 const IMAGE = process.env.SLICER_GUI_IMAGE || 'slicer-web-slicer-gui:local';
+
+/** Host files bind-mounted into seats when SLICER_GUI_MOUNT_DEV_SCRIPTS=true. */
+const DEV_SCRIPT_MOUNTS = Object.freeze([
+    ['slicer-gui-gpu/start.sh', '/usr/local/bin/start.sh'],
+    ['slicer-gui-gpu/launch-slicer.sh', '/usr/local/bin/launch-slicer.sh'],
+    ['slicer-gui-gpu/slicer_session.py', '/usr/local/bin/slicer_session.py'],
+    ['slicer-gui-gpu/slicer_addons.py', '/usr/local/bin/slicer_addons.py'],
+    ['slicer-gui-gpu/install-slicer-extensions.py', '/usr/local/bin/install-slicer-extensions.py'],
+    ['slicer-gui-gpu/fix-screen-geometry.sh', '/usr/local/bin/fix-screen-geometry.sh'],
+    ['slicer-gui-gpu/novnc/slicer-vnc.html', '/opt/novnc/slicer-vnc.html'],
+    ['slicer-gui-gpu/slicer-addons.json', '/usr/local/bin/slicer-addons.json']
+]);
 const READY_TIMEOUT_MS = Number(process.env.SLICER_GUI_READY_TIMEOUT_MS || 180000);
 const REUSE_READY_TIMEOUT_MS = Number(process.env.SLICER_GUI_REUSE_READY_TIMEOUT_MS || 15000);
 
@@ -335,6 +352,46 @@ async function startOrReuseSeat({
         `${hostDataDir}:/home/slicer/data`,
         '/dev/shm:/dev/shm'
     ];
+    const env = [
+        'NVIDIA_VISIBLE_DEVICES=all',
+        'NVIDIA_DRIVER_CAPABILITIES=all',
+        `VNC_ALLOW_NO_PASSWORD=${process.env.VNC_ALLOW_NO_PASSWORD || 'true'}`,
+        `VNC_PASSWORD=${process.env.VNC_PASSWORD || ''}`,
+        `DISPLAY_WIDTH=${process.env.SLICER_GUI_DISPLAY_WIDTH || '1920'}`,
+        `DISPLAY_HEIGHT=${process.env.SLICER_GUI_DISPLAY_HEIGHT || '1080'}`,
+        'SLICER_SIMPLIFIED_VIEWER_PATH=/opt/slicer-modules/SimplifiedViewer'
+    ];
+
+    // Daily host sync (data/slicer-addons): shared catalog + modules for all seats.
+    // Image bake remains the fallback until the first successful sync (.last-sync).
+    const addonsDir = slicerAddonsHostDir();
+    const useAddonsSync = slicerAddonsSyncReady(addonsDir);
+    if (useAddonsSync) {
+        const hostAddons = hostBindPathForSlicerAddonsDir(addonsDir);
+        const modulesNative = path.join(addonsDir, 'modules');
+        let hasSyncedModules = false;
+        try {
+            hasSyncedModules = fs.readdirSync(modulesNative).some((name) => {
+                try {
+                    return fs.statSync(path.join(modulesNative, name)).isDirectory();
+                } catch {
+                    return false;
+                }
+            });
+        } catch {
+            hasSyncedModules = false;
+        }
+        if (hasSyncedModules) {
+            binds.push(`${hostAddons}/modules:/opt/slicer-modules:ro`);
+        }
+        binds.push(`${hostAddons}/slicer.org:/home/slicer/slicer.org:ro`);
+        binds.push(`${hostAddons}/slicer.org:/home/slicer/.config/slicer.org:ro`);
+        env.push('SLICER_ADDONS_SYNC=1');
+        console.log(
+            `Full Slicer ${containerName}: host addons sync`
+            + `${hasSyncedModules ? ' (modules+extensions)' : ' (extensions only)'}`
+        );
+    }
 
     const hostWorkspace = (process.env.HOST_WORKSPACE_ROOT || '').trim().replace(/\\/g, '/');
     const simplifiedLocal = (process.env.SLICER_HEART_VIEWER_LOCAL_PATH || '').trim();
@@ -345,17 +402,11 @@ async function startOrReuseSeat({
         String(process.env.SLICER_GUI_MOUNT_DEV_SCRIPTS || '').trim()
     );
     if (hostWorkspace && mountDevScripts) {
-        const scripts = [
-            ['slicer-gui-gpu/start.sh', '/usr/local/bin/start.sh'],
-            ['slicer-gui-gpu/launch-slicer.sh', '/usr/local/bin/launch-slicer.sh'],
-            ['slicer-gui-gpu/slicer_session.py', '/usr/local/bin/slicer_session.py'],
-            ['slicer-gui-gpu/install-slicer-extensions.py', '/usr/local/bin/install-slicer-extensions.py'],
-            ['slicer-gui-gpu/fix-screen-geometry.sh', '/usr/local/bin/fix-screen-geometry.sh'],
-            ['slicer-gui-gpu/novnc/slicer-vnc.html', '/opt/novnc/slicer-vnc.html']
-        ];
-        for (const [rel, dest] of scripts) {
-            binds.push(`${toDockerBindPath(`${hostWorkspace.replace(/\/$/, '')}/${rel}`)}:${dest}:ro`);
+        const workspaceRoot = hostWorkspace.replace(/\/$/, '');
+        for (const [rel, dest] of DEV_SCRIPT_MOUNTS) {
+            binds.push(`${toDockerBindPath(`${workspaceRoot}/${rel}`)}:${dest}:ro`);
         }
+        env.push('SLICER_ADDONS_FILE=/usr/local/bin/slicer-addons.json');
     }
 
     console.log(`Starting Full Slicer session ${containerName}`);
@@ -363,15 +414,7 @@ async function startOrReuseSeat({
     const container = await docker.createContainer({
         Image: IMAGE,
         name: containerName,
-        Env: [
-            'NVIDIA_VISIBLE_DEVICES=all',
-            'NVIDIA_DRIVER_CAPABILITIES=all',
-            `VNC_ALLOW_NO_PASSWORD=${process.env.VNC_ALLOW_NO_PASSWORD || 'true'}`,
-            `VNC_PASSWORD=${process.env.VNC_PASSWORD || ''}`,
-            `DISPLAY_WIDTH=${process.env.SLICER_GUI_DISPLAY_WIDTH || '1920'}`,
-            `DISPLAY_HEIGHT=${process.env.SLICER_GUI_DISPLAY_HEIGHT || '1080'}`,
-            'SLICER_SIMPLIFIED_VIEWER_PATH=/opt/slicer-modules/SimplifiedViewer'
-        ],
+        Env: env,
         Labels: {
             'slicer-gui-service': 'true',
             'slicer-gui-user': safeUserId,

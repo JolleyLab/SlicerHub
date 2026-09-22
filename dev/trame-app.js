@@ -9,6 +9,7 @@ import {
 import { loadAppFeatures, isDirectusCasesEnabled, areAppFeaturesLoaded } from './services/features.js';
 import './login-form.js';
 import './register-form.js';
+import './invite-accept-form.js';
 import './change-password-form.js';
 import './file-manager.js';
 import './components/status-card.js';
@@ -29,12 +30,27 @@ import {
   hydrateUserPreferencesFromUser,
   clearCachedUserPreferences
 } from './utils/userPreferences.js';
+import { watchSystemColorScheme } from './components/theme.js';
 import './components/app-dialog.js';
 import {
   listOwnedGpuBillingSessions,
   stopProjectGpuBilling,
   transferProjectGpuBilling
 } from './services/projectGpu.js';
+
+function userDisplayName(user) {
+  if (!user) return 'Guest';
+  const first = String(user.firstName || user.first_name || '').trim();
+  const last = String(user.lastName || user.last_name || '').trim();
+  const full = `${first} ${last}`.trim();
+  if (full) return full;
+  const display = String(user.displayName || '').trim();
+  if (display && !display.includes('@')) return display;
+  if (user.email) return String(user.email).trim();
+  if (display) return display;
+  if (user.username) return String(user.username).trim();
+  return 'Guest';
+}
 
 export class TrameApp extends LitElement {
   static get styles() {
@@ -113,7 +129,11 @@ export class TrameApp extends LitElement {
         display: flex;
         align-items: center;
         justify-content: center;
-        background: #f5f5f5;
+        padding: 24px 16px;
+        box-sizing: border-box;
+        background: var(--color-background, #ecf4f9);
+        color: var(--color-text-primary, #040316);
+        font-family: var(--font-family-base, Inter, system-ui, sans-serif);
       }
 
       .logout-billing-dialog {
@@ -219,6 +239,7 @@ export class TrameApp extends LitElement {
       currentView: { type: String },
       selectedProjectId: { type: Number },
       shareToken: { type: String },
+      inviteToken: { type: String },
       shareLoading: { type: Boolean },
       shareError: { type: String },
       shareErrorStatus: { type: Number },
@@ -251,6 +272,7 @@ export class TrameApp extends LitElement {
     this.selectedProjectId = null;
     this.inactivityTimeout = null;
     this.shareToken = new URLSearchParams(window.location.search).get('share') || '';
+    this.inviteToken = new URLSearchParams(window.location.search).get('invite') || '';
     this.shareLoading = false;
     this.shareError = '';
     this.shareErrorStatus = 0;
@@ -273,7 +295,7 @@ export class TrameApp extends LitElement {
     this._trameHeartbeatInterval = null;
     this._onPopState = () => this.restoreViewFromUrl();
 
-    if (!this.shareToken) {
+    if (!this.shareToken && !this.inviteToken) {
       this.initializeAppView();
       this.checkExistingSession();
     }
@@ -292,13 +314,6 @@ export class TrameApp extends LitElement {
     if (!isDirectusCasesEnabled() && this.currentView === APP_VIEWS.CASES) {
       this.currentView = DEFAULT_APP_VIEW;
       this.syncViewToUrl();
-    }
-  }
-
-  disconnectedCallback() {
-    super.disconnectedCallback?.();
-    if (this._onPopState) {
-      window.removeEventListener('popstate', this._onPopState);
     }
   }
 
@@ -321,12 +336,13 @@ export class TrameApp extends LitElement {
     }
   }
 
-  syncViewToUrl({ replace = true } = {}) {
+  syncViewToUrl({ replace = true, clearCaseDeepLink = false } = {}) {
     if (this.shareToken) return;
     writeAppViewToUrl({
       currentView: this.currentView,
       selectedProjectId: this.selectedProjectId,
-      replace
+      replace,
+      clearCaseDeepLink
     });
   }
 
@@ -369,6 +385,7 @@ export class TrameApp extends LitElement {
     this.isAuthenticated = false;
     this.showLogin = true;
     this.stopInactivityTimer();
+    this._syncAuthThemeWatch();
   }
 
   handleLoginSuccess(e) {
@@ -376,6 +393,7 @@ export class TrameApp extends LitElement {
     this.user = user;
     this.isAuthenticated = true;
     this.name = user.username;
+    this._stopAuthThemeWatch();
     hydrateUserPreferencesFromUser(user);
     this.startInactivityTimer();
   }
@@ -385,8 +403,47 @@ export class TrameApp extends LitElement {
     this.user = user;
     this.isAuthenticated = true;
     this.name = user.username;
+    this._stopAuthThemeWatch();
     hydrateUserPreferencesFromUser(user);
     this.startInactivityTimer();
+  }
+
+  handleInviteAccepted(e) {
+    const { user, caseId } = e.detail || {};
+    this.inviteToken = '';
+    const url = new URL(window.location.href);
+    url.searchParams.delete('invite');
+    if (caseId) {
+      url.searchParams.set('view', 'cases');
+      url.searchParams.set('case', String(caseId));
+    }
+    history.replaceState(null, '', `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams}` : ''}`);
+    if (user) {
+      this.user = user;
+      this.isAuthenticated = true;
+      this.name = user.username;
+      this._stopAuthThemeWatch();
+      hydrateUserPreferencesFromUser(user);
+      this.startInactivityTimer();
+    }
+    this.initializeAppView();
+  }
+
+  handleNotificationOpen(e) {
+    const caseId = e.detail?.caseId;
+    if (!caseId || !isDirectusCasesEnabled()) return;
+    this.selectedProjectId = null;
+    this.currentView = APP_VIEWS.CASES;
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', 'cases');
+    url.searchParams.set('case', String(caseId));
+    history.pushState({ caseId: String(caseId) }, '', `${url.pathname}?${url.searchParams}`);
+    this.updateComplete.then(() => {
+      const page = this.renderRoot?.querySelector('directus-cases-page');
+      if (page && typeof page.openCase === 'function') {
+        page.openCase(String(caseId));
+      }
+    });
   }
 
   handlePasswordChanged(e) {
@@ -444,7 +501,8 @@ export class TrameApp extends LitElement {
       if (!isDirectusCasesEnabled()) return;
       this.selectedProjectId = null;
       this.currentView = APP_VIEWS.CASES;
-      this.syncViewToUrl();
+      // Menu → Cases always means the list, not a stale ?case= deep link
+      this.syncViewToUrl({ clearCaseDeepLink: true });
     }
   }
 
@@ -764,6 +822,7 @@ export class TrameApp extends LitElement {
 
     // Stop inactivity timer
     this.stopInactivityTimer();
+    this._syncAuthThemeWatch();
 
     // Cleanup any running containers
     await this.cleanupContainer();
@@ -772,6 +831,9 @@ export class TrameApp extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     installViewerActivityListeners();
+    this._onNotificationOpen = (e) => this.handleNotificationOpen(e);
+    this.addEventListener('notification-open', this._onNotificationOpen);
+    this._syncAuthThemeWatch();
     if (this.shareToken) {
       this.launchSharedViewer();
       return;
@@ -785,9 +847,31 @@ export class TrameApp extends LitElement {
   }
 
   disconnectedCallback() {
+    if (this._onNotificationOpen) {
+      this.removeEventListener('notification-open', this._onNotificationOpen);
+    }
+    if (this._onPopState) {
+      window.removeEventListener('popstate', this._onPopState);
+    }
+    this._stopAuthThemeWatch();
     this.stopTrameHeartbeat();
     this.stopSharedReplayPolling();
     super.disconnectedCallback();
+  }
+
+  _stopAuthThemeWatch() {
+    if (this._unwatchSystemTheme) {
+      this._unwatchSystemTheme();
+      this._unwatchSystemTheme = null;
+    }
+  }
+
+  /** Auth screens follow OS light/dark; signed-in UI uses account theme prefs. */
+  _syncAuthThemeWatch() {
+    this._stopAuthThemeWatch();
+    if (!this.isAuthenticated) {
+      this._unwatchSystemTheme = watchSystemColorScheme();
+    }
   }
 
   async handleViewerInactivityTimeout() {
@@ -885,6 +969,17 @@ export class TrameApp extends LitElement {
       `;
     }
 
+    if (this.inviteToken) {
+      return html`
+        <div class="auth-container">
+          <invite-accept-form
+            .token=${this.inviteToken}
+            @invite-accepted=${this.handleInviteAccepted}
+          ></invite-accept-form>
+        </div>
+      `;
+    }
+
     // Show auth forms if not authenticated
     if (!this.isAuthenticated) {
       return html`
@@ -947,7 +1042,7 @@ export class TrameApp extends LitElement {
 
       ${this.currentView === APP_VIEWS.FILES ? html`
         <file-manager
-          .username=${this.user?.username || 'Guest'}
+          .username=${userDisplayName(this.user)}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
@@ -955,7 +1050,7 @@ export class TrameApp extends LitElement {
       ` : ''}
       ${this.currentView === APP_VIEWS.PROJECTS ? html`
         <my-projects-landing-page
-          .username=${this.user?.username || 'Guest'}
+          .username=${userDisplayName(this.user)}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @create-project-request=${this.openCreateProjectFlow}
           @project-selected=${this.openProjectReviewFlow}
@@ -965,7 +1060,7 @@ export class TrameApp extends LitElement {
       ` : ''}
       ${this.currentView === APP_VIEWS.CREATE_PROJECT ? html`
         <create-project-form
-          .username=${this.user?.username || 'Guest'}
+          .username=${userDisplayName(this.user)}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
@@ -973,7 +1068,7 @@ export class TrameApp extends LitElement {
       ` : ''}
       ${this.currentView === APP_VIEWS.PROJECT_REVIEW ? html`
         <project-review-page
-          .username=${this.user?.username || 'Guest'}
+          .username=${userDisplayName(this.user)}
           .projectId=${this.selectedProjectId}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
@@ -982,7 +1077,7 @@ export class TrameApp extends LitElement {
       ` : ''}
       ${this.currentView === APP_VIEWS.SETTINGS ? html`
         <user-settings-page
-          .username=${this.user?.username || 'Guest'}
+          .username=${userDisplayName(this.user)}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
@@ -990,7 +1085,7 @@ export class TrameApp extends LitElement {
       ` : ''}
       ${this.currentView === APP_VIEWS.CASES && isDirectusCasesEnabled() ? html`
         <directus-cases-page
-          .username=${this.user?.username || 'Guest'}
+          .username=${userDisplayName(this.user)}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}

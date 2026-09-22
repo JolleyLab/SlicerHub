@@ -32,11 +32,14 @@ export function readAppViewFromUrl(search = window.location.search) {
 /**
  * Write SPA view state into the URL without reloading.
  * Keeps unrelated query params (e.g. share) intact.
+ * Clears Directus case deep-link params when not viewing Cases, and when
+ * returning to Cases via the app shell (menu), so users land on the list.
  */
 export function writeAppViewToUrl({
     currentView,
     selectedProjectId = null,
-    replace = true
+    replace = true,
+    clearCaseDeepLink = false
 } = {}) {
     const url = new URL(window.location.href);
     const params = url.searchParams;
@@ -53,6 +56,14 @@ export function writeAppViewToUrl({
         params.set(PROJECT_ID_QUERY_KEY, String(selectedProjectId));
     } else {
         params.delete(PROJECT_ID_QUERY_KEY);
+    }
+
+    // Case detail (?case=) is only meaningful on the Cases view. Leaving Cases
+    // (or explicitly asking for the list) must drop it — otherwise remounting
+    // Cases restores the old detail and looks like "only one case".
+    if (currentView !== APP_VIEWS.CASES || clearCaseDeepLink) {
+        params.delete('case');
+        params.delete('viewer');
     }
 
     const next = `${url.pathname}${params.toString() ? `?${params}` : ''}${url.hash}`;

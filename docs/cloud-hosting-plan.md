@@ -24,7 +24,9 @@ The application is a web-based platform for medical imaging review and collabora
 | Database | Stores users, projects, preferences, case data | Managed, persistent |
 | File Storage | Case attachments, imaging data | High capacity, tiered by access frequency |
 
-**GPU viewers** (3D Slicer, Trame) are **not included** in this plan. Clients configure their own GPU infrastructure. The session manager connects to a client-provided GPU endpoint via a configuration value — no code changes are required per client.
+**GPU viewers** (3D Slicer, Trame) are **not included** in the app hosting cost model below. Clients (or the org) provide GPU infrastructure. The session manager connects to that plane via configuration — no per-client app rewrite.
+
+**Full Slicer addons** (Sandbox, SlicerHeart, SimplifiedViewer, …) are updated with a **daily host sync** on the GPU machine — not by pushing a new container image to ACR each day. See [slicer-gui-addons.md](./slicer-gui-addons.md) for setup (local now, Hub base later, and Azure N-series shape).
 
 ---
 
@@ -268,6 +270,33 @@ Both options run the same Docker containers and the same PostgreSQL database. Mi
 
 ---
 
+## Appendix: Client GPU plane (Full Slicer) and Azure
+
+The tables above cover the **application** cloud. Full Slicer seats run on a **GPU host** that the org or client operates. Addon updates use a host directory sync, not daily image publishes.
+
+### Pattern (all clouds)
+
+1. Rare: build/pull `SLICER_GUI_IMAGE` (adapter on top of local or Hub Slicer base).  
+2. Daily: run `slicer-gui-gpu/sync-slicer-addons` on the GPU host → `data/slicer-addons/`.  
+3. New seats mount that tree so all users share the same snapshot.
+
+Details, cron, webhooks, and env vars: **[slicer-gui-addons.md](./slicer-gui-addons.md)**.
+
+### What it looks like on Azure hardware
+
+| App cloud (this plan) | GPU plane (separate) |
+|---|---|
+| Container Apps, ACR, PostgreSQL, Blob, Key Vault | **NVIDIA VM** (e.g. NCasT4_v3 / NC / NV) with Docker + NVIDIA Container Toolkit |
+| Holds backend that *starts* sessions | Holds `SLICER_GUI_IMAGE`, `data/slicer-addons`, per-user seat data |
+| ACR stores app images | ACR (or the same registry) stores **base/adapter** images only when those change |
+| No daily rebuild for Sandbox/SimplifiedViewer | **cron / Automation / Run Command / GitHub → SSH** runs sync on the VM |
+
+Outbound HTTPS from the GPU VM is required during sync (Extension Index + git). Seats that successfully mount the sync tree do not need to talk to the Extension Index at start.
+
+Vast.ai or on-prem NVIDIA boxes use the same sync scripts; only the VM/provider differs.
+
+---
+
 ## Next Steps
 
 | Decision | Options |
@@ -277,6 +306,7 @@ Both options run the same Docker containers and the same PostgreSQL database. Mi
 | Cold start handling | Identifier-first login (free) / minimum replicas (~$35/month) |
 | PostgreSQL migration | Before cloud deployment recommended — easier with less data |
 | SSO | When first client requires it — OIDC config only, no code changes |
+| GPU / Full Slicer addons | Client GPU host + daily sync — [slicer-gui-addons.md](./slicer-gui-addons.md) |
 
 ---
 

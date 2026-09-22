@@ -28,12 +28,14 @@ if (Should-BuildBase) {
 
 $Repo = if ($env:SLICER_HEART_VIEWER_REPO) { $env:SLICER_HEART_VIEWER_REPO } else { "" }
 $Ref = if ($env:SLICER_HEART_VIEWER_REF) { $env:SLICER_HEART_VIEWER_REF } else { "" }
+$Extensions = if ($env:SLICER_EXTENSIONS) { $env:SLICER_EXTENSIONS } else { "" }
 
 Write-Host "Building adapter image: $RuntimeImage (FROM $BaseImage)"
 docker build -f Dockerfile `
   --build-arg "SLICER_GUI_BASE_IMAGE=$BaseImage" `
   --build-arg "SLICER_HEART_VIEWER_REPO=$Repo" `
   --build-arg "SLICER_HEART_VIEWER_REF=$Ref" `
+  --build-arg "SLICER_EXTENSIONS=$Extensions" `
   -t $RuntimeImage .
 
 Write-Host "Done. Runtime image: $RuntimeImage"

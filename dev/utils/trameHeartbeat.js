@@ -12,6 +12,7 @@ import {
 export async function sendTrameContainerHeartbeat({
     sessionToken,
     projectId = null,
+    seatId = null,
     onIdleTimeout,
     heartbeatUrl = `${API_URL}/api/containers/heartbeat`,
     includeUserActive = true
@@ -31,6 +32,9 @@ export async function sendTrameContainerHeartbeat({
     }
     if (projectId != null && Number(projectId) > 0) {
         body.projectId = Number(projectId);
+    }
+    if (seatId != null && Number(seatId) > 0) {
+        body.seatId = Number(seatId);
     }
 
     const response = await fetch(heartbeatUrl, {

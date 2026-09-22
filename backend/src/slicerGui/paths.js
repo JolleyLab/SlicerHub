@@ -102,6 +102,42 @@ export function hostBindPathForSlicerGuiDir(nativeDir) {
     return native;
 }
 
+/**
+ * Host directory for daily-synced Slicer addons (modules + slicer.org).
+ * Empty string when unset / not ready — seats then use image-baked addons.
+ */
+export function slicerAddonsHostDir() {
+    const raw = (process.env.SLICER_ADDONS_HOST_DIR || '').trim();
+    if (raw) {
+        return path.resolve(raw);
+    }
+    return path.join(process.cwd(), 'data', 'slicer-addons');
+}
+
+/** True when daily sync has written .last-sync under the host addons dir. */
+export function slicerAddonsSyncReady(hostDir = slicerAddonsHostDir()) {
+    try {
+        return fs.existsSync(path.join(hostDir, '.last-sync'));
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Map addons host dir for docker -v (same HOST_WORKSPACE_ROOT rules as slicer-gui data).
+ */
+export function hostBindPathForSlicerAddonsDir(nativeDir = slicerAddonsHostDir()) {
+    const hostRoot = (process.env.HOST_WORKSPACE_ROOT || '').trim().replace(/\\/g, '/');
+    const native = path.resolve(nativeDir).replace(/\\/g, '/');
+    const marker = '/data/slicer-addons';
+    const idx = native.toLowerCase().lastIndexOf(marker.toLowerCase());
+    if (hostRoot && idx >= 0) {
+        const rel = native.slice(idx + 1); // data/slicer-addons...
+        return toDockerBindPath(`${hostRoot.replace(/\/$/, '')}/${rel}`);
+    }
+    return toDockerBindPath(native);
+}
+
 export function ensureSlicerGuiUserDir(userId, seatId = 1) {
     const dir = slicerGuiUserDir(userId, seatId);
     fs.mkdirSync(dir, { recursive: true });

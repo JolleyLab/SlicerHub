@@ -164,6 +164,40 @@ def run_window_size_sync() -> None:
         log(f"[slicer_session] apply-slicer-window-size failed: {exc}")
 
 
+def selection_volume_id(selection) -> str:
+    """Active volume id from the selection node (API differs across Slicer builds)."""
+    if selection is None:
+        return ""
+    try:
+        volume_id = selection.GetActiveVolumeID() or ""
+    except Exception:
+        volume_id = ""
+    if volume_id:
+        return volume_id
+    getter = getattr(selection, "GetReferenceActiveVolumeID", None)
+    if not callable(getter):
+        return ""
+    try:
+        return getter() or ""
+    except Exception:
+        return ""
+
+
+def set_selection_volume_id(selection, volume_id: str) -> None:
+    if selection is None or not volume_id:
+        return
+    try:
+        selection.SetActiveVolumeID(volume_id)
+    except Exception:
+        pass
+    setter = getattr(selection, "SetReferenceActiveVolumeID", None)
+    if callable(setter):
+        try:
+            setter(volume_id)
+        except Exception:
+            pass
+
+
 def refresh_slice_views(*, fit: bool = True) -> None:
     layout_manager = slicer.app.layoutManager()
     if not layout_manager:
@@ -181,7 +215,7 @@ def refresh_slice_views(*, fit: bool = True) -> None:
 
     app_logic = slicer.app.applicationLogic()
     selection = app_logic.GetSelectionNode()
-    volume_id = selection.GetActiveVolumeID() or selection.GetReferenceActiveVolumeID()
+    volume_id = selection_volume_id(selection)
     volume = slicer.mrmlScene.GetNodeByID(volume_id) if volume_id else None
 
     if volume is None:
@@ -192,14 +226,22 @@ def refresh_slice_views(*, fit: bool = True) -> None:
                 volume_id = volume.GetID()
                 break
 
-    if volume_id and volume:
-        selection.SetActiveVolumeID(volume_id)
-        selection.SetReferenceActiveVolumeID(volume_id)
-        app_logic.PropagateVolumeSelection(0)
-        slicer.util.setSliceViewerLayers(background=volume, fit=True)
+    if volume_id and volume and selection is not None:
+        set_selection_volume_id(selection, volume_id)
+        try:
+            app_logic.PropagateVolumeSelection(0)
+        except Exception:
+            pass
+        try:
+            slicer.util.setSliceViewerLayers(background=volume, fit=True)
+        except Exception:
+            pass
 
     if hasattr(app_logic, "FitSliceToAll"):
-        app_logic.FitSliceToAll(True, False)
+        try:
+            app_logic.FitSliceToAll(True, False)
+        except Exception:
+            pass
 
     slicer.app.processEvents()
 
@@ -655,21 +697,40 @@ def reapply_scene_layout_if_needed() -> None:
 
 
 def ensure_simplified_viewer_module_path() -> None:
-    """Ensure SimplifiedViewer search path is registered with the module factory."""
-    candidates = [
-        os.environ.get("SLICER_SIMPLIFIED_VIEWER_PATH", "").strip(),
-        "/opt/slicer-modules/SimplifiedViewer",
-        "/home/slicer/data/SimplifiedViewer",
-    ]
-    module_dir = next(
-        (path for path in candidates if path and os.path.isfile(os.path.join(path, "SimplifiedViewer.py"))),
-        "",
-    )
-    if not module_dir:
+    """Register SimplifiedViewer with the module factory if the .py is on disk."""
+    try:
+        import sys
+        if "/usr/local/bin" not in sys.path:
+            sys.path.insert(0, "/usr/local/bin")
+        from slicer_addons import discovery_path_for_module_dir, simplified_viewer_module_dirs
+        module_dirs = simplified_viewer_module_dirs()
+    except Exception as exc:
+        log(f"[slicer_session] Could not resolve SimplifiedViewer paths: {exc}")
+        module_dirs = []
+        for candidate in (
+            os.environ.get("SLICER_SIMPLIFIED_VIEWER_PATH", "").strip(),
+            "/opt/slicer-modules/SimplifiedViewer",
+            "/home/slicer/data/SimplifiedViewer",
+        ):
+            if candidate and os.path.isfile(os.path.join(candidate, "SimplifiedViewer.py")):
+                module_dirs.append(candidate)
+
+    if not module_dirs:
         log("[slicer_session] SimplifiedViewer.py not found on known module paths")
         return
 
-    # Module factory searchPaths must include the folder that contains SimplifiedViewer.py.
+    search_dirs = []
+    for module_dir in module_dirs:
+        path = module_dir if isinstance(module_dir, str) else str(module_dir)
+        try:
+            from pathlib import Path
+            parent = str(discovery_path_for_module_dir(Path(path)))
+        except Exception:
+            parent = os.path.dirname(path.rstrip("/"))
+        for search_dir in (parent, path):
+            if search_dir and search_dir not in search_dirs:
+                search_dirs.append(search_dir)
+
     try:
         from qt import QSettings
         settings = QSettings()
@@ -677,21 +738,37 @@ def ensure_simplified_viewer_module_path() -> None:
         if isinstance(existing, str):
             existing = [existing] if existing else []
         paths = [str(path) for path in existing]
-        if module_dir not in paths:
-            paths.append(module_dir)
+        changed = False
+        for search_dir in search_dirs:
+            if search_dir not in paths:
+                paths.append(search_dir)
+                changed = True
+        if changed:
             settings.setValue("Modules/AdditionalPaths", paths)
+            settings.sync()
     except Exception as exc:
         log(f"[slicer_session] Could not update Modules/AdditionalPaths: {exc}")
 
     try:
         factory = slicer.app.moduleManager().factoryManager()
-        paths = list(getattr(factory, "searchPaths", []) or [])
-        if module_dir not in paths:
-            paths.append(module_dir)
-            factory.searchPaths = paths
+        for search_dir in search_dirs:
+            if hasattr(factory, "addSearchPath"):
+                factory.addSearchPath(search_dir)
+            elif hasattr(factory, "addSearchPaths"):
+                factory.addSearchPaths([search_dir])
+            else:
+                paths = list(getattr(factory, "searchPaths", []) or [])
+                if search_dir not in paths:
+                    paths.append(search_dir)
+                    factory.searchPaths = paths
+        if hasattr(factory, "registerModules"):
+            factory.registerModules()
+        if hasattr(factory, "instantiateModules"):
+            factory.instantiateModules()
         if hasattr(factory, "loadModules"):
             factory.loadModules()
         slicer.app.processEvents()
+        log(f"[slicer_session] SimplifiedViewer search paths ensured: {search_dirs}")
     except Exception as exc:
         log(f"[slicer_session] Module factory refresh failed: {exc}")
 
@@ -936,10 +1013,12 @@ def schedule_hide_load_overlay(delay_ms: int = _OVERLAY_HOLD_MS) -> None:
 
 def find_simplified_viewer_widget():
     candidates = []
-    try:
-        candidates.append(slicer.util.getModuleWidget("SimplifiedViewer"))
-    except Exception:
-        pass
+    # Avoid slicer.util.getModuleWidget — it logs a loud error when unregistered.
+    if module_is_registered("SimplifiedViewer"):
+        try:
+            candidates.append(slicer.util.getModuleWidget("SimplifiedViewer"))
+        except Exception:
+            pass
 
     widget = getattr(slicer.modules, "SimplifiedViewerWidget", None)
     if widget is not None:
@@ -1480,6 +1559,17 @@ def poll_open_requests() -> None:
                 QTimer.singleShot(_OVERLAY_HOLD_MS + 50, clear_busy)
             except Exception as exc:
                 log(f"[slicer_session] Post-load UI adjust failed (scene kept): {exc}")
+                log(traceback.format_exc())
+                try:
+                    schedule_view_refresh()
+                except Exception:
+                    pass
+                try:
+                    hide_load_overlay()
+                except Exception:
+                    pass
+                overlay_shown = False
+                clear_busy()
 
             return
 

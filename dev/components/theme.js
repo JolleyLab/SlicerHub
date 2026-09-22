@@ -12,7 +12,14 @@ export const UI_COLOR_SCHEMES = {
         onPrimary: '#ecf4f9',
         onSecondary: '#ecf4f9',
         border: '#224f6b',
-        focus: '#0057c2'
+        focus: '#0057c2',
+        // Status banners: fg/bg pairs ≥ 4.5:1 (WCAG 2.0 AA normal text)
+        statusErrorBg: '#fde8e6',
+        statusErrorFg: '#8a1212',
+        statusErrorBorder: '#c43c32',
+        statusSuccessBg: '#e6f6ed',
+        statusSuccessFg: '#0b5c38',
+        statusSuccessBorder: '#2f8f63'
     },
     dark: {
         // Same hierarchy as light (shared page base + lifted panels), cooler slate-indigo.
@@ -28,7 +35,13 @@ export const UI_COLOR_SCHEMES = {
         onPrimary: '#f2f4fa',
         onSecondary: '#f2f4fa',
         border: '#343e58',
-        focus: '#8fa3d4'
+        focus: '#8fa3d4',
+        statusErrorBg: '#3a1418',
+        statusErrorFg: '#ffc9c2',
+        statusErrorBorder: '#e06b5f',
+        statusSuccessBg: '#0f2a1c',
+        statusSuccessFg: '#b6f0cf',
+        statusSuccessBorder: '#3d9a6a'
     }
 };
 
@@ -44,6 +57,7 @@ export function applyTheme(theme = 'light') {
 
     applyTypographyDefaults(root);
     root.setAttribute('data-theme', selectedTheme);
+    root.style.colorScheme = selectedTheme;
 
     Object.entries(palette).forEach(([key, value]) => {
         root.style.setProperty(`--color-${toKebabCase(key)}`, value);
@@ -84,6 +98,49 @@ export function initializeTheme() {
         || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 
     applyTheme(preferredTheme);
+}
+
+/** OS/browser light or dark preference. */
+export function getSystemColorScheme() {
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        return 'dark';
+    }
+    return 'light';
+}
+
+function cacheThemeHint(theme) {
+    try {
+        localStorage.setItem('ui-theme', theme === 'dark' ? 'dark' : 'light');
+    } catch (_) {
+        /* ignore */
+    }
+}
+
+/** Apply light/dark from the OS/browser preference (ignores saved account theme). */
+export function applySystemColorScheme() {
+    ensureInterFontLoaded();
+    const theme = getSystemColorScheme();
+    applyTheme(theme);
+    // Hint for first-login preference migration / registration defaults.
+    cacheThemeHint(theme);
+}
+
+/**
+ * Keep the document theme aligned with prefers-color-scheme.
+ * @returns {() => void} unsubscribe
+ */
+export function watchSystemColorScheme() {
+    applySystemColorScheme();
+    const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!mq) return () => {};
+
+    const onChange = () => applySystemColorScheme();
+    if (typeof mq.addEventListener === 'function') {
+        mq.addEventListener('change', onChange);
+        return () => mq.removeEventListener('change', onChange);
+    }
+    mq.addListener(onChange);
+    return () => mq.removeListener(onChange);
 }
 
 function toKebabCase(value) {

@@ -64,8 +64,8 @@ export class ConflictError extends AppError {
  * 429 Too Many Requests - Rate limit exceeded
  */
 export class TooManyRequestsError extends AppError {
-    constructor(message = 'Too many requests') {
-        super(message, 429);
+    constructor(message = 'Too many requests', code = null) {
+        super(message, 429, code);
     }
 }
 
