@@ -30,11 +30,56 @@ import {
 } from '../services/directus.js';
 import { AppError, ValidationError } from '../utils/errors.js';
 import { msg } from '../i18n/index.js';
+import { readUserPasswordHashFromDisk } from '../db/database.js';
+import bcrypt from 'bcrypt';
+import db from '../db/database.js';
 
 const PROVIDER = 'directus';
 
 export function isPasswordBridgeEnabled() {
     return config.auth?.passwordBridge === true;
+}
+
+/**
+ * Verify password against in-memory hash; if that fails, try the on-disk hash
+ * (sql.js side-process updates) and sync memory when it matches.
+ */
+async function verifyLocalPasswordWithDiskFallback(localUser, identity, pass) {
+    const verified = await User.verifyPassword(identity, pass);
+    if (verified && Number(verified.id) === Number(localUser.id)) {
+        return verified;
+    }
+
+    const diskHash = readUserPasswordHashFromDisk(localUser.id);
+    if (!diskHash || diskHash.startsWith('BRIDGED:')) {
+        return null;
+    }
+
+    const memHash = String(
+        db.prepare('SELECT password_hash FROM users WHERE id = ?').get(localUser.id)?.password_hash || ''
+    );
+    if (diskHash === memHash) {
+        return null;
+    }
+
+    const ok = await bcrypt.compare(pass, diskHash);
+    if (!ok) {
+        console.info(
+            'CUTOVER password-bridge: disk hash also did not match for',
+            identity
+        );
+        return null;
+    }
+
+    // Bring this process in sync with disk so later clears/links stay consistent.
+    db.prepare(
+        'UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    ).run(diskHash, localUser.id);
+    console.info(
+        'CUTOVER password-bridge: synced stale in-memory password hash from disk for',
+        identity
+    );
+    return User.findById(localUser.id);
 }
 
 /**
@@ -77,7 +122,7 @@ export async function tryBridgeLocalPasswordToDirectus({
         return false;
     }
 
-    const verified = await User.verifyPassword(identity, pass);
+    const verified = await verifyLocalPasswordWithDiskFallback(localUser, identity, pass);
     if (!verified || Number(verified.id) !== Number(localUser.id)) {
         console.info('CUTOVER password-bridge: local password did not match for', identity);
         return false;
