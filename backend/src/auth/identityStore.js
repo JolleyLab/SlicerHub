@@ -119,6 +119,11 @@ export function storeProviderTokens(tokenJti, userId, provider, tokens = {}) {
             refresh_token = NULL,
             expires_at = excluded.expires_at
     `).run(tokenJti, userId, provider, encrypted, expiresAt);
+    try {
+        flushDatabase();
+    } catch {
+        /* best effort */
+    }
 }
 
 /**

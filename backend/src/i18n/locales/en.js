@@ -78,6 +78,7 @@ export default {
         session_incomplete: 'Your session is incomplete. Please sign in again.',
         session_sign_in_once: 'Sign in once with your email and password so Cases can connect to your account.',
         session_expired: 'Your account connection expired. Please sign in again with your email and password.',
+        session_refresh_after_password_failed: 'Password updated, but Cases could not refresh. Please sign in again.',
         session_confirm_failed: 'Could not confirm your account for this session. Please sign in again.',
         role_id_required: 'Directus role id is required (DIRECTUS_DEFAULT_ROLE_ID)',
         user_id_required: 'Directus user id is required',

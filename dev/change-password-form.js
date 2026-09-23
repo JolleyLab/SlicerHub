@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit-element';
 import { API_URL } from './config.js';
 import { authFormSharedStyles } from './styles/auth-form-shared.js';
 import { t } from './i18n/index.js';
+import { loadAppFeatures, isPasswordBridgeEnabled } from './services/features.js';
 
 /**
  * Forced password + profile change after admin provision / migrate (Pattern A).
@@ -11,7 +12,9 @@ export class ChangePasswordForm extends LitElement {
     return {
       loading: { type: Boolean },
       error: { type: String },
-      success: { type: Boolean }
+      success: { type: Boolean },
+      // CUTOVER (password-bridge)
+      showCutoverWhy: { type: Boolean }
     };
   }
 
@@ -36,6 +39,43 @@ export class ChangePasswordForm extends LitElement {
             grid-template-columns: 1fr;
           }
         }
+
+        /* CUTOVER (password-bridge): delete with AUTH_PASSWORD_BRIDGE UI */
+        .why-cutover {
+          margin: 0 0 16px 0;
+          border: none;
+          padding: 0;
+        }
+        .why-cutover summary {
+          cursor: pointer;
+          list-style: none;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 0.9rem;
+          font-weight: 500;
+          color: var(--color-primary, #2c3878);
+          text-decoration: underline;
+          text-underline-offset: 2px;
+        }
+        .why-cutover summary::-webkit-details-marker {
+          display: none;
+        }
+        .why-cutover summary:focus-visible {
+          outline: 3px solid var(--color-focus, #0057c2);
+          outline-offset: 2px;
+          border-radius: 2px;
+        }
+        .why-cutover-body {
+          margin: 10px 0 0 0;
+          padding: 10px 12px;
+          border-radius: var(--radius-sm, 6px);
+          border: 1px solid var(--color-border);
+          background: color-mix(in srgb, var(--color-accent, #e8ebf5) 35%, var(--color-panel, #fff));
+          font-size: 0.9rem;
+          line-height: 1.45;
+          color: var(--color-text-secondary, #555);
+        }
       `
     ];
   }
@@ -45,6 +85,16 @@ export class ChangePasswordForm extends LitElement {
     this.loading = false;
     this.error = '';
     this.success = false;
+    this.showCutoverWhy = false;
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    // CUTOVER (password-bridge)
+    loadAppFeatures().then(() => {
+      this.showCutoverWhy = isPasswordBridgeEnabled();
+      this.requestUpdate();
+    });
   }
 
   async handleSubmit(e) {
@@ -106,6 +156,14 @@ export class ChangePasswordForm extends LitElement {
       <div class="auth-card">
         <h2>${t('auth.changePassword.title')}</h2>
         <p class="hint">${t('auth.changePassword.hint')}</p>
+        ${this.showCutoverWhy ? html`
+          <details class="why-cutover">
+            <summary title=${t('auth.changePassword.whySeeingThisBody')}>
+              ${t('auth.changePassword.whySeeingThis')}
+            </summary>
+            <p class="why-cutover-body">${t('auth.changePassword.whySeeingThisBody')}</p>
+          </details>
+        ` : ''}
         ${this.error ? html`
           <div class="auth-alert auth-alert--error" role="alert">${this.error}</div>
         ` : ''}

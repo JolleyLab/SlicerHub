@@ -250,7 +250,7 @@ export default function authRoutes(app) {
                 throw new ValidationError(msg('auth.password_min_length', { min }), null, 'auth.password_min_length');
             }
 
-            const user = await changePasswordForUser({
+            const updated = await changePasswordForUser({
                 userId: req.user.id,
                 currentPassword,
                 newPassword,
@@ -258,17 +258,32 @@ export default function authRoutes(app) {
                 lastName
             });
 
+            const directusTokens = updated?.directusTokens || null;
+            if (directusTokens?.accessToken && req.user?.jti) {
+                storeProviderTokens(req.user.jti, updated.id, 'directus', {
+                    accessToken: directusTokens.accessToken,
+                    refreshToken: directusTokens.refreshToken || null,
+                    expires: directusTokens.expires
+                });
+                setDirectusLinkCookie(res, {
+                    userId: updated.id,
+                    accessToken: directusTokens.accessToken,
+                    refreshToken: directusTokens.refreshToken || null,
+                    expires: directusTokens.expires
+                });
+            }
+
             recordAuthEvent({
                 event: 'password_change',
                 provider: getAuthProviderName(),
-                userId: user.id,
-                identity: user.email || user.username,
+                userId: updated.id,
+                identity: updated.email || updated.username,
                 req
             });
 
             res.json({
                 message: 'Password updated',
-                user: publicUser(user)
+                user: publicUser(updated)
             });
         })
     );

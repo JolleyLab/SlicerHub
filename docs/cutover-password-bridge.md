@@ -26,6 +26,7 @@ Search the repo for `CUTOVER (password-bridge)` / `CUTOVER — SQLite` and remov
 | Bridge block in `backend/src/auth/providers/directus.js` |
 | `User.hasLocalPasswordHash` / `clearLocalPasswordHash` in `User.js` |
 | `AUTH_PASSWORD_BRIDGE` from `.env` / `.env.example` |
+| SPA “Why am I seeing this?” on change-password (`auth.passwordBridge`) |
 | This doc + notes in `auth-providers.md` / migrate script |
 
 Set `AUTH_PASSWORD_BRIDGE=false` or unset immediately when stopping the bridge; delete code in the following cleanup PR.

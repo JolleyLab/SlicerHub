@@ -178,24 +178,29 @@ export async function getDirectusAccessTokenForAppUser(appUser, { forceRefresh =
     }
 
     if (forceRefresh) {
-        if (!tokens.refresh_token) {
-            throw new ForbiddenError(
-                msg('directus.session_expired'),
-                'DIRECTUS_SESSION_EXPIRED',
-                'directus.session_expired'
+        if (tokens.refresh_token) {
+            const next = await refreshDirectusAccess(tokens.refresh_token);
+            if (next?.accessToken) {
+                persistSessionAndCookie(res, jti, userId, next);
+                return next.accessToken;
+            }
+            // Password change / session revoke can invalidate refresh while access
+            // is still briefly usable — prefer that over forcing a full re-login.
+            console.warn(
+                'Directus refresh failed for user',
+                userId,
+                '— falling back to stored access token if still valid'
             );
         }
-        const next = await refreshDirectusAccess(tokens.refresh_token);
-        if (!next?.accessToken) {
-            clearDirectusLinkCookie(res);
-            throw new ForbiddenError(
-                msg('directus.session_expired'),
-                'DIRECTUS_SESSION_EXPIRED',
-                'directus.session_expired'
-            );
+        if (tokens.access_token && !accessLooksExpired(tokens)) {
+            return tokens.access_token;
         }
-        persistSessionAndCookie(res, jti, userId, next);
-        return next.accessToken;
+        clearDirectusLinkCookie(res);
+        throw new ForbiddenError(
+            msg('directus.session_expired'),
+            'DIRECTUS_SESSION_EXPIRED',
+            'directus.session_expired'
+        );
     }
 
     if (tokens.access_token && !accessLooksExpired(tokens)) {

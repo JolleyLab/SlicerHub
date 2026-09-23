@@ -120,6 +120,9 @@ export default {
         changePassword: {
             title: 'Finish setting up your account',
             hint: 'Choose a new password and add your name so collaborators can recognize you.',
+            // CUTOVER (password-bridge): delete with AUTH_PASSWORD_BRIDGE UI
+            whySeeingThis: 'Why am I seeing this?',
+            whySeeingThisBody: 'We are updating our systems to serve you better. You only need to do this once — your work and account are safe.',
             firstName: 'First name',
             lastName: 'Last name',
             current: 'Current (temporary) password',
