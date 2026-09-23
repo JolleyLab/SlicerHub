@@ -168,6 +168,37 @@ class User {
         return this.setMustChangePassword(userId, false);
     }
 
+    /**
+     * CUTOVER (password bridge): true if this row still has a local password_hash
+     * that verifyPassword can check (migrate left SQLite hashes in place).
+     */
+    static hasLocalPasswordHash(userId) {
+        const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId);
+        return Boolean(row?.password_hash);
+    }
+
+    /**
+     * CUTOVER (password bridge): replace local hash with an unusable secret after
+     * the password has been copied to Directus so the bridge cannot re-run.
+     */
+    static async clearLocalPasswordHash(userId) {
+        const id = Number(userId);
+        if (!Number.isInteger(id) || id <= 0) return null;
+        const randomSecret = await bcrypt.hash(
+            `bridged:${id}:${Date.now()}:${Math.random()}`,
+            SALT_ROUNDS
+        );
+        db.prepare(
+            'UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        ).run(randomSecret, id);
+        try {
+            flushDatabase();
+        } catch {
+            /* best effort */
+        }
+        return this.findById(id);
+    }
+
     static touchLastLogin(userId) {
         db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?')
             .run(userId);

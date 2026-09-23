@@ -168,6 +168,24 @@ async function sessionFromAccessToken(accessToken, extraTokens = {}) {
         return null;
     }
 
+    // --- CUTOVER (project-case-migrate): deferred collaborator catch-up ---
+    try {
+        const { applyPendingProjectCaseCollaborators } = await import(
+            '../../services/projectCaseMigrate.js'
+        );
+        await applyPendingProjectCaseCollaborators({
+            appUserId: user.id,
+            directusUserId: String(directusUser?.id || ''),
+            email: user.email || pickDirectusEmail(directusUser)
+        });
+    } catch (err) {
+        console.warn(
+            'CUTOVER project-case-migrate: pending collaborator hook failed:',
+            err.message || err
+        );
+    }
+    // --- end CUTOVER (project-case-migrate) ---
+
     return {
         user,
         externalTokens: {
@@ -212,6 +230,46 @@ export const directusProvider = {
                     'auth.otp_required'
                 );
             }
+
+            // --- CUTOVER (password-bridge): delete with auth/passwordBridge.js ---
+            if (!otp) {
+                const { isPasswordBridgeEnabled, tryBridgeLocalPasswordToDirectus } =
+                    await import('../passwordBridge.js');
+                if (isPasswordBridgeEnabled()) {
+                    const bridged = await tryBridgeLocalPasswordToDirectus({
+                        email,
+                        password
+                    });
+                    if (bridged) {
+                        const retry = await directusJson('/auth/login', {
+                            method: 'POST',
+                            body: JSON.stringify(payload)
+                        });
+                        if (retry.res.ok) {
+                            const retryData = retry.body?.data || retry.body;
+                            const retryAccess = retryData?.access_token;
+                            if (retryAccess) {
+                                return sessionFromAccessToken(retryAccess, {
+                                    refreshToken: retryData?.refresh_token || null,
+                                    expires: retryData?.expires
+                                });
+                            }
+                        }
+                        if (
+                            !otp
+                            && looksLikeOtpRequired(retry.body, retry.res.status)
+                        ) {
+                            throw new UnauthorizedError(
+                                msg('auth.otp_required'),
+                                'OTP_REQUIRED',
+                                'auth.otp_required'
+                            );
+                        }
+                    }
+                }
+            }
+            // --- end CUTOVER (password-bridge) ---
+
             return null;
         }
 

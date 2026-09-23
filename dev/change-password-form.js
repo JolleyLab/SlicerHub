@@ -4,7 +4,7 @@ import { authFormSharedStyles } from './styles/auth-form-shared.js';
 import { t } from './i18n/index.js';
 
 /**
- * Forced / voluntary password change after admin provision (Pattern A).
+ * Forced password + profile change after admin provision / migrate (Pattern A).
  */
 export class ChangePasswordForm extends LitElement {
   static get properties() {
@@ -26,6 +26,16 @@ export class ChangePasswordForm extends LitElement {
         .form-group {
           margin-bottom: 16px;
         }
+        .name-row {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+        }
+        @media (max-width: 480px) {
+          .name-row {
+            grid-template-columns: 1fr;
+          }
+        }
       `
     ];
   }
@@ -41,10 +51,16 @@ export class ChangePasswordForm extends LitElement {
     e.preventDefault();
     this.error = '';
     const form = e.target;
+    const firstName = String(form.firstName?.value || '').trim();
+    const lastName = String(form.lastName?.value || '').trim();
     const currentPassword = form.currentPassword?.value || '';
     const newPassword = form.newPassword?.value || '';
     const confirmPassword = form.confirmPassword?.value || '';
 
+    if (!firstName || !lastName) {
+      this.error = t('auth.changePassword.nameRequired');
+      return;
+    }
     if (newPassword !== confirmPassword) {
       this.error = t('auth.changePassword.mismatch');
       return;
@@ -60,7 +76,12 @@ export class ChangePasswordForm extends LitElement {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ currentPassword, newPassword })
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+          firstName,
+          lastName
+        })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -89,6 +110,16 @@ export class ChangePasswordForm extends LitElement {
           <div class="auth-alert auth-alert--error" role="alert">${this.error}</div>
         ` : ''}
         <form @submit=${this.handleSubmit}>
+          <div class="name-row">
+            <div class="form-group">
+              <label for="firstName">${t('auth.changePassword.firstName')}</label>
+              <input id="firstName" name="firstName" type="text" required autocomplete="given-name" />
+            </div>
+            <div class="form-group">
+              <label for="lastName">${t('auth.changePassword.lastName')}</label>
+              <input id="lastName" name="lastName" type="text" required autocomplete="family-name" />
+            </div>
+          </div>
           <div class="form-group">
             <label for="currentPassword">${t('auth.changePassword.current')}</label>
             <input id="currentPassword" name="currentPassword" type="password" required autocomplete="current-password" />

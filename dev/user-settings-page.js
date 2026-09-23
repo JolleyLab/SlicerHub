@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit-element';
+import { API_URL } from './config.js';
 import { t } from './i18n/index.js';
 import './components/page-layout-template.js';
 import './components/theme-toggle.js';
@@ -43,44 +44,186 @@ export class UserSettingsPage extends LitElement {
                 color: var(--color-text-primary);
             }
 
+            .section-title-row {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .section-hint {
+                position: relative;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 1.15rem;
+                height: 1.15rem;
+                padding: 0;
+                border: 1px solid var(--color-border);
+                border-radius: 50%;
+                background: transparent;
+                color: var(--color-text-secondary);
+                font: inherit;
+                font-size: 0.7rem;
+                font-weight: 600;
+                line-height: 1;
+                cursor: help;
+            }
+
+            .section-hint:hover,
+            .section-hint:focus-visible {
+                color: var(--color-text-primary);
+                border-color: var(--color-text-secondary);
+                outline: none;
+            }
+
+            .section-hint .hint-bubble {
+                position: absolute;
+                left: 50%;
+                bottom: calc(100% + 8px);
+                transform: translateX(-50%);
+                width: max-content;
+                max-width: min(280px, 70vw);
+                padding: 8px 10px;
+                border-radius: 8px;
+                background: var(--color-text-primary);
+                color: var(--color-background, #fff);
+                font-size: 0.8rem;
+                font-weight: 400;
+                line-height: 1.35;
+                text-align: left;
+                box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity 0.12s ease;
+                z-index: 2;
+            }
+
+            .section-hint .hint-bubble::after {
+                content: '';
+                position: absolute;
+                top: 100%;
+                left: 50%;
+                margin-left: -5px;
+                border: 5px solid transparent;
+                border-top-color: var(--color-text-primary);
+            }
+
+            .section-hint:hover .hint-bubble,
+            .section-hint:focus-visible .hint-bubble {
+                opacity: 1;
+            }
+
             .section-description {
                 margin: 0;
                 font-size: 0.9rem;
                 color: var(--color-text-secondary);
             }
 
-            .save-status {
-                font-size: 0.85rem;
-                color: var(--color-text-primary);
-                min-height: 1.2em;
-                font-weight: 500;
+            .profile-form {
+                display: flex;
+                flex-direction: column;
+                gap: 18px;
+                margin-top: 8px;
             }
 
-            .save-status[data-state='saving'] {
+            .name-row {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 12px;
+            }
+
+            @media (max-width: 480px) {
+                .name-row {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            .form-group {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+
+            .form-group label {
+                font-size: 0.85rem;
                 color: var(--color-text-secondary);
             }
 
-            .save-status[data-state='saved'] {
+            .form-group input {
+                font: inherit;
+                padding: 8px 10px;
+                border: 1px solid var(--color-border);
+                border-radius: var(--radius-md, 8px);
+                background: var(--color-background);
+                color: var(--color-text-primary);
+            }
+
+            .form-group input:disabled {
+                opacity: 0.65;
+            }
+
+            .autosave-status {
+                font-size: 0.85rem;
+                color: var(--color-text-secondary);
+                min-height: 1.2em;
+            }
+
+            .autosave-status[data-state='saving'] {
+                color: var(--color-text-secondary);
+            }
+
+            .autosave-status[data-state='saved'] {
                 color: var(--color-secondary);
             }
 
-            .save-status[data-state='error'] {
+            .autosave-status[data-state='error'] {
                 color: #b42318;
             }
 
-            :host-context([data-theme='dark']) .save-status {
-                color: color-mix(in srgb, var(--color-text-primary) 92%, #fff);
+            .settings-footer {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 12px;
+                margin-top: 4px;
+                padding-top: 4px;
             }
 
-            :host-context([data-theme='dark']) .save-status[data-state='saving'] {
-                color: color-mix(in srgb, var(--color-text-secondary) 70%, #fff);
+            .settings-footer button {
+                font: inherit;
+                padding: 8px 16px;
+                border-radius: var(--radius-md, 8px);
+                border: 1px solid var(--color-border);
+                background: var(--color-primary, #2f6fed);
+                color: #fff;
+                cursor: pointer;
             }
 
-            :host-context([data-theme='dark']) .save-status[data-state='saved'] {
-                color: color-mix(in srgb, #9db7ff 75%, #fff);
+            .settings-footer button:disabled {
+                opacity: 0.6;
+                cursor: not-allowed;
             }
 
-            :host-context([data-theme='dark']) .save-status[data-state='error'] {
+            .profile-status {
+                font-size: 0.85rem;
+                color: var(--color-text-secondary);
+                min-height: 1.2em;
+            }
+
+            .profile-status[data-state='saved'] {
+                color: var(--color-secondary);
+            }
+
+            .profile-status[data-state='error'] {
+                color: #b42318;
+            }
+
+            .profile-status[data-state='dirty'] {
+                color: var(--color-text-secondary);
+            }
+
+            :host-context([data-theme='dark']) .autosave-status[data-state='error'],
+            :host-context([data-theme='dark']) .profile-status[data-state='error'] {
                 color: #ff8a80;
             }
         `;
@@ -89,31 +232,58 @@ export class UserSettingsPage extends LitElement {
     static get properties() {
         return {
             username: { type: String },
+            user: { type: Object },
             theme: { type: String },
             useFullSlicer: { type: Boolean },
             useSimplifiedViewer: { type: Boolean },
             saveState: { type: String },
             saveStatusMessage: { type: String },
-            errorMessage: { type: String }
+            errorMessage: { type: String },
+            firstName: { type: String },
+            lastName: { type: String },
+            profileLinked: { type: Boolean },
+            profileLoading: { type: Boolean },
+            profileSaving: { type: Boolean },
+            profileState: { type: String },
+            profileStatusMessage: { type: String }
         };
     }
 
     constructor() {
         super();
         this.username = t('common.guest');
+        this.user = null;
         this.errorMessage = '';
         this.saveState = 'idle';
-        this.saveStatusMessage = t('settings.autoSave');
+        this.saveStatusMessage = t('settings.autoSavePrefs');
+        this.firstName = '';
+        this.lastName = '';
+        this.profileLinked = false;
+        this.profileLoading = true;
+        this.profileSaving = false;
+        this.profileState = 'idle';
+        this.profileStatusMessage = '';
+        this._savedFirstName = '';
+        this._savedLastName = '';
         this._saveTimer = null;
         this._savedClearTimer = null;
         this._persistGeneration = 0;
+        this._onBeforeUnload = (event) => this.handleBeforeUnload(event);
         const prefs = getCachedUserPreferences();
         this.theme = prefs.theme;
         this.useFullSlicer = prefs.useFullSlicer;
         this.useSimplifiedViewer = prefs.useSimplifiedViewer;
     }
 
+    connectedCallback() {
+        super.connectedCallback();
+        this.hydrateProfileFromUser(this.user);
+        this.loadProfile();
+        window.addEventListener('beforeunload', this._onBeforeUnload);
+    }
+
     disconnectedCallback() {
+        window.removeEventListener('beforeunload', this._onBeforeUnload);
         if (this._saveTimer) {
             clearTimeout(this._saveTimer);
             this._saveTimer = null;
@@ -125,12 +295,94 @@ export class UserSettingsPage extends LitElement {
         super.disconnectedCallback();
     }
 
+    updated(changed) {
+        if (changed.has('user') && this.user && !this.isProfileDirty()) {
+            this.hydrateProfileFromUser(this.user);
+        }
+    }
+
+    hydrateProfileFromUser(user) {
+        if (!user) return;
+        if (user.firstName != null) this.firstName = String(user.firstName || '');
+        if (user.lastName != null) this.lastName = String(user.lastName || '');
+        this._savedFirstName = this.firstName;
+        this._savedLastName = this.lastName;
+    }
+
+    setSavedProfileBaseline(firstName, lastName) {
+        this._savedFirstName = String(firstName || '').trim();
+        this._savedLastName = String(lastName || '').trim();
+        this.firstName = this._savedFirstName;
+        this.lastName = this._savedLastName;
+    }
+
+    isProfileDirty() {
+        if (!this.profileLinked) return false;
+        const first = String(this.firstName || '').trim();
+        const last = String(this.lastName || '').trim();
+        return first !== this._savedFirstName || last !== this._savedLastName;
+    }
+
+    /**
+     * Used by trame-app before leaving Settings (menu, back, logout).
+     * @returns {boolean} true if navigation may proceed
+     */
+    confirmLeave() {
+        if (!this.isProfileDirty()) return true;
+        return window.confirm(t('settings.unsavedWarning'));
+    }
+
+    handleBeforeUnload(event) {
+        if (!this.isProfileDirty()) return;
+        event.preventDefault();
+        event.returnValue = '';
+    }
+
+    async loadProfile() {
+        this.profileLoading = true;
+        this.profileState = 'idle';
+        this.profileStatusMessage = '';
+        try {
+            const res = await fetch(`${API_URL}/api/auth/me`, {
+                credentials: 'include',
+                cache: 'no-store'
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(data.error?.message || data.message || t('settings.profileFailed'));
+            }
+            this.profileLinked = Boolean(data.identity?.directusLinked);
+            const u = data.user || {};
+            this.setSavedProfileBaseline(u.firstName || '', u.lastName || '');
+        } catch (err) {
+            this.profileLinked = false;
+            console.warn('Settings profile load skipped:', err.message || err);
+        } finally {
+            this.profileLoading = false;
+        }
+    }
+
     handleMenuSelectionChange(event) {
+        if (!this.confirmLeave()) {
+            event.stopPropagation();
+            return;
+        }
         this.dispatchEvent(new CustomEvent('menu-selection-change', {
             detail: event.detail,
             bubbles: true,
             composed: true
         }));
+    }
+
+    onProfileFieldInput(field, value) {
+        this[field] = value;
+        if (this.isProfileDirty()) {
+            this.profileState = 'dirty';
+            this.profileStatusMessage = t('settings.unsavedHint');
+        } else {
+            this.profileState = 'idle';
+            this.profileStatusMessage = '';
+        }
     }
 
     queuePersist(patch) {
@@ -165,7 +417,7 @@ export class UserSettingsPage extends LitElement {
             this._savedClearTimer = setTimeout(() => {
                 if (this.saveState === 'saved') {
                     this.saveState = 'idle';
-                    this.saveStatusMessage = t('settings.autoSave');
+                    this.saveStatusMessage = t('settings.autoSavePrefs');
                 }
                 this._savedClearTimer = null;
             }, 2000);
@@ -200,7 +452,56 @@ export class UserSettingsPage extends LitElement {
         });
     }
 
+    async handleProfileSave(e) {
+        e?.preventDefault?.();
+        if (!this.profileLinked || this.profileSaving) return;
+
+        const firstName = String(this.firstName || '').trim();
+        const lastName = String(this.lastName || '').trim();
+        if (!firstName || !lastName) {
+            this.profileState = 'error';
+            this.profileStatusMessage = t('auth.changePassword.nameRequired');
+            return;
+        }
+
+        this.profileSaving = true;
+        this.profileState = 'saving';
+        this.profileStatusMessage = t('settings.savingProfile');
+        try {
+            const res = await fetch(`${API_URL}/api/auth/profile`, {
+                method: 'PUT',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ firstName, lastName })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                const serverMsg = data.error?.message || data.message || data.error;
+                throw new Error(typeof serverMsg === 'string' ? serverMsg : t('settings.profileFailed'));
+            }
+            this.setSavedProfileBaseline(
+                data.user?.firstName || firstName,
+                data.user?.lastName || lastName
+            );
+            this.profileState = 'saved';
+            this.profileStatusMessage = t('settings.profileSaved');
+            this.dispatchEvent(new CustomEvent('profile-updated', {
+                detail: { user: data.user },
+                bubbles: true,
+                composed: true
+            }));
+        } catch (err) {
+            this.profileState = 'error';
+            this.profileStatusMessage = err.message || t('settings.profileFailed');
+        } finally {
+            this.profileSaving = false;
+        }
+    }
+
     render() {
+        const showProfile = !this.profileLoading && this.profileLinked;
+        const dirty = this.isProfileDirty();
+
         return html`
             <page-layout-template
                 .username=${this.username}
@@ -220,9 +521,47 @@ export class UserSettingsPage extends LitElement {
                 ` : ''}
 
                 <div slot="content" class="settings-stack">
-                    <div class="save-status" data-state=${this.saveState} aria-live="polite">
-                        ${this.saveStatusMessage}
-                    </div>
+                    ${showProfile ? html`
+                    <section class="settings-section">
+                        <div class="section-title-row">
+                            <h2 class="section-title">${t('settings.profile')}</h2>
+                            <button
+                                type="button"
+                                class="section-hint"
+                                aria-label=${t('settings.profileHint')}
+                            >
+                                ?
+                                <span class="hint-bubble" role="tooltip">${t('settings.profileHint')}</span>
+                            </button>
+                        </div>
+                        <div class="profile-form">
+                            <div class="name-row">
+                                <div class="form-group">
+                                    <label for="settings-firstName">${t('settings.firstName')}</label>
+                                    <input
+                                        id="settings-firstName"
+                                        type="text"
+                                        autocomplete="given-name"
+                                        .value=${this.firstName}
+                                        ?disabled=${this.profileSaving}
+                                        @input=${(e) => this.onProfileFieldInput('firstName', e.target.value)}
+                                    />
+                                </div>
+                                <div class="form-group">
+                                    <label for="settings-lastName">${t('settings.lastName')}</label>
+                                    <input
+                                        id="settings-lastName"
+                                        type="text"
+                                        autocomplete="family-name"
+                                        .value=${this.lastName}
+                                        ?disabled=${this.profileSaving}
+                                        @input=${(e) => this.onProfileFieldInput('lastName', e.target.value)}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                    ` : ''}
 
                     <section class="settings-section">
                         <h2 class="section-title">${t('settings.appearance')}</h2>
@@ -233,6 +572,9 @@ export class UserSettingsPage extends LitElement {
                             .theme=${this.theme}
                             @theme-change=${(e) => this.handleThemeChange(e)}
                         ></theme-toggle>
+                        <div class="autosave-status" data-state=${this.saveState} aria-live="polite">
+                            ${this.saveStatusMessage}
+                        </div>
                     </section>
 
                     <section class="settings-section">
@@ -248,6 +590,25 @@ export class UserSettingsPage extends LitElement {
                             @options-change=${(e) => this.handleViewerOptionsChange(e)}
                         ></local-slicer-viewer-options>
                     </section>
+
+                    ${showProfile ? html`
+                    <div class="settings-footer">
+                        <button
+                            type="button"
+                            ?disabled=${this.profileSaving || !dirty}
+                            @click=${(e) => this.handleProfileSave(e)}
+                        >
+                            ${this.profileSaving
+                                ? t('settings.savingProfile')
+                                : t('settings.saveProfile')}
+                        </button>
+                        <span
+                            class="profile-status"
+                            data-state=${this.profileState}
+                            aria-live="polite"
+                        >${this.profileStatusMessage}</span>
+                    </div>
+                    ` : ''}
                 </div>
             </page-layout-template>
         `;

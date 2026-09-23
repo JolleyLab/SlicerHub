@@ -152,10 +152,16 @@ async function main() {
         for (const s of secrets) {
             console.log(`  ${s.email}\t${s.temporaryPassword}`);
         }
+        console.log(
+            '\nIf AUTH_PASSWORD_BRIDGE=true for the cutover window, users keep their old '
+            + 'SQLite password on first Directus login — these temps are unused. '
+            + 'Delete auth/passwordBridge.js when the window ends.'
+        );
     } else {
         console.log(
             '\nNo new temp passwords (Directus users already existed). '
-            + 'Use the original temp password, or reset password in Directus / via change-password after link.'
+            + 'With AUTH_PASSWORD_BRIDGE, linked locals still use their SQLite password once; '
+            + 'otherwise use the existing Directus password.'
         );
     }
     console.log(

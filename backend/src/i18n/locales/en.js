@@ -37,6 +37,11 @@ export default {
         current_password_incorrect: 'Current password is incorrect',
         password_must_differ: 'New password must differ from current password',
         password_change_not_allowed: 'Cannot change password for this account',
+        password_bridge_failed: 'Could not migrate your password to the account service. Contact an administrator.',
+        first_name_required: 'First name is required',
+        last_name_required: 'Last name is required',
+        profile_update_empty: 'No profile fields to update',
+        profile_requires_directus: 'Name is stored on your Directus account. Link Directus before editing profile.',
         account_link_broken: 'Linked product account is missing. Contact an administrator.',
         account_link_conflict: 'This email is already linked to a different Directus account. Contact an administrator.',
         email_not_verified: 'Email must be verified before this account can be linked.',
@@ -148,7 +153,11 @@ export default {
         min_one_collaborator: 'Project must include at least one collaborator',
         min_one_admin: 'Project must include at least one admin',
         collaborator_edit_file_title: 'Only project admins or collaborators can edit file titles',
-        file_not_in_project: 'File not found in this project'
+        file_not_in_project: 'File not found in this project',
+        migrate_to_case_disabled: 'Project → Case migration is not enabled on this server',
+        migrate_admin_only: 'Only project admins can migrate a project to a Case',
+        already_migrated_to_case: 'This project was already migrated to a Case',
+        not_found: 'Project not found'
     },
     file: {
         no_upload: 'No file uploaded',

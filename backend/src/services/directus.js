@@ -1407,17 +1407,48 @@ export async function createDirectusUser({ email, password, roleId, firstName, l
  * Update a Directus user's password (service token).
  */
 export async function updateDirectusUserPassword(directusUserId, newPassword) {
+    return updateDirectusUser(directusUserId, { password: newPassword });
+}
+
+/**
+ * Patch Directus user fields via service token (password, first_name, last_name, …).
+ * @param {string} directusUserId
+ * @param {{ password?: string, firstName?: string, lastName?: string }} fields
+ */
+export async function updateDirectusUser(directusUserId, fields = {}) {
     const id = String(directusUserId || '').trim();
     if (!id) {
         throw new ValidationError(msg('directus.user_id_required'), null, 'directus.user_id_required');
     }
-    if (!newPassword || String(newPassword).length < 8) {
-        throw new ValidationError(msg('auth.password_min_length_short', { min: 8 }), null, 'auth.password_min_length_short');
+
+    const body = {};
+    if (fields.password != null) {
+        if (!fields.password || String(fields.password).length < 8) {
+            throw new ValidationError(msg('auth.password_min_length_short', { min: 8 }), null, 'auth.password_min_length_short');
+        }
+        body.password = String(fields.password);
+    }
+    if (fields.firstName != null) {
+        const first = String(fields.firstName || '').trim();
+        if (!first) {
+            throw new ValidationError(msg('auth.first_name_required'), null, 'auth.first_name_required');
+        }
+        body.first_name = first;
+    }
+    if (fields.lastName != null) {
+        const last = String(fields.lastName || '').trim();
+        if (!last) {
+            throw new ValidationError(msg('auth.last_name_required'), null, 'auth.last_name_required');
+        }
+        body.last_name = last;
+    }
+    if (Object.keys(body).length === 0) {
+        throw new ValidationError(msg('auth.profile_update_empty'), null, 'auth.profile_update_empty');
     }
 
     const payload = await directusFetch(`/users/${encodeURIComponent(id)}`, {
         method: 'PATCH',
-        body: { password: String(newPassword) }
+        body
     });
     return payload?.data || null;
 }

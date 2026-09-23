@@ -561,6 +561,22 @@ export async function acceptSignupInvite(req, res, {
         linkIdentity(localUser.id, PROVIDER, directusUserId);
     }
 
+    // --- CUTOVER (project-case-migrate) ---
+    try {
+        const { applyPendingProjectCaseCollaborators } = await import('./projectCaseMigrate.js');
+        await applyPendingProjectCaseCollaborators({
+            appUserId: localUser.id,
+            directusUserId,
+            email
+        });
+    } catch (err) {
+        console.warn(
+            'CUTOVER project-case-migrate: signup pending collaborator hook failed:',
+            err.message || err
+        );
+    }
+    // --- end CUTOVER (project-case-migrate) ---
+
     await addCaseCollaboratorAsSystem(
         row.case_id,
         directusUserId,

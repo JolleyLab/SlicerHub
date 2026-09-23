@@ -2,6 +2,14 @@ import Project, { ROLE_ENUM } from '../models/Project.js';
 import User from '../models/User.js';
 import File from '../models/File.js';
 import { authenticateToken } from '../middleware/authMiddleware.js';
+import { requireDirectusLink } from '../auth/requireDirectusLink.js';
+import { requireDirectusUserToken } from '../auth/directusUserSession.js';
+import { fetchDirectusViewer } from '../services/directus.js';
+import {
+    isProjectCaseMigrateEnabled,
+    getProjectCaseMigration,
+    migrateProjectToCase
+} from '../services/projectCaseMigrate.js';
 import { ValidationError } from '../utils/errors.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { flushDatabase } from '../db/database.js';
@@ -249,4 +257,99 @@ export default function projectRoutes(app) {
             }
         });
     }));
+
+    // --- CUTOVER (project-case-migrate): delete with projectCaseMigrate.js ---
+    app.get(
+        '/api/projects/:projectId/migrate-to-case',
+        authenticateToken,
+        asyncHandler(async (req, res) => {
+            const projectId = Number(req.params.projectId);
+            if (!Number.isInteger(projectId) || projectId <= 0) {
+                throw new ValidationError(msg('project.invalid_id'), null, 'project.invalid_id');
+            }
+            const project = Project.findForUser({ projectId, userId: req.user.id });
+            if (!project) {
+                throw new ValidationError(msg('project.not_found_or_inaccessible'), null, 'project.not_found_or_inaccessible');
+            }
+            const row = getProjectCaseMigration(projectId);
+            res.json({
+                enabled: isProjectCaseMigrateEnabled(),
+                canMigrate: project.userRole === 'admin' && isProjectCaseMigrateEnabled() && !row,
+                migrated: Boolean(row?.case_id),
+                caseId: row?.case_id || null,
+                migratedAt: row?.migrated_at || null,
+                filesOk: row?.file_ok ?? null,
+                filesFailed: row?.file_failed ?? null
+            });
+        })
+    );
+
+    app.post(
+        '/api/projects/:projectId/migrate-to-case',
+        authenticateToken,
+        requireDirectusLink,
+        requireDirectusUserToken,
+        asyncHandler(async (req, res) => {
+            const projectId = Number(req.params.projectId);
+            if (!Number.isInteger(projectId) || projectId <= 0) {
+                throw new ValidationError(msg('project.invalid_id'), null, 'project.invalid_id');
+            }
+
+            const actorDirectusUserId = req.directusIdentity?.externalId
+                || (await fetchDirectusViewer(req.directusAccessToken))?.id;
+            if (!actorDirectusUserId) {
+                throw new ValidationError(msg('directus.session_confirm_failed'), null, 'directus.session_confirm_failed');
+            }
+
+            const accept = String(req.headers.accept || '');
+            const wantsStream = req.query.stream === '1'
+                || accept.includes('application/x-ndjson');
+
+            if (wantsStream) {
+                res.status(201);
+                res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+                res.setHeader('Cache-Control', 'no-store');
+                res.setHeader('X-Content-Type-Options', 'nosniff');
+                if (typeof res.flushHeaders === 'function') {
+                    res.flushHeaders();
+                }
+
+                const writeEvt = (evt) => {
+                    if (res.writableEnded) return;
+                    res.write(`${JSON.stringify(evt)}\n`);
+                    if (typeof res.flush === 'function') res.flush();
+                };
+
+                try {
+                    const result = await migrateProjectToCase({
+                        projectId,
+                        appUserId: req.user.id,
+                        accessToken: req.directusAccessToken,
+                        actorDirectusUserId: String(actorDirectusUserId),
+                        onProgress: writeEvt
+                    });
+                    writeEvt({ phase: 'done', result });
+                    res.end();
+                } catch (err) {
+                    writeEvt({
+                        phase: 'error',
+                        message: err?.message || String(err),
+                        code: err?.code || null
+                    });
+                    res.end();
+                }
+                return;
+            }
+
+            const result = await migrateProjectToCase({
+                projectId,
+                appUserId: req.user.id,
+                accessToken: req.directusAccessToken,
+                actorDirectusUserId: String(actorDirectusUserId)
+            });
+
+            res.status(201).json(result);
+        })
+    );
+    // --- end CUTOVER (project-case-migrate) ---
 }

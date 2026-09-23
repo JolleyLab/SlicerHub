@@ -13,6 +13,8 @@ let featuresPromise = null;
 let featuresLoaded = false;
 let features = Object.freeze({
     directusCases: false,
+    projectCaseMigrate: false,
+    inviteEmail: false,
     auth: DEFAULT_AUTH
 });
 
@@ -26,6 +28,16 @@ export function areAppFeaturesLoaded() {
 
 export function isDirectusCasesEnabled() {
     return features.directusCases === true;
+}
+
+/** CUTOVER (project-case-migrate) */
+export function isProjectCaseMigrateEnabled() {
+    return features.projectCaseMigrate === true;
+}
+
+/** Case signup invite emails via SMTP (copy-link always available). */
+export function isInviteEmailEnabled() {
+    return features.inviteEmail === true;
 }
 
 /**
@@ -58,6 +70,8 @@ export function loadAppFeatures() {
 
             features = Object.freeze({
                 directusCases: data?.directusCases === true,
+                projectCaseMigrate: data?.projectCaseMigrate === true,
+                inviteEmail: data?.inviteEmail === true,
                 auth: Object.freeze(auth)
             });
             featuresLoaded = true;

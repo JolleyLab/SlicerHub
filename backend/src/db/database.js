@@ -609,6 +609,40 @@ const migrations = [
             DROP TABLE IF EXISTS auth_webauthn_credentials;
             DROP TABLE IF EXISTS auth_trusted_devices;
         `
+    },
+    {
+        // CUTOVER (project→case migrate): delete tables + service when window ends.
+        id: '029_project_case_migrate_cutover',
+        up: `
+            CREATE TABLE IF NOT EXISTS project_case_migrations (
+                project_id INTEGER PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                migrated_by_app_user_id INTEGER,
+                migrated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                file_ok INTEGER NOT NULL DEFAULT 0,
+                file_failed INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'completed',
+                notes TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_project_case_migrations_case
+                ON project_case_migrations(case_id);
+
+            CREATE TABLE IF NOT EXISTS project_case_pending_collaborators (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                case_id TEXT NOT NULL,
+                invitee_email TEXT NOT NULL,
+                proposed_role TEXT NOT NULL DEFAULT 'collaborator',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                applied_at DATETIME,
+                applied_directus_user_id TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_project_case_pending_email_status
+                ON project_case_pending_collaborators(invitee_email, status);
+            CREATE INDEX IF NOT EXISTS idx_project_case_pending_case
+                ON project_case_pending_collaborators(case_id, status);
+        `
     }
 ];
 

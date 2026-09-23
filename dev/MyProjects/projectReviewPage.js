@@ -12,8 +12,11 @@ import {
     getProjectById,
     updateProjectCollaborators,
     listProjectFiles,
-    updateProjectFileTitle
+    updateProjectFileTitle,
+    getProjectCaseMigrateStatus,
+    migrateProjectToCase
 } from '../services/projects.js';
+import { isProjectCaseMigrateEnabled } from '../services/features.js';
 import {
     getProjectGpu,
     listGpuProviders,
@@ -111,6 +114,78 @@ export class ProjectReviewPage extends LitElement {
                 box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
             }
 
+            .migrate-panel {
+                margin-top: 16px;
+                border: 1px solid color-mix(in srgb, #b45309 40%, var(--color-border));
+                border-radius: var(--radius-lg);
+                background: color-mix(in srgb, #f59e0b 14%, var(--color-surface, var(--color-background)));
+                padding: 12px 14px;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+            }
+
+            .migrate-panel-title {
+                margin: 0;
+                font-size: 1rem;
+                font-weight: 650;
+                color: var(--color-text-primary);
+            }
+
+            .migrate-panel-hint {
+                margin: 0;
+                font-size: 0.9rem;
+                color: var(--color-text-secondary);
+            }
+
+            .migrate-panel-actions {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 10px;
+                margin-top: 2px;
+            }
+
+            .migrate-progress {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                margin-top: 4px;
+            }
+
+            .migrate-progress-label {
+                margin: 0;
+                font-size: 0.85rem;
+                color: var(--color-text-secondary);
+            }
+
+            .migrate-progress-track {
+                width: 100%;
+                height: 8px;
+                border-radius: 999px;
+                background: color-mix(in srgb, var(--color-border) 70%, transparent);
+                overflow: hidden;
+            }
+
+            .migrate-progress-fill {
+                height: 100%;
+                width: 0%;
+                border-radius: inherit;
+                background: var(--color-primary);
+                transition: width 0.2s ease;
+            }
+
+            .migrate-progress-fill.is-indeterminate {
+                width: 35%;
+                animation: migrate-progress-slide 1.1s ease-in-out infinite;
+            }
+
+            @keyframes migrate-progress-slide {
+                0% { transform: translateX(-120%); }
+                100% { transform: translateX(320%); }
+            }
+
             .files-panel {
                 margin-top: 16px;
                 border: 1px solid var(--color-border);
@@ -118,6 +193,12 @@ export class ProjectReviewPage extends LitElement {
                 background: var(--color-panel, var(--color-surface, var(--color-background)));
                 padding: 12px;
                 box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+            }
+
+            :host-context([data-theme='dark']) .migrate-panel {
+                border-color: color-mix(in srgb, #fbbf24 35%, var(--color-border));
+                background: color-mix(in srgb, #f59e0b 18%, var(--color-surface));
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
             }
 
             :host-context([data-theme='dark']) .collaborators-panel,
@@ -1163,6 +1244,15 @@ export class ProjectReviewPage extends LitElement {
             canEditCollaborators: { type: Boolean },
             canUploadFiles: { type: Boolean },
             canDeleteProjectFiles: { type: Boolean },
+            projectCaseMigrateCan: { type: Boolean },
+            projectCaseMigrated: { type: Boolean },
+            projectCaseMigrateCaseId: { type: String },
+            projectCaseMigrating: { type: Boolean },
+            projectCaseMigrateFeature: { type: Boolean },
+            projectCaseMigrateProgressLabel: { type: String },
+            projectCaseMigrateProgressPct: { type: Number },
+            projectCaseMigrateProgressIndeterminate: { type: Boolean },
+            projectRole: { type: String },
             projectFiles: { type: Array },
             loadingProjectFiles: { type: Boolean },
             showIframe: { type: Boolean },
@@ -1235,6 +1325,15 @@ export class ProjectReviewPage extends LitElement {
         this.canEditCollaborators = false;
         this.canUploadFiles = false;
         this.canDeleteProjectFiles = false;
+        this.projectCaseMigrateCan = false;
+        this.projectCaseMigrated = false;
+        this.projectCaseMigrateCaseId = '';
+        this.projectCaseMigrating = false;
+        this.projectCaseMigrateFeature = false;
+        this.projectCaseMigrateProgressLabel = '';
+        this.projectCaseMigrateProgressPct = 0;
+        this.projectCaseMigrateProgressIndeterminate = false;
+        this.projectRole = '';
         this.projectFiles = [];
         this.loadingProjectFiles = false;
         this.showIframe = false;
@@ -1327,7 +1426,12 @@ export class ProjectReviewPage extends LitElement {
         if (this.projectId) {
             cancelViewerStopOnLeave(this.projectId);
         }
-        this._handleBeforeUnload = () => {
+        this._handleBeforeUnload = (event) => {
+            if (this.projectCaseMigrating) {
+                event.preventDefault();
+                event.returnValue = '';
+                return '';
+            }
             if (!this.showIframe || !this._viewerSessionToken) return;
             const kind = this.viewerKind || VIEWER_KINDS.TRAME;
             const { stopUrl } = getViewerSessionEndpoints({
@@ -1521,6 +1625,51 @@ export class ProjectReviewPage extends LitElement {
         }));
     }
 
+    /** @returns {boolean} true if leave is allowed (used by trame-app + beforeunload) */
+    confirmLeaveMigrate() {
+        if (!this.projectCaseMigrating) return true;
+        return window.confirm(t('projects.migrateToCaseLeaveWarning'));
+    }
+
+    /** Alias used by trame-app leave guards. */
+    confirmLeave() {
+        return this.confirmLeaveMigrate();
+    }
+
+    resetMigrateProgress() {
+        this.projectCaseMigrateProgressLabel = '';
+        this.projectCaseMigrateProgressPct = 0;
+        this.projectCaseMigrateProgressIndeterminate = false;
+    }
+
+    applyMigrateProgress(evt = {}) {
+        const phase = String(evt.phase || '');
+        const total = Math.max(0, Number(evt.total) || 0);
+        const done = Math.max(0, Number(evt.done) || 0);
+        if (phase === 'case' || phase === 'case_ready') {
+            this.projectCaseMigrateProgressIndeterminate = total <= 0;
+            this.projectCaseMigrateProgressPct = 0;
+            this.projectCaseMigrateProgressLabel = t('projects.migrateToCaseProgressCase');
+            return;
+        }
+        if (phase === 'collaborators') {
+            this.projectCaseMigrateProgressIndeterminate = false;
+            this.projectCaseMigrateProgressPct = 100;
+            this.projectCaseMigrateProgressLabel = t('projects.migrateToCaseProgressCollab');
+            return;
+        }
+        if (phase === 'file') {
+            this.projectCaseMigrateProgressIndeterminate = total <= 0;
+            this.projectCaseMigrateProgressPct = total > 0
+                ? Math.min(100, Math.round((done / total) * 100))
+                : 0;
+            const name = String(evt.current || '').trim();
+            this.projectCaseMigrateProgressLabel = name
+                ? t('projects.migrateToCaseProgressFileNamed', { name, done, total })
+                : t('projects.migrateToCaseProgressFile', { done, total });
+        }
+    }
+
     collaboratorSnapshot(collaborators) {
         return collaborators
             .map((entry) => ({
@@ -1560,13 +1709,14 @@ export class ProjectReviewPage extends LitElement {
             const data = await getProjectById(this.projectId);
             this.projectName = data.project?.name || '';
             const role = data.project?.role;
+            this.projectRole = role || '';
             this.canEditCollaborators = role === 'admin';
             this.canUploadFiles = role === 'admin' || role === 'collaborator';
             this.canDeleteProjectFiles = role === 'admin' || role === 'collaborator';
             const collaborators = data.collaborators || [];
             this.collaborators = this.sortCollaborators(collaborators.map((entry) => ({ ...entry })));
             this.originalCollaborators = this.sortCollaborators(collaborators.map((entry) => ({ ...entry })));
-            await Promise.all([this.loadProjectFiles(), this.loadProjectGpu()]);
+            await Promise.all([this.loadProjectFiles(), this.loadProjectGpu(), this.loadProjectCaseMigrateStatus()]);
             this.maybeWarmLocalFullSlicer();
         } catch (error) {
             this.showErrorAlert(error.message || 'Unable to load project.', {
@@ -1579,10 +1729,86 @@ export class ProjectReviewPage extends LitElement {
             this.canEditCollaborators = false;
             this.canUploadFiles = false;
             this.canDeleteProjectFiles = false;
+            this.projectCaseMigrateCan = false;
+            this.projectCaseMigrated = false;
+            this.projectCaseMigrateCaseId = '';
+            this.projectCaseMigrateFeature = false;
+            this.projectRole = '';
             this.projectFiles = [];
         } finally {
             this.loading = false;
         }
+    }
+
+    async loadProjectCaseMigrateStatus() {
+        this.projectCaseMigrateCan = false;
+        this.projectCaseMigrated = false;
+        this.projectCaseMigrateCaseId = '';
+        this.projectCaseMigrateFeature = isProjectCaseMigrateEnabled();
+        if (!this.projectCaseMigrateFeature) return;
+        try {
+            const status = await getProjectCaseMigrateStatus(this.projectId);
+            this.projectCaseMigrated = Boolean(status.migrated);
+            this.projectCaseMigrateCaseId = status.caseId || '';
+            this.projectCaseMigrateCan = Boolean(status.canMigrate) && this.projectRole === 'admin';
+        } catch (_) {
+            this.projectCaseMigrateCan = false;
+        }
+    }
+
+    async handleMigrateProjectToCase() {
+        if (!this.projectCaseMigrateCan || this.projectCaseMigrating) return;
+        if (!window.confirm(t('projects.migrateToCaseConfirm'))) return;
+        this.projectCaseMigrating = true;
+        this.projectCaseMigrateProgressIndeterminate = true;
+        this.projectCaseMigrateProgressPct = 0;
+        this.projectCaseMigrateProgressLabel = t('projects.migrateToCaseProgressCase');
+        try {
+            const result = await migrateProjectToCase(this.projectId, {
+                onProgress: (evt) => this.applyMigrateProgress(evt)
+            });
+            this.projectCaseMigrated = true;
+            this.projectCaseMigrateCaseId = result.caseId || '';
+            this.projectCaseMigrateCan = false;
+            // Success is shown in the migrate panel (Already migrated + Open Case).
+            // Partial file failures still get an alert so they aren't silent.
+            const failed = Number(result.files?.failed) || 0;
+            if (failed > 0) {
+                const ok = Number(result.files?.ok) || 0;
+                this.showErrorAlert(
+                    t('projects.migrateToCaseDone', {
+                        ok,
+                        failedSuffix: t('projects.migrateToCaseFailedSuffix', { n: failed })
+                    }),
+                    {
+                        title: t('projects.migrateToCase'),
+                        force: true
+                    }
+                );
+            }
+        } catch (error) {
+            this.showErrorAlert(error.message || t('projects.migrateFailed'), {
+                title: t('projects.migrateToCase'),
+                force: true
+            });
+        } finally {
+            this.projectCaseMigrating = false;
+            this.resetMigrateProgress();
+        }
+    }
+
+    openMigratedCase() {
+        const caseId = String(this.projectCaseMigrateCaseId || '').trim();
+        if (!caseId) return;
+        this.dispatchEvent(new CustomEvent('menu-selection-change', {
+            detail: {
+                selectedKey: 'cases',
+                item: { key: 'cases', label: 'Cases' },
+                caseId
+            },
+            bubbles: true,
+            composed: true
+        }));
     }
 
     formatDate(dateString) {
@@ -3695,6 +3921,65 @@ export class ProjectReviewPage extends LitElement {
                     <div slot="content" class="status-note">Loading project...</div>
                 ` : ''}
                 ${!this.loading ? html`
+                    ${this.projectCaseMigrateFeature ? html`
+                    <div slot="content" class="migrate-panel" role="status">
+                        <p class="migrate-panel-title">${t('projects.deprecationBanner')}</p>
+                        ${this.projectCaseMigrated ? html`
+                            <p class="migrate-panel-hint">${t('projects.migrateToCaseAlready')}</p>
+                            <div class="migrate-panel-actions">
+                                ${this.projectCaseMigrateCaseId ? html`
+                                    <button
+                                        class="primary-button"
+                                        type="button"
+                                        @click=${() => this.openMigratedCase()}
+                                    >
+                                        ${t('projects.openMigratedCase')}
+                                    </button>
+                                ` : ''}
+                            </div>
+                        ` : this.projectRole === 'admin' ? html`
+                            <p class="migrate-panel-hint">${t('projects.migrateToCaseHint')}</p>
+                            <div class="migrate-panel-actions">
+                                <button
+                                    class="primary-button"
+                                    type="button"
+                                    ?disabled=${this.projectCaseMigrating || !this.projectCaseMigrateCan}
+                                    @click=${() => this.handleMigrateProjectToCase()}
+                                >
+                                    ${this.projectCaseMigrating
+                                        ? t('projects.migrateToCaseWorking')
+                                        : t('projects.migrateToCase')}
+                                </button>
+                            </div>
+                            ${this.projectCaseMigrating ? html`
+                                <div class="migrate-progress" aria-live="polite">
+                                    <p class="migrate-progress-label">
+                                        ${this.projectCaseMigrateProgressLabel || t('projects.migrateToCaseWorking')}
+                                    </p>
+                                    <div
+                                        class="migrate-progress-track"
+                                        role="progressbar"
+                                        aria-valuemin="0"
+                                        aria-valuemax="100"
+                                        aria-valuenow=${this.projectCaseMigrateProgressIndeterminate
+                                            ? undefined
+                                            : this.projectCaseMigrateProgressPct}
+                                        aria-label=${this.projectCaseMigrateProgressLabel || t('projects.migrateToCaseWorking')}
+                                    >
+                                        <div
+                                            class="migrate-progress-fill ${this.projectCaseMigrateProgressIndeterminate ? 'is-indeterminate' : ''}"
+                                            style=${this.projectCaseMigrateProgressIndeterminate
+                                                ? ''
+                                                : `width: ${this.projectCaseMigrateProgressPct}%`}
+                                        ></div>
+                                    </div>
+                                </div>
+                            ` : ''}
+                        ` : html`
+                            <p class="migrate-panel-hint">${t('projects.migrateContactAdmin')}</p>
+                        `}
+                    </div>
+                    ` : ''}
                     <div slot="content" class="collaborators-panel">
                         <details
                             class="collaborators-details"

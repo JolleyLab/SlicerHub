@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
+import { isInviteEmailEnabled } from '../services/features.js';
 import './app-dialog.js';
 import './dropdown-select.js';
 
@@ -612,7 +613,7 @@ export class PeopleDialog extends LitElement {
                 this.inviteRole = '';
                 if (result?.status === 'signup_invite' && result?.inviteUrl) {
                     this.lastInviteUrl = result.inviteUrl;
-                    this.lookupMessage = result.emailSent
+                    this.lookupMessage = (result.emailSent && isInviteEmailEnabled())
                         ? t('people.inviteEmailSent')
                         : t('people.inviteLinkReady');
                 } else if (result?.status === 'pending' || result?.status === 'pending_approval') {

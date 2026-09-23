@@ -144,7 +144,13 @@ const config = {
          */
         requireDirectusLink: process.env.AUTH_REQUIRE_DIRECTUS_LINK === 'true'
             ? true
-            : (process.env.AUTH_REQUIRE_DIRECTUS_LINK === 'false' ? false : null)
+            : (process.env.AUTH_REQUIRE_DIRECTUS_LINK === 'false' ? false : null),
+        /**
+         * CUTOVER (delete with auth/passwordBridge.js): one-release bridge so migrated
+         * users sign in with their old SQLite password once; BFF copies it to Directus.
+         * Set AUTH_PASSWORD_BRIDGE=true only for the migration window, then remove.
+         */
+        passwordBridge: process.env.AUTH_PASSWORD_BRIDGE === 'true'
     },
 
     // Directus headless API (service credentials — Cases / system jobs, not user login)
@@ -155,7 +161,15 @@ const config = {
         // Off by default — set ENABLE_DIRECTUS_CASES=true to expose Cases UI + /api/directus/*
         casesEnabled: process.env.ENABLE_DIRECTUS_CASES === 'true',
         /** Role UUID for newly provisioned Directus users (app clinician / non-admin). */
-        defaultRoleId: (process.env.DIRECTUS_DEFAULT_ROLE_ID || '').trim()
+        defaultRoleId: (process.env.DIRECTUS_DEFAULT_ROLE_ID || '').trim(),
+        /**
+         * CUTOVER (delete with projectCaseMigrate.js): per-project Migrate → Case button.
+         * Default on when Cases are enabled; set ENABLE_PROJECT_CASE_MIGRATE=false to hide.
+         */
+        projectCaseMigrateEnabled: process.env.ENABLE_PROJECT_CASE_MIGRATE === 'false'
+            ? false
+            : (process.env.ENABLE_PROJECT_CASE_MIGRATE === 'true'
+                || process.env.ENABLE_DIRECTUS_CASES === 'true')
     },
 
     /**
@@ -180,8 +194,9 @@ const config = {
     caseInviteTtlDays: Math.max(1, Math.min(30, Number(process.env.CASE_INVITE_TTL_DAYS || 7) || 7)),
 
     /**
-     * Outbound SMTP. Empty host = disabled (invite copy-link still works).
-     * Local compose defaults to Mailpit (`mailpit:1025`, UI :8025).
+     * Outbound SMTP for case signup invite emails.
+     * Default off until SMTP_ENABLED=true (copy-link after approve still works).
+     * Local compose can point at Mailpit; leave SMTP_ENABLED=false until ready to send.
      */
     mail: {
         enabled: (() => {
@@ -231,6 +246,19 @@ if (config.isProduction) {
         '⚠️  AUTH_DEV_RELAXED is on — longer idle session and softer login rate limits. '
         + 'Never enable in production.'
     );
+}
+
+// CUTOVER: remove with auth/passwordBridge.js when SQLite→Directus password migration ends.
+if (config.auth.passwordBridge) {
+    console.warn(
+        '⚠️  AUTH_PASSWORD_BRIDGE is on — SQLite passwords can be copied to Directus on first '
+        + 'failed Directus login. Disable and delete auth/passwordBridge.js after the cutover window.'
+    );
+    if (config.auth.provider !== 'directus') {
+        console.warn(
+            '⚠️  AUTH_PASSWORD_BRIDGE has no effect unless AUTH_PROVIDER=directus.'
+        );
+    }
 }
 
 export default config;

@@ -24,6 +24,7 @@ import {
     storeProviderTokens,
     clearProviderTokens
 } from '../auth/identityStore.js';
+import { buildIdentityPayload } from '../auth/identityPayload.js';
 import { attachStoredDirectusTokensToSession } from '../auth/directusUserSession.js';
 import { setDirectusLinkCookie } from '../auth/directusLinkCookie.js';
 import {
@@ -223,7 +224,8 @@ export default function authRoutes(app) {
             res.json({
                 message: 'Login successful',
                 user: publicUser(result.user),
-                provider: result.provider
+                provider: result.provider,
+                identity: buildIdentityPayload(result.user.id)
             });
         })
     );
@@ -231,14 +233,15 @@ export default function authRoutes(app) {
     /**
      * Change password (Directus-linked users update Directus via service token;
      * local-only users update SQLite). Clears must_change_password on success.
-     * Body: { currentPassword, newPassword }
+     * Body: { currentPassword, newPassword, firstName?, lastName? }
+     * firstName/lastName required when the user is Directus-linked.
      */
     app.post(
         '/api/auth/change-password',
         requireAllowedWebOrigin,
         authenticateToken,
         asyncHandler(async (req, res) => {
-            const { currentPassword, newPassword } = req.body || {};
+            const { currentPassword, newPassword, firstName, lastName } = req.body || {};
             const min = config.security.passwordMinLength || 8;
             if (!currentPassword || !newPassword) {
                 throw new ValidationError(msg('auth.change_password_fields_required'), null, 'auth.change_password_fields_required');
@@ -250,7 +253,9 @@ export default function authRoutes(app) {
             const user = await changePasswordForUser({
                 userId: req.user.id,
                 currentPassword,
-                newPassword
+                newPassword,
+                firstName,
+                lastName
             });
 
             recordAuthEvent({
@@ -264,6 +269,51 @@ export default function authRoutes(app) {
             res.json({
                 message: 'Password updated',
                 user: publicUser(user)
+            });
+        })
+    );
+
+    /**
+     * Update display name on the linked Directus user (service token).
+     * Body: { firstName, lastName }
+     */
+    app.put(
+        '/api/auth/profile',
+        requireAllowedWebOrigin,
+        authenticateToken,
+        asyncHandler(async (req, res) => {
+            const firstName = String(req.body?.firstName || req.body?.first_name || '').trim();
+            const lastName = String(req.body?.lastName || req.body?.last_name || '').trim();
+            if (!firstName) {
+                throw new ValidationError(msg('auth.first_name_required'), null, 'auth.first_name_required');
+            }
+            if (!lastName) {
+                throw new ValidationError(msg('auth.last_name_required'), null, 'auth.last_name_required');
+            }
+
+            const user = User.findById(req.user.id);
+            if (!user) {
+                throw new NotFoundError(msg('user.not_found'), null, 'user.not_found');
+            }
+
+            const link = findDirectusLinkForUser(user.id);
+            if (!link?.external_id) {
+                throw new ValidationError(msg('auth.profile_requires_directus'), null, 'auth.profile_requires_directus');
+            }
+
+            const { updateDirectusUser, isDirectusConfigured } = await import('../services/directus.js');
+            if (!isDirectusConfigured()) {
+                throw new ValidationError(msg('directus.not_configured'), null, 'directus.not_configured');
+            }
+
+            await updateDirectusUser(link.external_id, { firstName, lastName });
+
+            res.json({
+                user: publicUser({
+                    ...user,
+                    firstName,
+                    lastName
+                })
             });
         })
     );
@@ -333,10 +383,7 @@ export default function authRoutes(app) {
 
         res.json({
             user: publicUser(profile),
-            identity: {
-                directusLinked: Boolean(directusLink),
-                directusUserId: directusLink?.external_id || null
-            }
+            identity: buildIdentityPayload(user.id)
         });
     }));
 

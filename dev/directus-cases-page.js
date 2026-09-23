@@ -36,6 +36,7 @@ import {
 } from './utils/viewerLaunch.js';
 import { getCachedLocalSlicerViewerOptions } from './utils/userPreferences.js';
 import { resolveSimplifiedViewerChoice } from './utils/localSlicerViewerOptions.js';
+import { isInviteEmailEnabled } from './services/features.js';
 import { sendTrameContainerHeartbeat } from './utils/trameHeartbeat.js';
 import { stopViewerSession } from './utils/viewerSessionLifecycle.js';
 import {
@@ -1545,9 +1546,9 @@ export class DirectusCasesPage extends LitElement {
             });
             const dialog = this.renderRoot?.querySelector('#case-people-dialog');
             if (dialog && data.inviteUrl) {
-                dialog.lookupMessage = data.emailSent
-                    ? 'Invite approved and emailed. You can still copy the link.'
-                    : 'Invite approved — copy the link and send it.';
+                dialog.lookupMessage = (data.emailSent && isInviteEmailEnabled())
+                    ? t('people.inviteApprovedEmailed')
+                    : t('people.inviteApprovedCopyLink');
             }
         } catch (err) {
             const dialog = this.renderRoot?.querySelector('#case-people-dialog');

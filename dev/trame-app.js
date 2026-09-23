@@ -8,6 +8,11 @@ import {
   writeAppViewToUrl
 } from './components/app-views.js';
 import { loadAppFeatures, isDirectusCasesEnabled, areAppFeaturesLoaded } from './services/features.js';
+import {
+  setDirectusLinkGate,
+  clearDirectusLinkGate,
+  canAccessAccountSettings
+} from './utils/directusLinkGate.js';
 import './login-form.js';
 import './register-form.js';
 import './invite-accept-form.js';
@@ -15,7 +20,6 @@ import './change-password-form.js';
 import './file-manager.js';
 import './components/status-card.js';
 import './MyProjects/myProjectsEmptyState.js';
-import './MyProjects/createProjectForm.js';
 import './MyProjects/projectReviewPage.js';
 import './user-settings-page.js';
 import './directus-cases-page.js';
@@ -294,7 +298,7 @@ export class TrameApp extends LitElement {
     this._logoutBillingAutoTimer = null;
     this._logoutBillingAutoInterval = null;
     this._trameHeartbeatInterval = null;
-    this._onPopState = () => this.restoreViewFromUrl();
+    this._onPopState = () => this.handlePopState();
 
     if (!this.shareToken && !this.inviteToken) {
       this.initializeAppView();
@@ -308,6 +312,17 @@ export class TrameApp extends LitElement {
     await loadAppFeatures();
     this.restoreViewFromUrl({ writeBack: false });
     this.guardCasesView();
+    this.guardCreateProjectView();
+    this.guardSettingsView();
+  }
+
+  applyIdentityGate(identity) {
+    if (!identity || typeof identity !== 'object') return;
+    setDirectusLinkGate({
+      required: identity.directusLinkRequired === true,
+      linked: identity.directusLinked === true
+    });
+    this.guardSettingsView();
   }
 
   guardCasesView() {
@@ -316,6 +331,73 @@ export class TrameApp extends LitElement {
       this.currentView = DEFAULT_APP_VIEW;
       this.syncViewToUrl();
     }
+  }
+
+  /** CUTOVER: new projects are Cases-only; block create-project deep links. */
+  guardCreateProjectView() {
+    if (this.currentView !== APP_VIEWS.CREATE_PROJECT) return;
+    this.currentView = APP_VIEWS.PROJECTS;
+    this.selectedProjectId = null;
+    this.syncViewToUrl();
+  }
+
+  guardSettingsView() {
+    if (this.currentView !== APP_VIEWS.SETTINGS) return;
+    if (canAccessAccountSettings()) return;
+    this.currentView = DEFAULT_APP_VIEW;
+    this.selectedProjectId = null;
+    this.syncViewToUrl();
+  }
+
+  _settingsPage() {
+    return this.renderRoot?.querySelector('user-settings-page')
+      || this.shadowRoot?.querySelector('user-settings-page')
+      || null;
+  }
+
+  _projectReviewPage() {
+    return this.renderRoot?.querySelector('project-review-page')
+      || this.shadowRoot?.querySelector('project-review-page')
+      || null;
+  }
+
+  /** @returns {boolean} true if leave is allowed */
+  confirmLeaveSettings() {
+    const page = this._settingsPage();
+    if (page && typeof page.confirmLeave === 'function') {
+      return page.confirmLeave();
+    }
+    return true;
+  }
+
+  /** CUTOVER (project-case-migrate): block nav while migrate is running. */
+  confirmLeaveProjectMigrate() {
+    if (this.currentView !== APP_VIEWS.PROJECT_REVIEW) return true;
+    const page = this._projectReviewPage();
+    if (page && typeof page.confirmLeave === 'function') {
+      return page.confirmLeave();
+    }
+    return true;
+  }
+
+  /** @returns {boolean} true if leave is allowed */
+  confirmLeaveCurrentView() {
+    if (this.currentView === APP_VIEWS.SETTINGS && !this.confirmLeaveSettings()) {
+      return false;
+    }
+    if (!this.confirmLeaveProjectMigrate()) {
+      return false;
+    }
+    return true;
+  }
+
+  handlePopState() {
+    if (!this.confirmLeaveCurrentView()) {
+      // Browser already moved the URL — put the guarded view back.
+      this.syncViewToUrl({ replace: true });
+      return;
+    }
+    this.restoreViewFromUrl({ writeBack: false });
   }
 
   restoreViewFromUrl({ writeBack = true } = {}) {
@@ -332,6 +414,8 @@ export class TrameApp extends LitElement {
       this.selectedProjectId = null;
     }
     this.guardCasesView();
+    this.guardCreateProjectView();
+    this.guardSettingsView();
     if (writeBack) {
       this.syncViewToUrl();
     }
@@ -359,6 +443,7 @@ export class TrameApp extends LitElement {
         this.user = data.user;
         this.isAuthenticated = true;
         this.name = this.user.username;
+        this.applyIdentityGate(data.identity);
         await hydrateUserPreferencesFromUser(this.user);
         this.startInactivityTimer();
         return;
@@ -385,15 +470,17 @@ export class TrameApp extends LitElement {
     this.user = null;
     this.isAuthenticated = false;
     this.showLogin = true;
+    clearDirectusLinkGate();
     this.stopInactivityTimer();
     this._syncAuthThemeWatch();
   }
 
   handleLoginSuccess(e) {
-    const { user } = e.detail;
+    const { user, identity } = e.detail || {};
     this.user = user;
     this.isAuthenticated = true;
     this.name = user.username;
+    this.applyIdentityGate(identity);
     this._stopAuthThemeWatch();
     hydrateUserPreferencesFromUser(user);
     this.startInactivityTimer();
@@ -426,6 +513,8 @@ export class TrameApp extends LitElement {
       this._stopAuthThemeWatch();
       hydrateUserPreferencesFromUser(user);
       this.startInactivityTimer();
+      // Invite redeem creates/links Directus — refresh gate from /me.
+      this.checkExistingSession();
     }
     this.initializeAppView();
   }
@@ -433,6 +522,7 @@ export class TrameApp extends LitElement {
   handleNotificationOpen(e) {
     const caseId = e.detail?.caseId;
     if (!caseId || !isDirectusCasesEnabled()) return;
+    if (!this.confirmLeaveCurrentView()) return;
     const inviteId = e.detail?.inviteId || null;
     const type = String(e.detail?.type || '');
     const openPeople = Boolean(inviteId)
@@ -460,9 +550,17 @@ export class TrameApp extends LitElement {
     const { user } = e.detail || {};
     if (user) {
       this.user = { ...(this.user || {}), ...user, mustChangePassword: false };
+      this.name = userDisplayName(this.user);
     } else if (this.user) {
       this.user = { ...this.user, mustChangePassword: false };
     }
+  }
+
+  handleProfileUpdated(e) {
+    const { user } = e.detail || {};
+    if (!user) return;
+    this.user = { ...(this.user || {}), ...user };
+    this.name = userDisplayName(this.user);
   }
 
   handleShowRegister() {
@@ -473,13 +571,9 @@ export class TrameApp extends LitElement {
     this.showLogin = true;
   }
 
-  openCreateProjectFlow() {
-    this.selectedProjectId = null;
-    this.currentView = APP_VIEWS.CREATE_PROJECT;
-    this.syncViewToUrl();
-  }
-
   openSettingsFlow() {
+    if (!canAccessAccountSettings()) return;
+    if (!this.confirmLeaveProjectMigrate()) return;
     this.selectedProjectId = null;
     this.currentView = APP_VIEWS.SETTINGS;
     this.syncViewToUrl();
@@ -494,6 +588,7 @@ export class TrameApp extends LitElement {
   }
 
   handleProjectsMenuSelection(e) {
+    if (!this.confirmLeaveCurrentView()) return;
     const selectedKey = e.detail?.selectedKey;
     if (selectedKey === 'my-files') {
       this.selectedProjectId = null;
@@ -511,6 +606,20 @@ export class TrameApp extends LitElement {
       if (!isDirectusCasesEnabled()) return;
       this.selectedProjectId = null;
       this.currentView = APP_VIEWS.CASES;
+      const caseId = e.detail?.caseId ? String(e.detail.caseId).trim() : '';
+      if (caseId) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('view', 'cases');
+        url.searchParams.set('case', caseId);
+        history.pushState({ caseId }, '', `${url.pathname}?${url.searchParams}`);
+        this.updateComplete.then(() => {
+          const page = this.renderRoot?.querySelector('directus-cases-page');
+          if (page && typeof page.openCase === 'function') {
+            page.openCase(caseId);
+          }
+        });
+        return;
+      }
       // Menu → Cases always means the list, not a stale ?case= deep link
       this.syncViewToUrl({ clearCaseDeepLink: true });
     }
@@ -564,6 +673,7 @@ export class TrameApp extends LitElement {
    */
   async handleLogout() {
     if (this.logoutBillingBusy || this.logoutBillingMode) return;
+    if (!this.confirmLeaveCurrentView()) return;
 
     try {
       const data = await listOwnedGpuBillingSessions();
@@ -1062,19 +1172,10 @@ export class TrameApp extends LitElement {
         <my-projects-landing-page
           .username=${userDisplayName(this.user)}
           @menu-selection-change=${this.handleProjectsMenuSelection}
-          @create-project-request=${this.openCreateProjectFlow}
           @project-selected=${this.openProjectReviewFlow}
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
         ></my-projects-landing-page>
-      ` : ''}
-      ${this.currentView === APP_VIEWS.CREATE_PROJECT ? html`
-        <create-project-form
-          .username=${userDisplayName(this.user)}
-          @menu-selection-change=${this.handleProjectsMenuSelection}
-          @settings-request=${this.openSettingsFlow}
-          @logout-request=${this.handleLogout}
-        ></create-project-form>
       ` : ''}
       ${this.currentView === APP_VIEWS.PROJECT_REVIEW ? html`
         <project-review-page
@@ -1085,12 +1186,14 @@ export class TrameApp extends LitElement {
           @logout-request=${this.handleLogout}
         ></project-review-page>
       ` : ''}
-      ${this.currentView === APP_VIEWS.SETTINGS ? html`
+      ${this.currentView === APP_VIEWS.SETTINGS && canAccessAccountSettings() ? html`
         <user-settings-page
           .username=${userDisplayName(this.user)}
+          .user=${this.user}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
+          @profile-updated=${this.handleProfileUpdated}
         ></user-settings-page>
       ` : ''}
       ${this.currentView === APP_VIEWS.CASES && isDirectusCasesEnabled() ? html`

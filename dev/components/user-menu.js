@@ -2,6 +2,8 @@ import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
 
+import { canAccessAccountSettings } from '../utils/directusLinkGate.js';
+
 export class UserMenu extends LitElement {
     static get styles() {
         return css`
@@ -210,7 +212,9 @@ export class UserMenu extends LitElement {
                 <div class="menu">
                     <div class="menu-title ${nameIsLong ? 'is-long' : ''}">${t('nav.signedInAs')} <strong>${label}</strong></div>
                     <hr>
+                    ${canAccessAccountSettings() ? html`
                     <button class="menu-item" @click=${this.requestSettings}>${t('nav.settings')}</button>
+                    ` : ''}
                     <button class="menu-item" @click=${this.requestLogout}>${t('nav.logOut')}</button>
                 </div>
             ` : ''}

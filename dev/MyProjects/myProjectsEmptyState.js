@@ -1,13 +1,40 @@
 import { LitElement, html, css } from 'lit-element';
 import { t } from '../i18n/index.js';
 import '../components/page-layout-template.js';
-import '../components/add-button.js';
 import '../components/page-content-message.js';
 import { listMyProjects } from '../services/projects.js';
+import { isProjectCaseMigrateEnabled } from '../services/features.js';
 
 export class MyProjectsLandingPage extends LitElement {
     static get styles() {
         return css`
+            .deprecation-banner {
+                margin-top: 16px;
+                padding: 12px 14px;
+                border-radius: var(--radius-md);
+                border: 1px solid color-mix(in srgb, #b45309 40%, var(--color-border));
+                background: color-mix(in srgb, #f59e0b 14%, var(--color-surface, var(--color-background)));
+                color: var(--color-text-primary);
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }
+
+            .deprecation-banner strong {
+                font-weight: 650;
+            }
+
+            .deprecation-banner .detail {
+                margin: 0;
+                font-size: 0.9rem;
+                color: var(--color-text-secondary);
+            }
+
+            :host-context([data-theme='dark']) .deprecation-banner {
+                border-color: color-mix(in srgb, #fbbf24 35%, var(--color-border));
+                background: color-mix(in srgb, #f59e0b 18%, var(--color-surface));
+            }
+
             .project-grid {
                 margin-top: 16px;
                 display: grid;
@@ -104,10 +131,6 @@ export class MyProjectsLandingPage extends LitElement {
                 opacity: 0.6;
                 cursor: not-allowed;
             }
-
-            add-button {
-                margin-top: 16px;
-            }
         `;
     }
 
@@ -144,13 +167,6 @@ export class MyProjectsLandingPage extends LitElement {
     handleMenuSelectionChange(event) {
         this.dispatchEvent(new CustomEvent('menu-selection-change', {
             detail: event.detail,
-            bubbles: true,
-            composed: true
-        }));
-    }
-
-    handleCreateProjectRequest() {
-        this.dispatchEvent(new CustomEvent('create-project-request', {
             bubbles: true,
             composed: true
         }));
@@ -223,8 +239,14 @@ export class MyProjectsLandingPage extends LitElement {
                 ${this.error ? html`
                     <page-content-message slot="content" variant="error" .message=${this.error}></page-content-message>
                 ` : ''}
+                ${isProjectCaseMigrateEnabled() ? html`
+                    <div slot="content" class="deprecation-banner" role="status">
+                        <strong>${t('projects.deprecationBanner')}</strong>
+                        <p class="detail">${t('projects.deprecationBannerDetail')}</p>
+                    </div>
+                ` : ''}
                 ${!this.loading && this.projects.length === 0 ? html`
-                    <page-content-message slot="content" variant="empty" message="Your project list is empty."></page-content-message>
+                    <page-content-message slot="content" variant="empty" message=${t('projects.empty')}></page-content-message>
                 ` : ''}
                 ${this.projects.length > 0 ? html`
                     <div slot="content" class="project-grid">
@@ -252,11 +274,6 @@ export class MyProjectsLandingPage extends LitElement {
                         </button>
                     ` : ''}
                 ` : ''}
-                <add-button
-                    slot="content"
-                    title=${t('projects.createNew')}
-                    @add-button-click=${() => this.handleCreateProjectRequest()}
-                ></add-button>
             </page-layout-template>
         `;
     }

@@ -150,3 +150,105 @@ export async function updateProjectFileTitle(projectId, fileId, displayTitle) {
 
     return data;
 }
+
+/** CUTOVER (project-case-migrate) */
+export async function getProjectCaseMigrateStatus(projectId) {
+    const response = await fetch(
+        `${API_URL}/api/projects/${encodeURIComponent(projectId)}/migrate-to-case`,
+        { method: 'GET', credentials: 'include', cache: 'no-store' }
+    );
+    let data = {};
+    try {
+        data = await response.json();
+    } catch (_) {
+        data = {};
+    }
+    if (!response.ok) {
+        const message = data.error?.message || data.message || t('projects.migrateStatusFailed');
+        const err = new Error(message);
+        err.status = response.status;
+        throw err;
+    }
+    return data;
+}
+
+/** CUTOVER (project-case-migrate) — streams NDJSON progress when supported. */
+export async function migrateProjectToCase(projectId, { onProgress } = {}) {
+    const response = await fetch(
+        `${API_URL}/api/projects/${encodeURIComponent(projectId)}/migrate-to-case?stream=1`,
+        {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                Accept: 'application/x-ndjson, application/json'
+            }
+        }
+    );
+
+    const contentType = String(response.headers.get('content-type') || '');
+    if (contentType.includes('ndjson') && response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let finalResult = null;
+        let streamError = null;
+
+        const handleLine = (line) => {
+            const trimmed = String(line || '').trim();
+            if (!trimmed) return;
+            let evt;
+            try {
+                evt = JSON.parse(trimmed);
+            } catch (_) {
+                return;
+            }
+            if (evt.phase === 'done') {
+                finalResult = evt.result || evt;
+                return;
+            }
+            if (evt.phase === 'error') {
+                streamError = new Error(evt.message || t('projects.migrateFailed'));
+                streamError.status = response.status;
+                streamError.code = evt.code || null;
+                return;
+            }
+            onProgress?.(evt);
+        };
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let newline = buffer.indexOf('\n');
+            while (newline >= 0) {
+                handleLine(buffer.slice(0, newline));
+                buffer = buffer.slice(newline + 1);
+                newline = buffer.indexOf('\n');
+            }
+        }
+        if (buffer.trim()) handleLine(buffer);
+
+        if (streamError) throw streamError;
+        if (!finalResult) {
+            const err = new Error(t('projects.migrateFailed'));
+            err.status = response.status;
+            throw err;
+        }
+        return finalResult;
+    }
+
+    let data = {};
+    try {
+        data = await response.json();
+    } catch (_) {
+        data = {};
+    }
+    if (!response.ok) {
+        const message = data.error?.message || data.message || t('projects.migrateFailed');
+        const err = new Error(message);
+        err.status = response.status;
+        err.code = data.error?.code || null;
+        throw err;
+    }
+    return data;
+}

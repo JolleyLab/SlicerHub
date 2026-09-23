@@ -162,6 +162,12 @@ Clinicians are never created by self-register in Directus-mode sites. Product ad
 - Env: `DIRECTUS_DEFAULT_ROLE_ID`, `USER_PROVISION_MODE=temp_password` (Pattern A)
 - `POST /api/auth/change-password` + SPA force-change UI when `mustChangePassword` is true
 - Backfill existing locals: `node scripts/migrate-local-users-to-directus.mjs` (service token)
+- **CUTOVER password bridge (one release):** `AUTH_PASSWORD_BRIDGE=true` + `AUTH_PROVIDER=directus`.
+  Users keep their old SQLite password for the first post-migrate login; the BFF verifies
+  bcrypt, PATCHes Directus, clears the local hash, then completes Directus login.
+  Implementation is isolated in `backend/src/auth/passwordBridge.js` — delete that file and
+  every `CUTOVER (password-bridge)` comment when the window ends. Do not hand out migrate
+  temp passwords while the bridge is on.
 
 Pattern B (`invite_email`) is intentionally deferred; local handoff lives in gitignored `docs/user-provisioning-patterns.md`.
 
@@ -195,12 +201,13 @@ with Cases). **No service-token fallback** for those routes.
 - Redeem: `GET /api/invites/signup/:token` (preview) + `POST /api/invites/signup/:token/accept`
   (creates Directus + local user, applies membership, issues product session + Directus call-as-user
   tokens). Link is single-use; expired/used tokens are rejected.
-- **Email:** When SMTP is configured (`SMTP_HOST`), minting a signup invite also sends the redeem
-  link. Failures are soft — the invite still succeeds and People keeps **Copy link**.
-  - Local: compose service **Mailpit** (`mailpit:1025`, UI [http://localhost:8025](http://localhost:8025)).
-    Backend defaults `SMTP_HOST=mailpit`. Open Mailpit to read invite mail in dev.
-  - Production: set real `SMTP_HOST` / `SMTP_PORT` / `SMTP_FROM` (and auth if required); or
-    `SMTP_ENABLED=false` for copy-link only.
+- **Email:** Off by default (`SMTP_ENABLED=false`). Minting/approving a signup invite still
+  returns a redeem link for **Copy link** in People. When ready, set `SMTP_ENABLED=true` plus
+  `SMTP_HOST` / `SMTP_PORT` / `SMTP_FROM` (and auth if required). Soft-fail: email errors never
+  block the invite.
+  - Local: compose includes **Mailpit** (`mailpit:1025`, UI [http://localhost:8025](http://localhost:8025)).
+    Keep `SMTP_ENABLED=false` for copy-link only; set `SMTP_ENABLED=true` to exercise Mailpit.
+  - Production: real SMTP + `SMTP_ENABLED=true`, or leave false for copy-link only.
 - Notifications: `GET /api/notifications` (product user).
 - Membership writes go through Directus as nested `case.collaborators` (and may fall back to
   `/items/case_directus_users`). **Important:** Directus still enforces permissions on the

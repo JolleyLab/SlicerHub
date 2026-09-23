@@ -1,6 +1,8 @@
 /**
  * Force / voluntary password change for Directus-backed product users.
  * Local-only users update bcrypt hash on the shadow password column.
+ * Directus-linked users also set first_name / last_name (provisioned accounts
+ * otherwise have no Studio access to edit profile).
  */
 
 import config from '../config/index.js';
@@ -8,7 +10,7 @@ import User from '../models/User.js';
 import { findDirectusLinkForUser } from './identityStore.js';
 import {
     isDirectusConfigured,
-    updateDirectusUserPassword
+    updateDirectusUser
 } from '../services/directus.js';
 import { ValidationError, UnauthorizedError, AppError } from '../utils/errors.js';
 import bcrypt from 'bcrypt';
@@ -37,9 +39,15 @@ async function verifyDirectusPassword(email, password) {
 }
 
 /**
- * @param {{ userId: number, currentPassword: string, newPassword: string }} input
+ * @param {{ userId: number, currentPassword: string, newPassword: string, firstName?: string, lastName?: string }} input
  */
-export async function changePasswordForUser({ userId, currentPassword, newPassword }) {
+export async function changePasswordForUser({
+    userId,
+    currentPassword,
+    newPassword,
+    firstName,
+    lastName
+}) {
     const user = User.findById(userId);
     if (!user) {
         throw new ValidationError(msg('user.not_found'), null, 'user.not_found');
@@ -60,13 +68,32 @@ export async function changePasswordForUser({ userId, currentPassword, newPasswo
     const link = findDirectusLinkForUser(userId);
 
     if (link && isDirectusConfigured()) {
+        const first = String(firstName || '').trim();
+        const last = String(lastName || '').trim();
+        if (!first) {
+            throw new ValidationError(msg('auth.first_name_required'), null, 'auth.first_name_required');
+        }
+        if (!last) {
+            throw new ValidationError(msg('auth.last_name_required'), null, 'auth.last_name_required');
+        }
+
         const ok = await verifyDirectusPassword(user.email, current);
         if (!ok) {
             throw new UnauthorizedError(msg('auth.current_password_incorrect'), null, 'auth.current_password_incorrect');
         }
-        await updateDirectusUserPassword(link.external_id, next);
+        await updateDirectusUser(link.external_id, {
+            password: next,
+            firstName: first,
+            lastName: last
+        });
         User.clearMustChangePassword(userId);
-        return User.findById(userId);
+        const updated = User.findById(userId);
+        return {
+            ...updated,
+            firstName: first,
+            lastName: last,
+            mustChangePassword: false
+        };
     }
 
     // Local-account path (no Directus link): update SQLite password_hash

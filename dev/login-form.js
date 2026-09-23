@@ -139,7 +139,7 @@ export class LoginForm extends LitElement {
                 this.otpRequired = false;
                 this.otp = '';
                 this.dispatchEvent(new CustomEvent('login-success', {
-                    detail: { user: data.user },
+                    detail: { user: data.user, identity: data.identity || null },
                     bubbles: true,
                     composed: true
                 }));

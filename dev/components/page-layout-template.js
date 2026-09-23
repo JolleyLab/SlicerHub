@@ -263,7 +263,11 @@ export class PageShellTemplate extends LitElement {
     connectedCallback() {
         super.connectedCallback();
         loadAppFeatures().then((flags) => {
-            this.menuItems = getAppMenuItems({ directusCasesEnabled: flags.directusCases });
+            this.menuItems = getAppMenuItems({
+                directusCasesEnabled: flags.directusCases,
+                // CUTOVER (project-case-migrate)
+                projectCaseMigrateEnabled: flags.projectCaseMigrate === true
+            });
             this.requestUpdate();
         });
         this._compactMq = window.matchMedia(COMPACT_NAV_MQ);
