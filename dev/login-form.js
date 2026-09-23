@@ -38,6 +38,8 @@ export class LoginForm extends LitElement {
             success: { type: String },
             identityLabel: { type: String },
             identityPlaceholder: { type: String },
+            identityInputType: { type: String },
+            authProvider: { type: String },
             registrationEnabled: { type: Boolean }
         };
     }
@@ -58,12 +60,33 @@ export class LoginForm extends LitElement {
         this.success = '';
         this.identityLabel = t('auth.login.identityDefault');
         this.identityPlaceholder = t('auth.login.identityDefault');
+        this.identityInputType = 'text';
+        this.authProvider = 'local';
         this.registrationEnabled = true;
     }
 
     connectedCallback() {
         super.connectedCallback();
         this._loadAuthConfig();
+    }
+
+    applyAuthConfig(auth) {
+        if (!auth || typeof auth !== 'object') return;
+        const provider = String(auth.provider || 'local').trim().toLowerCase();
+        this.authProvider = provider;
+        if (provider === 'directus') {
+            this.identityLabel = auth.identityLabel || t('auth.login.identityEmail');
+            this.identityPlaceholder = auth.identityPlaceholder || t('auth.login.identityEmailPlaceholder');
+            this.identityInputType = 'email';
+        } else {
+            this.identityLabel = auth.identityLabel || t('auth.login.identityDefault');
+            this.identityPlaceholder = auth.identityPlaceholder || t('auth.login.identityDefault');
+            this.identityInputType = 'text';
+        }
+        if (typeof auth.registrationEnabled === 'boolean') {
+            this.registrationEnabled = auth.registrationEnabled;
+        }
+        this.devRelaxed = auth.devRelaxed === true;
     }
 
     async _loadAuthConfig() {
@@ -82,14 +105,7 @@ export class LoginForm extends LitElement {
                     /* keep defaults */
                 }
             }
-            if (auth) {
-                if (auth.identityLabel) this.identityLabel = auth.identityLabel;
-                if (auth.identityPlaceholder) this.identityPlaceholder = auth.identityPlaceholder;
-                if (typeof auth.registrationEnabled === 'boolean') {
-                    this.registrationEnabled = auth.registrationEnabled;
-                }
-                this.devRelaxed = auth.devRelaxed === true;
-            }
+            this.applyAuthConfig(auth);
         } catch {
             // keep defaults
         }
@@ -218,9 +234,10 @@ export class LoginForm extends LitElement {
             <label for="identity">${this.identityLabel}</label>
             <input
               id="identity"
-              name="username"
-              type="text"
-              autocomplete="username"
+              name=${this.authProvider === 'directus' ? 'email' : 'username'}
+              type=${this.identityInputType}
+              autocomplete=${this.authProvider === 'directus' ? 'email' : 'username'}
+              inputmode=${this.authProvider === 'directus' ? 'email' : 'text'}
               .value=${this.identity}
               @input=${(e) => this.identity = e.target.value}
               ?disabled=${this.loading}

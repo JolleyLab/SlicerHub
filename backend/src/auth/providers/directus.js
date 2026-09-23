@@ -203,7 +203,7 @@ export const directusProvider = {
      * @param {{ identity: string, password: string, otp?: string }} credentials
      */
     async login({ identity, password, otp }) {
-        const email = String(identity || '').trim();
+        const email = String(identity || '').trim().toLowerCase();
         if (!email.includes('@')) {
             throw new ValidationError(msg('auth.directus_email_required'), null, 'auth.directus_email_required');
         }

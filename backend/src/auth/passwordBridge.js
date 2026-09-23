@@ -21,10 +21,12 @@
 
 import config from '../config/index.js';
 import User from '../models/User.js';
-import { findDirectusLinkForUser } from './identityStore.js';
-import { updateDirectusUser } from '../services/directus.js';
-import { AppError } from '../utils/errors.js';
+import { findDirectusLinkForUser, linkIdentity } from './identityStore.js';
+import { findDirectusUserByEmail, updateDirectusUser } from '../services/directus.js';
+import { AppError, ValidationError } from '../utils/errors.js';
 import { msg } from '../i18n/index.js';
+
+const PROVIDER = 'directus';
 
 export function isPasswordBridgeEnabled() {
     return config.auth?.passwordBridge === true;
@@ -35,28 +37,68 @@ export function isPasswordBridgeEnabled() {
  * @returns {Promise<boolean>} true if Directus password was updated (caller should retry login)
  */
 export async function tryBridgeLocalPasswordToDirectus({ email, password }) {
-    if (!isPasswordBridgeEnabled()) return false;
-
-    const identity = String(email || '').trim().toLowerCase();
-    const pass = String(password || '');
-    if (!identity.includes('@') || !pass) return false;
-
-    const localUser = User.findByEmail(identity);
-    if (!localUser || localUser.is_active === 0 || localUser.is_active === false) {
+    if (!isPasswordBridgeEnabled()) {
+        console.info('CUTOVER password-bridge: skipped (AUTH_PASSWORD_BRIDGE not true)');
         return false;
     }
 
-    const link = findDirectusLinkForUser(localUser.id);
+    const identity = String(email || '').trim().toLowerCase();
+    const pass = String(password || '');
+    if (!identity.includes('@') || !pass) {
+        console.info('CUTOVER password-bridge: skipped (need email + password)');
+        return false;
+    }
+
+    if (pass.length < 8) {
+        throw new ValidationError(
+            msg('auth.password_min_length_short', { min: 8 }),
+            null,
+            'auth.password_min_length_short'
+        );
+    }
+
+    const localUser = User.findByEmail(identity);
+    if (!localUser || localUser.is_active === 0 || localUser.is_active === false) {
+        console.info('CUTOVER password-bridge: no active local user for', identity);
+        return false;
+    }
+
+    let link = findDirectusLinkForUser(localUser.id);
     if (!link?.external_id) {
+        // Recover when migrate created the Directus user but this DB missed the link row.
+        try {
+            const dx = await findDirectusUserByEmail(identity);
+            if (dx?.id) {
+                linkIdentity(localUser.id, PROVIDER, String(dx.id));
+                link = findDirectusLinkForUser(localUser.id);
+                console.info(
+                    'CUTOVER password-bridge: recovered Directus link for',
+                    identity,
+                    String(dx.id)
+                );
+            }
+        } catch (err) {
+            console.warn(
+                'CUTOVER password-bridge: Directus email lookup failed',
+                identity,
+                err.message || err
+            );
+        }
+    }
+
+    if (!link?.external_id) {
+        console.info('CUTOVER password-bridge: no Directus link for local user', localUser.id, identity);
         return false;
     }
 
     if (!User.hasLocalPasswordHash(localUser.id)) {
+        console.info('CUTOVER password-bridge: local hash already bridged/cleared for', identity);
         return false;
     }
 
     const verified = await User.verifyPassword(identity, pass);
     if (!verified || Number(verified.id) !== Number(localUser.id)) {
+        console.info('CUTOVER password-bridge: local password did not match for', identity);
         return false;
     }
 

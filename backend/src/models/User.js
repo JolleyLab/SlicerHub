@@ -135,8 +135,15 @@ class User {
             return null;
         }
 
+        const storedHash = String(user.password_hash || '');
+        // CUTOVER (password-bridge): sentinel after copy to Directus — not a bcrypt hash.
+        if (!storedHash || storedHash.startsWith('BRIDGED:')) {
+            await bcrypt.compare(String(password || ''), TIMING_PAD_HASH);
+            return null;
+        }
+
         // External/shadow accounts use a random unusable hash; still require compare
-        const isValid = await bcrypt.compare(password, user.password_hash);
+        const isValid = await bcrypt.compare(password, storedHash);
 
         if (!isValid) {
             return null;
@@ -169,28 +176,27 @@ class User {
     }
 
     /**
-     * CUTOVER (password bridge): true if this row still has a local password_hash
-     * that verifyPassword can check (migrate left SQLite hashes in place).
+     * CUTOVER (password bridge): true if this row still has a usable local
+     * password_hash (migrate left SQLite hashes in place). Cleared hashes use
+     * a BRIDGED: sentinel and do not count.
      */
     static hasLocalPasswordHash(userId) {
         const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId);
-        return Boolean(row?.password_hash);
+        const hash = String(row?.password_hash || '');
+        if (!hash || hash.startsWith('BRIDGED:')) return false;
+        return true;
     }
 
     /**
-     * CUTOVER (password bridge): replace local hash with an unusable secret after
-     * the password has been copied to Directus so the bridge cannot re-run.
+     * CUTOVER (password bridge): mark local hash unusable after the password
+     * has been copied to Directus so the bridge cannot re-run.
      */
     static async clearLocalPasswordHash(userId) {
         const id = Number(userId);
         if (!Number.isInteger(id) || id <= 0) return null;
-        const randomSecret = await bcrypt.hash(
-            `bridged:${id}:${Date.now()}:${Math.random()}`,
-            SALT_ROUNDS
-        );
         db.prepare(
             'UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-        ).run(randomSecret, id);
+        ).run(`BRIDGED:${id}:${Date.now()}`, id);
         try {
             flushDatabase();
         } catch {

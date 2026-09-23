@@ -58,6 +58,8 @@ export default {
             password: 'Password',
             passwordPlaceholder: 'Enter your password',
             identityDefault: 'Username or email',
+            identityEmail: 'Email',
+            identityEmailPlaceholder: 'you@example.com',
             submit: 'Login',
             submitting: 'Logging in...',
             verify: 'Verify',
