@@ -33,10 +33,14 @@ export function isPasswordBridgeEnabled() {
 }
 
 /**
- * @param {{ email: string, password: string }} args
+ * @param {{ email: string, password: string, clearLocalHash?: boolean }} args
  * @returns {Promise<boolean>} true if Directus password was updated (caller should retry login)
  */
-export async function tryBridgeLocalPasswordToDirectus({ email, password }) {
+export async function tryBridgeLocalPasswordToDirectus({
+    email,
+    password,
+    clearLocalHash = false
+}) {
     if (!isPasswordBridgeEnabled()) {
         console.info('CUTOVER password-bridge: skipped (AUTH_PASSWORD_BRIDGE not true)');
         return false;
@@ -118,13 +122,16 @@ export async function tryBridgeLocalPasswordToDirectus({ email, password }) {
         );
     }
 
-    try {
-        await User.clearLocalPasswordHash(localUser.id);
-    } catch (err) {
-        console.warn(
-            'CUTOVER password-bridge: Directus password set but local hash clear failed:',
-            err.message || err
-        );
+    // Only clear after the caller confirms Directus login works with the new password.
+    if (clearLocalHash) {
+        try {
+            await User.clearLocalPasswordHash(localUser.id);
+        } catch (err) {
+            console.warn(
+                'CUTOVER password-bridge: Directus password set but local hash clear failed:',
+                err.message || err
+            );
+        }
     }
 
     console.info(`CUTOVER password-bridge: synced local password to Directus for ${identity}`);
