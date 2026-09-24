@@ -11,7 +11,14 @@
   `data/slicerweb/` (git-ignored, about 640 MB). To upgrade, put a new SHA in `slicerweb/VERSION` and re-run the script.
   If `data/` is not writable by you (Docker creates it root-owned on some hosts), set `SLICERWEB_DIR` to another
   folder, both when running the script and in `.env` so compose mounts it (`SLICERWEB_DIR=$HOME/slicerweb-site`).
-  After a first fetch, run `docker compose up -d` (not just `restart`): the nginx mount only changes on recreate.
+  Run the fetch **before** `docker compose up -d` (and use `up -d`, not `restart`: the nginx mount only changes on
+  recreate). If compose ran first, Docker creates the missing folder as root, empty; nginx then answers 403
+  ("directory index ... is forbidden"). Fix without sudo: `docker compose stop nginx && rmdir <folder>`, run the
+  fetch again, then `docker compose up -d nginx`.
+  nginx's workers run as the unprivileged `nginx` user (uid 101), not root, so the folder and every directory above
+  it must be traversable by it. Home directories are often `750`: use `chmod o+x "$HOME"` (or
+  `setfacl -m u:101:x "$HOME"`) and `chmod -R a+rX <folder>`. Check with
+  `docker exec -u nginx nginx ls /usr/share/slicerweb`.
 - **Serving.** nginx serves `data/slicerweb/` at `/slicerweb/` from the same origin as the app, which is what lets
   the cases page reach the frame's `slicerWeb` bridge. The `.mjs` MIME type is declared in `nginx/default.conf`
   (the stock `mime.types` lacks it, and browsers refuse ES modules served as octet-stream).

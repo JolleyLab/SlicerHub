@@ -22,6 +22,8 @@ fi
 if ! mkdir -p "$DEST" 2>/dev/null || [ ! -w "$DEST" ]; then
     echo "Cannot write to $DEST." >&2
     echo "Set SLICERWEB_DIR to a folder you can write to (in your shell and in .env), then run this again." >&2
+    echo "If Docker created that folder (root-owned and empty, because docker compose ran first):" >&2
+    echo "  docker compose stop nginx && rmdir \"$DEST\"   # allowed when you own its parent; no sudo" >&2
     exit 1
 fi
 

@@ -23,7 +23,7 @@ try {
     $probe = Join-Path $dest '.write-test'
     Set-Content -Path $probe -Value '' ; Remove-Item $probe
 } catch {
-    throw "Cannot write to $dest. Set SLICERWEB_DIR to a folder you can write to (and in .env), then run this again."
+    throw "Cannot write to $dest. Set SLICERWEB_DIR to a folder you can write to (and in .env), then run this again. If Docker created that folder (because docker compose ran first), stop nginx and remove the empty folder."
 }
 
 # Work in the system temp folder, so nothing is needed beyond the destination itself.
