@@ -6,9 +6,7 @@ const DEFAULT_AUTH = Object.freeze({
     registrationEnabled: true,
     identityLabel: 'Username or email',
     identityPlaceholder: 'Username or email',
-    devRelaxed: false,
-    // CUTOVER (password-bridge)
-    passwordBridge: false
+    devRelaxed: false
 });
 
 let featuresPromise = null;
@@ -42,11 +40,6 @@ export function isInviteEmailEnabled() {
     return features.inviteEmail === true;
 }
 
-/** CUTOVER (password-bridge) */
-export function isPasswordBridgeEnabled() {
-    return features.auth?.passwordBridge === true;
-}
-
 /**
  * Load public feature flags once (safe to call repeatedly).
  */
@@ -72,9 +65,7 @@ export function loadAppFeatures() {
                 registrationEnabled: authIn.registrationEnabled !== false,
                 identityLabel: authIn.identityLabel || DEFAULT_AUTH.identityLabel,
                 identityPlaceholder: authIn.identityPlaceholder || DEFAULT_AUTH.identityPlaceholder,
-                devRelaxed: authIn.devRelaxed === true,
-                // CUTOVER (password-bridge)
-                passwordBridge: authIn.passwordBridge === true
+                devRelaxed: authIn.devRelaxed === true
             };
 
             features = Object.freeze({

@@ -7,10 +7,12 @@ import './components/comments-panel.js';
 import {
     listDirectusCases,
     openDirectusAttachmentFullSlicer,
+    fetchDirectusAttachmentContent,
+    checkDirectusAttachmentDownload,
+    directusAttachmentDownloadUrl,
     createDirectusCaseComment,
     createDirectusCase,
     updateDirectusCase,
-    uploadDirectusCaseAttachment,
     deleteDirectusCaseAttachment,
     lookupDirectusUserByEmail,
     updateDirectusCaseCollaborators,
@@ -24,6 +26,9 @@ import {
 import './components/people-dialog.js';
 import './components/list-filter-tools.js';
 import './components/attachment-open-menu.js';
+import { uploadManager } from './services/uploadManager.js';
+import { formatBytes } from './utils/formatBytes.js';
+import { deepActiveElement } from './utils/focus.js';
 import {
     VIEWER_KINDS,
     VIEWER_RELEASE_MODES,
@@ -32,6 +37,7 @@ import {
     getViewerSessionEndpoints,
     buildViewerStopBody,
     buildSlicerGuiLoaderUrl,
+    buildSlicerWebUrl,
     viewerDisplayName
 } from './utils/viewerLaunch.js';
 import { getCachedLocalSlicerViewerOptions } from './utils/userPreferences.js';
@@ -69,14 +75,7 @@ const LIST_SORT_OPTIONS = Object.freeze([
     })
 ]);
 
-function formatBytes(bytes) {
-    const n = Number(bytes);
-    if (!Number.isFinite(n) || n < 0) return '';
-    if (n < 1024) return `${n} B`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-    if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
+const attachmentFileName = (attachment) => attachment?.filenameDownload || attachment?.name || 'attachment';
 
 function formatDateTime(value) {
     if (!value) return '';
@@ -415,7 +414,7 @@ export class DirectusCasesPage extends LitElement {
                 font: inherit;
                 font-size: 0.875rem;
                 font-weight: 600;
-                color: var(--color-secondary);
+                color: var(--color-focus);
                 cursor: pointer;
                 display: inline-flex;
                 align-items: center;
@@ -424,7 +423,7 @@ export class DirectusCasesPage extends LitElement {
 
             .back-link:hover,
             .back-link:focus-visible {
-                color: var(--color-primary);
+                color: var(--color-text-primary);
             }
 
             .back-link:focus-visible {
@@ -576,6 +575,7 @@ export class DirectusCasesPage extends LitElement {
             }
 
             .files-body {
+                position: relative;
                 padding: 12px 16px;
                 display: flex;
                 flex-direction: column;
@@ -633,10 +633,79 @@ export class DirectusCasesPage extends LitElement {
                 text-overflow: ellipsis;
             }
 
+            .upload-progress {
+                flex: 1;
+                min-width: 0;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }
+
+            .upload-progress progress {
+                width: 100%;
+                height: 8px;
+                accent-color: var(--color-focus, var(--color-primary));
+            }
+
             .upload-error {
-                color: #c62828;
+                color: var(--color-status-error-fg, #8a1212);
                 font-size: 0.85rem;
                 flex: 1;
+            }
+
+            /* Download button: a spinner while the access check runs (still, if reduced motion is asked for) */
+            .download-spinner {
+                width: 14px;
+                height: 14px;
+                box-sizing: border-box;
+                border: 2px solid currentColor;
+                border-right-color: transparent;
+                border-radius: 50%;
+                animation: download-spin 0.8s linear infinite;
+            }
+
+            @keyframes download-spin {
+                to { transform: rotate(360deg); }
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                .download-spinner {
+                    animation: none;
+                    border-right-color: currentColor;
+                }
+            }
+
+            /* Read by screen readers only */
+            .visually-hidden {
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                margin: -1px;
+                padding: 0;
+                overflow: hidden;
+                clip: rect(0 0 0 0);
+                white-space: nowrap;
+                border: 0;
+            }
+
+            /* Drag-and-drop attach */
+            .files-body.drag-over {
+                outline: 2px dashed var(--color-focus, var(--color-primary));
+                outline-offset: -6px;
+            }
+
+            .drop-hint {
+                position: absolute;
+                inset: 0;
+                z-index: 1;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                /* text-primary on a lightly tinted panel keeps AA contrast in both themes */
+                background: color-mix(in srgb, var(--color-focus, var(--color-primary)) 14%, var(--color-panel, #fff));
+                color: var(--color-text-primary);
+                font-weight: 600;
+                pointer-events: none;
             }
 
             /* ─── New Case form ─────────────────────────────────────── */
@@ -835,15 +904,6 @@ export class DirectusCasesPage extends LitElement {
                 border-color: var(--color-accent);
             }
 
-            :host-context([data-theme='dark']) .back-link {
-                color: var(--color-accent);
-            }
-
-            :host-context([data-theme='dark']) .back-link:hover,
-            :host-context([data-theme='dark']) .back-link:focus-visible {
-                color: var(--color-text-primary);
-            }
-
             /* Inputs: sunken below the panel surface for legibility */
             :host-context([data-theme='dark']) .form-input,
             :host-context([data-theme='dark']) .form-textarea {
@@ -1009,6 +1069,8 @@ export class DirectusCasesPage extends LitElement {
             viewerLoading: { type: Boolean },
             viewerLoadingDetail: { type: String },
             viewerSimplified: { type: Boolean },
+            viewerKind: { type: String },
+            viewerClosing: { type: Boolean },
             currentFileName: { type: String },
             // New Case form
             showNewCaseForm: { type: Boolean },
@@ -1028,8 +1090,12 @@ export class DirectusCasesPage extends LitElement {
             uploadingFile: { type: Boolean },
             uploadError: { type: String },
             uploadStatusText: { type: String },
+            uploadProgress: { type: Number },
+            attachmentDragOver: { type: Boolean },
             // Attachment delete
             deletingAttachmentId: { type: String },
+            downloadingAttachmentIds: { type: Object },
+            downloadStatusText: { type: String },
             // Attachment sort / search
             attachmentSortOrder: { type: String },
             attachmentSearchQuery: { type: String },
@@ -1060,6 +1126,12 @@ export class DirectusCasesPage extends LitElement {
         this.currentFileName = '';
         this._viewerSessionToken = null;
         this._viewerSeatId = null;
+        this.viewerKind = VIEWER_KINDS.SLICER_GUI;
+        this.viewerClosing = false;
+        this._viewerOpenId = 0;
+        this._focusBeforeViewer = null;
+        this._slicerWebRun = 0;
+        this._slicerWebPending = null;
         this._heartbeatInterval = null;
         this._handleBeforeUnload = null;
         this._popStateHandler = null;
@@ -1084,8 +1156,13 @@ export class DirectusCasesPage extends LitElement {
         this.uploadingFile = false;
         this.uploadError = '';
         this.uploadStatusText = '';
-        // Attachment delete
+        this.uploadProgress = 0;
+        this.attachmentDragOver = false;
+        this._attachmentDragDepth = 0;
+        // Attachment delete / download
         this.deletingAttachmentId = '';
+        this.downloadingAttachmentIds = new Set();
+        this.downloadStatusText = '';
         // Attachment sort / search
         this.attachmentSortOrder = 'newest';
         this.attachmentSearchQuery = '';
@@ -1120,6 +1197,17 @@ export class DirectusCasesPage extends LitElement {
         url.searchParams.set('case', this.selectedCaseId);
         url.searchParams.set('viewer', '1');
         return url.toString();
+    }
+
+    /** Add the viewer's history entry, so the browser Back button closes it. */
+    _pushViewerHistory(caseId) {
+        this._viewerPushedState = true;
+        history.pushState({ caseId, viewer: true }, '', this._buildViewerUrl());
+    }
+
+    /** Point the address bar back at the plain case URL (drops the viewer entry) without a history step. */
+    _replaceUrlWithCase() {
+        history.replaceState({ caseId: this.selectedCaseId }, '', this._buildCaseUrl(this.selectedCaseId));
     }
 
     _handlePopState(event) {
@@ -1171,10 +1259,19 @@ export class DirectusCasesPage extends LitElement {
             });
         };
         window.addEventListener('beforeunload', this._handleBeforeUnload);
+
+        this._onUploadChange = () => this.syncUploadState();
+        this._onUploadAttached = (event) => this.handleAttachmentUploaded(event.detail);
+        uploadManager.addEventListener('change', this._onUploadChange);
+        uploadManager.addEventListener('attached', this._onUploadAttached);
+        this.syncUploadState();
+
         this.loadCases();
     }
 
     disconnectedCallback() {
+        uploadManager.removeEventListener('change', this._onUploadChange);
+        uploadManager.removeEventListener('attached', this._onUploadAttached);
         window.removeEventListener('beforeunload', this._handleBeforeUnload);
         this._handleBeforeUnload = null;
         if (this._popStateHandler) {
@@ -1193,6 +1290,8 @@ export class DirectusCasesPage extends LitElement {
     }
 
     updated(changed) {
+        if (changed.has('selectedCaseId')) this.syncUploadState();
+        if (changed.has('showIframe')) this.syncViewerFocus();
         if (changed.has('selectedCaseId') || this.selectedCaseId) {
             this.syncDetailLayoutObserver();
         }
@@ -1765,6 +1864,43 @@ export class DirectusCasesPage extends LitElement {
         }
     }
 
+    // ── Attachment download ────────────────────────────────────────────────
+    async handleDownloadAttachment(caseRow, attachment) {
+        if (!attachment?.id || this.downloadingAttachmentIds.has(attachment.id)) return;
+        if (!this.canEditCaseContent(caseRow)) return;
+
+        const name = attachmentFileName(attachment);
+        this.setDownloading(attachment.id, true);
+        this.downloadStatusText = t('cases.downloadStarting', { name });
+        this.uploadError = '';
+        try {
+            // A quick access check (it does not wait for the file), so a refusal is a message and not a
+            // saved error page. Then the browser takes over and shows the download's progress itself.
+            await checkDirectusAttachmentDownload(caseRow.id, attachment.id);
+            if (!this.isConnected) return; // user left the page during the check
+            const link = document.createElement('a');
+            link.href = directusAttachmentDownloadUrl(caseRow.id, attachment.id);
+            link.download = name;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            this.downloadStatusText = t('cases.downloadStarted', { name });
+        } catch (err) {
+            this.downloadStatusText = '';
+            this.uploadError = this.userFacingError(err, t('cases.downloadFailed'));
+        } finally {
+            this.setDownloading(attachment.id, false);
+        }
+    }
+
+    /** Track which rows have a download starting: only that row's button is busy, everything else stays usable. */
+    setDownloading(attachmentId, on) {
+        const next = new Set(this.downloadingAttachmentIds);
+        if (on) next.add(attachmentId);
+        else next.delete(attachmentId);
+        this.downloadingAttachmentIds = next;
+    }
+
     // ── Attachment delete ──────────────────────────────────────────────────
     async handleDeleteAttachment(caseRow, attachment) {
         if (!attachment?.id || this.deletingAttachmentId) return;
@@ -1796,36 +1932,111 @@ export class DirectusCasesPage extends LitElement {
 
     async handleFileSelected(event, caseRow) {
         const file = event.target?.files?.[0];
-        if (!file || !caseRow?.id || this.uploadingFile) return;
-        if (!this.canEditCaseContent(caseRow)) return;
-
         // Reset input so the same file can be re-selected if needed
-        event.target.value = '';
+        if (event.target) event.target.value = '';
+        if (file) await this.uploadFiles(caseRow, [file]);
+    }
 
-        this.uploadingFile = true;
+    /**
+     * Hand files to the background upload manager. Uploading continues if the user navigates away;
+     * progress and per-file controls live in the Uploads panel, and the attachment appears on the
+     * case when each file finishes.
+     */
+    uploadFiles(caseRow, files) {
+        if (!files.length || !caseRow?.id) return;
+        if (!this.canEditCaseContent(caseRow)) return;
         this.uploadError = '';
-        this.uploadStatusText = t('cases.uploadingFile', { name: file.name });
-        try {
-            const data = await uploadDirectusCaseAttachment(caseRow.id, file);
-            const attachment = data.attachment;
-            // Append to the case's attachment list in-place
-            this.cases = this.cases.map((row) => {
-                if (row.id !== caseRow.id) return row;
-                const attachments = Array.isArray(row.attachments) ? [...row.attachments] : [];
-                if (attachment?.id) attachments.push(attachment);
-                return { ...row, attachments };
-            });
-            this.uploadStatusText = t('cases.uploadComplete', { name: file.name });
-            // Clear the success message after 4 s
-            setTimeout(() => {
-                this.uploadStatusText = '';
-            }, 4000);
-        } catch (err) {
-            this.uploadError = this.userFacingError(err, "Couldn't upload that file. Please try again.");
-            this.uploadStatusText = '';
-        } finally {
-            this.uploadingFile = false;
+        uploadManager.enqueue({ caseId: caseRow.id, caseTitle: caseRow.title || '', files });
+    }
+
+    /** Keyboard focus follows the viewer overlay: into it when it opens, back to where the user was when it closes. */
+    syncViewerFocus() {
+        if (this.showIframe) {
+            this.shadowRoot?.querySelector('.iframe-header .primary-button')?.focus();
+            return;
         }
+        const previous = this._focusBeforeViewer;
+        this._focusBeforeViewer = null;
+        // Wait a frame: nested components (the "Open with" button re-enables) finish updating a tick
+        // after this page does, and a disabled control cannot take focus.
+        requestAnimationFrame(() => {
+            if (previous?.isConnected) previous.focus();
+        });
+    }
+
+    /** Mirror the manager's state for the selected case into the inline progress row. */
+    syncUploadState() {
+        const summary = uploadManager.summary(this.selectedCaseId);
+        this.uploadingFile = summary.count > 0;
+        this.uploadProgress = summary.progress;
+        if (summary.count === 0) {
+            this.uploadStatusText = '';
+        } else if (summary.awaitingDetails && summary.progress >= 1) {
+            this.uploadStatusText = t('cases.uploadNeedsDetails');
+        } else if (summary.count === 1) {
+            this.uploadStatusText = t('cases.uploadingFile', { name: summary.names[0] });
+        } else {
+            this.uploadStatusText = t('cases.uploadingNFiles', { count: summary.count });
+        }
+    }
+
+    /** A background upload finished: show the new attachment without reloading the list. */
+    handleAttachmentUploaded({ caseId, attachment }) {
+        if (!attachment?.id) return;
+        this.cases = this.cases.map((row) => {
+            if (row.id !== caseId) return row;
+            const others = (row.attachments || []).filter((a) => a.id !== attachment.id);
+            return { ...row, attachments: [...others, attachment] };
+        });
+    }
+
+    // ── Drag-and-drop attach ───────────────────────────────────────────────
+    isFileDrag(event) {
+        return Array.from(event.dataTransfer?.types || []).includes('Files');
+    }
+
+    canDropAttachments(caseRow) {
+        return this.canEditCaseContent(caseRow) && !this.openingAttachmentId;
+    }
+
+    handleAttachmentDragEnter(event, caseRow) {
+        if (!this.isFileDrag(event)) return;
+        event.preventDefault();
+        this._attachmentDragDepth += 1;
+        if (this.canDropAttachments(caseRow)) this.attachmentDragOver = true;
+    }
+
+    handleAttachmentDragOver(event, caseRow) {
+        if (!this.isFileDrag(event)) return;
+        // Always claim file drags so the browser doesn't navigate to a dropped file.
+        event.preventDefault();
+        const allowed = this.canDropAttachments(caseRow);
+        event.dataTransfer.dropEffect = allowed ? 'copy' : 'none';
+        this.attachmentDragOver = allowed;
+    }
+
+    handleAttachmentDragLeave(event) {
+        if (!this.isFileDrag(event)) return;
+        this._attachmentDragDepth = Math.max(0, this._attachmentDragDepth - 1);
+        if (this._attachmentDragDepth === 0) this.attachmentDragOver = false;
+    }
+
+    handleAttachmentDrop(event, caseRow) {
+        if (!this.isFileDrag(event)) return;
+        event.preventDefault();
+        this._attachmentDragDepth = 0;
+        this.attachmentDragOver = false;
+        if (!this.canDropAttachments(caseRow)) return;
+
+        // Folders arrive as zero-byte "files"; skip them (entries must be read synchronously).
+        const items = Array.from(event.dataTransfer.items || []).filter((item) => item.kind === 'file');
+        const dropped = Array.from(event.dataTransfer.files || []);
+        const files = dropped.filter((_, i) => !items[i]?.webkitGetAsEntry?.()?.isDirectory);
+        if (files.length === 0) {
+            if (dropped.length > 0) this.uploadError = t('cases.foldersNotSupported');
+            return;
+        }
+        this.uploadFiles(caseRow, files);
     }
 
     startHeartbeat() {
@@ -1863,26 +2074,43 @@ export class DirectusCasesPage extends LitElement {
         this.clearViewerUiState();
 
         if (!token) return;
+        await this._releaseViewerSession(token, seatId);
+    }
+
+    _releaseViewerSession(sessionToken, seatId) {
         const { stopUrl } = getViewerSessionEndpoints({
             kind: VIEWER_KINDS.SLICER_GUI,
             sessionScope: VIEWER_SESSION_SCOPES.DIRECTUS
         });
-        await stopViewerSession({
+        return stopViewerSession({
             stopUrl,
-            sessionToken: token,
+            sessionToken,
             body: buildViewerStopBody({
                 kind: VIEWER_KINDS.SLICER_GUI,
-                sessionToken: token,
+                sessionToken,
                 seatId,
                 mode: VIEWER_RELEASE_MODES.SOFT
             })
         });
     }
 
-    // Public: called by the Close button. Uses history.back() so the browser
-    // back button and the button are indistinguishable to the user.
+    // Public: called by the Close button. Full Slicer uses history.back() so the browser back button
+    // and the button are indistinguishable to the user; SlicerWeb closes directly (see below).
     closeViewer() {
-        if (this._viewerPushedState) {
+        if (this.viewerKind === VIEWER_KINDS.SLICERWEB) {
+            // SlicerWeb's own frame navigation adds shared history entries, so history.back()
+            // may only step the iframe. Close directly and fix the URL in place.
+            this._viewerPushedState = false;
+            this._replaceUrlWithCase();
+            // Tearing down the same-origin SlicerWeb frame (WASM heap, workers) blocks the shared
+            // main thread, so hide the overlay and let it paint before removing the iframe.
+            this._slicerWebPending = null;
+            this.viewerClosing = true;
+            const openId = this._viewerOpenId;
+            requestAnimationFrame(() => setTimeout(() => {
+                if (openId === this._viewerOpenId) this._doCloseViewer();
+            }, 0));
+        } else if (this._viewerPushedState) {
             this._viewerPushedState = false;
             history.back(); // popstate fires → _handlePopState → _doCloseViewer
         } else {
@@ -1894,11 +2122,7 @@ export class DirectusCasesPage extends LitElement {
     async _handleViewerIdleTimeout() {
         this._viewerPushedState = false;
         await this._doCloseViewer();
-        history.replaceState(
-            { caseId: this.selectedCaseId },
-            '',
-            this._buildCaseUrl(this.selectedCaseId)
-        );
+        this._replaceUrlWithCase();
     }
 
     attachmentMetaLine(attachment) {
@@ -2047,7 +2271,12 @@ export class DirectusCasesPage extends LitElement {
         this.viewerLoading = false;
         this.viewerLoadingDetail = '';
         this.viewerSimplified = false;
+        this.viewerKind = VIEWER_KINDS.SLICER_GUI;
+        this.viewerClosing = false;
         this.currentFileName = '';
+        this._slicerWebRun += 1; // cancels any in-flight SlicerWeb load
+        this._viewerOpenId += 1; // orphans any in-flight open request
+        this._slicerWebPending = null;
         this._viewerSessionToken = null;
         this._viewerSeatId = null;
         this.openingAttachmentId = '';
@@ -2068,9 +2297,16 @@ export class DirectusCasesPage extends LitElement {
         );
         const viewerLabel = viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified: useSimplified });
 
+        this._focusBeforeViewer = deepActiveElement();
+        // Closing the viewer while this request is in flight bumps _viewerOpenId; a superseded
+        // request must not touch the UI, and must release the seat it started.
+        const openId = ++this._viewerOpenId;
+        const isSuperseded = () => openId !== this._viewerOpenId;
+
         this.openingAttachmentId = attachment.id;
         this.errorMessage = '';
-        this.currentFileName = attachment.filenameDownload || attachment.name || 'attachment';
+        this.currentFileName = attachmentFileName(attachment);
+        this.viewerKind = VIEWER_KINDS.SLICER_GUI;
         this.viewerSimplified = useSimplified;
         this.viewerLoading = true;
         this.viewerLoadingDetail = attachment.filesize && attachment.filesize > 50 * 1024 * 1024
@@ -2084,6 +2320,15 @@ export class DirectusCasesPage extends LitElement {
             const data = await openDirectusAttachmentFullSlicer(caseRow.id, attachment.id, {
                 useSimplifiedViewer: useSimplified
             });
+            if (isSuperseded()) {
+                if (data.sessionToken) {
+                    this._releaseViewerSession(
+                        data.sessionToken,
+                        data.seatId != null ? Number(data.seatId) : null
+                    ).catch(() => {});
+                }
+                return;
+            }
 
             this._viewerSessionToken = data.sessionToken || null;
             this._viewerSeatId = data.seatId != null ? Number(data.seatId) : null;
@@ -2107,19 +2352,94 @@ export class DirectusCasesPage extends LitElement {
             this.viewerLoadingDetail = t('cases.openingViewerReady', { viewer: viewerLabel });
             this.openingAttachmentId = '';
 
-            this._viewerPushedState = true;
-            history.pushState(
-                { caseId: caseRow.id, viewer: true },
-                '',
-                this._buildViewerUrl()
-            );
+            this._pushViewerHistory(caseRow.id);
         } catch (err) {
+            if (isSuperseded()) return;
             this.clearViewerUiState();
             this.errorMessage = this.userFacingError(err, "Couldn't open the viewer. Please try again.");
         }
     }
 
-    handleViewerIframeLoad() {
+    /** "Open with" choice: 'full' | 'simplified' (Full Slicer) or 'web' (in-browser SlicerWeb). */
+    handleOpenViewer(caseRow, attachment, viewer) {
+        if (viewer === 'web') return this.handleOpenSlicerWeb(caseRow, attachment);
+        return this.handleOpenAttachment(caseRow, attachment, { simplified: viewer === 'simplified' });
+    }
+
+    async handleOpenSlicerWeb(caseRow, attachment) {
+        if (this.openingAttachmentId || !attachment?.canOpenInSlicer) return;
+
+        this._viewerOpenId += 1;
+        this._focusBeforeViewer = deepActiveElement();
+        this.errorMessage = '';
+        this.currentFileName = attachmentFileName(attachment);
+        this.viewerKind = VIEWER_KINDS.SLICERWEB;
+        this.viewerSimplified = false;
+        this.viewerLoading = true;
+        this.viewerLoadingDetail = t('cases.openingSlicerWeb');
+        this.showIframe = true;
+        this._slicerWebRun += 1;
+        // Download while the runtime starts; both are awaited in loadPendingIntoSlicerWeb.
+        const download = fetchDirectusAttachmentContent(caseRow.id, attachment.id);
+        download.catch(() => {}); // surfaced when awaited
+        this._slicerWebPending = { download, fileName: this.currentFileName };
+        this.iframeUrl = buildSlicerWebUrl();
+
+        this._pushViewerHistory(caseRow.id);
+    }
+
+    /**
+     * Wait for the same-origin SlicerWeb bridge, then hand it the downloaded file.
+     * SlicerWeb may reload its own frame once mid-start, so each frame load restarts this.
+     */
+    async loadPendingIntoSlicerWeb(frame) {
+        const pending = this._slicerWebPending;
+        if (!pending) return;
+        const run = ++this._slicerWebRun;
+        const cancelled = () => run !== this._slicerWebRun || !this.showIframe;
+        const readyBridge = () => {
+            try {
+                const bridge = frame.contentWindow?.slicerWeb;
+                return bridge?.store?.status === 'ready' ? bridge : null;
+            } catch (_) {
+                return null; // cross-origin: cannot reach the bridge
+            }
+        };
+
+        try {
+            const deadline = Date.now() + 5 * 60 * 1000;
+            let slicer = readyBridge();
+            while (!slicer) {
+                if (cancelled()) return;
+                if (Date.now() > deadline) throw new Error(t('cases.slicerWebStartFailed'));
+                await new Promise((resolve) => setTimeout(resolve, 200));
+                slicer = readyBridge();
+            }
+
+            this.viewerLoadingDetail = t('cases.loadingIntoSlicerWeb', { name: pending.fileName });
+            const blob = await pending.download;
+            if (cancelled()) return;
+            const [path] = await slicer.writeFiles([new File([blob], pending.fileName)]);
+            await slicer.bridge.call('loadFiles', [[path]]);
+            if (cancelled()) return;
+            this._slicerWebPending = null;
+            this.viewerLoading = false;
+            this.viewerLoadingDetail = '';
+        } catch (err) {
+            if (cancelled()) return;
+            const message = this.userFacingError(err, t('errors.openViewerFailed'));
+            this._viewerPushedState = false;
+            await this._doCloseViewer();
+            this._replaceUrlWithCase();
+            this.errorMessage = message;
+        }
+    }
+
+    handleViewerIframeLoad(event) {
+        if (this.viewerKind === VIEWER_KINDS.SLICERWEB) {
+            this.loadPendingIntoSlicerWeb(event?.target);
+            return;
+        }
         this.viewerLoading = false;
         this.viewerLoadingDetail = '';
         markViewerActivity();
@@ -2129,6 +2449,7 @@ export class DirectusCasesPage extends LitElement {
         const filteredCases = this.sortCases(this.filterCases(this.cases));
         return html`
             <page-layout-template
+                ?inert=${this.showIframe}
                 .username=${this.username}
                 selectedMenuKey="cases"
                 homeHref="/file-manager"
@@ -2291,6 +2612,7 @@ export class DirectusCasesPage extends LitElement {
             : t('cases.peopleLabel');
         return html`
             <page-layout-template
+                ?inert=${this.showIframe}
                 .username=${this.username}
                 selectedMenuKey="cases"
                 homeHref="/file-manager"
@@ -2413,7 +2735,17 @@ export class DirectusCasesPage extends LitElement {
                                     ></list-filter-tools>
                                 ` : ''}
                             </div>
-                            <div class="files-body">
+                            <div
+                                class="files-body ${this.attachmentDragOver ? 'drag-over' : ''}"
+                                @dragenter=${(e) => this.handleAttachmentDragEnter(e, caseRow)}
+                                @dragover=${(e) => this.handleAttachmentDragOver(e, caseRow)}
+                                @dragleave=${(e) => this.handleAttachmentDragLeave(e)}
+                                @drop=${(e) => this.handleAttachmentDrop(e, caseRow)}
+                            >
+                                ${this.attachmentDragOver ? html`
+                                    <div class="drop-hint">${t('cases.dropToAttach')}</div>
+                                ` : ''}
+                                <div class="visually-hidden" role="status" aria-live="polite" aria-atomic="true">${this.downloadStatusText}</div>
                                 ${allAttachments.length === 0 ? html`
                                     <div class="empty-note">${t('cases.noFiles')}</div>
                                 ` : attachments.length === 0 ? html`
@@ -2433,13 +2765,10 @@ export class DirectusCasesPage extends LitElement {
                                                 ${attachment?.canOpenInSlicer ? html`
                                                     <attachment-open-menu
                                                         slot="title-trailing"
+                                                        .fileName=${this.attachmentTitle(attachment)}
                                                         .preferSimplifiedDefault=${this.accountPrefersSimplifiedViewer()}
                                                         ?disabled=${!!this.openingAttachmentId || this.viewerLoading}
-                                                        @open-viewer=${(e) => this.handleOpenAttachment(
-                                                            caseRow,
-                                                            attachment,
-                                                            { simplified: e.detail?.simplified === true }
-                                                        )}
+                                                        @open-viewer=${(e) => this.handleOpenViewer(caseRow, attachment, e.detail?.viewer)}
                                                     ></attachment-open-menu>
                                                 ` : ''}
                                                 ${canEdit ? html`
@@ -2447,9 +2776,27 @@ export class DirectusCasesPage extends LitElement {
                                                         slot="actions"
                                                         class="file-icon-button"
                                                         type="button"
-                                                        title=${t('cases.removeFile')}
-                                                        aria-label=${t('cases.removeFile')}
-                                                        ?disabled=${!!this.deletingAttachmentId || this.uploadingFile}
+                                                        title=${t('cases.downloadFileNamed', { name: this.attachmentTitle(attachment) })}
+                                                        aria-label=${t('cases.downloadFileNamed', { name: this.attachmentTitle(attachment) })}
+                                                        aria-busy=${this.downloadingAttachmentIds.has(attachment.id) ? 'true' : 'false'}
+                                                        aria-disabled=${this.downloadingAttachmentIds.has(attachment.id) ? 'true' : 'false'}
+                                                        @click=${() => this.handleDownloadAttachment(caseRow, attachment)}
+                                                    >
+                                                        ${this.downloadingAttachmentIds.has(attachment.id) ? html`
+                                                            <span class="download-spinner" aria-hidden="true"></span>
+                                                        ` : html`
+                                                            <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+                                                                <path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                                                            </svg>
+                                                        `}
+                                                    </button>
+                                                    <button
+                                                        slot="actions"
+                                                        class="file-icon-button"
+                                                        type="button"
+                                                        title=${t('cases.removeFileNamed', { name: this.attachmentTitle(attachment) })}
+                                                        aria-label=${t('cases.removeFileNamed', { name: this.attachmentTitle(attachment) })}
+                                                        ?disabled=${!!this.deletingAttachmentId}
                                                         @click=${() => this.handleDeleteAttachment(caseRow, attachment)}
                                                     >
                                                         <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
@@ -2471,7 +2818,19 @@ export class DirectusCasesPage extends LitElement {
 
                                 ${canEdit ? html`
                                     <div class="upload-action-row">
-                                        ${this.uploadStatusText ? html`
+                                        ${this.uploadingFile ? html`
+                                            <div class="upload-progress">
+                                                <span class="upload-status">
+                                                    ${this.uploadStatusText}
+                                                    ${Math.round(this.uploadProgress * 100)}%
+                                                </span>
+                                                <progress
+                                                    max="1"
+                                                    .value=${this.uploadProgress}
+                                                    aria-label=${this.uploadStatusText}
+                                                ></progress>
+                                            </div>
+                                        ` : this.uploadStatusText ? html`
                                             <span class="upload-status">${this.uploadStatusText}</span>
                                         ` : this.uploadError ? html`
                                             <span class="upload-error">${this.uploadError}</span>
@@ -2479,10 +2838,10 @@ export class DirectusCasesPage extends LitElement {
                                         <button
                                             class="secondary-button"
                                             type="button"
-                                            ?disabled=${this.uploadingFile || !!this.openingAttachmentId}
+                                            ?disabled=${!!this.openingAttachmentId}
                                             @click=${() => this.triggerFileUpload()}
                                         >
-                                            ${this.uploadingFile ? t('cases.uploading') : t('cases.addFile')}
+                                            ${t('cases.addFile')}
                                         </button>
                                     </div>
                                 ` : ''}
@@ -2507,15 +2866,20 @@ export class DirectusCasesPage extends LitElement {
 
     renderViewerOverlay() {
         if (!this.showIframe) return html``;
-        const viewerLabel = viewerDisplayName(VIEWER_KINDS.SLICER_GUI, {
+        const viewerLabel = viewerDisplayName(this.viewerKind, {
             simplified: this.viewerSimplified
         });
+        const viewerTitle = `${viewerLabel}: ${this.currentFileName || t('common.loading')}`;
         return html`
-            <div class="iframe-overlay">
+            <div
+                class="iframe-overlay"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="viewer-title"
+                style=${this.viewerClosing ? 'display:none' : ''}
+            >
                 <div class="iframe-header">
-                    <div class="iframe-title">
-                        ${viewerLabel}: ${this.currentFileName || t('common.loading')}
-                    </div>
+                    <div class="iframe-title" id="viewer-title">${viewerTitle}</div>
                     <div class="iframe-header-actions">
                         <button
                             class="primary-button"
@@ -2530,17 +2894,18 @@ export class DirectusCasesPage extends LitElement {
                     ${this.iframeUrl !== 'about:blank' ? html`
                         <iframe
                             class="trame-iframe"
+                            title=${viewerTitle}
                             src="${this.iframeUrl}"
                             allow="clipboard-read; clipboard-write; cross-origin-isolated"
                             allowfullscreen
                             frameborder="0"
                             referrerpolicy="origin"
-                            @load=${() => this.handleViewerIframeLoad()}
+                            @load=${(e) => this.handleViewerIframeLoad(e)}
                         ></iframe>
                     ` : ''}
                     ${this.viewerLoading ? html`
                         <div class="loading-overlay">
-                            <div class="viewer-loading">
+                            <div class="viewer-loading" role="status">
                                 <p>${this.viewerLoadingDetail || t('cases.loadingViewer')}</p>
                             </div>
                         </div>

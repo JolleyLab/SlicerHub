@@ -290,6 +290,25 @@ function ensureCacheDir() {
     return dir;
 }
 
+/** Where an asset lives in the cache; the name keeps the original extension. */
+function assetCacheName(assetId, filenameDownload) {
+    const safeName = sanitizeFileName(filenameDownload || `${assetId}.bin`);
+    return { safeName, cachePath: path.join(ensureCacheDir(), `${assetId}-${safeName}`) };
+}
+
+/** Cache location used before the cache moved to the slicer-gui volume. */
+function legacyAssetCachePath(assetId, safeName) {
+    return path.join(process.cwd(), 'data', 'directus-cache', `${assetId}-${safeName}`);
+}
+
+/** A complete cached file (right size when known), or null. */
+function usableCachedFile(candidate, expectedSize) {
+    if (!candidate || !fs.existsSync(candidate)) return null;
+    const stat = fs.statSync(candidate);
+    if (expectedSize != null && stat.size !== expectedSize) return null;
+    return { path: candidate, bytes: stat.size };
+}
+
 function sanitizeFileName(name) {
     const base = path.basename(String(name || 'attachment').trim() || 'attachment');
     return base.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_') || 'attachment';
@@ -1826,6 +1845,9 @@ export async function getCaseAttachment(caseId, attachmentId, { accessToken } = 
     return mapped;
 }
 
+/** In-flight Directus asset fetches, keyed by cache path (see ensureDirectusAssetCached). */
+const inflightAssetFills = new Map();
+
 /**
  * Ensure a Directus asset is cached on disk. Reuses the file when size matches.
  * Download uses the caller's Directus access token (no service-token fallback).
@@ -1848,32 +1870,19 @@ export async function ensureDirectusAssetCached({
         throw new DirectusUnavailableError('Directus is not configured. Set DIRECTUS_URL.');
     }
 
-    const safeName = sanitizeFileName(filenameDownload || `${assetId}.bin`);
-    const cachePath = path.join(ensureCacheDir(), `${assetId}-${safeName}`);
+    const { safeName, cachePath } = assetCacheName(assetId, filenameDownload);
     const expected = expectedSize != null && Number.isFinite(Number(expectedSize))
         ? Number(expectedSize)
         : null;
 
-    const legacyCachePath = path.join(
-        process.cwd(),
-        'data',
-        'directus-cache',
-        `${assetId}-${safeName}`
-    );
-
-    function usableCache(candidate) {
-        if (!candidate || !fs.existsSync(candidate)) return null;
-        const stat = fs.statSync(candidate);
-        if (expected != null && stat.size !== expected) return null;
-        return { path: candidate, bytes: stat.size };
-    }
-
-    const existing = usableCache(cachePath) || usableCache(legacyCachePath);
+    const existing = usableCachedFile(cachePath, expected)
+        || usableCachedFile(legacyAssetCachePath(assetId, safeName), expected);
     if (existing) {
         if (existing.path !== cachePath) {
             try {
                 ensureCacheDir();
-                fs.copyFileSync(existing.path, cachePath);
+                // Async: a synchronous copy of a large file would stall every other request.
+                await fs.promises.copyFile(existing.path, cachePath);
                 console.log('Migrated Directus asset cache to slicer-gui volume', {
                     fileId: assetId,
                     bytes: existing.bytes
@@ -1897,6 +1906,38 @@ export async function ensureDirectusAssetCached({
         };
     }
 
+    // Concurrent requests for the same uncached file (two collaborators, or a viewer plus a
+    // download) share one fetch. Sharing is safe: every caller has already passed its own
+    // access check before reaching here, and a single fetch/rename avoids a shared .tmp race.
+    const inFlight = inflightAssetFills.get(cachePath);
+    if (inFlight) return inFlight;
+
+    const fill = downloadAssetToCache({ assetId, cachePath, safeName, expected, accessToken });
+    inflightAssetFills.set(cachePath, fill);
+    try {
+        return await fill;
+    } finally {
+        inflightAssetFills.delete(cachePath);
+    }
+}
+
+/**
+ * Open a streaming download of a Directus asset as the caller. Failures are mapped to app errors before
+ * any body is read; an aborted `signal` rejects with the abort error.
+ * @returns {Promise<Response>} an ok response with a body
+ */
+export async function fetchDirectusAsset(fileId, accessToken, signal) {
+    const assetId = String(fileId || '').trim();
+    if (!assetId) {
+        throw new ValidationError(msg('directus.file_id_required'), null, 'directus.file_id_required');
+    }
+    if (!accessToken) {
+        throw new ValidationError(msg('directus.asset_download_token_required'), null, 'directus.asset_download_token_required');
+    }
+    if (!isDirectusUrlConfigured()) {
+        throw new DirectusUnavailableError('Directus is not configured. Set DIRECTUS_URL.');
+    }
+
     const url = new URL(`/assets/${encodeURIComponent(assetId)}`, `${config.directus.url}/`);
     url.searchParams.set('download', '');
 
@@ -1907,9 +1948,11 @@ export async function ensureDirectusAssetCached({
             headers: {
                 Authorization: `Bearer ${accessToken}`,
                 Accept: '*/*'
-            }
+            },
+            signal
         });
     } catch (err) {
+        if (signal?.aborted) throw err;
         throw new InternalError(`Directus asset download failed: ${err.message || 'network error'}`);
     }
 
@@ -1931,6 +1974,26 @@ export async function ensureDirectusAssetCached({
     if (!response.body) {
         throw new InternalError('Directus asset download returned an empty body');
     }
+    return response;
+}
+
+/**
+ * The cached copy of an asset when a complete one is on disk, else null. Never downloads or copies
+ * anything, so it is cheap enough to call when deciding how to serve a request.
+ */
+export function findCachedDirectusAsset({ fileId, filenameDownload = null, expectedSize = null } = {}) {
+    const assetId = String(fileId || '').trim();
+    if (!assetId) return null;
+    const { safeName, cachePath } = assetCacheName(assetId, filenameDownload);
+    const expected = expectedSize != null && Number.isFinite(Number(expectedSize)) ? Number(expectedSize) : null;
+    const found = usableCachedFile(cachePath, expected)
+        || usableCachedFile(legacyAssetCachePath(assetId, safeName), expected);
+    return found ? { cachePath: found.path, fileName: safeName, bytes: found.bytes } : null;
+}
+
+/** Fetch one Directus asset into the cache: written to a .tmp file, renamed when complete. */
+async function downloadAssetToCache({ assetId, cachePath, safeName, expected, accessToken }) {
+    const response = await fetchDirectusAsset(assetId, accessToken);
 
     const tmpPath = `${cachePath}.tmp`;
     try {

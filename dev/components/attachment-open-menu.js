@@ -7,7 +7,7 @@ const MENU_MIN_WIDTH = 220;
 const MENU_GAP_PX = 4;
 const VIEWPORT_PADDING_PX = 8;
 const PORTAL_STYLE_ID = 'attachment-open-menu-portal-styles';
-const APPROX_MENU_HEIGHT_PX = 96;
+const APPROX_MENU_HEIGHT_PX = 136;
 
 const PORTAL_CSS = `
 .attachment-open-menu-panel {
@@ -64,7 +64,7 @@ const PORTAL_CSS = `
 
 /**
  * Open-with control for case attachments.
- * Emits `open-viewer` with { simplified: boolean }.
+ * Emits `open-viewer` with { viewer: 'full' | 'simplified' | 'web' }.
  * Menu is portaled to document.body so scroll parents do not clip it.
  */
 export class AttachmentOpenMenu extends LitElement {
@@ -120,6 +120,8 @@ export class AttachmentOpenMenu extends LitElement {
     static get properties() {
         return {
             open: { type: Boolean },
+            /** The attachment this menu belongs to; makes the button's accessible name specific. */
+            fileName: { type: String },
             disabled: { type: Boolean },
             /** Account default is Simplified viewer. */
             preferSimplifiedDefault: { type: Boolean }
@@ -130,6 +132,7 @@ export class AttachmentOpenMenu extends LitElement {
         super();
         initializeTheme();
         this.open = false;
+        this.fileName = '';
         this.disabled = false;
         this.preferSimplifiedDefault = false;
         this._portalHost = null;
@@ -158,6 +161,62 @@ export class AttachmentOpenMenu extends LitElement {
         if (changed.has('open') || (this.open && changed.has('preferSimplifiedDefault'))) {
             if (this.open) this.renderMenuPortal();
             else this.destroyMenuPortal();
+        }
+        // Opening the menu moves keyboard focus into it (it is rendered at the end of the page).
+        if (changed.has('open') && this.open) this.focusMenuItem(0);
+    }
+
+    menuItems() {
+        return Array.from(this._portalHost?.querySelectorAll('[role="menuitem"]') || []);
+    }
+
+    focusMenuItem(index) {
+        const items = this.menuItems();
+        if (items.length === 0) return;
+        items[((index % items.length) + items.length) % items.length].focus();
+    }
+
+    closeAndFocusTrigger() {
+        this.open = false;
+        this.shadowRoot?.querySelector('.trigger')?.focus();
+    }
+
+    onMenuKeydown(event) {
+        const items = this.menuItems();
+        const current = items.indexOf(event.target.closest?.('[role="menuitem"]'));
+        switch (event.key) {
+            case 'ArrowDown':
+                event.preventDefault();
+                this.focusMenuItem(current + 1);
+                break;
+            case 'ArrowUp':
+                event.preventDefault();
+                this.focusMenuItem(current - 1);
+                break;
+            case 'Home':
+                event.preventDefault();
+                this.focusMenuItem(0);
+                break;
+            case 'End':
+                event.preventDefault();
+                this.focusMenuItem(items.length - 1);
+                break;
+            case 'Escape':
+                event.preventDefault();
+                this.closeAndFocusTrigger();
+                break;
+            case 'Tab':
+                // Leave the menu; focus returns to the button so Tab carries on from there.
+                this.closeAndFocusTrigger();
+                break;
+            default:
+        }
+    }
+
+    onTriggerKeydown(event) {
+        if (event.key === 'ArrowDown' && !this.open && !this.disabled) {
+            event.preventDefault();
+            this.open = true;
         }
     }
 
@@ -209,17 +268,19 @@ export class AttachmentOpenMenu extends LitElement {
         return { top: Math.round(top), left: Math.round(left) };
     }
 
-    menuItemTemplate({ label, simplified, isDefault }) {
+    menuItemTemplate({ label, viewer, isDefault, hint = '' }) {
         return html`
             <button
                 class="item"
                 type="button"
                 role="menuitem"
-                @click=${() => this.selectViewer(simplified)}
+                tabindex="-1"
+                @click=${() => this.selectViewer(viewer)}
             >
                 <span class="check ${isDefault ? '' : 'is-empty'}" aria-hidden="true">✓</span>
                 <span class="item-label">
                     ${label}
+                    ${hint ? html`<span class="hint">${hint}</span>` : ''}
                     ${isDefault ? html`<span class="hint">${t('viewers.defaultHint')}</span>` : ''}
                 </span>
             </button>
@@ -235,17 +296,25 @@ export class AttachmentOpenMenu extends LitElement {
             <div
                 class="attachment-open-menu-panel"
                 role="menu"
+                aria-label=${t('viewers.openWith')}
+                @keydown=${(e) => this.onMenuKeydown(e)}
                 style="top:${top}px;left:${left}px;"
             >
                 ${this.menuItemTemplate({
                     label: t('viewers.fullSlicer'),
-                    simplified: false,
+                    viewer: 'full',
                     isDefault: !preferSimplified
                 })}
                 ${this.menuItemTemplate({
                     label: t('viewers.simplified'),
-                    simplified: true,
+                    viewer: 'simplified',
                     isDefault: preferSimplified
+                })}
+                ${this.menuItemTemplate({
+                    label: t('viewers.slicerWeb'),
+                    viewer: 'web',
+                    isDefault: false,
+                    hint: t('viewers.slicerWebHint')
                 })}
             </div>
         `, host);
@@ -264,13 +333,21 @@ export class AttachmentOpenMenu extends LitElement {
         this.open = !this.open;
     }
 
-    selectViewer(simplified) {
+    selectViewer(viewer) {
+        // Focus goes back to the button first, so whatever opens next knows where to return to.
+        this.shadowRoot?.querySelector('.trigger')?.focus();
         this.open = false;
         this.dispatchEvent(new CustomEvent('open-viewer', {
-            detail: { simplified: simplified === true },
+            detail: { viewer },
             bubbles: true,
             composed: true
         }));
+    }
+
+    triggerLabel() {
+        return this.fileName
+            ? t('viewers.openWithNamed', { name: this.fileName })
+            : t('viewers.openWith');
     }
 
     render() {
@@ -278,12 +355,13 @@ export class AttachmentOpenMenu extends LitElement {
             <button
                 class="trigger"
                 type="button"
-                title=${t('viewers.openWith')}
-                aria-label=${t('viewers.openWith')}
+                title=${this.triggerLabel()}
+                aria-label=${this.triggerLabel()}
                 aria-expanded=${this.open ? 'true' : 'false'}
                 aria-haspopup="menu"
                 ?disabled=${this.disabled}
                 @click=${(e) => this.toggleMenu(e)}
+                @keydown=${(e) => this.onTriggerKeydown(e)}
             >
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path

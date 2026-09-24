@@ -9,6 +9,18 @@ export const APP_VIEWS = Object.freeze({
 
 export const DEFAULT_APP_VIEW = APP_VIEWS.FILES;
 
+/**
+ * My Projects (the legacy project list, project review and create-project pages) is hidden: Cases
+ * replaced it. The code is kept for now; set this to true to bring back the nav entry and views.
+ */
+export const MY_PROJECTS_VISIBLE = false;
+
+export const PROJECT_VIEWS = Object.freeze(new Set([
+    APP_VIEWS.PROJECTS,
+    APP_VIEWS.CREATE_PROJECT,
+    APP_VIEWS.PROJECT_REVIEW
+]));
+
 const VIEW_QUERY_KEY = 'view';
 const PROJECT_ID_QUERY_KEY = 'projectId';
 

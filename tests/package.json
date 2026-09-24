@@ -1,0 +1,8 @@
+{
+    "name": "slicer-web-tests",
+    "private": true,
+    "description": "Unit tests for the backend and dev (frontend) code. Uses the built-in node test runner (Node 22+ for the glob). tests/full-slicer holds the separate load-test harness.",
+    "scripts": {
+        "test": "node --test \"unit/**/*.test.mjs\""
+    }
+}

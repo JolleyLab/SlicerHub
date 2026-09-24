@@ -162,12 +162,8 @@ Clinicians are never created by self-register in Directus-mode sites. Product ad
 - Env: `DIRECTUS_DEFAULT_ROLE_ID`, `USER_PROVISION_MODE=temp_password` (Pattern A)
 - `POST /api/auth/change-password` + SPA force-change UI when `mustChangePassword` is true
 - Backfill existing locals: `node scripts/migrate-local-users-to-directus.mjs` (service token)
-- **CUTOVER password bridge (one release):** `AUTH_PASSWORD_BRIDGE=true` + `AUTH_PROVIDER=directus`.
-  Users keep their old SQLite password for the first post-migrate login; the BFF verifies
-  bcrypt, PATCHes Directus, clears the local hash, then completes Directus login.
-  Implementation is isolated in `backend/src/auth/passwordBridge.js` — delete that file and
-  every `CUTOVER (password-bridge)` comment when the window ends. Do not hand out migrate
-  temp passwords while the bridge is on.
+- The one-release SQLite→Directus password bridge (`AUTH_PASSWORD_BRIDGE`) has been removed. Local password
+  hashes are no longer used for sign-in; users sign in with their Directus password.
 
 Pattern B (`invite_email`) is intentionally deferred; local handoff lives in gitignored `docs/user-provisioning-patterns.md`.
 

@@ -81,9 +81,7 @@ export function getPublicAuthConfig() {
         identityPlaceholder: provider === 'directus'
             ? 'you@example.com'
             : 'Username or email',
-        devRelaxed: config.auth?.devRelaxed === true,
-        // CUTOVER (password-bridge): SPA reassurance on forced password change
-        passwordBridge: config.auth?.passwordBridge === true
+        devRelaxed: config.auth?.devRelaxed === true
     };
 }
 

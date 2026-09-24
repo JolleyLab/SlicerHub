@@ -1,27 +1,32 @@
+import path from 'path';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import { ValidationError, NotFoundError } from '../utils/errors.js';
+import { ValidationError, NotFoundError, ForbiddenError } from '../utils/errors.js';
 import config from '../config/index.js';
 import db from '../db/database.js';
 import { requireDirectusLink } from '../auth/requireDirectusLink.js';
 import { requireDirectusUserToken } from '../auth/directusUserSession.js';
-import multer from 'multer';
 import {
     listCases,
     isDirectusUrlConfigured,
     getCaseAttachment,
+    getCaseCollabActorContext,
     ensureDirectusAssetCached,
+    findCachedDirectusAsset,
+    fetchDirectusAsset,
     canOpenAttachmentInSlicer,
     createCaseComment,
     createCase,
     updateCase,
-    uploadDirectusFile,
     createCaseAttachment,
     deleteCaseAttachment,
     fetchDirectusViewer,
     lookupDirectusUserByEmail,
     setCaseCollaborators
 } from '../services/directus.js';
+import { attachUploadedFileToCase } from '../services/attachUploadedFile.js';
+import { issueUploadToken } from '../services/uploadTokens.js';
+import { createAttachmentDownloadHandler } from '../services/attachmentDownload.js';
 import {
     inviteExistingUserToCase,
     listPendingInvitesForCase,
@@ -45,11 +50,6 @@ import {
 } from '../services/notifications.js';
 import { msg } from '../i18n/index.js';
 
-// 500 MB cap — large MRB / imaging files are expected. Adjust via env if needed.
-const upload = multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: Number(process.env.UPLOAD_MAX_BYTES) || 500 * 1024 * 1024 }
-});
 import { stageCachedFileForSlicerGui, readSlicerGuiBusyStatus } from '../slicerGui/stageFile.js';
 import { buildSlicerGuiViewerPath } from '../slicerGui/paths.js';
 import {
@@ -461,44 +461,54 @@ export default function directusRoutes(app) {
     }));
 
     /**
-     * Upload a file and attach it to a case.
-     * Accepts multipart/form-data with a `file` field.
-     * Optional body field: `name` (display name; defaults to original filename).
+     * Start a resumable upload: returns a one-time token bound to the caller, and the metadata the
+     * client must send with the upload so the file can be recognised afterwards (see
+     * services/uploadTokens.js). The client treats both as opaque.
      */
     app.post(
-        '/api/directus/cases/:caseId/attachments',
+        '/api/directus/uploads/token',
         ...collabAuth,
-        upload.single('file'),
+        asyncHandler(async (req, res) => {
+            res.json(issueUploadToken(req.user.id));
+        })
+    );
+
+    /**
+     * Attach a file already uploaded to Directus (resumable TUS upload, see routes/directusTus.js) to
+     * a case. Body: { uploadToken, name?, type?, size? } where uploadToken is the token issued by
+     * POST /api/directus/uploads/token for that upload (see services/attachUploadedFile.js).
+     */
+    app.post(
+        '/api/directus/cases/:caseId/attachments/from-upload',
+        ...collabAuth,
         asyncHandler(async (req, res) => {
             const caseId = String(req.params.caseId || '').trim();
             if (!caseId) throw new ValidationError(msg('case.id_required'), null, 'case.id_required');
-            if (!req.file) throw new ValidationError(msg('case.upload_file_required'), null, 'case.upload_file_required');
 
-            const originalName = req.file.originalname || 'upload';
-            const displayName = String(req.body?.name || '').trim() || originalName;
+            const displayName = String(req.body?.name || '').trim() || 'upload';
+            const size = Number(req.body?.size);
+            // Only used to fill in the response if Directus does not return the file record.
+            const fileMeta = {
+                filename_download: displayName,
+                type: String(req.body?.type || '') || null,
+                filesize: Number.isFinite(size) ? size : null
+            };
 
-            // 1. Upload the file bytes to Directus /files (keep original filename)
-            const directusFile = await uploadDirectusFile({
-                buffer: req.file.buffer,
-                originalname: originalName,
-                mimetype: req.file.mimetype
-            }, { accessToken: req.directusAccessToken });
-
-            // 2. Create the attachment record linking Directus file → case
-            const attachment = await createCaseAttachment(
+            const { attachment, fileId } = await attachUploadedFileToCase({
                 caseId,
-                directusFile.id,
+                userId: req.user.id,
+                uploadToken: String(req.body?.uploadToken || '').trim(),
                 displayName,
-                { accessToken: req.directusAccessToken, fileMeta: directusFile }
-            );
+                fileMeta,
+                accessToken: req.directusAccessToken
+            });
 
             res.status(201).json({
                 attachment,
                 meta: {
                     actingAs: 'user',
                     directusUserId: req.directusIdentity?.externalId || null,
-                    directusFileId: directusFile.id,
-                    bytes: req.file.size
+                    directusFileId: fileId
                 }
             });
         })
@@ -549,6 +559,87 @@ export default function directusRoutes(app) {
             }
         });
     }));
+
+    /** Name an attachment's asset is cached under (the original file name where there is one). */
+    const attachmentDiskName = (attachment) => attachment.filenameDownload || attachment.name || 'attachment.bin';
+
+    /**
+     * Check the caller may use this attachment and return it. Directus enforces read access as the
+     * caller and getCaseAttachment checks the case/attachment match. With requireEditRole only case
+     * admins and collaborators pass (read_only is refused).
+     */
+    async function authorizeCaseAttachment(req, { requireEditRole = false } = {}) {
+        const caseId = String(req.params.caseId || '').trim();
+        const attachmentId = String(req.params.attachmentId || '').trim();
+        if (!caseId || !attachmentId) {
+            throw new ValidationError(msg('case.case_and_file_required'), null, 'case.case_and_file_required');
+        }
+
+        const attachment = await getCaseAttachment(caseId, attachmentId, {
+            accessToken: req.directusAccessToken
+        });
+
+        if (requireEditRole) {
+            const actorDirectusUserId = req.directusIdentity?.externalId
+                || (await fetchDirectusViewer(req.directusAccessToken))?.id;
+            if (!actorDirectusUserId) {
+                throw new ValidationError(msg('directus.session_confirm_failed'), null, 'directus.session_confirm_failed');
+            }
+            const ctx = await getCaseCollabActorContext(caseId, {
+                accessToken: req.directusAccessToken,
+                actorDirectusUserId: String(actorDirectusUserId)
+            });
+            if (!ctx.actorCanInvite) { // admin or collaborator
+                throw new ForbiddenError(msg('case.download_forbidden'), null, 'case.download_forbidden');
+            }
+        }
+        return attachment;
+    }
+
+    /**
+     * Attachment bytes for the in-browser viewers (SlicerWeb), for any case member. The whole file is
+     * cached first (the viewer needs all of it); served inline and uncacheable. Not a save-to-device
+     * path (see /download).
+     */
+    app.get(
+        '/api/directus/cases/:caseId/attachments/:attachmentId/content',
+        ...collabAuth,
+        asyncHandler(async (req, res) => {
+            const attachment = await authorizeCaseAttachment(req);
+            const cached = await ensureDirectusAssetCached({
+                fileId: attachment.fileId,
+                filenameDownload: attachmentDiskName(attachment),
+                expectedSize: attachment.filesize,
+                accessToken: req.directusAccessToken
+            });
+            res.sendFile(path.resolve(cached.cachePath), {
+                headers: {
+                    'Content-Disposition': 'inline',
+                    'Cache-Control': 'private, no-store'
+                }
+            });
+        })
+    );
+
+    /**
+     * Save-to-device download of a case attachment. Case admins and collaborators only; read_only
+     * members may view files in a viewer but not copy them off the platform. HEAD is the browser's
+     * quick access check; GET serves the cached copy or streams from Directus as bytes arrive (see
+     * services/attachmentDownload.js).
+     */
+    app.get(
+        '/api/directus/cases/:caseId/attachments/:attachmentId/download',
+        ...collabAuth,
+        asyncHandler(createAttachmentDownloadHandler({
+            authorize: (req) => authorizeCaseAttachment(req, { requireEditRole: true }),
+            findCached: (attachment) => findCachedDirectusAsset({
+                fileId: attachment.fileId,
+                filenameDownload: attachmentDiskName(attachment),
+                expectedSize: attachment.filesize
+            }),
+            fetchAsset: (attachment, accessToken, signal) => fetchDirectusAsset(attachment.fileId, accessToken, signal)
+        }))
+    );
 
     /**
      * Download a case attachment from Directus as the user, stage into local Full Slicer, open.

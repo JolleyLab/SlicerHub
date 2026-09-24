@@ -171,6 +171,8 @@ services:
       - "8000:80" # Port 8000 is open on Paperspace by default
     volumes:
       - ./nginx:/etc/nginx/conf.d:ro
+      # Prebuilt SlicerWeb site; populate with scripts/fetch-slicerweb.ps1 (or .sh)
+      - ./data/slicerweb:/usr/share/slicerweb:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

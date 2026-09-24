@@ -13,6 +13,7 @@ import userRoutes from "./routes/users.js";
 import projectRoutes from "./routes/projects.js";
 import projectGpuRoutes from "./routes/projectGpu.js";
 import directusRoutes from "./routes/directus.js";
+import directusTusRoutes from "./routes/directusTus.js";
 import featuresRoutes from "./routes/features.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { isDirectusConfigured } from "./services/directus.js";
@@ -97,6 +98,7 @@ projectGpuRoutes(app);
 
 // Directus PoC (headless case list behind app auth)
 directusRoutes(app);
+directusTusRoutes(app);
 
 // Register container routes
 containerRoutes(app);

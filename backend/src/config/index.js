@@ -145,12 +145,6 @@ const config = {
         requireDirectusLink: process.env.AUTH_REQUIRE_DIRECTUS_LINK === 'true'
             ? true
             : (process.env.AUTH_REQUIRE_DIRECTUS_LINK === 'false' ? false : null),
-        /**
-         * CUTOVER (delete with auth/passwordBridge.js): one-release bridge so migrated
-         * users sign in with their old SQLite password once; BFF copies it to Directus.
-         * Set AUTH_PASSWORD_BRIDGE=true only for the migration window, then remove.
-         */
-        passwordBridge: process.env.AUTH_PASSWORD_BRIDGE === 'true'
     },
 
     // Directus headless API (service credentials — Cases / system jobs, not user login)
@@ -246,19 +240,6 @@ if (config.isProduction) {
         '⚠️  AUTH_DEV_RELAXED is on — longer idle session and softer login rate limits. '
         + 'Never enable in production.'
     );
-}
-
-// CUTOVER: remove with auth/passwordBridge.js when SQLite→Directus password migration ends.
-if (config.auth.passwordBridge) {
-    console.warn(
-        '⚠️  AUTH_PASSWORD_BRIDGE is on — SQLite passwords can be copied to Directus on first '
-        + 'failed Directus login. Disable and delete auth/passwordBridge.js after the cutover window.'
-    );
-    if (config.auth.provider !== 'directus') {
-        console.warn(
-            '⚠️  AUTH_PASSWORD_BRIDGE has no effect unless AUTH_PROVIDER=directus.'
-        );
-    }
 }
 
 export default config;

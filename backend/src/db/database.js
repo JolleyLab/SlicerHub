@@ -795,33 +795,6 @@ export default dbWrapper;
 export { flushDatabaseSync as flushDatabase };
 
 /**
- * Read a single user's password_hash from the on-disk file without replacing
- * the in-memory DB. Used by the password-bridge cutover when a side process
- * (migrate / debug script) updated disk while this server still held a stale hash.
- */
-export function readUserPasswordHashFromDisk(userId) {
-    const id = Number(userId);
-    if (!Number.isInteger(id) || id <= 0) return null;
-    if (!fs.existsSync(dbPath)) return null;
-    let diskDb = null;
-    try {
-        diskDb = new SQL.Database(fs.readFileSync(dbPath));
-        const result = diskDb.exec('SELECT password_hash FROM users WHERE id = ?', [id]);
-        if (!result?.[0]?.values?.[0]?.[0]) return null;
-        return String(result[0].values[0][0] || '') || null;
-    } catch (err) {
-        console.warn('readUserPasswordHashFromDisk failed:', err.message || err);
-        return null;
-    } finally {
-        try {
-            diskDb?.close();
-        } catch {
-            /* ignore */
-        }
-    }
-}
-
-/**
  * Replace in-memory DB from disk (disk wins). Call only when you know side
  * processes updated the file and this process must see those rows.
  */

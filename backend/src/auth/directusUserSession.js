@@ -227,22 +227,32 @@ export async function getDirectusAccessTokenForAppUser(appUser, { forceRefresh =
     );
 }
 
+async function attachDirectusAccessToken(req, res, next, { forceRefresh }) {
+    try {
+        req.directusAccessToken = await getDirectusAccessTokenForAppUser(req.user, {
+            forceRefresh,
+            req,
+            res
+        });
+        next();
+    } catch (err) {
+        next(err);
+    }
+}
+
+/**
+ * Like requireDirectusUserToken, but reuses the stored access token and only refreshes when it is
+ * about to expire. For high-frequency requests (upload chunks) where a Directus refresh per
+ * request would be wasteful.
+ */
+export const requireDirectusUserTokenCached = (req, res, next) =>
+    attachDirectusAccessToken(req, res, next, { forceRefresh: false });
+
 /**
  * Async middleware: after authenticateToken (+ optional requireDirectusLink).
  * Sets req.directusAccessToken.
  * Always refreshes the Directus access token when a refresh_token is stored so
  * role/policy edits apply on the next Cases request (not only after JWT expiry).
  */
-export async function requireDirectusUserToken(req, res, next) {
-    try {
-        const accessToken = await getDirectusAccessTokenForAppUser(req.user, {
-            forceRefresh: true,
-            req,
-            res
-        });
-        req.directusAccessToken = accessToken;
-        next();
-    } catch (err) {
-        next(err);
-    }
-}
+export const requireDirectusUserToken = (req, res, next) =>
+    attachDirectusAccessToken(req, res, next, { forceRefresh: true });

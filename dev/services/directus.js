@@ -1,5 +1,6 @@
 import { API_URL } from '../config.js';
 import { t } from '../i18n/index.js';
+import { tusUpload } from './tusUpload.js';
 
 async function parseJson(response) {
     try {
@@ -21,6 +22,11 @@ export function friendlyCasesError(raw, fallback = 'Something went wrong. Please
         /sign in once with your email and password|account connection expired|connect to your account/i.test(lower)
     ) {
         return text;
+    }
+
+    // Upload transport failures carry a code, so this does not depend on the message wording.
+    if (code === 'UPLOAD_NETWORK_ERROR') {
+        return t('errors.serverUnreachable');
     }
 
     if (
@@ -162,22 +168,64 @@ export async function createDirectusCaseComment(caseId, comment) {
     return data;
 }
 
-export async function uploadDirectusCaseAttachment(caseId, file) {
-    const form = new FormData();
-    form.append('file', file);
+/**
+ * Ask the server to start an upload. It returns a one-time token bound to this user, and the metadata
+ * to send with the upload so the file can be recognised afterwards. Both are opaque to the client.
+ * @returns {Promise<{ uploadToken: string, metadata: Record<string, string> }>}
+ */
+async function requestUploadToken() {
+    const response = await fetch(`${API_URL}/api/directus/uploads/token`, {
+        method: 'POST',
+        credentials: 'include'
+    });
+    const data = await parseJson(response);
+    if (!response.ok) {
+        throwApiError(response, data, t('errors.uploadFileFailed'));
+    }
+    return data;
+}
+
+/**
+ * Phase 1 of adding a file to a case: send the bytes to Directus as a resumable, chunked upload
+ * (progress, resume after a dropped connection, no proxy body-size limit).
+ * @param {{ onProgress?: (sent: number, total: number) => void, signal?: AbortSignal,
+ *   transport?: Function }} [options] transport is only for tests (see tusUpload)
+ * @returns {Promise<{ uploadToken: string }>} pass the token to attachUploadedFile
+ */
+export async function uploadFileResumable(file, { onProgress, signal, transport } = {}) {
+    // Directus does not report which file an upload became and forgets the upload when it completes,
+    // so the server issues a token and the metadata that lets it find the file afterwards.
+    const { uploadToken, metadata } = await requestUploadToken();
+    await tusUpload({
+        file,
+        endpoint: `${API_URL}/api/directus/files/tus`,
+        metadata,
+        onProgress,
+        signal,
+        transport
+    });
+    return { uploadToken };
+}
+
+/**
+ * Phase 2: link an uploaded Directus file to a case as an attachment.
+ * @returns {Promise<object>} the new attachment
+ */
+export async function attachUploadedFile(caseId, { uploadToken, name, type = '', size = null }) {
     const response = await fetch(
-        `${API_URL}/api/directus/cases/${encodeURIComponent(caseId)}/attachments`,
+        `${API_URL}/api/directus/cases/${encodeURIComponent(caseId)}/attachments/from-upload`,
         {
             method: 'POST',
             credentials: 'include',
-            body: form
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uploadToken, name, type, size })
         }
     );
     const data = await parseJson(response);
     if (!response.ok) {
         throwApiError(response, data, t('errors.uploadFileFailed'));
     }
-    return data;
+    return data.attachment;
 }
 
 export async function deleteDirectusCaseAttachment(caseId, attachmentId) {
@@ -350,6 +398,45 @@ export async function openDirectusAttachmentFullSlicer(caseId, attachmentId, {
         throwApiError(response, data, t('errors.openViewerFailed'));
     }
     return data;
+}
+
+function attachmentUrl(caseId, attachmentId, suffix) {
+    return `${API_URL}/api/directus/cases/${encodeURIComponent(caseId)}/attachments/${encodeURIComponent(attachmentId)}/${suffix}`;
+}
+
+/** Fetch an attachment's bytes as a Blob for the in-browser SlicerWeb viewer (any case member). */
+export async function fetchDirectusAttachmentContent(caseId, attachmentId) {
+    const response = await fetch(attachmentUrl(caseId, attachmentId, 'content'), {
+        method: 'GET',
+        credentials: 'include'
+    });
+    if (!response.ok) {
+        throwApiError(response, await parseJson(response), t('errors.openViewerFailed'));
+    }
+    return response.blob();
+}
+
+export function directusAttachmentDownloadUrl(caseId, attachmentId) {
+    return attachmentUrl(caseId, attachmentId, 'download');
+}
+
+/**
+ * Confirm the save-to-device download will be allowed (role + access) before handing the URL to
+ * the browser, so a refusal shows as an error instead of a saved error page. The server also
+ * warms its file cache on this request.
+ */
+export async function checkDirectusAttachmentDownload(caseId, attachmentId) {
+    const response = await fetch(directusAttachmentDownloadUrl(caseId, attachmentId), {
+        method: 'HEAD',
+        credentials: 'include'
+    });
+    if (!response.ok) {
+        const err = new Error(response.status === 403
+            ? t('cases.downloadForbidden')
+            : t('cases.downloadFailed'));
+        err.status = response.status;
+        throw err;
+    }
 }
 
 export async function directusFullSlicerHeartbeat(sessionToken, { seatId } = {}) {

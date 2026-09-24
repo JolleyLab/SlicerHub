@@ -8,7 +8,8 @@ import { resolveTramePageUrl } from './trameViewerUrl.js';
 
 export const VIEWER_KINDS = Object.freeze({
     TRAME: 'trame',
-    SLICER_GUI: 'slicer-gui'
+    SLICER_GUI: 'slicer-gui',
+    SLICERWEB: 'slicerweb'
 });
 
 export const VIEWER_SESSION_SCOPES = Object.freeze({
@@ -194,7 +195,13 @@ export function buildSlicerGuiLoaderUrl({
     return loader.href;
 }
 
+/** In-browser SlicerWeb build, served same-origin by nginx (see scripts/fetch-slicerweb.*). */
+export function buildSlicerWebUrl({ layout = 'FourUp' } = {}) {
+    return `/slicerweb/?layout=${encodeURIComponent(layout)}&sample=`;
+}
+
 export function viewerDisplayName(kind, { simplified = false } = {}) {
+    if (kind === VIEWER_KINDS.SLICERWEB) return t('viewers.slicerWeb');
     if (kind === VIEWER_KINDS.SLICER_GUI) {
         return simplified ? t('viewers.simplified') : t('viewers.fullSlicer');
     }

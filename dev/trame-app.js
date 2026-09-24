@@ -4,6 +4,8 @@ import { t } from './i18n/index.js';
 import {
   APP_VIEWS,
   DEFAULT_APP_VIEW,
+  MY_PROJECTS_VISIBLE,
+  PROJECT_VIEWS,
   readAppViewFromUrl,
   writeAppViewToUrl
 } from './components/app-views.js';
@@ -37,6 +39,8 @@ import {
 } from './utils/userPreferences.js';
 import { watchSystemColorScheme } from './components/theme.js';
 import './components/app-dialog.js';
+import './components/upload-tray.js';
+import { uploadManager } from './services/uploadManager.js';
 import {
   listOwnedGpuBillingSessions,
   stopProjectGpuBilling,
@@ -312,7 +316,7 @@ export class TrameApp extends LitElement {
     await loadAppFeatures();
     this.restoreViewFromUrl({ writeBack: false });
     this.guardCasesView();
-    this.guardCreateProjectView();
+    this.guardProjectViews();
     this.guardSettingsView();
   }
 
@@ -333,8 +337,21 @@ export class TrameApp extends LitElement {
     }
   }
 
-  /** CUTOVER: new projects are Cases-only; block create-project deep links. */
-  guardCreateProjectView() {
+  /**
+   * My Projects is hidden (MY_PROJECTS_VISIBLE): send deep links (?view=projects, project review,
+   * create-project) to Cases, or to the default view until features have loaded.
+   * When visible again, new projects stay Cases-only, so create-project still redirects.
+   */
+  guardProjectViews() {
+    if (!PROJECT_VIEWS.has(this.currentView)) return;
+    if (!MY_PROJECTS_VISIBLE) {
+      this.currentView = areAppFeaturesLoaded() && isDirectusCasesEnabled()
+        ? APP_VIEWS.CASES
+        : DEFAULT_APP_VIEW;
+      this.selectedProjectId = null;
+      this.syncViewToUrl();
+      return;
+    }
     if (this.currentView !== APP_VIEWS.CREATE_PROJECT) return;
     this.currentView = APP_VIEWS.PROJECTS;
     this.selectedProjectId = null;
@@ -414,7 +431,7 @@ export class TrameApp extends LitElement {
       this.selectedProjectId = null;
     }
     this.guardCasesView();
-    this.guardCreateProjectView();
+    this.guardProjectViews();
     this.guardSettingsView();
     if (writeBack) {
       this.syncViewToUrl();
@@ -580,6 +597,7 @@ export class TrameApp extends LitElement {
   }
 
   openProjectReviewFlow(e) {
+    if (!MY_PROJECTS_VISIBLE) return;
     const projectId = Number(e.detail?.projectId);
     if (!Number.isInteger(projectId) || projectId <= 0) return;
     this.selectedProjectId = projectId;
@@ -597,6 +615,7 @@ export class TrameApp extends LitElement {
       return;
     }
     if (selectedKey === 'my-projects') {
+      if (!MY_PROJECTS_VISIBLE) return;
       this.selectedProjectId = null;
       this.currentView = APP_VIEWS.PROJECTS;
       this.syncViewToUrl();
@@ -674,6 +693,7 @@ export class TrameApp extends LitElement {
   async handleLogout() {
     if (this.logoutBillingBusy || this.logoutBillingMode) return;
     if (!this.confirmLeaveCurrentView()) return;
+    if (uploadManager.hasActive() && !confirm(t('uploads.confirmLogout'))) return;
 
     try {
       const data = await listOwnedGpuBillingSessions();
@@ -914,6 +934,7 @@ export class TrameApp extends LitElement {
   }
 
   async performLogout() {
+    uploadManager.cancelAll();
     try {
       // Stop any running containers before logout
       await fetch(`${API_URL}/api/containers/stop`, {
@@ -1204,6 +1225,8 @@ export class TrameApp extends LitElement {
           @logout-request=${this.handleLogout}
         ></directus-cases-page>
       ` : ''}
+
+      <upload-tray></upload-tray>
 
       <app-dialog
         id="logout-billing-dialog"

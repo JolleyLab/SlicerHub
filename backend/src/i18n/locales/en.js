@@ -104,7 +104,6 @@ export default {
         invite_email_required: 'A valid email address is required',
         invite_pending_not_found: 'Pending invite not found',
         people_list_invalid: 'People list is invalid. Please try again.',
-        upload_file_required: 'Please choose a file to upload.',
         case_and_file_required: 'Case and file are required.',
         title_required: 'Case title is required',
         title_empty: 'title cannot be empty',
@@ -126,6 +125,7 @@ export default {
         comment_too_long: 'Comment must be 5000 characters or less',
         attachment_not_found: 'Attachment not found',
         attachment_not_on_case: 'Attachment not found on this case',
+        download_forbidden: 'Only case admins and collaborators can download files',
         attachment_no_directus_file: 'Attachment has no Directus file',
         case_attachment_ids_required: 'caseId and attachmentId are required',
         case_and_file_ids_required: 'caseId and fileId are required',
@@ -140,6 +140,13 @@ export default {
         people_add_needs_admin: 'Ask a case admin to approve new people on this case.',
         collaborators_update_failed: "Couldn't update people on this case. Please try again."
     },
+    upload: {
+        token_invalid: 'The upload could not be verified. Refresh the page and try again.',
+        file_not_linkable: "The file uploaded, but couldn't be linked to the case. Please try again, and contact an admin if it keeps happening.",
+        method_not_allowed: 'Method not allowed',
+        file_server_unreachable: "Couldn't reach the file server. Please try again."
+    },
+
     project: {
         name_required: 'Project name is required',
         name_too_long: 'Project name must be 250 characters or less',

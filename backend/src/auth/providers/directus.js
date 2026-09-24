@@ -231,64 +231,6 @@ export const directusProvider = {
                 );
             }
 
-            // --- CUTOVER (password-bridge): delete with auth/passwordBridge.js ---
-            if (!otp) {
-                const { isPasswordBridgeEnabled, tryBridgeLocalPasswordToDirectus } =
-                    await import('../passwordBridge.js');
-                if (isPasswordBridgeEnabled()) {
-                    const bridged = await tryBridgeLocalPasswordToDirectus({
-                        email,
-                        password,
-                        clearLocalHash: false
-                    });
-                    if (bridged) {
-                        const retry = await directusJson('/auth/login', {
-                            method: 'POST',
-                            body: JSON.stringify(payload)
-                        });
-                        if (retry.res.ok) {
-                            const retryData = retry.body?.data || retry.body;
-                            const retryAccess = retryData?.access_token;
-                            if (retryAccess) {
-                                const localAfter = User.findByEmail(email);
-                                if (localAfter?.id) {
-                                    try {
-                                        await User.clearLocalPasswordHash(localAfter.id);
-                                    } catch (err) {
-                                        console.warn(
-                                            'CUTOVER password-bridge: post-login local hash clear failed:',
-                                            err.message || err
-                                        );
-                                    }
-                                }
-                                return sessionFromAccessToken(retryAccess, {
-                                    refreshToken: retryData?.refresh_token || null,
-                                    expires: retryData?.expires
-                                });
-                            }
-                        }
-                        console.warn(
-                            'CUTOVER password-bridge: Directus password updated but retry login failed',
-                            {
-                                status: retry.res.status,
-                                message: retry.body?.errors?.[0]?.message || retry.body?.message || null
-                            }
-                        );
-                        if (
-                            !otp
-                            && looksLikeOtpRequired(retry.body, retry.res.status)
-                        ) {
-                            throw new UnauthorizedError(
-                                msg('auth.otp_required'),
-                                'OTP_REQUIRED',
-                                'auth.otp_required'
-                            );
-                        }
-                    }
-                }
-            }
-            // --- end CUTOVER (password-bridge) ---
-
             return null;
         }
 
