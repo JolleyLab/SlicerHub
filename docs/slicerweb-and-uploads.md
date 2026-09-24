@@ -9,6 +9,9 @@
   ([lassoan/slicerweb-app](https://github.com/lassoan/slicerweb-app), which keeps a single commit, so the pin can
   disappear when upstream republishes). `scripts/fetch-slicerweb.sh` / `.ps1` download that commit into
   `data/slicerweb/` (git-ignored, about 640 MB). To upgrade, put a new SHA in `slicerweb/VERSION` and re-run the script.
+  If `data/` is not writable by you (Docker creates it root-owned on some hosts), set `SLICERWEB_DIR` to another
+  folder, both when running the script and in `.env` so compose mounts it (`SLICERWEB_DIR=$HOME/slicerweb-site`).
+  After a first fetch, run `docker compose up -d` (not just `restart`): the nginx mount only changes on recreate.
 - **Serving.** nginx serves `data/slicerweb/` at `/slicerweb/` from the same origin as the app, which is what lets
   the cases page reach the frame's `slicerWeb` bridge. The `.mjs` MIME type is declared in `nginx/default.conf`
   (the stock `mime.types` lacks it, and browsers refuse ES modules served as octet-stream).
