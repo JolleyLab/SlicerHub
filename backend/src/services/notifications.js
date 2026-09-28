@@ -23,7 +23,7 @@ export function createNotification({
         String(title || '').slice(0, 240),
         body != null ? String(body).slice(0, 2000) : null,
         caseId != null ? String(caseId) : null,
-        inviteId != null ? Number(inviteId) : null
+        inviteId != null ? String(inviteId) : null
     );
     return getNotificationById(result.lastInsertRowid);
 }
@@ -110,8 +110,8 @@ export function deleteNotificationForUser(userId, notificationId) {
 
 export function deleteNotificationsForInviteIds(inviteIds) {
     const ids = (Array.isArray(inviteIds) ? inviteIds : [inviteIds])
-        .map((id) => Number(id))
-        .filter((id) => Number.isInteger(id) && id > 0);
+        .map((id) => String(id ?? '').trim())
+        .filter(Boolean);
     if (!ids.length) return 0;
     const placeholders = ids.map(() => '?').join(',');
     const result = db.prepare(`

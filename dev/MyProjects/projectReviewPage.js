@@ -47,7 +47,7 @@ import {
     setViewerIdleMs,
     isViewerUserActive
 } from '../utils/viewerActivity.js';
-import { sendTrameContainerHeartbeat } from '../utils/trameHeartbeat.js';
+import { sendViewerHeartbeat } from '../utils/viewerHeartbeat.js';
 import { stopViewerSession } from '../utils/viewerSessionLifecycle.js';
 import {
     VIEWER_KINDS,
@@ -563,7 +563,7 @@ export class ProjectReviewPage extends LitElement {
                 background: #090b14;
             }
 
-            .trame-iframe {
+            .viewer-iframe {
                 flex: 1;
                 border: none;
                 background: var(--color-surface, var(--color-background));
@@ -571,8 +571,8 @@ export class ProjectReviewPage extends LitElement {
                 height: 100%;
             }
 
-            .iframe-overlay:fullscreen .trame-iframe,
-            .iframe-overlay.is-fullscreen .trame-iframe {
+            .iframe-overlay:fullscreen .viewer-iframe,
+            .iframe-overlay.is-fullscreen .viewer-iframe {
                 background: #090b14;
             }
 
@@ -1395,7 +1395,7 @@ export class ProjectReviewPage extends LitElement {
         this.toastTimeout = null;
         this._lastErrorAlertKey = '';
         this._errorAlertKind = null;
-        this._trameHeartbeatInterval = null;
+        this._viewerHeartbeatInterval = null;
         this._viewerSessionToken = null;
         this._viewerSeatId = null;
         this._gpuPollInterval = null;
@@ -1625,13 +1625,13 @@ export class ProjectReviewPage extends LitElement {
         }));
     }
 
-    /** @returns {boolean} true if leave is allowed (used by trame-app + beforeunload) */
+    /** @returns {boolean} true if leave is allowed (used by slicer-app + beforeunload) */
     confirmLeaveMigrate() {
         if (!this.projectCaseMigrating) return true;
         return window.confirm(t('projects.migrateToCaseLeaveWarning'));
     }
 
-    /** Alias used by trame-app leave guards. */
+    /** Alias used by slicer-app leave guards. */
     confirmLeave() {
         return this.confirmLeaveMigrate();
     }
@@ -3336,7 +3336,7 @@ export class ProjectReviewPage extends LitElement {
         }
 
         try {
-            const iframe = this.renderRoot?.querySelector('.trame-iframe');
+            const iframe = this.renderRoot?.querySelector('.viewer-iframe');
             const iframeDoc = iframe?.contentWindow?.document;
             if (!iframeDoc) return;
 
@@ -3389,7 +3389,7 @@ export class ProjectReviewPage extends LitElement {
             projectId: this.projectId
         });
         const ping = () => {
-            sendTrameContainerHeartbeat({
+            sendViewerHeartbeat({
                 sessionToken: this._viewerSessionToken,
                 projectId: this.projectId,
                 heartbeatUrl,
@@ -3403,7 +3403,7 @@ export class ProjectReviewPage extends LitElement {
         };
         ping();
         // Full Slicer: shorter cadence — Edge Sleeping Tabs can pause timers for minutes.
-        this._trameHeartbeatInterval = setInterval(ping, kind === VIEWER_KINDS.SLICER_GUI ? 20000 : 60000);
+        this._viewerHeartbeatInterval = setInterval(ping, kind === VIEWER_KINDS.SLICER_GUI ? 20000 : 60000);
         this._onViewerWakeHeartbeat = () => {
             if (document.hidden || !this.showIframe) return;
             markViewerActivity();
@@ -3469,9 +3469,9 @@ export class ProjectReviewPage extends LitElement {
     }
 
     stopTrameHeartbeat() {
-        if (this._trameHeartbeatInterval) {
-            clearInterval(this._trameHeartbeatInterval);
-            this._trameHeartbeatInterval = null;
+        if (this._viewerHeartbeatInterval) {
+            clearInterval(this._viewerHeartbeatInterval);
+            this._viewerHeartbeatInterval = null;
         }
         if (this._onViewerWakeHeartbeat) {
             document.removeEventListener('visibilitychange', this._onViewerWakeHeartbeat);
@@ -4588,7 +4588,7 @@ export class ProjectReviewPage extends LitElement {
                     <div class="iframe-container">
                         ${this.iframeUrl !== 'about:blank' ? html`
                             <iframe
-                                class="trame-iframe"
+                                class="viewer-iframe"
                                 src="${this.iframeUrl}"
                                 allow="clipboard-read; clipboard-write; cross-origin-isolated; fullscreen"
                                 allowfullscreen

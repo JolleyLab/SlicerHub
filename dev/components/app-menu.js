@@ -5,7 +5,8 @@ export const DEFAULT_MENU_KEY = 'cases';
 
 /**
  * Build nav items from server feature flags.
- * Cases is shown first when enabled; My Files remains as secondary access.
+ * Cases is shown first when enabled; My Files remains as secondary access. Home is reached from the
+ * header link, so it has no entry here.
  * My Projects is hidden while MY_PROJECTS_VISIBLE is false (see app-views.js).
  * Labels are resolved via t() so locale packs take effect at call time.
  */

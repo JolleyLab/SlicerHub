@@ -25,14 +25,11 @@ import './MyProjects/myProjectsEmptyState.js';
 import './MyProjects/projectReviewPage.js';
 import './user-settings-page.js';
 import './directus-cases-page.js';
-import { resolveTramePageUrl } from './utils/trameViewerUrl.js';
+import './home-page.js';
 import { buildSlicerGuiLoaderUrl, VIEWER_KINDS } from './utils/viewerLaunch.js';
 import {
-  installViewerActivityListeners,
-  markViewerActivity,
-  resetViewerActivity
+  installViewerActivityListeners
 } from './utils/viewerActivity.js';
-import { sendTrameContainerHeartbeat } from './utils/trameHeartbeat.js';
 import {
   hydrateUserPreferencesFromUser,
   clearCachedUserPreferences
@@ -61,7 +58,7 @@ function userDisplayName(user) {
   return t('common.guest');
 }
 
-export class TrameApp extends LitElement {
+export class SlicerApp extends LitElement {
   static get styles() {
     return css`
       :host {
@@ -104,33 +101,11 @@ export class TrameApp extends LitElement {
         background: #d32f2f;
       }
 
-      .controls {
-        border: solid 1px gray;
-        padding: 16px;
-        margin-bottom: 10px;
-      }
-
-      .spinner {
-        display: inline-block;
-        width: 16px;
-        height: 16px;
-        border: 3px solid rgba(0, 0, 0, 0.2);
-        border-top-color: rgba(0, 0, 0, 0.8);
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-        vertical-align: middle;
-        margin-right: 8px;
-      }
-
       iframe {
         width: 100%;
         height: calc(100vh - 200px);
         border: 1px solid #ccc;
         margin-top: 10px;
-      }
-
-      @keyframes spin {
-        to { transform: rotate(360deg); }
       }
 
       .auth-container {
@@ -235,12 +210,6 @@ export class TrameApp extends LitElement {
 
   static get properties() {
     return {
-      name: { type: String },
-      output: { type: String },
-      loading: { type: Boolean },
-      useIframe: { type: Boolean },
-      showIframe: { type: Boolean },
-      iframeUrl: { type: String },
       // Auth properties
       isAuthenticated: { type: Boolean },
       user: { type: Object },
@@ -266,12 +235,6 @@ export class TrameApp extends LitElement {
 
   constructor() {
     super();
-    this.name = "World";
-    this.output = "";
-    this.loading = false;
-    this.useIframe = false;
-    this.showIframe = false;
-    this.iframeUrl = "";
 
     // Auth state
     this.isAuthenticated = false;
@@ -459,7 +422,6 @@ export class TrameApp extends LitElement {
         const data = await res.json();
         this.user = data.user;
         this.isAuthenticated = true;
-        this.name = this.user.username;
         this.applyIdentityGate(data.identity);
         await hydrateUserPreferencesFromUser(this.user);
         this.startInactivityTimer();
@@ -472,6 +434,21 @@ export class TrameApp extends LitElement {
     } catch (err) {
       // No valid session - stay logged out
       console.log('No existing session');
+    }
+  }
+
+  /**
+   * The login response carries the local account only; /api/auth/me adds the Directus profile
+   * (first and last name). Without this, the header shows the email until the next page load.
+   */
+  async refreshUserProfile() {
+    try {
+      const res = await fetch(`${API_URL}/api/auth/me`, { credentials: 'include' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.user) this.user = { ...(this.user || {}), ...data.user };
+    } catch (_) {
+      // keep the login payload; the profile fills in on the next load
     }
   }
 
@@ -496,18 +473,21 @@ export class TrameApp extends LitElement {
     const { user, identity } = e.detail || {};
     this.user = user;
     this.isAuthenticated = true;
-    this.name = user.username;
     this.applyIdentityGate(identity);
+    // Signing in always starts on Home, whatever view was open before.
+    this.selectedProjectId = null;
+    this.currentView = APP_VIEWS.HOME;
+    this.syncViewToUrl();
     this._stopAuthThemeWatch();
     hydrateUserPreferencesFromUser(user);
     this.startInactivityTimer();
+    this.refreshUserProfile();
   }
 
   handleRegisterSuccess(e) {
     const { user } = e.detail;
     this.user = user;
     this.isAuthenticated = true;
-    this.name = user.username;
     this._stopAuthThemeWatch();
     hydrateUserPreferencesFromUser(user);
     this.startInactivityTimer();
@@ -526,7 +506,6 @@ export class TrameApp extends LitElement {
     if (user) {
       this.user = user;
       this.isAuthenticated = true;
-      this.name = user.username;
       this._stopAuthThemeWatch();
       hydrateUserPreferencesFromUser(user);
       this.startInactivityTimer();
@@ -567,7 +546,6 @@ export class TrameApp extends LitElement {
     const { user } = e.detail || {};
     if (user) {
       this.user = { ...(this.user || {}), ...user, mustChangePassword: false };
-      this.name = userDisplayName(this.user);
     } else if (this.user) {
       this.user = { ...this.user, mustChangePassword: false };
     }
@@ -577,7 +555,6 @@ export class TrameApp extends LitElement {
     const { user } = e.detail || {};
     if (!user) return;
     this.user = { ...(this.user || {}), ...user };
-    this.name = userDisplayName(this.user);
   }
 
   handleShowRegister() {
@@ -608,6 +585,12 @@ export class TrameApp extends LitElement {
   handleProjectsMenuSelection(e) {
     if (!this.confirmLeaveCurrentView()) return;
     const selectedKey = e.detail?.selectedKey;
+    if (selectedKey === 'home') {
+      this.selectedProjectId = null;
+      this.currentView = APP_VIEWS.HOME;
+      this.syncViewToUrl();
+      return;
+    }
     if (selectedKey === 'my-files') {
       this.selectedProjectId = null;
       this.currentView = APP_VIEWS.FILES;
@@ -995,7 +978,6 @@ export class TrameApp extends LitElement {
       window.removeEventListener('popstate', this._onPopState);
     }
     this._stopAuthThemeWatch();
-    this.stopTrameHeartbeat();
     this.stopSharedReplayPolling();
     super.disconnectedCallback();
   }
@@ -1015,34 +997,9 @@ export class TrameApp extends LitElement {
     }
   }
 
-  async handleViewerInactivityTimeout() {
-    if (!this.showIframe) return;
-    this.output = t('gpu.viewerClosedInactivity');
-    await this.closeIframe();
-  }
-
-  startTrameHeartbeat() {
-    this.stopTrameHeartbeat();
-    const ping = () => {
-      sendTrameContainerHeartbeat({
-        onIdleTimeout: () => this.handleViewerInactivityTimeout()
-      }).catch(() => {});
-    };
-    ping();
-    this._trameHeartbeatInterval = setInterval(ping, 60000);
-  }
-
-  stopTrameHeartbeat() {
-    if (this._trameHeartbeatInterval) {
-      clearInterval(this._trameHeartbeatInterval);
-      this._trameHeartbeatInterval = null;
-    }
-  }
-
   async cleanupContainer() {
     if (!this.isAuthenticated) return;
 
-    this.stopTrameHeartbeat();
     try {
       await fetch(`${API_URL}/api/containers/stop`, {
         method: "POST",
@@ -1152,35 +1109,14 @@ export class TrameApp extends LitElement {
 
     // Show main app if authenticated
     return html`
-      <!-- Old Trame controls - commented out but kept for reference
-      <div class="controls">
-        <h1>Hello, ${this.name}!</h1>
-        
-        <div>
-          <label>
-            <input type="checkbox" ?checked=${this.useIframe} @change=${this.toggleMode}>
-            Open in iframe (embedded)
-          </label>
-        </div>
-        
-        <button @click=${this.startTrame} ?disabled=${this.loading}>
-          ${this.loading
-        ? html`<span class="spinner"></span>Starting Trame…`
-        : 'Start Trame'}
-        </button>
-        
-        ${this.showIframe ? html`
-          <button @click=${this.closeIframe}>Close Trame</button>
-        ` : ''}
-
-        <pre>${this.output}</pre>
-      </div>
-      
-      ${this.showIframe ? html`
-        <iframe src="${this.iframeUrl}"></iframe>
+      ${this.currentView === APP_VIEWS.HOME ? html`
+        <home-page
+          .username=${userDisplayName(this.user)}
+          @menu-selection-change=${this.handleProjectsMenuSelection}
+          @settings-request=${this.openSettingsFlow}
+          @logout-request=${this.handleLogout}
+        ></home-page>
       ` : ''}
-      -->
-
       ${this.currentView === APP_VIEWS.FILES ? html`
         <file-manager
           .username=${userDisplayName(this.user)}
@@ -1337,128 +1273,6 @@ export class TrameApp extends LitElement {
     `;
   }
 
-  toggleMode(e) {
-    this.useIframe = e.target.checked;
-  }
-
-  startTrame() {
-    if (this.useIframe) {
-      this._startTrameAsync(null);
-    } else {
-      const newWindow = window.open("", "_blank");
-      if (!newWindow) {
-        this.output = "Popup blocked! Please allow popups for this site.";
-        return;
-      }
-      newWindow.document.write("<h2>Starting Trame… please wait</h2>");
-      this._startTrameAsync(newWindow);
-    }
-  }
-
-  async closeIframe() {
-    this.stopTrameHeartbeat();
-    resetViewerActivity();
-    this.showIframe = false;
-    this.iframeUrl = "";
-
-    // Stop the container
-    try {
-      await fetch(`${API_URL}/api/containers/stop`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        credentials: 'include'
-      });
-      this.output = "Trame container stopped";
-    } catch (err) {
-      console.error("Error stopping container:", err);
-    }
-  }
-
-  monitorWindowClosed(windowRef) {
-    const checkInterval = setInterval(() => {
-      if (windowRef.closed) {
-        clearInterval(checkInterval);
-        console.log("Trame window closed, cleaning up container...");
-        this.cleanupContainer();
-        this.output = "Trame window closed, container stopped";
-      }
-    }, 1000); // Check every second
-  }
-
-  async _startTrameAsync(newWindow) {
-    this.loading = true;
-    try {
-      // Clean up any existing container first
-      await this.cleanupContainer();
-
-      const res = await fetch(`${API_URL}/api/containers/start`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        credentials: 'include'
-      });
-
-      if (!res.ok) {
-        const errorText = await res.text();
-        throw new Error(`Failed to start job: ${res.status} - ${errorText}`);
-      }
-
-      const data = await res.json();
-      const url = resolveTramePageUrl(data.frontendUrl);
-
-      if (this.useIframe) {
-        // Wait a moment for Trame to fully start, then show iframe
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        this.iframeUrl = url;
-        markViewerActivity();
-        this.showIframe = true;
-        this.startTrameHeartbeat();
-        this.output = "Trame app loaded in iframe";
-      } else {
-        // Wait for Trame to start, then redirect new window
-        newWindow.document.write("<h2>Starting Trame, please wait a few seconds...</h2>");
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        newWindow.location.href = url;
-        this.output = "Trame app opened in new tab";
-
-        // Monitor the new window and cleanup when it closes
-        this.monitorWindowClosed(newWindow);
-      }
-    } catch (err) {
-      console.error(err);
-      this.output = err.message;
-      if (newWindow) {
-        newWindow.document.write(`<p style="color:red;">${err.message}</p>`);
-      }
-    } finally {
-      this.loading = false;
-    }
-  }
-
-  async pollUrl(url, timeout = 60000, interval = 1000) {
-    const start = Date.now();
-    let attempts = 0;
-    while (Date.now() - start < timeout) {
-      try {
-        attempts++;
-        console.log(`Polling attempt ${attempts}: ${url}`);
-        const r = await fetch(url, { mode: 'cors' });
-        console.log(`Poll response: ${r.status} ${r.statusText}`);
-        if (r.ok || r.status === 200) {
-          console.log('Polling successful!');
-          return;
-        }
-      } catch (e) {
-        console.log(`Poll error: ${e.message}`);
-      }
-      await new Promise(r => setTimeout(r, interval));
-    }
-    throw new Error("Trame app did not become ready in time");
-  }
-
   async launchSharedViewer() {
     if (!this.shareToken) return;
     this.shareLoading = true;
@@ -1610,4 +1424,4 @@ export class TrameApp extends LitElement {
   }
 }
 
-customElements.define('trame-app', TrameApp);
+customElements.define('slicer-app', SlicerApp);

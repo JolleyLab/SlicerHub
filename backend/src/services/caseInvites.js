@@ -4,17 +4,24 @@
  * - Collaborator invite → pending until a case admin approves
  */
 
-import db from '../db/database.js';
 import { findAppUserIdByDirectusExternalId } from '../auth/identityStore.js';
 import { createNotification } from './notifications.js';
+import { lookupDirectusUserByEmail, findDirectusUserByEmail } from './directus.js';
 import {
     CASE_COLLAB_ROLES,
-    lookupDirectusUserByEmail,
-    findDirectusUserByEmail,
+    requestedCaseRole,
     addCaseCollaborator,
     getCaseCollabActorContext
-} from './directus.js';
-import { inviteNewEmailToCase } from './caseSignupInvites.js';
+} from './caseCollaborators.js';
+import {
+    INVITE_STATUS,
+    getInvite,
+    createInvite,
+    updateInvite,
+    findOpenExistingUserInvite,
+    listOpenForCase
+} from './caseInviteStore.js';
+import { inviteNewEmailToCase, expireStaleSignupInvites, withInviteUrl } from './caseSignupInvites.js';
 import {
     ValidationError,
     ForbiddenError,
@@ -24,81 +31,16 @@ import {
 import { msg } from '../i18n/index.js';
 
 function normalizeRole(role, { allowAdmin }) {
-    const raw = String(role || '').trim().toLowerCase();
-    if (raw === CASE_COLLAB_ROLES.ADMIN || raw === 'admin') {
-        return allowAdmin ? CASE_COLLAB_ROLES.ADMIN : CASE_COLLAB_ROLES.COLLABORATOR;
-    }
-    if (raw === CASE_COLLAB_ROLES.READ_ONLY || raw === 'read_only' || raw === 'readonly' || raw === 'observer') {
-        return CASE_COLLAB_ROLES.READ_ONLY;
-    }
-    return CASE_COLLAB_ROLES.COLLABORATOR;
+    const requested = requestedCaseRole(role);
+    return requested === CASE_COLLAB_ROLES.ADMIN && !allowAdmin ? CASE_COLLAB_ROLES.COLLABORATOR : requested;
 }
 
-function mapInviteRow(row) {
-    if (!row) return null;
-    return {
-        id: row.id,
-        kind: 'existing',
-        caseId: row.case_id,
-        caseTitle: row.case_title || null,
-        inviteeDirectusUserId: row.invitee_directus_user_id,
-        inviteeEmail: row.invitee_email,
-        proposedRole: row.proposed_role,
-        inviterDirectusUserId: row.inviter_directus_user_id,
-        status: row.status,
-        createdAt: row.created_at,
-        resolvedAt: row.resolved_at || null
-    };
-}
-
-export function listPendingInvitesForCase(caseId) {
-    const caseKey = String(caseId || '').trim();
-    if (!caseKey) return [];
-    return db.prepare(`
-        SELECT * FROM case_invites
-        WHERE case_id = ? AND status = 'pending'
-        ORDER BY created_at DESC
-    `).all(caseKey).map(mapInviteRow);
-}
-
-export function getInviteById(inviteId) {
-    const row = db.prepare('SELECT * FROM case_invites WHERE id = ?').get(Number(inviteId));
-    return mapInviteRow(row);
-}
-
-function insertPendingInvite({
-    caseId,
-    caseTitle,
-    inviteeDirectusUserId,
-    inviteeEmail,
-    proposedRole,
-    inviterDirectusUserId,
-    inviterAppUserId
-}) {
-    const existing = db.prepare(`
-        SELECT id FROM case_invites
-        WHERE case_id = ? AND invitee_directus_user_id = ? AND status = 'pending'
-        LIMIT 1
-    `).get(String(caseId), String(inviteeDirectusUserId));
-    if (existing) {
-        throw new ConflictError(msg('case.invite_pending_exists'), null, 'case.invite_pending_exists');
-    }
-
-    const result = db.prepare(`
-        INSERT INTO case_invites (
-            case_id, case_title, invitee_directus_user_id, invitee_email,
-            proposed_role, inviter_directus_user_id, inviter_app_user_id, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
-    `).run(
-        String(caseId),
-        caseTitle || null,
-        String(inviteeDirectusUserId),
-        String(inviteeEmail || '').toLowerCase(),
-        proposedRole,
-        String(inviterDirectusUserId),
-        inviterAppUserId != null ? Number(inviterAppUserId) : null
-    );
-    return getInviteById(result.lastInsertRowid);
+/** Invites still waiting on a case, both kinds; signup invites whose link ran out are expired first. */
+export async function listOpenInvitesForCase(caseId) {
+    const key = String(caseId || '').trim();
+    if (!key) return [];
+    await expireStaleSignupInvites(key);
+    return (await listOpenForCase(key)).map((invite) => withInviteUrl(invite));
 }
 
 function notifyAppUserForDirectusId(directusUserId, payload) {
@@ -117,7 +59,6 @@ function notifyAppUserForDirectusId(directusUserId, payload) {
 
 function notifyCaseAdmins(ctx, payload) {
     const adminIds = new Set();
-    if (ctx.ownerId) adminIds.add(String(ctx.ownerId));
     for (const member of ctx.existingList || []) {
         if (member.role === CASE_COLLAB_ROLES.ADMIN && member.id) {
             adminIds.add(String(member.id));
@@ -140,8 +81,7 @@ export async function inviteExistingUserToCase({
     email,
     role,
     accessToken,
-    actorDirectusUserId,
-    actorAppUserId = null
+    actorDirectusUserId
 }) {
     const normalized = String(email || '').trim().toLowerCase();
     // Existence check via service token — do not use NotFound as control flow for the client.
@@ -152,8 +92,7 @@ export async function inviteExistingUserToCase({
             email: normalized,
             role,
             accessToken,
-            actorDirectusUserId,
-            actorAppUserId
+            actorDirectusUserId
         });
     }
 
@@ -185,9 +124,6 @@ export async function inviteExistingUserToCase({
     }
 
     const inviteeId = String(person.id);
-    if (inviteeId === String(ctx.ownerId)) {
-        throw new ValidationError(msg('case.owner_already_member'), null, 'case.owner_already_member');
-    }
     if (ctx.existingList.some((c) => String(c.id) === inviteeId)) {
         throw new ConflictError(msg('case.member_already_exists'), null, 'case.member_already_exists');
     }
@@ -200,6 +136,24 @@ export async function inviteExistingUserToCase({
             accessToken,
             actorDirectusUserId
         });
+        // Keep a record of the invite, already approved, so it is traceable and shows in activity. The
+        // person is on the case either way, so a failure here is logged, not raised.
+        let record = null;
+        try {
+            record = await createInvite({
+                kind: 'existing',
+                status: INVITE_STATUS.APPROVED,
+                caseId,
+                inviteeEmail: person.email || email,
+                inviteeUserId: inviteeId,
+                proposedRole,
+                inviterId: actorDirectusUserId,
+                resolvedAt: new Date().toISOString(),
+                resolvedById: actorDirectusUserId
+            });
+        } catch (err) {
+            console.warn('Could not record the invite that was applied directly:', err.message || err);
+        }
         const notification = notifyAppUserForDirectusId(inviteeId, {
             type: 'case_invite_accepted',
             title: `Added to case: ${caseTitle}`,
@@ -209,21 +163,24 @@ export async function inviteExistingUserToCase({
         return {
             status: 'added',
             collaborators: result.collaborators,
-            invite: null,
+            invite: record,
             notification: Boolean(notification),
             invitee: person
         };
     }
 
     // Collaborator: pending admin approval
-    const invite = insertPendingInvite({
+    if (await findOpenExistingUserInvite(caseId, inviteeId)) {
+        throw new ConflictError(msg('case.invite_pending_exists'), null, 'case.invite_pending_exists');
+    }
+    const invite = await createInvite({
+        kind: 'existing',
+        status: INVITE_STATUS.PENDING_APPROVAL,
         caseId,
-        caseTitle,
-        inviteeDirectusUserId: inviteeId,
         inviteeEmail: person.email || email,
+        inviteeUserId: inviteeId,
         proposedRole,
-        inviterDirectusUserId: actorDirectusUserId,
-        inviterAppUserId: actorAppUserId
+        inviterId: actorDirectusUserId
     });
 
     notifyCaseAdmins(ctx, {
@@ -243,90 +200,65 @@ export async function inviteExistingUserToCase({
     };
 }
 
-export async function approveCaseInvite({
-    inviteId,
-    accessToken,
-    actorDirectusUserId
-}) {
-    const row = db.prepare('SELECT * FROM case_invites WHERE id = ?').get(Number(inviteId));
-    if (!row || row.status !== 'pending') {
+/** An existing-user invite that is still waiting for approval, or a not-found error. */
+async function pendingExistingInvite(inviteId) {
+    const invite = await getInvite(inviteId);
+    if (!invite || invite.kind !== 'existing' || invite.status !== INVITE_STATUS.PENDING_APPROVAL) {
         throw new NotFoundError(msg('case.invite_pending_not_found'), null, 'case.invite_pending_not_found');
     }
+    return invite;
+}
 
-    const ctx = await getCaseCollabActorContext(row.case_id, {
-        accessToken,
-        actorDirectusUserId
-    });
+export async function approveCaseInvite({ inviteId, accessToken, actorDirectusUserId }) {
+    const invite = await pendingExistingInvite(inviteId);
+
+    const ctx = await getCaseCollabActorContext(invite.caseId, { accessToken, actorDirectusUserId });
     if (!ctx.actorIsAdmin) {
         throw new ForbiddenError(msg('case.invite_approve_admin_only'), null, 'case.invite_approve_admin_only');
     }
 
-    const already = ctx.existingList.some(
-        (c) => String(c.id) === String(row.invitee_directus_user_id)
-    );
+    const already = ctx.existingList.some((c) => String(c.id) === invite.inviteeDirectusUserId);
     let collaborators = ctx.existingList;
     if (!already) {
         const result = await addCaseCollaborator(
-            row.case_id,
-            row.invitee_directus_user_id,
-            row.proposed_role,
+            invite.caseId,
+            invite.inviteeDirectusUserId,
+            invite.proposedRole,
             { accessToken, actorDirectusUserId }
         );
         collaborators = result.collaborators;
     }
 
-    db.prepare(`
-        UPDATE case_invites
-        SET status = 'approved',
-            resolved_at = CURRENT_TIMESTAMP,
-            resolved_by_directus_user_id = ?
-        WHERE id = ?
-    `).run(String(actorDirectusUserId), row.id);
+    const resolved = await updateInvite(invite.id, {
+        status: INVITE_STATUS.APPROVED,
+        resolved_at: new Date().toISOString(),
+        resolved_by: String(actorDirectusUserId)
+    });
 
-    const caseTitle = row.case_title || 'a case';
-    notifyAppUserForDirectusId(row.invitee_directus_user_id, {
+    const caseTitle = invite.caseTitle || 'a case';
+    notifyAppUserForDirectusId(invite.inviteeDirectusUserId, {
         type: 'case_invite_accepted',
         title: `Added to case: ${caseTitle}`,
-        body: `Your invite to “${caseTitle}” was approved (${String(row.proposed_role).replace('_', ' ')}).`,
-        caseId: String(row.case_id),
-        inviteId: row.id
+        body: `Your invite to “${caseTitle}” was approved (${invite.proposedRole.replace('_', ' ')}).`,
+        caseId: invite.caseId,
+        inviteId: invite.id
     });
 
-    return {
-        status: 'approved',
-        invite: getInviteById(row.id),
-        collaborators
-    };
+    return { status: 'approved', invite: resolved, collaborators };
 }
 
-export async function rejectCaseInvite({
-    inviteId,
-    accessToken,
-    actorDirectusUserId
-}) {
-    const row = db.prepare('SELECT * FROM case_invites WHERE id = ?').get(Number(inviteId));
-    if (!row || row.status !== 'pending') {
-        throw new NotFoundError(msg('case.invite_pending_not_found'), null, 'case.invite_pending_not_found');
-    }
+export async function rejectCaseInvite({ inviteId, accessToken, actorDirectusUserId }) {
+    const invite = await pendingExistingInvite(inviteId);
 
-    const ctx = await getCaseCollabActorContext(row.case_id, {
-        accessToken,
-        actorDirectusUserId
-    });
+    const ctx = await getCaseCollabActorContext(invite.caseId, { accessToken, actorDirectusUserId });
     if (!ctx.actorIsAdmin) {
         throw new ForbiddenError(msg('case.invite_reject_admin_only'), null, 'case.invite_reject_admin_only');
     }
 
-    db.prepare(`
-        UPDATE case_invites
-        SET status = 'rejected',
-            resolved_at = CURRENT_TIMESTAMP,
-            resolved_by_directus_user_id = ?
-        WHERE id = ?
-    `).run(String(actorDirectusUserId), row.id);
-
-    return {
-        status: 'rejected',
-        invite: getInviteById(row.id)
-    };
+    const resolved = await updateInvite(invite.id, {
+        status: INVITE_STATUS.REJECTED,
+        resolved_at: new Date().toISOString(),
+        resolved_by: String(actorDirectusUserId)
+    });
+    return { status: 'rejected', invite: resolved };
 }

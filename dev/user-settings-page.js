@@ -4,6 +4,7 @@ import { t } from './i18n/index.js';
 import './components/page-layout-template.js';
 import './components/theme-toggle.js';
 import './components/local-slicer-viewer-options.js';
+import './components/home-layout-settings.js';
 import './components/page-content-message.js';
 import {
     getCachedUserPreferences,
@@ -235,6 +236,7 @@ export class UserSettingsPage extends LitElement {
             user: { type: Object },
             theme: { type: String },
             useFullSlicer: { type: Boolean },
+            homeLayout: { type: Object },
             useSimplifiedViewer: { type: Boolean },
             saveState: { type: String },
             saveStatusMessage: { type: String },
@@ -272,6 +274,7 @@ export class UserSettingsPage extends LitElement {
         const prefs = getCachedUserPreferences();
         this.theme = prefs.theme;
         this.useFullSlicer = prefs.useFullSlicer;
+        this.homeLayout = prefs.homeLayout;
         this.useSimplifiedViewer = prefs.useSimplifiedViewer;
     }
 
@@ -324,7 +327,7 @@ export class UserSettingsPage extends LitElement {
     }
 
     /**
-     * Used by trame-app before leaving Settings (menu, back, logout).
+     * Used by slicer-app before leaving Settings (menu, back, logout).
      * @returns {boolean} true if navigation may proceed
      */
     confirmLeave() {
@@ -410,6 +413,7 @@ export class UserSettingsPage extends LitElement {
             }
             this.theme = next.theme;
             this.useFullSlicer = next.useFullSlicer;
+            this.homeLayout = next.homeLayout;
             this.useSimplifiedViewer = next.useSimplifiedViewer;
             this.saveState = 'saved';
             this.saveStatusMessage = t('settings.saved');
@@ -438,6 +442,16 @@ export class UserSettingsPage extends LitElement {
             theme,
             useFullSlicer: this.useFullSlicer,
             useSimplifiedViewer: this.useSimplifiedViewer
+        });
+    }
+
+    handleHomeLayoutChange(event) {
+        this.homeLayout = event?.detail?.layout;
+        this.queuePersist({
+            theme: this.theme,
+            useFullSlicer: this.useFullSlicer,
+            useSimplifiedViewer: this.useSimplifiedViewer,
+            homeLayout: this.homeLayout
         });
     }
 
@@ -575,6 +589,15 @@ export class UserSettingsPage extends LitElement {
                         <div class="autosave-status" data-state=${this.saveState} aria-live="polite">
                             ${this.saveStatusMessage}
                         </div>
+                    </section>
+
+                    <section class="settings-section">
+                        <h2 class="section-title">${t('homeLayout.title')}</h2>
+                        <p class="section-description">${t('homeLayout.description')}</p>
+                        <home-layout-settings
+                            .layout=${this.homeLayout}
+                            @layout-change=${(e) => this.handleHomeLayoutChange(e)}
+                        ></home-layout-settings>
                     </section>
 
                     <section class="settings-section">

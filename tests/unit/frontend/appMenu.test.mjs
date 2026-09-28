@@ -18,3 +18,9 @@ test('every My Projects view is covered by the redirect guard', () => {
         [APP_VIEWS.PROJECTS, APP_VIEWS.CREATE_PROJECT, APP_VIEWS.PROJECT_REVIEW].sort()
     );
 });
+
+test('Home is the default view and is reached from the header, not the side menu', async () => {
+    const { DEFAULT_APP_VIEW } = await import('../../../dev/components/app-views.js');
+    assert.equal(DEFAULT_APP_VIEW, APP_VIEWS.HOME);
+    assert.ok(!keys({ directusCasesEnabled: true }).includes('home'));
+});

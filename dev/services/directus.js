@@ -301,6 +301,34 @@ export async function listDirectusCaseInvites(caseId) {
     return data.invites || [];
 }
 
+/** Invites across all cases that the signed-in user can approve or reject. */
+export async function listInvitesAwaitingMyApproval() {
+    const response = await fetch(`${API_URL}/api/directus/invites/pending-approval`, {
+        method: 'GET',
+        credentials: 'include',
+        cache: 'no-store'
+    });
+    const data = await parseJson(response);
+    if (!response.ok) {
+        throwApiError(response, data, t('errors.loadInvitesFailed'));
+    }
+    return data.invites || [];
+}
+
+/** Recent invite activity (sent, approved) on the user's cases, newest first. */
+export async function listRecentActivity() {
+    const response = await fetch(`${API_URL}/api/directus/activity/recent`, {
+        method: 'GET',
+        credentials: 'include',
+        cache: 'no-store'
+    });
+    const data = await parseJson(response);
+    if (!response.ok) {
+        throwApiError(response, data, t('errors.loadActivityFailed'));
+    }
+    return data.events || [];
+}
+
 export async function approveDirectusCaseInvite(caseId, inviteId, { kind } = {}) {
     const response = await fetch(
         `${API_URL}/api/directus/cases/${encodeURIComponent(caseId)}/invites/${encodeURIComponent(inviteId)}/approve`,
@@ -439,38 +467,3 @@ export async function checkDirectusAttachmentDownload(caseId, attachmentId) {
     }
 }
 
-export async function directusFullSlicerHeartbeat(sessionToken, { seatId } = {}) {
-    const body = { sessionToken };
-    if (seatId != null && seatId !== '') {
-        body.seatId = Number(seatId);
-    }
-    const response = await fetch(`${API_URL}/api/directus/full-slicer-heartbeat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(body)
-    });
-    const data = await parseJson(response);
-    if (!response.ok) {
-        throwApiError(response, data, t('errors.viewerSessionEnded'));
-    }
-    return data;
-}
-
-export async function stopDirectusFullSlicer(sessionToken, { mode = 'soft', seatId } = {}) {
-    const body = { sessionToken, mode };
-    if (seatId != null && seatId !== '') {
-        body.seatId = Number(seatId);
-    }
-    const response = await fetch(`${API_URL}/api/directus/full-slicer-stop`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(body)
-    });
-    const data = await parseJson(response);
-    if (!response.ok) {
-        throwApiError(response, data, t('errors.stopViewerFailed'));
-    }
-    return data;
-}

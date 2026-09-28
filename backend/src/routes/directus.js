@@ -10,7 +10,6 @@ import {
     listCases,
     isDirectusUrlConfigured,
     getCaseAttachment,
-    getCaseCollabActorContext,
     ensureDirectusAssetCached,
     findCachedDirectusAsset,
     fetchDirectusAsset,
@@ -21,20 +20,22 @@ import {
     createCaseAttachment,
     deleteCaseAttachment,
     fetchDirectusViewer,
-    lookupDirectusUserByEmail,
-    setCaseCollaborators
+    lookupDirectusUserByEmail
 } from '../services/directus.js';
+import { getCaseCollabActorContext, setCaseCollaborators } from '../services/caseCollaborators.js';
 import { attachUploadedFileToCase } from '../services/attachUploadedFile.js';
 import { issueUploadToken } from '../services/uploadTokens.js';
+import { listInvitesAwaitingApproval } from '../services/pendingApprovals.js';
+import { listRecentActivity } from '../services/recentActivity.js';
 import { createAttachmentDownloadHandler } from '../services/attachmentDownload.js';
 import {
     inviteExistingUserToCase,
-    listPendingInvitesForCase,
+    listOpenInvitesForCase,
     approveCaseInvite,
     rejectCaseInvite
 } from '../services/caseInvites.js';
+import { getInvite } from '../services/caseInviteStore.js';
 import {
-    listSignupInvitesForCase,
     approveSignupInvite,
     rejectSignupInvite,
     getSignupInvitePreview,
@@ -221,8 +222,7 @@ export default function directusRoutes(app) {
             email,
             role: req.body?.role || 'collaborator',
             accessToken: req.directusAccessToken,
-            actorDirectusUserId: String(actorDirectusUserId),
-            actorAppUserId: req.user?.id
+            actorDirectusUserId: String(actorDirectusUserId)
         });
 
         const statusCode = (result.status === 'pending' || result.status === 'pending_approval')
@@ -237,135 +237,86 @@ export default function directusRoutes(app) {
         });
     }));
 
-    /**
-     * Pending invites for a case (existing users + signup emails).
-     * Local SQLite only — do not require a live Directus access token
-     * (force-refresh 403s were noisy/spurious when dx_link refresh expired).
-     */
-    app.get(
-        '/api/directus/cases/:caseId/invites',
-        authenticateToken,
-        requireDirectusLink,
-        asyncHandler(async (req, res) => {
-            const caseId = String(req.params.caseId || '').trim();
-            if (!caseId) throw new ValidationError(msg('case.id_required'), null, 'case.id_required');
-            const invites = [
-                ...listPendingInvitesForCase(caseId),
-                ...listSignupInvitesForCase(caseId)
-            ].sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
-            res.set('Cache-Control', 'no-store');
-            res.json({ invites });
-        })
-    );
-
-    app.post('/api/directus/cases/:caseId/invites/:inviteId/approve', ...collabAuth, asyncHandler(async (req, res) => {
+    /** Open invites for a case (existing users + signup emails). Case admins and collaborators only. */
+    app.get('/api/directus/cases/:caseId/invites', ...collabAuth, asyncHandler(async (req, res) => {
+        const caseId = String(req.params.caseId || '').trim();
+        if (!caseId) throw new ValidationError(msg('case.id_required'), null, 'case.id_required');
         const actorDirectusUserId = req.directusIdentity?.externalId
             || (await fetchDirectusViewer(req.directusAccessToken))?.id;
         if (!actorDirectusUserId) {
-        throw new ValidationError(msg('directus.session_confirm_failed'), null, 'directus.session_confirm_failed');
+            throw new ValidationError(msg('directus.session_confirm_failed'), null, 'directus.session_confirm_failed');
         }
-        const caseId = String(req.params.caseId || '').trim();
-        const inviteId = req.params.inviteId;
-        const kindHint = String(req.body?.kind || req.query?.kind || '').trim().toLowerCase();
-        const args = {
-            inviteId,
+        const ctx = await getCaseCollabActorContext(caseId, {
             accessToken: req.directusAccessToken,
             actorDirectusUserId: String(actorDirectusUserId)
-        };
-
-        // Resolve table by hint, then fall back — signup and existing invite ids can collide.
-        const trySignup = () => {
-            const row = db.prepare(
-                'SELECT id, case_id, status FROM case_signup_invites WHERE id = ?'
-            ).get(Number(inviteId));
-            if (
-                row
-                && String(row.case_id) === caseId
-                && row.status === 'pending_approval'
-            ) {
-                return approveSignupInvite(args);
-            }
-            return null;
-        };
-        const tryExisting = () => {
-            const row = db.prepare(
-                'SELECT id, case_id, status FROM case_invites WHERE id = ?'
-            ).get(Number(inviteId));
-            if (row && String(row.case_id) === caseId && row.status === 'pending') {
-                return approveCaseInvite(args);
-            }
-            return null;
-        };
-
-        let result = null;
-        if (kindHint === 'signup') {
-            result = await trySignup();
-            if (!result) result = await tryExisting();
-        } else {
-            result = await tryExisting();
-            if (!result) result = await trySignup();
+        });
+        if (!ctx.actorCanInvite) {
+            throw new ForbiddenError(msg('case.invite_forbidden'), null, 'case.invite_forbidden');
         }
-        if (!result) {
-            throw new NotFoundError(msg('case.invite_pending_not_found'), null, 'case.invite_pending_not_found');
-        }
-        res.json(result);
+        res.set('Cache-Control', 'no-store');
+        res.json({ invites: await listOpenInvitesForCase(caseId) });
     }));
 
-    app.post('/api/directus/cases/:caseId/invites/:inviteId/reject', ...collabAuth, asyncHandler(async (req, res) => {
+    /**
+     * Approve or reject an invite. The invite id is unique across kinds and must belong to the case in
+     * the URL; the service then checks that the caller is an admin of that case.
+     */
+    const decideInvite = (decision) => asyncHandler(async (req, res) => {
         const actorDirectusUserId = req.directusIdentity?.externalId
             || (await fetchDirectusViewer(req.directusAccessToken))?.id;
         if (!actorDirectusUserId) {
-        throw new ValidationError(msg('directus.session_confirm_failed'), null, 'directus.session_confirm_failed');
+            throw new ValidationError(msg('directus.session_confirm_failed'), null, 'directus.session_confirm_failed');
         }
         const caseId = String(req.params.caseId || '').trim();
-        const inviteId = req.params.inviteId;
-        const kindHint = String(req.body?.kind || req.query?.kind || '').trim().toLowerCase();
+        const invite = await getInvite(req.params.inviteId);
+        if (!invite || invite.caseId !== caseId) {
+            throw new NotFoundError(msg('case.invite_pending_not_found'), null, 'case.invite_pending_not_found');
+        }
         const args = {
-            inviteId,
+            inviteId: invite.id,
             accessToken: req.directusAccessToken,
             actorDirectusUserId: String(actorDirectusUserId)
         };
+        const handlers = invite.kind === 'signup'
+            ? { approve: approveSignupInvite, reject: rejectSignupInvite }
+            : { approve: approveCaseInvite, reject: rejectCaseInvite };
+        res.json(await handlers[decision](args));
+    });
 
-        const trySignup = () => {
-            const row = db.prepare(
-                'SELECT id, case_id, status FROM case_signup_invites WHERE id = ?'
-            ).get(Number(inviteId));
-            if (
-                row
-                && String(row.case_id) === caseId
-                && ['pending_approval', 'pending_signup'].includes(row.status)
-            ) {
-                return rejectSignupInvite(args);
-            }
-            return null;
-        };
-        const tryExisting = () => {
-            const row = db.prepare(
-                'SELECT id, case_id, status FROM case_invites WHERE id = ?'
-            ).get(Number(inviteId));
-            if (row && String(row.case_id) === caseId && row.status === 'pending') {
-                return rejectCaseInvite(args);
-            }
-            return null;
-        };
+    app.post('/api/directus/cases/:caseId/invites/:inviteId/approve', ...collabAuth, decideInvite('approve'));
+    app.post('/api/directus/cases/:caseId/invites/:inviteId/reject', ...collabAuth, decideInvite('reject'));
 
-        let result = null;
-        if (kindHint === 'signup') {
-            result = await trySignup();
-            if (!result) result = await tryExisting();
-        } else {
-            result = await tryExisting();
-            if (!result) result = await trySignup();
+    /** Invites, across cases, that the signed-in user can approve or reject (admin of the case). */
+    app.get('/api/directus/invites/pending-approval', ...collabAuth, asyncHandler(async (req, res) => {
+        const actorDirectusUserId = req.directusIdentity?.externalId
+            || (await fetchDirectusViewer(req.directusAccessToken))?.id;
+        if (!actorDirectusUserId) {
+            throw new ValidationError(msg('directus.session_confirm_failed'), null, 'directus.session_confirm_failed');
         }
-        if (!result) {
-            throw new NotFoundError(msg('case.invite_pending_not_found'), null, 'case.invite_pending_not_found');
-        }
-        res.json(result);
+        const invites = await listInvitesAwaitingApproval({
+            isCaseAdmin: async (caseId) => (await getCaseCollabActorContext(caseId, {
+                accessToken: req.directusAccessToken,
+                actorDirectusUserId: String(actorDirectusUserId)
+            })).actorIsAdmin
+        });
+        res.set('Cache-Control', 'no-store');
+        res.json({ invites });
+    }));
+
+    /**
+     * Recent invite activity (sent, approved) on the cases where the signed-in user is admin or
+     * collaborator. Reads through the service token and only needs to know who the user is, so it works
+     * even when their own Directus session has expired.
+     */
+    app.get('/api/directus/activity/recent', authenticateToken, requireDirectusLink, asyncHandler(async (req, res) => {
+        const userId = req.directusIdentity?.externalId;
+        res.set('Cache-Control', 'no-store');
+        res.json({ events: userId ? await listRecentActivity({ userId: String(userId) }) : [] });
     }));
 
     /** Public: preview a signup invite (no session). */
     app.get('/api/invites/signup/:token', asyncHandler(async (req, res) => {
-        const preview = getSignupInvitePreview(req.params.token);
+        const preview = await getSignupInvitePreview(req.params.token);
         res.set('Cache-Control', 'no-store');
         res.json(preview);
     }));
@@ -544,7 +495,8 @@ export default function directusRoutes(app) {
             : (typeof req.body?.text === 'string' ? req.body.text : '');
 
         const comment = await createCaseComment(caseId, text, {
-            accessToken: req.directusAccessToken
+            accessToken: req.directusAccessToken,
+            actorAppUserId: req.user.id
         });
         res.status(201).json({
             comment,

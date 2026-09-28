@@ -84,10 +84,6 @@ export async function evaluateRemoteBillingStop(projectId, { viewerActive, nowMs
     return { stopped: false, remoteActivity };
 }
 
-export function isJobActive(projectId) {
-    return activeJobs.has(projectId);
-}
-
 function clearJobIfCurrent(projectId, type, promise) {
     const current = activeJobs.get(projectId);
     if (current?.type === type && current.promise === promise) {
@@ -459,13 +455,6 @@ export function getTrameContextForProject(projectId) {
         viewerPublicBaseUrl: instance.viewerPublicBaseUrl,
         runtime: 'process'
     };
-}
-
-export async function ensureGpuViewerProxyForProject(projectId) {
-    const instance = ProjectGpu.getInstance(projectId);
-    if (ProjectGpu.isRemoteRunning(instance) && instance.viewerPublicBaseUrl) {
-        await writeGpuViewerProxy(instance.viewerPublicBaseUrl);
-    }
 }
 
 export { restoreGpuViewerProxies };

@@ -1,4 +1,5 @@
 export const APP_VIEWS = Object.freeze({
+    HOME: 'home',
     FILES: 'files',
     PROJECTS: 'projects',
     CREATE_PROJECT: 'create-project',
@@ -7,7 +8,7 @@ export const APP_VIEWS = Object.freeze({
     CASES: 'cases'
 });
 
-export const DEFAULT_APP_VIEW = APP_VIEWS.FILES;
+export const DEFAULT_APP_VIEW = APP_VIEWS.HOME;
 
 /**
  * My Projects (the legacy project list, project review and create-project pages) is hidden: Cases

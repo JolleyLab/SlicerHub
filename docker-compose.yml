@@ -159,7 +159,8 @@ services:
     volumes:
       - ./dev:/app
       - frontend-node-modules:/app/node_modules
-    command: ["sh", "-c", "test -d node_modules/lit-element || npm ci; exec npm run serve -- --host"]
+    # Re-install when a dependency added since the volume was made is missing (e.g. sortablejs)
+    command: ["sh", "-c", "test -d node_modules/lit-element && test -d node_modules/sortablejs || npm ci; exec npm run serve -- --host"]
     networks:
       - trame-net
 

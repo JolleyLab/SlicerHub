@@ -37,7 +37,6 @@ export default {
         current_password_incorrect: 'Current password is incorrect',
         password_must_differ: 'New password must differ from current password',
         password_change_not_allowed: 'Cannot change password for this account',
-        password_bridge_failed: 'Could not migrate your password to the account service. Contact an administrator.',
         first_name_required: 'First name is required',
         last_name_required: 'Last name is required',
         profile_update_empty: 'No profile fields to update',
@@ -63,17 +62,12 @@ export default {
     directus: {
         not_configured: 'Directus is not configured',
         url_not_configured: 'Directus is not configured (DIRECTUS_URL)',
-        url_not_configured_set: 'Directus is not configured. Set DIRECTUS_URL.',
         auth_not_configured: 'Directus auth is not configured (DIRECTUS_URL)',
-        service_token_not_configured: 'Directus service token is not configured. Set DIRECTUS_TOKEN for system operations.',
         user_token_required: 'Directus user access token is required',
-        user_id_missing: 'Directus user id missing from /users/me',
         account_no_email: 'Directus account has no email; cannot map to application user',
         profile_load_failed: 'Failed to load Directus user profile',
         login_missing_token: 'Directus login response missing access_token',
-        login_failed: 'Directus login failed',
         login_no_session: 'Directus login did not return a session',
-        post_create_login_failed: 'Could not sign in to Directus after account create',
         link_required: 'This account is not linked to Directus. Sign in with your Directus credentials (or complete account setup) so collaboration features can act as you.',
         session_incomplete: 'Your session is incomplete. Please sign in again.',
         session_sign_in_once: 'Sign in once with your email and password so Cases can connect to your account.',
@@ -107,10 +101,8 @@ export default {
         case_and_file_required: 'Case and file are required.',
         title_required: 'Case title is required',
         title_empty: 'title cannot be empty',
-        not_found: 'Case not found',
         invite_pending_exists: 'That person already has a pending invite on this case',
         invite_forbidden: 'Only case admins and collaborators can invite users',
-        owner_already_member: 'The case owner is already on this case',
         member_already_exists: 'That person is already on this case',
         invite_approve_admin_only: 'Only case admins can approve invites',
         invite_reject_admin_only: 'Only case admins can reject invites',
@@ -134,11 +126,13 @@ export default {
             'Could not update people on this case. Directus did not return collaborator '
             + 'junction ids. Grant clinician Read on `case.collaborators` (fields id, role, '
             + 'directus_users_id), or Read on collection `case_directus_users`.',
+        role_invalid: 'That role is not valid. Use admin, collaborator or read only.',
+        last_admin_required: 'A case needs at least one admin.',
+        people_update_failed: "Couldn't update people on this case. Please try again.",
         people_add_admin_only: 'Only case admins can add people directly',
         people_change_forbidden: 'Only case admins and collaborators can change people on this case',
         people_change_denied: "You don't have access to change people on this case.",
         people_add_needs_admin: 'Ask a case admin to approve new people on this case.',
-        collaborators_update_failed: "Couldn't update people on this case. Please try again."
     },
     upload: {
         token_invalid: 'The upload could not be verified. Refresh the page and try again.',
@@ -233,11 +227,6 @@ export default {
         billing_stopping: 'GPU billing is stopping — try again shortly',
         billing_operation_in_progress: 'GPU billing operation already in progress for this project',
         already_provisioning: 'GPU is already provisioning',
-        still_starting: 'GPU is still starting. Wait until it is ready, then try again.',
-        shutting_down: 'GPU is shutting down. Try again in a moment.',
-        billing_unavailable: 'GPU billing is unavailable. Start billing again or contact a project admin.',
-        billing_not_running_observer: 'GPU billing is not running. Ask a project admin or collaborator to start billing before opening files.',
-        billing_not_running: 'Start GPU billing on this project before opening files.'
     },
     slicer_gui: {
         session_not_found: 'Full Slicer session not found or expired',

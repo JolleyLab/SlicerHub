@@ -45,15 +45,6 @@ export function setLocaleMessages(overrides) {
     catalog = deepMerge(catalog, overrides);
 }
 
-/** Reset to built-in English (tests / brand clear). */
-export function resetLocaleMessages() {
-    catalog = en;
-}
-
-export function getLocaleCatalog() {
-    return catalog;
-}
-
 function deepMerge(base, over) {
     const out = { ...base };
     for (const [k, v] of Object.entries(over)) {

@@ -31,24 +31,6 @@ export function isViewerUserActive(now = Date.now()) {
     return (now - lastActivityAt) < idleMs;
 }
 
-export function hasViewerIdleTimedOut(now = Date.now()) {
-    if (!lastActivityAt) return false;
-    return (now - lastActivityAt) >= idleMs;
-}
-
-export function onViewerReadySignal(listener) {
-    if (typeof listener !== 'function') {
-        return () => {};
-    }
-    const handler = (event) => {
-        if (event?.data?.type === 'slicer-viewer-activity') {
-            listener();
-        }
-    };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-}
-
 export function installViewerActivityListeners() {
     if (listenersInstalled) return;
     listenersInstalled = true;

@@ -24,11 +24,13 @@ import { findDirectusLinkForUser } from '../auth/identityStore.js';
 import {
     createCase,
     uploadDirectusFile,
-    createCaseAttachment,
+    createCaseAttachment
+} from './directus.js';
+import {
     addCaseCollaborator,
     addCaseCollaboratorAsSystem,
     CASE_COLLAB_ROLES
-} from './directus.js';
+} from './caseCollaborators.js';
 import {
     ValidationError,
     ForbiddenError,

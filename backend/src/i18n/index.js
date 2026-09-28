@@ -8,7 +8,7 @@
 
 import en from './locales/en.js';
 
-let catalog = en;
+const catalog = en;
 
 function lookup(key) {
     if (!key || typeof key !== 'string') return undefined;
@@ -33,24 +33,6 @@ export function msg(key, vars) {
     const raw = lookup(key);
     if (raw == null) return key;
     return format(raw, vars);
-}
-
-export function setMessageCatalog(overrides) {
-    if (!overrides || typeof overrides !== 'object') return;
-    catalog = deepMerge(catalog, overrides);
-}
-
-function deepMerge(base, over) {
-    const out = { ...base };
-    for (const [k, v] of Object.entries(over)) {
-        if (v && typeof v === 'object' && !Array.isArray(v)
-            && base[k] && typeof base[k] === 'object' && !Array.isArray(base[k])) {
-            out[k] = deepMerge(base[k], v);
-        } else {
-            out[k] = v;
-        }
-    }
-    return out;
 }
 
 export default msg;

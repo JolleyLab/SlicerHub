@@ -8,8 +8,14 @@ import { t } from '../i18n/index.js';
  * Expected comment shape:
  *   { id, body, createdAt, author?: { name } }
  *
+ * Props:
+ *   collaborators — [{ id: string (Directus uuid), name: string }]
+ *     Pass the case's collaborator list so the @-mention picker can offer names.
+ *     The posted text will contain @uuid (what Directus expects); the textarea
+ *     shows @Name while the user is composing.
+ *
  * Events:
- *   post-comment — detail: { text } (compose submit)
+ *   post-comment — detail: { text } (compose submit, mentions already resolved to @uuid)
  */
 export class CommentsPanel extends LitElement {
     static get styles() {
@@ -132,36 +138,14 @@ export class CommentsPanel extends LitElement {
                 flex-shrink: 0;
             }
 
-            .avatar.tone-a {
-                background: #2c3878;
-                color: #f5f6fb;
-            }
-
-            .avatar.tone-b {
-                background: #1e5a72;
-                color: #f5f6fb;
-            }
-
-            .avatar.tone-c {
-                background: #3d2f6e;
-                color: #f5f6fb;
-            }
+            .avatar.tone-a { background: #2c3878; color: #f5f6fb; }
+            .avatar.tone-b { background: #1e5a72; color: #f5f6fb; }
+            .avatar.tone-c { background: #3d2f6e; color: #f5f6fb; }
 
             :host-context([data-theme='light']) .avatar,
-            :host-context([data-theme='light']) .avatar.tone-a {
-                background: #074174;
-                color: #ecf4f9;
-            }
-
-            :host-context([data-theme='light']) .avatar.tone-b {
-                background: #0f5f86;
-                color: #ecf4f9;
-            }
-
-            :host-context([data-theme='light']) .avatar.tone-c {
-                background: #1a3d6e;
-                color: #ecf4f9;
-            }
+            :host-context([data-theme='light']) .avatar.tone-a { background: #074174; color: #ecf4f9; }
+            :host-context([data-theme='light']) .avatar.tone-b { background: #0f5f86; color: #ecf4f9; }
+            :host-context([data-theme='light']) .avatar.tone-c { background: #1a3d6e; color: #ecf4f9; }
 
             .bubble {
                 border-radius: var(--radius-sm) var(--radius-lg) var(--radius-lg) var(--radius-lg);
@@ -254,6 +238,12 @@ export class CommentsPanel extends LitElement {
                 box-sizing: border-box;
             }
 
+            /* Wraps the textarea so the mention dropdown can be absolutely positioned */
+            .textarea-wrap {
+                position: relative;
+                min-width: 0;
+            }
+
             .comment-compose textarea {
                 width: 100%;
                 min-height: 36px;
@@ -273,6 +263,75 @@ export class CommentsPanel extends LitElement {
                 outline: none;
                 border-color: var(--color-primary);
                 box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 16%, transparent);
+            }
+
+            /* @-mention autocomplete dropdown */
+            .mention-dropdown {
+                position: absolute;
+                bottom: calc(100% + 4px);
+                left: 0;
+                right: 0;
+                margin: 0;
+                padding: 4px 0;
+                list-style: none;
+                background: var(--color-panel, #fff);
+                border: 1px solid var(--color-border);
+                border-radius: var(--radius-md, 8px);
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+                overflow-y: auto;
+                max-height: 220px;
+                z-index: 10;
+            }
+
+            :host-context([data-theme='dark']) .mention-dropdown {
+                background: var(--color-panel);
+                border-color: var(--color-border);
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+            }
+
+            .mention-item {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                width: 100%;
+                padding: 7px 12px;
+                border: none;
+                background: transparent;
+                color: var(--color-text-primary);
+                font: inherit;
+                font-size: 0.88rem;
+                text-align: left;
+                cursor: pointer;
+                box-sizing: border-box;
+            }
+
+            .mention-item:hover,
+            .mention-item[aria-selected='true'] {
+                background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+            }
+
+            .mention-item:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: -2px;
+            }
+
+            .mention-avatar {
+                flex-shrink: 0;
+                width: 26px;
+                height: 26px;
+                border-radius: 50%;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 0.7rem;
+                font-weight: 700;
+                color: #f5f6fb;
+                background: #2c3878;
+            }
+
+            :host-context([data-theme='light']) .mention-avatar {
+                background: #074174;
+                color: #ecf4f9;
             }
 
             .primary-button {
@@ -312,6 +371,8 @@ export class CommentsPanel extends LitElement {
     static get properties() {
         return {
             comments: { type: Array },
+            /** [{ id: string (uuid), name: string }] — collaborators available to @-mention */
+            collaborators: { type: Array },
             title: { type: String },
             emptyMessage: { type: String },
             placeholder: { type: String },
@@ -319,7 +380,11 @@ export class CommentsPanel extends LitElement {
             postingLabel: { type: String },
             allowCompose: { type: Boolean },
             posting: { type: Boolean },
-            draft: { type: String }
+            draft: { type: String },
+            /** null = not in a mention; string = active @query */
+            _mentionQuery: { type: String },
+            /** keyboard-selected index in the dropdown */
+            _mentionIndex: { type: Number }
         };
     }
 
@@ -327,6 +392,7 @@ export class CommentsPanel extends LitElement {
         super();
         initializeTheme();
         this.comments = [];
+        this.collaborators = [];
         this.title = t('comments.title');
         this.emptyMessage = t('comments.empty');
         this.placeholder = t('comments.placeholder');
@@ -335,10 +401,25 @@ export class CommentsPanel extends LitElement {
         this.allowCompose = true;
         this.posting = false;
         this.draft = '';
+        this._mentionQuery = null;
+        this._mentionIndex = 0;
+        this._mentionStart = 0;   // cursor index in draft where the @ token started
+        this._mentionMap = {};    // { displayName: uuid } for inserted mentions in this draft
     }
 
     clearDraft() {
         this.draft = '';
+        this._mentionQuery = null;
+        this._mentionMap = {};
+    }
+
+    /** Collaborators whose name contains the current @query, capped at 8. */
+    get _mentionSuggestions() {
+        if (this._mentionQuery === null || !Array.isArray(this.collaborators)) return [];
+        const q = this._mentionQuery.toLowerCase();
+        return this.collaborators
+            .filter((c) => !q || c.name.toLowerCase().includes(q))
+            .slice(0, 8);
     }
 
     authorName(comment) {
@@ -370,16 +451,10 @@ export class CommentsPanel extends LitElement {
             const now = new Date();
             const sameDay = date.toDateString() === now.toDateString();
             if (sameDay) {
-                return date.toLocaleTimeString(undefined, {
-                    hour: 'numeric',
-                    minute: '2-digit'
-                });
+                return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
             }
             return date.toLocaleString(undefined, {
-                month: 'short',
-                day: 'numeric',
-                hour: 'numeric',
-                minute: '2-digit'
+                month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
             });
         } catch {
             return String(iso);
@@ -388,20 +463,86 @@ export class CommentsPanel extends LitElement {
 
     handleDraftInput(event) {
         this.draft = event.target.value;
+        this._detectMention(event.target);
+    }
+
+    /** Look behind the cursor for an active @query. Updates _mentionQuery and _mentionStart. */
+    _detectMention(textarea) {
+        const pos = textarea.selectionStart;
+        const before = textarea.value.slice(0, pos);
+        // Match @ followed by non-whitespace chars right up to the cursor
+        const match = before.match(/@(\S*)$/);
+        if (match) {
+            this._mentionStart = pos - match[0].length;
+            this._mentionQuery = match[1];
+            this._mentionIndex = 0;
+        } else {
+            this._mentionQuery = null;
+        }
     }
 
     handleComposeKeydown(event) {
+        const suggestions = this._mentionSuggestions;
+        // While the dropdown is open, intercept arrow/enter/escape keys
+        if (suggestions.length && this._mentionQuery !== null) {
+            if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                this._mentionIndex = (this._mentionIndex + 1) % suggestions.length;
+                return;
+            }
+            if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                this._mentionIndex = (this._mentionIndex - 1 + suggestions.length) % suggestions.length;
+                return;
+            }
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                this._insertMention(suggestions[this._mentionIndex]);
+                return;
+            }
+            if (event.key === 'Escape') {
+                this._mentionQuery = null;
+                return;
+            }
+        }
         if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
             this.handlePost();
         }
     }
 
+    /** Replace the active @query in the draft with @Name and record the uuid mapping. */
+    _insertMention(collaborator) {
+        const textarea = this.shadowRoot?.querySelector('textarea');
+        if (!textarea) return;
+        const token = `@${collaborator.name} `;
+        const cursorPos = textarea.selectionStart;
+        const before = this.draft.slice(0, this._mentionStart);
+        const after = this.draft.slice(cursorPos);
+        this.draft = before + token + after;
+        this._mentionMap = { ...this._mentionMap, [collaborator.name]: collaborator.id };
+        this._mentionQuery = null;
+        // Restore cursor after the inserted token
+        const newPos = before.length + token.length;
+        this.updateComplete.then(() => {
+            const t = this.shadowRoot?.querySelector('textarea');
+            if (t) {
+                t.setSelectionRange(newPos, newPos);
+                t.focus();
+            }
+        });
+    }
+
     handlePost() {
         const text = String(this.draft || '').trim();
         if (!text || this.posting || !this.allowCompose) return;
+        // Substitute each @DisplayName with @uuid before sending to Directus
+        let resolved = text;
+        for (const [name, uuid] of Object.entries(this._mentionMap)) {
+            resolved = resolved.split(`@${name}`).join(`@${uuid}`);
+        }
         this.dispatchEvent(new CustomEvent('post-comment', {
-            detail: { text },
+            detail: { text: resolved },
             bubbles: true,
             composed: true
         }));
@@ -411,9 +552,7 @@ export class CommentsPanel extends LitElement {
         if (changed.has('comments')) {
             const thread = this.shadowRoot?.querySelector?.('.chat-thread');
             if (thread) {
-                requestAnimationFrame(() => {
-                    thread.scrollTop = thread.scrollHeight;
-                });
+                requestAnimationFrame(() => { thread.scrollTop = thread.scrollHeight; });
             }
         }
     }
@@ -436,9 +575,38 @@ export class CommentsPanel extends LitElement {
         `;
     }
 
+    renderMentionDropdown(suggestions) {
+        if (!suggestions.length) return '';
+        return html`
+            <ul
+                class="mention-dropdown"
+                role="listbox"
+                aria-label=${t('comments.mentionList')}
+            >
+                ${suggestions.map((c, i) => html`
+                    <li role="presentation">
+                        <button
+                            type="button"
+                            class="mention-item"
+                            role="option"
+                            aria-selected=${i === this._mentionIndex ? 'true' : 'false'}
+                            @mousedown=${(e) => { e.preventDefault(); this._insertMention(c); }}
+                        >
+                            <span class="mention-avatar" aria-hidden="true">
+                                ${this.authorInitials(c.name)}
+                            </span>
+                            ${c.name}
+                        </button>
+                    </li>
+                `)}
+            </ul>
+        `;
+    }
+
     render() {
         const comments = Array.isArray(this.comments) ? this.comments : [];
         const canPost = !this.posting && !!String(this.draft || '').trim();
+        const suggestions = this._mentionSuggestions;
 
         return html`
             <div class="chat-header">
@@ -452,13 +620,16 @@ export class CommentsPanel extends LitElement {
             </div>
             ${this.allowCompose ? html`
                 <div class="comment-compose">
-                    <textarea
-                        placeholder=${this.placeholder}
-                        .value=${this.draft}
-                        ?disabled=${this.posting}
-                        @input=${this.handleDraftInput}
-                        @keydown=${this.handleComposeKeydown}
-                    ></textarea>
+                    <div class="textarea-wrap">
+                        <textarea
+                            placeholder=${this.placeholder}
+                            .value=${this.draft}
+                            ?disabled=${this.posting}
+                            @input=${this.handleDraftInput}
+                            @keydown=${this.handleComposeKeydown}
+                        ></textarea>
+                        ${this.renderMentionDropdown(suggestions)}
+                    </div>
                     <button
                         class="primary-button"
                         type="button"

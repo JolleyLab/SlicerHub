@@ -11,10 +11,3 @@ export function resolveTramePageUrl(frontendUrl) {
     }
 }
 
-export function isRemoteTrameViewerUrl(url) {
-    try {
-        return new URL(url, window.location.href).hostname !== window.location.hostname;
-    } catch {
-        return false;
-    }
-}

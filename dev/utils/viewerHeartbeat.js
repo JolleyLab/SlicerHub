@@ -9,7 +9,7 @@ import {
  * Ping a viewer session lease. Optionally close on client-side idle timeout.
  * Works for Trame and Full Slicer (pass heartbeatUrl from getViewerSessionEndpoints).
  */
-export async function sendTrameContainerHeartbeat({
+export async function sendViewerHeartbeat({
     sessionToken,
     projectId = null,
     seatId = null,

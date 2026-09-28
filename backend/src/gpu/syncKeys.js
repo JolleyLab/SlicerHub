@@ -55,12 +55,3 @@ export function isFileStaged(file, syncedFiles, launcherUserId, { vastFullSlicer
     return !expectedBytes || entry.bytes === expectedBytes;
 }
 
-/** True when the project cache object is present for this file. */
-export function isFileCachedOnGpu(file, syncedFiles, projectId) {
-    if (!syncedFiles || !file || !projectId) return false;
-    const { cacheKey } = resolveProjectCacheTarget(file, projectId);
-    const entry = syncedFiles[cacheKey];
-    if (!entry) return false;
-    const expectedBytes = Number(file.file_size) || 0;
-    return !expectedBytes || entry.bytes === expectedBytes;
-}

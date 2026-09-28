@@ -5,10 +5,12 @@ import {
     DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS,
     normalizeLocalSlicerViewerOptions
 } from './localSlicerViewerOptions.js';
+import { DEFAULT_HOME_LAYOUT, normalizeHomeLayout } from './homeLayout.js';
 
 export const DEFAULT_USER_PREFERENCES = Object.freeze({
     theme: 'light',
-    ...DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS
+    ...DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS,
+    homeLayout: DEFAULT_HOME_LAYOUT
 });
 
 const THEME_CACHE_KEY = 'ui-theme';
@@ -22,7 +24,8 @@ export function normalizeUserPreferences(input = {}) {
     return {
         theme,
         useFullSlicer: viewer.useFullSlicer,
-        useSimplifiedViewer: viewer.useSimplifiedViewer
+        useSimplifiedViewer: viewer.useSimplifiedViewer,
+        homeLayout: normalizeHomeLayout(input?.homeLayout)
     };
 }
 
@@ -82,6 +85,8 @@ export function applyUserPreferences(preferences = {}) {
     cachedPreferences = normalizeUserPreferences(preferences);
     applyTheme(cachedPreferences.theme);
     cacheThemeLocally(cachedPreferences.theme);
+    // Pages that render from preferences (Home) redraw when they change.
+    window.dispatchEvent(new CustomEvent('user-preferences-changed'));
     return getCachedUserPreferences();
 }
 
@@ -102,27 +107,22 @@ async function parseResponse(response) {
 }
 
 /**
- * Apply preferences from login/me payload. Optionally migrate one-time
- * browser/OS theme (+ legacy viewer options) into the account when still at defaults.
+ * Apply preferences from login/me payload. Accounts still at the defaults get one-time migration of
+ * the legacy browser-stored viewer options.
+ *
+ * The theme is never migrated from the device: "light" is the default, so an account that chose
+ * light is indistinguishable from an untouched one, and the device theme (which the signed-out
+ * screens overwrite with the OS scheme) would replace the saved choice on every refresh. New
+ * accounts are seeded with the device theme at registration instead.
  */
 export async function hydrateUserPreferencesFromUser(user) {
     let preferences = normalizeUserPreferences(user?.preferences || {});
 
     if (isDefaultPreferences(preferences)) {
         const legacy = readLegacyLocalViewerOptions();
-        const themeFromDevice = resolvePreferredThemeForNewAccount();
-
-        const migrationPatch = {};
         if (legacy && (legacy.useFullSlicer || legacy.useSimplifiedViewer)) {
-            Object.assign(migrationPatch, legacy);
-        }
-        if (themeFromDevice === 'dark' || themeFromDevice === 'light') {
-            migrationPatch.theme = themeFromDevice;
-        }
-
-        if (Object.keys(migrationPatch).length > 0) {
             try {
-                preferences = await saveUserPreferences(migrationPatch);
+                preferences = await saveUserPreferences(legacy);
                 clearLegacyLocalViewerOptions();
                 return preferences;
             } catch (err) {

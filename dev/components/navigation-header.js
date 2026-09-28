@@ -168,7 +168,7 @@ export class NavigationHeader extends LitElement {
         // App is an SPA — avoid navigating to a non-existent /file-manager route.
         event.preventDefault();
         this.dispatchEvent(new CustomEvent('menu-selection-change', {
-            detail: { selectedKey: 'my-files' },
+            detail: { selectedKey: 'home' },
             bubbles: true,
             composed: true
         }));

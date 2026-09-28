@@ -6,11 +6,6 @@
  * Account persistence lives in utils/userPreferences.js (server-backed).
  */
 
-export const LOCAL_SLICER_VIEWER_OPTION_KEYS = Object.freeze({
-    useFullSlicer: 'useFullSlicer',
-    useSimplifiedViewer: 'useSimplifiedViewer'
-});
-
 export const DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS = Object.freeze({
     useFullSlicer: false,
     useSimplifiedViewer: false
@@ -40,11 +35,3 @@ export function resolveSimplifiedViewerChoice(requested, accountDefault = false)
     return accountDefault === true;
 }
 
-export function mergeLocalSlicerViewerOptionPatch(current = {}, patch = {}) {
-    const base = normalizeLocalSlicerViewerOptions(current);
-    const next = {
-        ...base,
-        ...patch
-    };
-    return normalizeLocalSlicerViewerOptions(next);
-}

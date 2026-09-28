@@ -643,6 +643,20 @@ const migrations = [
             CREATE INDEX IF NOT EXISTS idx_project_case_pending_case
                 ON project_case_pending_collaborators(case_id, status);
         `
+    },
+    {
+        // Case roles now live only in Directus (case_directus_users.role).
+        id: '030_drop_case_collaborator_roles',
+        up: `DROP TABLE IF EXISTS case_collaborator_roles;`
+    },
+    {
+        // Invites live in Directus (case_invite). Their notifications pointed at the old integer ids.
+        id: '031_drop_case_invites',
+        up: `
+            DROP TABLE IF EXISTS case_invites;
+            DROP TABLE IF EXISTS case_signup_invites;
+            DELETE FROM user_notifications WHERE invite_id IS NOT NULL;
+        `
     }
 ];
 

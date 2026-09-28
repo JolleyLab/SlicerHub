@@ -7,7 +7,7 @@ export const UI_COLOR_SCHEMES = {
         textSecondary: '#0c0941',
         textContrast: '#040316',
         primary: '#074174',
-        secondary: '#167aac',
+        secondary: '#1372a2',
         accent: '#b8cfe0',
         onPrimary: '#ecf4f9',
         onSecondary: '#ecf4f9',

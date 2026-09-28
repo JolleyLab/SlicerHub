@@ -71,6 +71,13 @@ export async function dismissNotification(id) {
     return data;
 }
 
+/** Mention notifications only — convenience slice for home-page Recent activity. */
+export async function listMentionNotifications() {
+    const data = await listNotifications();
+    const all = Array.isArray(data.notifications) ? data.notifications : [];
+    return all.filter((n) => n.type === 'mention');
+}
+
 /** Tell any open notification-bell to refetch. */
 export function invalidateNotifications() {
     window.dispatchEvent(new CustomEvent('notifications-invalidate'));

@@ -4,7 +4,6 @@
  */
 
 import crypto from 'crypto';
-import db from '../db/database.js';
 import config from '../config/index.js';
 import User from '../models/User.js';
 import {
@@ -17,14 +16,23 @@ import {
 import { issueAppSession } from '../auth/session.js';
 import { setDirectusLinkCookie } from '../auth/directusLinkCookie.js';
 import { createNotification, deleteNotificationsForInviteIds } from './notifications.js';
+import { isDirectusConfigured, createDirectusUser, findDirectusUserByEmail } from './directus.js';
 import {
     CASE_COLLAB_ROLES,
-    isDirectusConfigured,
-    createDirectusUser,
-    findDirectusUserByEmail,
+    requestedCaseRole,
     getCaseCollabActorContext,
     addCaseCollaboratorAsSystem
-} from './directus.js';
+} from './caseCollaborators.js';
+import {
+    INVITE_STATUS,
+    getInvite,
+    createInvite,
+    updateInvite,
+    deleteInvite,
+    findOpenByEmail,
+    findByTokenHash,
+    expireStaleSignupInvites as expireStaleInStore
+} from './caseInviteStore.js';
 import { sendCaseSignupInviteEmail } from './mail.js';
 import {
     ValidationError,
@@ -38,19 +46,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PROVIDER = 'directus';
 
 function normalizeRole(role, { allowAdmin }) {
-    const raw = String(role || '').trim().toLowerCase().replace(/-/g, '_');
-    if (raw === CASE_COLLAB_ROLES.ADMIN || raw === 'admin') {
-        return allowAdmin ? CASE_COLLAB_ROLES.ADMIN : CASE_COLLAB_ROLES.COLLABORATOR;
-    }
-    if (
-        raw === CASE_COLLAB_ROLES.READ_ONLY
-        || raw === 'readonly'
-        || raw === 'observer'
-        || raw === 'read'
-    ) {
-        return CASE_COLLAB_ROLES.READ_ONLY;
-    }
-    return CASE_COLLAB_ROLES.COLLABORATOR;
+    const requested = requestedCaseRole(role);
+    return requested === CASE_COLLAB_ROLES.ADMIN && !allowAdmin ? CASE_COLLAB_ROLES.COLLABORATOR : requested;
 }
 
 function hashToken(token) {
@@ -113,96 +110,36 @@ async function loginDirectusWithPassword(email, password) {
     };
 }
 
-function mapSignupInvite(row, { includeUrlToken = null } = {}) {
-    if (!row) return null;
-    const expired = row.expires_at
-        && new Date(row.expires_at).getTime() < Date.now()
-        && row.status === 'pending_signup';
+/** A stored invite as the API returns it; a signup invite adds the link when its token is known. */
+export function withInviteUrl(invite, { includeUrlToken = null } = {}) {
+    if (!invite) return null;
     return {
-        id: row.id,
-        kind: 'signup',
-        caseId: row.case_id,
-        caseTitle: row.case_title || null,
-        inviteeEmail: row.invitee_email,
-        proposedRole: row.proposed_role,
-        inviterDirectusUserId: row.inviter_directus_user_id,
-        status: expired ? 'expired' : row.status,
-        expiresAt: row.expires_at || null,
-        createdAt: row.created_at,
-        resolvedAt: row.resolved_at || null,
-        inviteUrl: includeUrlToken ? inviteUrlForToken(includeUrlToken) : null
+        ...invite,
+        ...(invite.kind === 'signup' ? { inviteUrl: includeUrlToken ? inviteUrlForToken(includeUrlToken) : null } : {})
     };
 }
 
 /**
- * Mark overdue pending_signup invites as expired, invalidate tokens, and drop
- * related in-app notifications so they disappear from the People dialog.
+ * Delete signup invites whose link has run out (the token stops working) and drop the notifications
+ * about them, so they disappear from the People dialog.
  * @param {string|null} caseId optional case scope
- * @returns {number[]} expired invite ids
+ * @returns {Promise<string[]>} expired invite ids
  */
-export function expireStaleSignupInvites(caseId = null) {
-    const caseKey = caseId != null ? String(caseId).trim() : '';
-    const nowIso = new Date().toISOString();
-    const stale = caseKey
-        ? db.prepare(`
-            SELECT id FROM case_signup_invites
-            WHERE case_id = ?
-              AND status = 'pending_signup'
-              AND expires_at IS NOT NULL
-              AND expires_at < ?
-          `).all(caseKey, nowIso)
-        : db.prepare(`
-            SELECT id FROM case_signup_invites
-            WHERE status = 'pending_signup'
-              AND expires_at IS NOT NULL
-              AND expires_at < ?
-          `).all(nowIso);
-
-    if (!stale.length) return [];
-
-    const ids = stale.map((row) => Number(row.id)).filter((id) => Number.isInteger(id) && id > 0);
-    const placeholders = ids.map(() => '?').join(',');
-    db.prepare(`
-        UPDATE case_signup_invites
-        SET status = 'expired',
-            token_hash = NULL,
-            resolved_at = COALESCE(resolved_at, CURRENT_TIMESTAMP)
-        WHERE id IN (${placeholders})
-    `).run(...ids);
-
-    try {
-        deleteNotificationsForInviteIds(ids);
-    } catch (err) {
-        console.warn('Failed to clear notifications for expired signup invites:', err.message || err);
+export async function expireStaleSignupInvites(caseId = null) {
+    const ids = await expireStaleInStore(caseId);
+    if (ids.length) {
+        try {
+            deleteNotificationsForInviteIds(ids);
+        } catch (err) {
+            console.warn('Failed to clear notifications for expired signup invites:', err.message || err);
+        }
     }
     return ids;
 }
 
-export function listSignupInvitesForCase(caseId) {
-    const caseKey = String(caseId || '').trim();
-    if (!caseKey) return [];
-    expireStaleSignupInvites(caseKey);
-    return db.prepare(`
-        SELECT * FROM case_signup_invites
-        WHERE case_id = ?
-          AND status IN ('pending_signup', 'pending_approval')
-        ORDER BY created_at DESC
-    `).all(caseKey).map((row) => mapSignupInvite(row));
-}
-
-function getSignupRowById(id) {
-    return db.prepare('SELECT * FROM case_signup_invites WHERE id = ?').get(Number(id)) || null;
-}
-
-function findOpenSignupByEmail(caseId, email) {
-    expireStaleSignupInvites(caseId);
-    return db.prepare(`
-        SELECT * FROM case_signup_invites
-        WHERE case_id = ?
-          AND invitee_email = ?
-          AND status IN ('pending_signup', 'pending_approval')
-        LIMIT 1
-    `).get(String(caseId), String(email).toLowerCase()) || null;
+async function findOpenSignupByEmail(caseId, email) {
+    await expireStaleSignupInvites(caseId);
+    return findOpenByEmail(caseId, email);
 }
 
 function notifyAppUserForDirectusId(directusUserId, payload) {
@@ -218,7 +155,6 @@ function notifyAppUserForDirectusId(directusUserId, payload) {
 
 function notifyCaseAdmins(ctx, payload) {
     const adminIds = new Set();
-    if (ctx.ownerId) adminIds.add(String(ctx.ownerId));
     for (const member of ctx.existingList || []) {
         if (member.role === CASE_COLLAB_ROLES.ADMIN && member.id) {
             adminIds.add(String(member.id));
@@ -230,48 +166,15 @@ function notifyCaseAdmins(ctx, payload) {
     }
 }
 
-function insertSignupInvite({
-    caseId,
-    caseTitle,
-    inviteeEmail,
-    proposedRole,
-    inviterDirectusUserId,
-    inviterAppUserId,
-    status,
-    tokenHash = null,
-    expiresAt = null
-}) {
-    const result = db.prepare(`
-        INSERT INTO case_signup_invites (
-            case_id, case_title, invitee_email, proposed_role,
-            inviter_directus_user_id, inviter_app_user_id,
-            token_hash, expires_at, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-        String(caseId),
-        caseTitle || null,
-        String(inviteeEmail).toLowerCase(),
-        proposedRole,
-        String(inviterDirectusUserId),
-        inviterAppUserId != null ? Number(inviterAppUserId) : null,
-        tokenHash,
-        expiresAt,
-        status
-    );
-    return getSignupRowById(result.lastInsertRowid);
-}
-
-function activateSignupToken(rowId) {
+async function activateSignupToken(inviteId) {
     const token = mintToken();
     const expiresAt = expiresAtIso();
-    db.prepare(`
-        UPDATE case_signup_invites
-        SET status = 'pending_signup',
-            token_hash = ?,
-            expires_at = ?
-        WHERE id = ?
-    `).run(hashToken(token), expiresAt, Number(rowId));
-    return { token, expiresAt, row: getSignupRowById(rowId) };
+    const invite = await updateInvite(inviteId, {
+        status: INVITE_STATUS.PENDING_SIGNUP,
+        token_hash: hashToken(token),
+        expires_at: expiresAt
+    });
+    return { token, expiresAt, invite };
 }
 
 /**
@@ -315,8 +218,7 @@ export async function inviteNewEmailToCase({
     email,
     role,
     accessToken,
-    actorDirectusUserId,
-    actorAppUserId = null
+    actorDirectusUserId
 }) {
     const normalized = String(email || '').trim().toLowerCase();
     if (!EMAIL_RE.test(normalized)) {
@@ -331,7 +233,7 @@ export async function inviteNewEmailToCase({
         throw new ForbiddenError(msg('case.invite_forbidden'), null, 'case.invite_forbidden');
     }
 
-    const existing = findOpenSignupByEmail(caseId, normalized);
+    const existing = await findOpenSignupByEmail(caseId, normalized);
     if (existing) {
         throw new ConflictError(msg('case.signup_invite_pending_exists'), null, 'case.signup_invite_pending_exists');
     }
@@ -340,14 +242,13 @@ export async function inviteNewEmailToCase({
     const caseTitle = ctx.caseTitle || 'a case';
 
     if (!ctx.actorIsAdmin) {
-        const row = insertSignupInvite({
+        const row = await createInvite({
+            kind: 'signup',
+            status: INVITE_STATUS.PENDING_APPROVAL,
             caseId,
-            caseTitle,
             inviteeEmail: normalized,
             proposedRole,
-            inviterDirectusUserId: actorDirectusUserId,
-            inviterAppUserId: actorAppUserId,
-            status: 'pending_approval'
+            inviterId: actorDirectusUserId
         });
         notifyCaseAdmins(ctx, {
             type: 'case_invite_pending',
@@ -358,23 +259,22 @@ export async function inviteNewEmailToCase({
         });
         return {
             status: 'pending_approval',
-            invite: mapSignupInvite(row),
+            invite: withInviteUrl(row),
             inviteUrl: null,
             invitee: { email: normalized, id: null }
         };
     }
 
-    const row = insertSignupInvite({
+    const row = await createInvite({
+        kind: 'signup',
+        status: INVITE_STATUS.PENDING_SIGNUP,
         caseId,
-        caseTitle,
         inviteeEmail: normalized,
         proposedRole,
-        inviterDirectusUserId: actorDirectusUserId,
-        inviterAppUserId: actorAppUserId,
-        status: 'pending_signup'
+        inviterId: actorDirectusUserId
     });
-    const { token, row: active } = activateSignupToken(row.id);
-    const invite = mapSignupInvite(active, { includeUrlToken: token });
+    const { token, invite: active } = await activateSignupToken(row.id);
+    const invite = withInviteUrl(active, { includeUrlToken: token });
     const delivery = await deliverSignupInvite(invite, {
         email: normalized,
         caseTitle,
@@ -390,31 +290,25 @@ export async function inviteNewEmailToCase({
     };
 }
 
-export async function approveSignupInvite({
-    inviteId,
-    accessToken,
-    actorDirectusUserId
-}) {
-    const row = getSignupRowById(inviteId);
-    if (!row || row.status !== 'pending_approval') {
+/** A signup invite in one of the given states, or a not-found error. */
+async function signupInviteInStates(inviteId, states) {
+    const invite = await getInvite(inviteId);
+    if (!invite || invite.kind !== 'signup' || !states.includes(invite.status)) {
         throw new NotFoundError(msg('case.signup_invite_not_found'), null, 'case.signup_invite_not_found');
     }
-    const ctx = await getCaseCollabActorContext(row.case_id, {
-        accessToken,
-        actorDirectusUserId
-    });
+    return invite;
+}
+
+export async function approveSignupInvite({ inviteId, accessToken, actorDirectusUserId }) {
+    const row = await signupInviteInStates(inviteId, [INVITE_STATUS.PENDING_APPROVAL]);
+    const ctx = await getCaseCollabActorContext(row.caseId, { accessToken, actorDirectusUserId });
     if (!ctx.actorIsAdmin) {
         throw new ForbiddenError(msg('case.invite_approve_admin_only'), null, 'case.invite_approve_admin_only');
     }
 
-    const { token, row: active } = activateSignupToken(row.id);
-    db.prepare(`
-        UPDATE case_signup_invites
-        SET resolved_by_directus_user_id = ?
-        WHERE id = ?
-    `).run(String(actorDirectusUserId), row.id);
-
-    const invite = mapSignupInvite(getSignupRowById(active.id), { includeUrlToken: token });
+    const { token } = await activateSignupToken(row.id);
+    const active = await updateInvite(row.id, { resolved_by: String(actorDirectusUserId) });
+    const invite = withInviteUrl(active, { includeUrlToken: token });
     const delivery = await deliverSignupInvite(invite, {
         email: invite.inviteeEmail,
         caseTitle: invite.caseTitle,
@@ -429,53 +323,43 @@ export async function approveSignupInvite({
     };
 }
 
-export async function rejectSignupInvite({
-    inviteId,
-    accessToken,
-    actorDirectusUserId
-}) {
-    const row = getSignupRowById(inviteId);
-    if (!row || !['pending_approval', 'pending_signup'].includes(row.status)) {
-        throw new NotFoundError(msg('case.signup_invite_not_found'), null, 'case.signup_invite_not_found');
-    }
-    const ctx = await getCaseCollabActorContext(row.case_id, {
-        accessToken,
-        actorDirectusUserId
-    });
+export async function rejectSignupInvite({ inviteId, accessToken, actorDirectusUserId }) {
+    const row = await signupInviteInStates(inviteId, [INVITE_STATUS.PENDING_APPROVAL, INVITE_STATUS.PENDING_SIGNUP]);
+    const ctx = await getCaseCollabActorContext(row.caseId, { accessToken, actorDirectusUserId });
     if (!ctx.actorIsAdmin) {
         throw new ForbiddenError(msg('case.invite_reject_admin_only'), null, 'case.invite_reject_admin_only');
     }
-    db.prepare(`
-        UPDATE case_signup_invites
-        SET status = 'cancelled',
-            resolved_at = CURRENT_TIMESTAMP,
-            resolved_by_directus_user_id = ?,
-            token_hash = NULL
-        WHERE id = ?
-    `).run(String(actorDirectusUserId), row.id);
-    return { status: 'cancelled', invite: mapSignupInvite(getSignupRowById(row.id)) };
+    const rejected = await updateInvite(row.id, {
+        status: INVITE_STATUS.REJECTED,
+        resolved_at: new Date().toISOString(),
+        resolved_by: String(actorDirectusUserId),
+        token_hash: null
+    });
+    return { status: 'rejected', invite: withInviteUrl(rejected) };
 }
 
-export function getSignupInvitePreview(rawToken) {
-    const token = String(rawToken || '').trim();
-    if (!token) throw new ValidationError(msg('case.invite_token_required'), null, 'case.invite_token_required');
-    const row = db.prepare(`
-        SELECT * FROM case_signup_invites WHERE token_hash = ? LIMIT 1
-    `).get(hashToken(token));
-    if (!row || row.status !== 'pending_signup') {
+/** The open signup invite for a link token, expiring it (and refusing it) once its time has passed. */
+async function openInviteForToken(token) {
+    const row = await findByTokenHash(hashToken(token));
+    if (!row || row.status !== INVITE_STATUS.PENDING_SIGNUP) {
         throw new NotFoundError(msg('case.invite_invalid_or_used'), null, 'case.invite_invalid_or_used');
     }
-    if (!row.expires_at || new Date(row.expires_at).getTime() < Date.now()) {
-        db.prepare(`
-            UPDATE case_signup_invites SET status = 'expired', token_hash = NULL WHERE id = ?
-        `).run(row.id);
+    if (!row.expiresAt || new Date(row.expiresAt).getTime() < Date.now()) {
+        await deleteInvite(row.id);
         throw new NotFoundError(msg('case.invite_expired'), null, 'case.invite_expired');
     }
+    return row;
+}
+
+export async function getSignupInvitePreview(rawToken) {
+    const token = String(rawToken || '').trim();
+    if (!token) throw new ValidationError(msg('case.invite_token_required'), null, 'case.invite_token_required');
+    const row = await openInviteForToken(token);
     return {
-        email: row.invitee_email,
-        caseTitle: row.case_title || 'a case',
-        proposedRole: row.proposed_role,
-        expiresAt: row.expires_at
+        email: row.inviteeEmail,
+        caseTitle: row.caseTitle || 'a case',
+        proposedRole: row.proposedRole,
+        expiresAt: row.expiresAt
     };
 }
 
@@ -503,20 +387,9 @@ export async function acceptSignupInvite(req, res, {
         );
     }
 
-    const row = db.prepare(`
-        SELECT * FROM case_signup_invites WHERE token_hash = ? LIMIT 1
-    `).get(hashToken(token));
-    if (!row || row.status !== 'pending_signup') {
-        throw new NotFoundError(msg('case.invite_invalid_or_used'), null, 'case.invite_invalid_or_used');
-    }
-    if (!row.expires_at || new Date(row.expires_at).getTime() < Date.now()) {
-        db.prepare(`
-            UPDATE case_signup_invites SET status = 'expired', token_hash = NULL WHERE id = ?
-        `).run(row.id);
-        throw new NotFoundError(msg('case.invite_expired'), null, 'case.invite_expired');
-    }
+    const row = await openInviteForToken(token);
 
-    const email = String(row.invitee_email).toLowerCase();
+    const email = String(row.inviteeEmail).toLowerCase();
     let directusUser = await findDirectusUserByEmail(email);
     if (directusUser) {
         throw new ConflictError(msg('case.signup_email_exists'), null, 'case.signup_email_exists');
@@ -577,20 +450,14 @@ export async function acceptSignupInvite(req, res, {
     }
     // --- end CUTOVER (project-case-migrate) ---
 
-    await addCaseCollaboratorAsSystem(
-        row.case_id,
-        directusUserId,
-        row.proposed_role
-    );
+    await addCaseCollaboratorAsSystem(row.caseId, directusUserId, row.proposedRole);
 
-    db.prepare(`
-        UPDATE case_signup_invites
-        SET status = 'accepted',
-            resolved_at = CURRENT_TIMESTAMP,
-            token_hash = NULL,
-            accepted_directus_user_id = ?
-        WHERE id = ?
-    `).run(directusUserId, row.id);
+    await updateInvite(row.id, {
+        status: INVITE_STATUS.ACCEPTED,
+        resolved_at: new Date().toISOString(),
+        token_hash: null,
+        accepted_user: directusUserId
+    });
 
     const externalTokens = await loginDirectusWithPassword(email, password);
     const { user: sessionUser, sessionPayload } = issueAppSession(req, res, {
@@ -612,8 +479,8 @@ export async function acceptSignupInvite(req, res, {
     return {
         status: 'accepted',
         user: sessionUser,
-        caseId: row.case_id,
-        caseTitle: row.case_title,
-        role: row.proposed_role
+        caseId: row.caseId,
+        caseTitle: row.caseTitle,
+        role: row.proposedRole
     };
 }

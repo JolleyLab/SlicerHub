@@ -15,7 +15,7 @@ import {
     markViewerActivity,
     resetViewerActivity
 } from './utils/viewerActivity.js';
-import { sendTrameContainerHeartbeat } from './utils/trameHeartbeat.js';
+import { sendViewerHeartbeat } from './utils/viewerHeartbeat.js';
 import { stopViewerSession } from './utils/viewerSessionLifecycle.js';
 
 export class FileManager extends LitElement {
@@ -298,7 +298,7 @@ export class FileManager extends LitElement {
                 to { transform: rotate(360deg); }
             }
 
-            .trame-iframe {
+            .viewer-iframe {
                 flex: 1;
                 border: none;
                 background: #000;
@@ -1132,7 +1132,7 @@ export class FileManager extends LitElement {
         }
 
         try {
-            const iframe = this.shadowRoot.querySelector('.trame-iframe');
+            const iframe = this.shadowRoot.querySelector('.viewer-iframe');
             const iframeDoc = iframe?.contentWindow?.document;
             if (!iframeDoc) return;
 
@@ -1182,7 +1182,7 @@ export class FileManager extends LitElement {
         try {
             // Flush pending UI edits inside the iframe before server-side save.
             try {
-                const iframe = this.shadowRoot.querySelector('.trame-iframe');
+                const iframe = this.shadowRoot.querySelector('.viewer-iframe');
                 const iframeWin = iframe?.contentWindow;
                 const iframeDoc = iframeWin?.document;
                 iframeWin?.focus?.();
@@ -1378,7 +1378,7 @@ export class FileManager extends LitElement {
     startHeartbeat() {
         this.stopHeartbeat();
         const ping = () => {
-            sendTrameContainerHeartbeat({
+            sendViewerHeartbeat({
                 sessionToken: this.viewerSessionToken,
                 onIdleTimeout: () => this.handleViewerInactivityTimeout()
             }).catch((err) => console.log('Heartbeat failed:', err.message));
@@ -1692,7 +1692,7 @@ export class FileManager extends LitElement {
                     <div class="iframe-container">
                         ${this.iframeUrl !== 'about:blank' ? html`
                             <iframe
-                                class="trame-iframe"
+                                class="viewer-iframe"
                                 src="${this.iframeUrl}"
                                 @load=${this.handleIframeLoad}
                                 @error=${this.handleIframeError}

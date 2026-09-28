@@ -87,6 +87,14 @@ navigation and 200% zoom. Decisions worth keeping when this code changes:
 - My Projects is hidden behind `MY_PROJECTS_VISIBLE` in `dev/components/app-views.js` (code kept for now).
 - The SQLite→Directus password bridge (`AUTH_PASSWORD_BRIDGE`) has been removed; sign-in checks Directus only.
 
+## Updating a running install
+
+- `git pull`, then `docker compose restart backend` for backend changes (the backend does not watch files).
+- The frontend serves files live, but it keeps `node_modules` in a volume. `docker compose up -d frontend`
+  reinstalls packages when a dependency is missing from that volume (it checks for `lit-element` and
+  `sortablejs`); add new dependencies to that check in `docker-compose.yml`. Current frontend dependency
+  beyond Lit: SortableJS (MIT), used to drag Home page sections in Settings.
+
 ## Tests
 
 Unit tests for the backend and the frontend live in the top-level `tests/unit/` (not next to the code):

@@ -19,10 +19,6 @@ export function getSessionProvider(kind) {
     return provider;
 }
 
-export function registerSessionProvider(provider) {
-    providers.set(provider.kind, provider);
-}
-
 export async function pruneExpiredViewerSessions() {
     const expired = listExpiredSessions();
     for (const { kind, sessionKey, sessionToken } of expired) {

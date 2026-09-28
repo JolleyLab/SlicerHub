@@ -6,10 +6,12 @@ import {
     DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS,
     normalizeLocalSlicerViewerOptions
 } from './localSlicerViewerOptions.js';
+import { normalizeHomeLayout } from '../utils/homeLayout.js';
 
 export const DEFAULT_USER_PREFERENCES = Object.freeze({
     theme: 'light',
-    ...DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS
+    ...DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS,
+    homeLayout: normalizeHomeLayout(null)
 });
 
 export function normalizeUserPreferences(input = {}) {
@@ -18,7 +20,8 @@ export function normalizeUserPreferences(input = {}) {
     return {
         theme,
         useFullSlicer: viewer.useFullSlicer,
-        useSimplifiedViewer: viewer.useSimplifiedViewer
+        useSimplifiedViewer: viewer.useSimplifiedViewer,
+        homeLayout: normalizeHomeLayout(input?.homeLayout)
     };
 }
 

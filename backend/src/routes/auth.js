@@ -421,6 +421,9 @@ export default function authRoutes(app) {
         if (req.body?.useSimplifiedViewer !== undefined) {
             patch.useSimplifiedViewer = req.body.useSimplifiedViewer === true;
         }
+        if (req.body?.homeLayout !== undefined) {
+            patch.homeLayout = req.body.homeLayout;
+        }
 
         const preferences = User.updatePreferences(req.user.id, patch);
         if (!preferences) {

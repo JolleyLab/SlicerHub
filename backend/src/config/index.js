@@ -64,9 +64,7 @@ const config = {
     docker: {
         socketPath: os.platform() === 'win32'
             ? '//./pipe/docker_engine'
-            : '/var/run/docker.sock',
-        network: process.env.DOCKER_NETWORK || 'trame-net',
-        defaultImage: process.env.DOCKER_IMAGE || 'slicer-web-trame:local'
+            : '/var/run/docker.sock'
     },
 
     // Trame viewer routing

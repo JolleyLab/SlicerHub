@@ -1,7 +1,7 @@
 /**
  * Shared gate: when Directus link is required for collab, Settings (and similar
  * account surfaces) require auth_identity_links too.
- * Populated from /api/auth/me (and login) by trame-app.
+ * Populated from /api/auth/me (and login) by slicer-app.
  */
 
 let gate = {
@@ -18,14 +18,6 @@ export function setDirectusLinkGate({ required, linked } = {}) {
 
 export function clearDirectusLinkGate() {
     gate = { required: false, linked: false };
-}
-
-export function isDirectusLinkRequiredClient() {
-    return gate.required;
-}
-
-export function isDirectusLinkedClient() {
-    return gate.linked;
 }
 
 /** Settings / profile when Directus is part of the product path. */

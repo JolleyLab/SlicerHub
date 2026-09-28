@@ -43,7 +43,7 @@ import {
 import { getCachedLocalSlicerViewerOptions } from './utils/userPreferences.js';
 import { resolveSimplifiedViewerChoice } from './utils/localSlicerViewerOptions.js';
 import { isInviteEmailEnabled } from './services/features.js';
-import { sendTrameContainerHeartbeat } from './utils/trameHeartbeat.js';
+import { sendViewerHeartbeat } from './utils/viewerHeartbeat.js';
 import { stopViewerSession } from './utils/viewerSessionLifecycle.js';
 import {
     installViewerActivityListeners,
@@ -1026,7 +1026,7 @@ export class DirectusCasesPage extends LitElement {
                 background: #090b14;
             }
 
-            .trame-iframe {
+            .viewer-iframe {
                 flex: 1;
                 width: 100%;
                 height: 100%;
@@ -2046,7 +2046,7 @@ export class DirectusCasesPage extends LitElement {
             sessionScope: VIEWER_SESSION_SCOPES.DIRECTUS
         });
         const ping = () => {
-            sendTrameContainerHeartbeat({
+            sendViewerHeartbeat({
                 sessionToken: this._viewerSessionToken,
                 seatId: this._viewerSeatId,
                 heartbeatUrl,
@@ -2850,6 +2850,9 @@ export class DirectusCasesPage extends LitElement {
 
                         <comments-panel
                             .comments=${comments}
+                            .collaborators=${(caseRow.collaborators || [])
+                                .filter((c) => c.id && c.username)
+                                .map((c) => ({ id: c.id, name: c.username }))}
                             emptyMessage=${this.sessionMeta?.comments?.loaded === false
                                 ? t('cases.commentsLoadFailed')
                                 : t('cases.noComments')}
@@ -2893,7 +2896,7 @@ export class DirectusCasesPage extends LitElement {
                 <div class="iframe-container">
                     ${this.iframeUrl !== 'about:blank' ? html`
                         <iframe
-                            class="trame-iframe"
+                            class="viewer-iframe"
                             title=${viewerTitle}
                             src="${this.iframeUrl}"
                             allow="clipboard-read; clipboard-write; cross-origin-isolated"
