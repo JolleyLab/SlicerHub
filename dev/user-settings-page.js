@@ -3,6 +3,7 @@ import { API_URL } from './config.js';
 import { t } from './i18n/index.js';
 import './components/page-layout-template.js';
 import './components/theme-toggle.js';
+import './change-password-form.js';
 import './components/local-slicer-viewer-options.js';
 import './components/home-layout-settings.js';
 import './components/page-content-message.js';
@@ -574,6 +575,13 @@ export class UserSettingsPage extends LitElement {
                                 </div>
                             </div>
                         </div>
+                    </section>
+                    <section class="settings-section">
+                        <h2 class="section-title">${t('auth.changePassword.settingsTitle')}</h2>
+                        <change-password-form
+                            .firstName=${this.firstName}
+                            .lastName=${this.lastName}
+                        ></change-password-form>
                     </section>
                     ` : ''}
 

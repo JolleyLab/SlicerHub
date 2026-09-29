@@ -11,20 +11,13 @@ export const DEFAULT_MENU_KEY = 'cases';
  * Labels are resolved via t() so locale packs take effect at call time.
  */
 export function getAppMenuItems({
-    directusCasesEnabled = false,
     projectCaseMigrateEnabled = false
 } = {}) {
     const filesItem = Object.freeze({ key: 'my-files', label: t('nav.myFiles') });
     const casesItem = Object.freeze({ key: 'cases', label: t('nav.myCases') });
     const projectsItem = Object.freeze({ key: 'my-projects', label: t('nav.myProjects') });
-    let items;
-    if (directusCasesEnabled) {
-        items = projectCaseMigrateEnabled
-            ? [casesItem, projectsItem, filesItem]
-            : [casesItem, filesItem];
-    } else {
-        // Cases off: legacy My Projects + My Files
-        items = [projectsItem, filesItem];
-    }
+    const items = projectCaseMigrateEnabled
+        ? [casesItem, projectsItem, filesItem]
+        : [casesItem, filesItem];
     return Object.freeze(items.filter((item) => MY_PROJECTS_VISIBLE || item !== projectsItem));
 }

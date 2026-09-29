@@ -9,7 +9,7 @@ import {
   readAppViewFromUrl,
   writeAppViewToUrl
 } from './components/app-views.js';
-import { loadAppFeatures, isDirectusCasesEnabled, areAppFeaturesLoaded } from './services/features.js';
+import { loadAppFeatures, areAppFeaturesLoaded } from './services/features.js';
 import {
   setDirectusLinkGate,
   clearDirectusLinkGate,
@@ -128,6 +128,64 @@ export class SlicerApp extends LitElement {
         max-width: 520px;
       }
 
+      .directus-reconnect-form {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        min-width: min(380px, 85vw);
+      }
+
+      .directus-reconnect-hint {
+        margin: 0;
+        line-height: 1.45;
+        color: var(--color-text-secondary, #555);
+        font-size: 0.93rem;
+      }
+
+      .directus-reconnect-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .directus-reconnect-field label {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--color-text-primary, #333);
+      }
+
+      .directus-reconnect-field input {
+        border: 1px solid var(--color-border, #ddd);
+        border-radius: var(--radius-md);
+        padding: 8px 12px;
+        font: inherit;
+        font-size: 0.95rem;
+        background: var(--color-surface, var(--color-background, #fff));
+        color: var(--color-text-primary, #333);
+        min-height: 40px;
+        box-sizing: border-box;
+        width: 100%;
+      }
+
+      .directus-reconnect-field input:focus {
+        outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+        outline-offset: var(--focus-ring-offset, 2px);
+        border-color: var(--color-primary);
+      }
+
+      .directus-reconnect-error {
+        margin: 0;
+        font-size: 0.88rem;
+        color: var(--color-error, #c62828);
+      }
+
+      .directus-reconnect-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 4px;
+      }
+
       .logout-billing-dialog p {
         margin: 0;
         line-height: 1.45;
@@ -229,7 +287,10 @@ export class SlicerApp extends LitElement {
       logoutBillingMode: { type: String },
       logoutTransferSession: { type: Object },
       logoutSoleSessions: { type: Array },
-      logoutBillingAutoSeconds: { type: Number }
+      logoutBillingAutoSeconds: { type: Number },
+      _directusReconnectBusy: { type: Boolean },
+      _directusReconnectError: { type: String },
+      _directusReconnectOpen: { type: Boolean }
     };
   }
 
@@ -260,11 +321,15 @@ export class SlicerApp extends LitElement {
     this.logoutTransferSession = null;
     this.logoutSoleSessions = [];
     this.logoutBillingAutoSeconds = 0;
+    this._directusReconnectBusy = false;
+    this._directusReconnectError = '';
+    this._directusReconnectOpen = false;
     this._logoutQueueWithOthers = [];
     this._logoutQueueSole = [];
     this._logoutBillingAutoTimer = null;
     this._logoutBillingAutoInterval = null;
     this._trameHeartbeatInterval = null;
+    this._directusKeepaliveTimer = null;
     this._onPopState = () => this.handlePopState();
 
     if (!this.shareToken && !this.inviteToken) {
@@ -273,12 +338,22 @@ export class SlicerApp extends LitElement {
     }
 
     window.addEventListener('popstate', this._onPopState);
+    this._onDirectusSessionExpired = () => {
+      if (!this._directusReconnectOpen && this.isAuthenticated) {
+        this._directusReconnectOpen = true;
+        this._directusReconnectError = '';
+        this.requestUpdate();
+        this.updateComplete.then(() => {
+          this.renderRoot?.querySelector('#directus-reconnect-dialog')?.openDialog?.();
+        });
+      }
+    };
+    window.addEventListener('directus-session-expired', this._onDirectusSessionExpired);
   }
 
   async initializeAppView() {
     await loadAppFeatures();
     this.restoreViewFromUrl({ writeBack: false });
-    this.guardCasesView();
     this.guardProjectViews();
     this.guardSettingsView();
   }
@@ -292,13 +367,6 @@ export class SlicerApp extends LitElement {
     this.guardSettingsView();
   }
 
-  guardCasesView() {
-    if (!areAppFeaturesLoaded()) return;
-    if (!isDirectusCasesEnabled() && this.currentView === APP_VIEWS.CASES) {
-      this.currentView = DEFAULT_APP_VIEW;
-      this.syncViewToUrl();
-    }
-  }
 
   /**
    * My Projects is hidden (MY_PROJECTS_VISIBLE): send deep links (?view=projects, project review,
@@ -308,9 +376,7 @@ export class SlicerApp extends LitElement {
   guardProjectViews() {
     if (!PROJECT_VIEWS.has(this.currentView)) return;
     if (!MY_PROJECTS_VISIBLE) {
-      this.currentView = areAppFeaturesLoaded() && isDirectusCasesEnabled()
-        ? APP_VIEWS.CASES
-        : DEFAULT_APP_VIEW;
+      this.currentView = areAppFeaturesLoaded() ? APP_VIEWS.CASES : DEFAULT_APP_VIEW;
       this.selectedProjectId = null;
       this.syncViewToUrl();
       return;
@@ -393,7 +459,6 @@ export class SlicerApp extends LitElement {
       this.currentView = DEFAULT_APP_VIEW;
       this.selectedProjectId = null;
     }
-    this.guardCasesView();
     this.guardProjectViews();
     this.guardSettingsView();
     if (writeBack) {
@@ -425,6 +490,7 @@ export class SlicerApp extends LitElement {
         this.applyIdentityGate(data.identity);
         await hydrateUserPreferencesFromUser(this.user);
         this.startInactivityTimer();
+        this._startDirectusKeepalive();
         return;
       }
 
@@ -466,6 +532,7 @@ export class SlicerApp extends LitElement {
     this.showLogin = true;
     clearDirectusLinkGate();
     this.stopInactivityTimer();
+    this._stopDirectusKeepalive();
     this._syncAuthThemeWatch();
   }
 
@@ -481,6 +548,7 @@ export class SlicerApp extends LitElement {
     this._stopAuthThemeWatch();
     hydrateUserPreferencesFromUser(user);
     this.startInactivityTimer();
+    this._startDirectusKeepalive();
     this.refreshUserProfile();
   }
 
@@ -491,6 +559,7 @@ export class SlicerApp extends LitElement {
     this._stopAuthThemeWatch();
     hydrateUserPreferencesFromUser(user);
     this.startInactivityTimer();
+    this._startDirectusKeepalive();
   }
 
   handleInviteAccepted(e) {
@@ -509,6 +578,7 @@ export class SlicerApp extends LitElement {
       this._stopAuthThemeWatch();
       hydrateUserPreferencesFromUser(user);
       this.startInactivityTimer();
+      this._startDirectusKeepalive();
       // Invite redeem creates/links Directus — refresh gate from /me.
       this.checkExistingSession();
     }
@@ -517,7 +587,7 @@ export class SlicerApp extends LitElement {
 
   handleNotificationOpen(e) {
     const caseId = e.detail?.caseId;
-    if (!caseId || !isDirectusCasesEnabled()) return;
+    if (!caseId) return;
     if (!this.confirmLeaveCurrentView()) return;
     const inviteId = e.detail?.inviteId || null;
     const type = String(e.detail?.type || '');
@@ -605,7 +675,6 @@ export class SlicerApp extends LitElement {
       return;
     }
     if (selectedKey === 'cases') {
-      if (!isDirectusCasesEnabled()) return;
       this.selectedProjectId = null;
       this.currentView = APP_VIEWS.CASES;
       const caseId = e.detail?.caseId ? String(e.detail.caseId).trim() : '';
@@ -669,6 +738,26 @@ export class SlicerApp extends LitElement {
     }
   }
 
+  // Fires every 10 minutes while signed in to silently rotate Directus tokens before
+  // they expire. Always swallows errors — the reconnect modal handles genuine failures.
+  _startDirectusKeepalive() {
+    this._stopDirectusKeepalive();
+    const INTERVAL_MS = 10 * 60 * 1000;
+    this._directusKeepaliveTimer = setInterval(() => {
+      fetch(`${API_URL}/api/auth/directus/keepalive`, {
+        method: 'POST',
+        credentials: 'include'
+      }).catch(() => { /* silent */ });
+    }, INTERVAL_MS);
+  }
+
+  _stopDirectusKeepalive() {
+    if (this._directusKeepaliveTimer) {
+      clearInterval(this._directusKeepaliveTimer);
+      this._directusKeepaliveTimer = null;
+    }
+  }
+
   /**
    * Explicit logout (menu button). If the user owns remote GPU billing, remind them
    * to transfer or stop before signing out.
@@ -724,6 +813,35 @@ export class SlicerApp extends LitElement {
   closeLogoutBillingDialog() {
     this.clearLogoutBillingAutoTimer();
     this.renderRoot?.querySelector('#logout-billing-dialog')?.closeDialog?.();
+  }
+
+  async _submitDirectusReconnect(e) {
+    e.preventDefault();
+    if (this._directusReconnectBusy) return;
+    const password = e.target.elements.password?.value || '';
+    if (!password) return;
+    this._directusReconnectBusy = true;
+    this._directusReconnectError = '';
+    try {
+      const res = await fetch(`${API_URL}/api/auth/directus/reconnect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ password })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        this._directusReconnectError = data.error?.message || data.message || t('common.requestFailed');
+        return;
+      }
+      this._directusReconnectOpen = false;
+      this.renderRoot?.querySelector('#directus-reconnect-dialog')?.closeDialog?.();
+      window.dispatchEvent(new CustomEvent('directus-session-restored'));
+    } catch {
+      this._directusReconnectError = t('errors.serverUnreachable');
+    } finally {
+      this._directusReconnectBusy = false;
+    }
   }
 
   clearLogoutBillingState() {
@@ -977,6 +1095,10 @@ export class SlicerApp extends LitElement {
     if (this._onPopState) {
       window.removeEventListener('popstate', this._onPopState);
     }
+    if (this._onDirectusSessionExpired) {
+      window.removeEventListener('directus-session-expired', this._onDirectusSessionExpired);
+    }
+    this._stopDirectusKeepalive();
     this._stopAuthThemeWatch();
     this.stopSharedReplayPolling();
     super.disconnectedCallback();
@@ -1153,7 +1275,7 @@ export class SlicerApp extends LitElement {
           @profile-updated=${this.handleProfileUpdated}
         ></user-settings-page>
       ` : ''}
-      ${this.currentView === APP_VIEWS.CASES && isDirectusCasesEnabled() ? html`
+      ${this.currentView === APP_VIEWS.CASES ? html`
         <directus-cases-page
           .username=${userDisplayName(this.user)}
           @menu-selection-change=${this.handleProjectsMenuSelection}
@@ -1270,6 +1392,50 @@ export class SlicerApp extends LitElement {
           </div>
         ` : ''}
       </app-dialog>
+
+      ${this._directusReconnectOpen ? html`
+        <app-dialog
+          id="directus-reconnect-dialog"
+          title=${t('directusReconnect.title')}
+          .lightDismiss=${false}
+          .showDefaultCloseButton=${false}
+        >
+          <form class="directus-reconnect-form" @submit=${(e) => this._submitDirectusReconnect(e)}>
+            <p class="directus-reconnect-hint">${t('directusReconnect.hint')}</p>
+            <div class="directus-reconnect-field">
+              <label for="dx-reconnect-pw">${t('directusReconnect.passwordLabel')}</label>
+              <input
+                id="dx-reconnect-pw"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                ?disabled=${this._directusReconnectBusy}
+                autofocus
+              />
+            </div>
+            ${this._directusReconnectError ? html`
+              <p class="directus-reconnect-error" role="alert">${this._directusReconnectError}</p>
+            ` : ''}
+            <div class="directus-reconnect-actions">
+              <button
+                type="button"
+                class="secondary-button"
+                ?disabled=${this._directusReconnectBusy}
+                @click=${() => {
+                  this._directusReconnectOpen = false;
+                  this.renderRoot?.querySelector('#directus-reconnect-dialog')?.closeDialog?.();
+                  window.dispatchEvent(new CustomEvent('directus-session-reconnect-cancelled'));
+                }}
+              >${t('directusReconnect.cancel')}</button>
+              <button
+                type="submit"
+                class="primary-button"
+                ?disabled=${this._directusReconnectBusy}
+              >${this._directusReconnectBusy ? t('common.working') : t('directusReconnect.submit')}</button>
+            </div>
+          </form>
+        </app-dialog>
+      ` : ''}
     `;
   }
 

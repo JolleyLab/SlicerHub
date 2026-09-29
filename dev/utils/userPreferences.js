@@ -17,6 +17,8 @@ const THEME_CACHE_KEY = 'ui-theme';
 const LEGACY_VIEWER_OPTIONS_KEY = 'user-local-slicer-viewer-options';
 
 let cachedPreferences = { ...DEFAULT_USER_PREFERENCES };
+// Incremented on every explicit user-initiated save; hydration skips applying if it changed.
+let _saveGeneration = 0;
 
 export function normalizeUserPreferences(input = {}) {
     const theme = input?.theme === 'dark' ? 'dark' : 'light';
@@ -116,6 +118,7 @@ async function parseResponse(response) {
  * accounts are seeded with the device theme at registration instead.
  */
 export async function hydrateUserPreferencesFromUser(user) {
+    const snapshotGen = _saveGeneration;
     let preferences = normalizeUserPreferences(user?.preferences || {});
 
     if (isDefaultPreferences(preferences)) {
@@ -132,6 +135,10 @@ export async function hydrateUserPreferencesFromUser(user) {
     }
 
     clearLegacyLocalViewerOptions();
+    if (_saveGeneration !== snapshotGen) {
+        // User explicitly changed preferences while this background hydration was in-flight.
+        return getCachedUserPreferences();
+    }
     return applyUserPreferences(preferences);
 }
 
@@ -147,6 +154,7 @@ export async function fetchUserPreferences() {
 }
 
 export async function saveUserPreferences(patch = {}) {
+    const myGen = ++_saveGeneration;
     const response = await fetch(`${API_URL}/api/auth/preferences`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -154,6 +162,10 @@ export async function saveUserPreferences(patch = {}) {
         body: JSON.stringify(patch)
     });
     const data = await parseResponse(response);
+    if (myGen < _saveGeneration) {
+        // A newer save is already in-flight; don't apply this stale response.
+        return getCachedUserPreferences();
+    }
     return applyUserPreferences(data.preferences || patch);
 }
 

@@ -1,7 +1,8 @@
 import { LitElement, html, css } from 'lit-element';
 import { t } from './i18n/index.js';
-import { isDirectusCasesEnabled, loadAppFeatures } from './services/features.js';
+import { loadAppFeatures } from './services/features.js';
 import {
+    listDirectusCases,
     listInvitesAwaitingMyApproval,
     listRecentActivity,
     approveDirectusCaseInvite,
@@ -402,6 +403,7 @@ export class HomePage extends LitElement {
                 gap: 10px;
             }
 
+
             /* Categories are told apart by icon and name, not hue: the app has one palette. */
             :host {
                 --card-accent: var(--color-primary);
@@ -602,6 +604,7 @@ export class HomePage extends LitElement {
             todo: { type: Array },
             /** @type {{ id: string, kind: 'mention'|'approval', title: string, detail?: string }[]} */
             activity: { type: Array },
+            recentCases: { type: Array },
             panelFilters: { type: Object },
             _filterMenuOpen: { type: Object },
             homeLayout: { type: Object },
@@ -616,6 +619,7 @@ export class HomePage extends LitElement {
         this.username = '';
         this.todo = [];
         this.activity = [];
+        this.recentCases = [];
         this.panelFilters = {};
         this._filterMenuOpen = {};
         this._onDocClick = (e) => this._handleDocClick(e);
@@ -627,6 +631,10 @@ export class HomePage extends LitElement {
         this.updateStatus = '';
         this.updateStatusIsError = false;
         this._onNotificationsInvalidate = () => this.loadInviteData();
+        this._onDirectusSessionRestored = () => {
+            this.loadRecentCases();
+            this.loadInviteData();
+        };
     }
 
     connectedCallback() {
@@ -635,9 +643,11 @@ export class HomePage extends LitElement {
         loadAppFeatures().then(() => {
             this.requestUpdate();
             this.loadInviteData();
+            this.loadRecentCases();
         });
         window.addEventListener('notifications-invalidate', this._onNotificationsInvalidate);
         window.addEventListener('user-preferences-changed', this._onPreferencesChanged);
+        window.addEventListener('directus-session-restored', this._onDirectusSessionRestored);
         document.addEventListener('click', this._onDocClick, true);
         this._onPreferencesChanged();
     }
@@ -645,6 +655,7 @@ export class HomePage extends LitElement {
     disconnectedCallback() {
         window.removeEventListener('notifications-invalidate', this._onNotificationsInvalidate);
         window.removeEventListener('user-preferences-changed', this._onPreferencesChanged);
+        window.removeEventListener('directus-session-restored', this._onDirectusSessionRestored);
         document.removeEventListener('click', this._onDocClick, true);
         super.disconnectedCallback();
     }
@@ -655,7 +666,6 @@ export class HomePage extends LitElement {
     }
 
     async loadRecentActivity() {
-        if (!isDirectusCasesEnabled()) return;
         try {
             const [events, mentions] = await Promise.all([
                 listRecentActivity(),
@@ -671,7 +681,6 @@ export class HomePage extends LitElement {
     }
 
     async loadPendingInvites() {
-        if (!isDirectusCasesEnabled()) return;
         try {
             const invites = await listInvitesAwaitingMyApproval();
             this.todo = [
@@ -680,6 +689,32 @@ export class HomePage extends LitElement {
             ];
         } catch (err) {
             console.warn('Could not load pending invites:', err.message);
+        }
+    }
+
+    async loadRecentCases() {
+        try {
+            const { cases = [] } = await listDirectusCases({ limit: 50 });
+            const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+            this.recentCases = cases
+                .map((c) => {
+                    const timestamps = [
+                        c.updatedAt,
+                        c.createdAt,
+                        ...(c.comments || []).map((cm) => cm.createdAt),
+                        ...(c.attachments || []).map((a) => a.modifiedAt)
+                    ].map((ts) => {
+                        if (!ts) return 0;
+                        const s = String(ts).trim();
+                        const normalised = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s) ? s.replace(' ', 'T') + 'Z' : s;
+                        return Date.parse(normalised) || 0;
+                    });
+                    return { ...c, _lastActivityMs: Math.max(...timestamps) };
+                })
+                .filter((c) => c._lastActivityMs >= cutoff)
+                .sort((a, b) => b._lastActivityMs - a._lastActivityMs);
+        } catch (err) {
+            console.warn('Could not load recent cases:', err.message);
         }
     }
 
@@ -953,18 +988,45 @@ export class HomePage extends LitElement {
     }
 
     renderRecentCases() {
+        const cases = this.recentCases;
         return html`
             <section class="panel" aria-labelledby="home-recent-cases">
                 <div class="panel-header">
                     <span class="panel-icon">${ICON_CASES}</span>
                     <h2 class="panel-title" id="home-recent-cases">${t('home.recentCases')}</h2>
                 </div>
-                <div class="panel-body">
-                    <div class="empty-state">
-                        <p class="empty-title">${t('home.recentCasesEmptyTitle')}</p>
-                        <p class="empty-hint">${t('home.recentCasesEmptyHint')}</p>
-                    </div>
-                </div>
+                ${cases.length === 0 ? html`
+                    <p class="panel-clear"><span>${t('home.recentCasesEmptyTitle')}</span></p>
+                ` : html`
+                    <ul class="card-list">
+                        ${cases.map((c) => html`
+                            <li>
+                                <button
+                                    type="button"
+                                    class="card card-clickable"
+                                    aria-label=${t('home.recentCasesOpenAria', { title: c.title || t('home.invite.untitledCase') })}
+                                    @click=${() => this.dispatchEvent(new CustomEvent('notification-open', {
+                                        detail: { caseId: c.id, type: 'mention' },
+                                        bubbles: true, composed: true
+                                    }))}
+                                >
+                                    <time class="card-time" datetime=${new Date(c._lastActivityMs).toISOString()} title=${fullTime(new Date(c._lastActivityMs).toISOString())}>
+                                        ${condensedTime(new Date(c._lastActivityMs).toISOString())}
+                                    </time>
+                                    <div class="card-main">
+                                        <p class="card-title">${c.title || t('home.invite.untitledCase')}</p>
+                                        ${(c.comments?.length || c.attachments?.length) ? html`
+                                            <p class="card-detail">${[
+                                                c.comments?.length ? `${c.comments.length} ${c.comments.length === 1 ? t('home.recentCasesComment') : t('home.recentCasesComments')}` : null,
+                                                c.attachments?.length ? `${c.attachments.length} ${c.attachments.length === 1 ? t('home.recentCasesFile') : t('home.recentCasesFiles')}` : null,
+                                            ].filter(Boolean).join(' · ')}</p>
+                                        ` : ''}
+                                    </div>
+                                </button>
+                            </li>
+                        `)}
+                    </ul>
+                `}
             </section>
         `;
     }

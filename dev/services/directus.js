@@ -1,6 +1,7 @@
 import { API_URL } from '../config.js';
 import { t } from '../i18n/index.js';
 import { tusUpload } from './tusUpload.js';
+export { saveWithDirectusReconnect } from './directusRetry.js';
 
 async function parseJson(response) {
     try {
@@ -104,6 +105,9 @@ function throwApiError(response, data, fallback) {
     err.status = response.status;
     err.code = data?.error?.code || null;
     err.rawMessage = raw;
+    if (err.code === 'DIRECTUS_SESSION_EXPIRED' || err.code === 'DIRECTUS_SESSION_REQUIRED') {
+        window.dispatchEvent(new CustomEvent('directus-session-expired'));
+    }
     throw err;
 }
 

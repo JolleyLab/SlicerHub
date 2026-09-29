@@ -10,12 +10,9 @@ export default function featuresRoutes(app) {
      */
     app.get('/api/features', asyncHandler(async (_req, res) => {
         res.json({
-            directusCases: config.directus.casesEnabled && isDirectusConfigured(),
             // CUTOVER (project-case-migrate)
             projectCaseMigrate: Boolean(
-                config.directus.projectCaseMigrateEnabled
-                && config.directus.casesEnabled
-                && isDirectusConfigured()
+                config.directus.projectCaseMigrateEnabled && isDirectusConfigured()
             ),
             /** Case signup invite email delivery (SMTP). Copy-link works either way. */
             inviteEmail: Boolean(config.mail?.enabled && config.mail?.host),

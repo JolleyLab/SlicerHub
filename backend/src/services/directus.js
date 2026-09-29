@@ -1059,23 +1059,20 @@ export async function createCaseComment(caseId, commentText, { accessToken, acto
 
     // Notify each @-mentioned user. Skip the commenter themselves; silently skip
     // anyone whose Directus UUID is not linked to an app account.
-    console.log('[mention-notif] mentionIds:', mentionIds, 'actorAppUserId:', actorAppUserId, 'rawComment:', row?.comment);
     if (mentionIds.length) {
         const actorName = mapped.author?.name || 'Someone';
         const notifBody = String(mapped.body || '').slice(0, 200);
         for (const mentionedUuid of mentionIds) {
             try {
                 const appUserId = findAppUserIdByDirectusExternalId(mentionedUuid);
-                console.log('[mention-notif] uuid:', mentionedUuid, '→ appUserId:', appUserId, 'skip?', !appUserId || appUserId === actorAppUserId);
                 if (!appUserId || appUserId === actorAppUserId) continue;
-                const notif = createNotification({
+                createNotification({
                     userId: appUserId,
                     type: 'mention',
                     title: `${actorName} mentioned you in "${caseTitle}"`,
                     body: notifBody,
                     caseId: caseKey
                 });
-                console.log('[mention-notif] created:', notif?.id);
             } catch (err) {
                 console.warn('Mention notification skipped:', err.message || err);
             }

@@ -116,17 +116,21 @@ export default {
         changePassword: {
             title: 'Finish setting up your account',
             hint: 'Choose a new password and add your name so collaborators can recognize you.',
+            settingsTitle: 'Change password',
+            settingsCurrent: 'Current password',
             firstName: 'First name',
             lastName: 'Last name',
             current: 'Current (temporary) password',
             newPassword: 'New password',
             confirm: 'Confirm new password',
             submit: 'Save and continue',
+            settingsSubmit: 'Update password',
             submitting: 'Saving…',
             mismatch: 'New passwords do not match',
             minLength: 'New password must be at least 8 characters',
             nameRequired: 'First and last name are required',
-            failed: 'Could not update your account'
+            failed: 'Could not update your account',
+            settingsSuccess: 'Password updated successfully'
         }
     },
     nav: {
@@ -149,8 +153,13 @@ export default {
         customize: 'Customize this page',
         allHidden: 'Every section on this page is hidden.',
         recentCases: 'Recent cases',
-        recentCasesEmptyTitle: 'Nothing here yet',
+        recentCasesEmptyTitle: 'No activity in the last 30 days',
         recentCasesEmptyHint: 'Cases you open or update will show up here for quick access.',
+        recentCasesOpenAria: 'Open case: {title}',
+        recentCasesComment: 'comment',
+        recentCasesComments: 'comments',
+        recentCasesFile: 'file',
+        recentCasesFiles: 'files',
         filterLabel: 'Filter {section}',
         filterAll: 'All',
         filterCount: '{count} types',
@@ -670,6 +679,13 @@ export default {
     },
     dialog: {
         closeAria: 'Close dialog'
+    },
+    directusReconnect: {
+        title: 'Reconnect to Cases',
+        hint: 'Your connection to Cases expired. Enter your password to reconnect without signing out.',
+        passwordLabel: 'Password',
+        submit: 'Reconnect',
+        cancel: 'Cancel'
     },
     errors: {
         sessionExpired: 'Your session expired. Please sign in again.',

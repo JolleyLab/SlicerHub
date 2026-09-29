@@ -264,7 +264,6 @@ export class PageShellTemplate extends LitElement {
         super.connectedCallback();
         loadAppFeatures().then((flags) => {
             this.menuItems = getAppMenuItems({
-                directusCasesEnabled: flags.directusCases,
                 // CUTOVER (project-case-migrate)
                 projectCaseMigrateEnabled: flags.projectCaseMigrate === true
             });

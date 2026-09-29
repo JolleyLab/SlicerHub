@@ -6,7 +6,8 @@ import {
     ValidationError,
     UnauthorizedError,
     NotFoundError,
-    ForbiddenError
+    ForbiddenError,
+    AppError
 } from '../utils/errors.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { createRateLimiter, getRateLimitClientIp } from '../middleware/rateLimit.js';
@@ -25,7 +26,10 @@ import {
     clearProviderTokens
 } from '../auth/identityStore.js';
 import { buildIdentityPayload } from '../auth/identityPayload.js';
-import { attachStoredDirectusTokensToSession } from '../auth/directusUserSession.js';
+import {
+    attachStoredDirectusTokensToSession,
+    getDirectusAccessTokenForAppUser
+} from '../auth/directusUserSession.js';
 import { setDirectusLinkCookie } from '../auth/directusLinkCookie.js';
 import {
     loginRateLimitMiddleware,
@@ -372,7 +376,6 @@ export default function authRoutes(app) {
 
                 if (!firstName && !lastName) {
                     try {
-                        const { getDirectusAccessTokenForAppUser } = await import('../auth/directusUserSession.js');
                         const accessToken = await getDirectusAccessTokenForAppUser(req.user, { req, res });
                         const viewer = await fetchDirectusViewer(accessToken);
                         if (viewer) {
@@ -441,6 +444,78 @@ export default function authRoutes(app) {
         }
 
         res.json({ preferences });
+    }));
+
+    /**
+     * Re-authenticate the current user with Directus using their password, refreshing
+     * the dx_link cookie without ending the app session. Used after the Directus session
+     * expires (e.g. after a service restart) so the user stays signed in to the app.
+     */
+    app.post('/api/auth/directus/reconnect', authenticateToken, asyncHandler(async (req, res) => {
+        const { password } = req.body;
+        if (!password || typeof password !== 'string') {
+            throw new ValidationError('Password is required', null, 'auth.password_required');
+        }
+
+        const user = User.findById(req.user.id);
+        if (!user?.email) {
+            throw new NotFoundError(msg('user.not_found'), null, 'user.not_found');
+        }
+
+        const base = (config.directus?.url || '').trim().replace(/\/+$/, '');
+        if (!base) {
+            throw new AppError('Directus not configured', 503, null, 'directus.not_configured');
+        }
+
+        const dxRes = await fetch(`${base}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({
+                email: String(user.email).trim().toLowerCase(),
+                password: String(password),
+                mode: 'json'
+            })
+        });
+
+        let body = null;
+        try { body = await dxRes.json(); } catch { /* */ }
+
+        const data = body?.data || body;
+        if (!dxRes.ok || !data?.access_token) {
+            throw new UnauthorizedError(msg('auth.current_password_incorrect'), null, 'auth.current_password_incorrect');
+        }
+
+        const tokens = {
+            accessToken: data.access_token,
+            refreshToken: data.refresh_token || null,
+            expires: data.expires
+        };
+
+        if (req.user?.jti) {
+            storeProviderTokens(req.user.jti, req.user.id, 'directus', tokens);
+            setDirectusLinkCookie(res, {
+                userId: req.user.id,
+                ...tokens
+            });
+        }
+
+        res.json({ ok: true });
+    }));
+
+    /**
+     * Silently refresh the Directus access token while the user is still active.
+     * Always returns 200 — failures are intentionally swallowed so a background
+     * timer can call this without ever triggering the reconnect modal.
+     */
+    app.post('/api/auth/directus/keepalive', authenticateToken, asyncHandler(async (req, res) => {
+        try {
+            await getDirectusAccessTokenForAppUser(req.user, { forceRefresh: true, res });
+        } catch {
+            // Swallow silently — Directus may be down or the refresh token may be
+            // genuinely expired. The reconnect modal handles that when the user
+            // next performs a real Directus operation.
+        }
+        res.json({ ok: true });
     }));
 
     /**

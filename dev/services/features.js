@@ -12,7 +12,6 @@ const DEFAULT_AUTH = Object.freeze({
 let featuresPromise = null;
 let featuresLoaded = false;
 let features = Object.freeze({
-    directusCases: false,
     projectCaseMigrate: false,
     inviteEmail: false,
     auth: DEFAULT_AUTH
@@ -24,10 +23,6 @@ export function getAppFeatures() {
 
 export function areAppFeaturesLoaded() {
     return featuresLoaded;
-}
-
-export function isDirectusCasesEnabled() {
-    return features.directusCases === true;
 }
 
 /** CUTOVER (project-case-migrate) */
@@ -69,7 +64,6 @@ export function loadAppFeatures() {
             };
 
             features = Object.freeze({
-                directusCases: data?.directusCases === true,
                 projectCaseMigrate: data?.projectCaseMigrate === true,
                 inviteEmail: data?.inviteEmail === true,
                 auth: Object.freeze(auth)
