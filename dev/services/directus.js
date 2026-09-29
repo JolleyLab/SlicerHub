@@ -436,6 +436,27 @@ function attachmentUrl(caseId, attachmentId, suffix) {
     return `${API_URL}/api/directus/cases/${encodeURIComponent(caseId)}/attachments/${encodeURIComponent(attachmentId)}/${suffix}`;
 }
 
+/**
+ * Save the currently-running Slicer scene back to a case attachment.
+ * @param {string} caseId
+ * @param {string} attachmentId
+ * @param {{ saveMode: 'overwrite' | 'saveAsNew' }} options
+ * @returns {Promise<{ success: boolean, saveMode: string, attachment: object }>}
+ */
+export async function saveDirectusCaseAttachmentScene(caseId, attachmentId, { saveMode = 'overwrite' } = {}) {
+    const response = await fetch(attachmentUrl(caseId, attachmentId, 'save-scene'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ saveMode })
+    });
+    const data = await parseJson(response);
+    if (!response.ok) {
+        throwApiError(response, data, t('errors.saveSceneFailed'));
+    }
+    return data;
+}
+
 /** Fetch an attachment's bytes as a Blob for the in-browser SlicerWeb viewer (any case member). */
 export async function fetchDirectusAttachmentContent(caseId, attachmentId) {
     const response = await fetch(attachmentUrl(caseId, attachmentId, 'content'), {

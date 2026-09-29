@@ -716,6 +716,7 @@ export default {
         rejectInviteFailed: "Couldn't reject that invite.",
         invalidInviteLink: 'This invite link is invalid or expired.',
         createAccountFailed: "Couldn't create your account from this invite.",
+        saveSceneFailed: "Couldn't save the scene. Please try again.",
         openViewerFailed: "Couldn't open the viewer. Please try again.",
         stopViewerFailed: "Couldn't stop the viewer.",
         createProjectFailed: 'Failed to create project',

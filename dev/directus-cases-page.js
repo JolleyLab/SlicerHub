@@ -14,6 +14,7 @@ import {
     createDirectusCase,
     updateDirectusCase,
     deleteDirectusCaseAttachment,
+    saveDirectusCaseAttachmentScene,
     lookupDirectusUserByEmail,
     updateDirectusCaseCollaborators,
     inviteDirectusCaseUser,
@@ -24,6 +25,7 @@ import {
     friendlyCasesError
 } from './services/directus.js';
 import './components/people-dialog.js';
+import './components/app-dialog.js';
 import './components/list-filter-tools.js';
 import './components/attachment-open-menu.js';
 import { uploadManager } from './services/uploadManager.js';
@@ -1015,6 +1017,39 @@ export class DirectusCasesPage extends LitElement {
                 align-items: center;
             }
 
+            .save-scene-btn,
+            .save-as-new-btn {
+                padding: 6px 14px;
+                border-radius: 6px;
+                border: 1px solid var(--color-border);
+                background: var(--color-surface, var(--color-background));
+                color: var(--color-text-primary);
+                cursor: pointer;
+                font-size: 0.875rem;
+                white-space: nowrap;
+            }
+
+            .save-scene-btn:hover:not(:disabled),
+            .save-as-new-btn:hover:not(:disabled) {
+                background: var(--color-surface-hover, color-mix(in srgb, var(--color-primary) 10%, var(--color-background)));
+                border-color: var(--color-primary);
+            }
+
+            .save-scene-btn:disabled,
+            .save-as-new-btn:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+
+            .save-indicator {
+                font-size: 0.8rem;
+                color: var(--color-success, #22c55e);
+                padding: 2px 8px;
+                background: color-mix(in srgb, var(--color-success, #22c55e) 12%, transparent);
+                border-radius: 4px;
+                white-space: nowrap;
+            }
+
             .iframe-container {
                 flex: 1;
                 display: flex;
@@ -1072,6 +1107,11 @@ export class DirectusCasesPage extends LitElement {
             viewerKind: { type: String },
             viewerClosing: { type: Boolean },
             currentFileName: { type: String },
+            currentAttachmentId: { type: String },
+            hasUnsavedChanges: { type: Boolean },
+            isSavingScene: { type: Boolean },
+            saveIndicatorMessage: { type: String },
+            closePromptMode: { type: String },
             // New Case form
             showNewCaseForm: { type: Boolean },
             newCaseTitle: { type: String },
@@ -1124,6 +1164,15 @@ export class DirectusCasesPage extends LitElement {
         this.viewerLoadingDetail = '';
         this.viewerSimplified = false;
         this.currentFileName = '';
+        this.currentAttachmentId = '';
+        this.hasUnsavedChanges = false;
+        this.isSavingScene = false;
+        this.saveIndicatorMessage = '';
+        this.saveIndicatorTimeout = null;
+        this.saveIndicatorActivityCleanup = null;
+        this.iframeActivityCleanup = null;
+        this.closePromptMode = null;
+        this._closePromptResolver = null;
         this._viewerSessionToken = null;
         this._viewerSeatId = null;
         this.viewerKind = VIEWER_KINDS.SLICER_GUI;
@@ -2096,7 +2145,22 @@ export class DirectusCasesPage extends LitElement {
 
     // Public: called by the Close button. Full Slicer uses history.back() so the browser back button
     // and the button are indistinguishable to the user; SlicerWeb closes directly (see below).
-    closeViewer() {
+    async closeViewer() {
+        if (
+            this.viewerKind === VIEWER_KINDS.SLICER_GUI
+            && this.hasUnsavedChanges
+            && this.iframeUrl && this.iframeUrl !== 'about:blank'
+        ) {
+            const choice = await this.promptCloseChoice('unsaved');
+            if (choice === 'save') {
+                const saved = await this.saveCurrentScene('overwrite');
+                if (!saved) {
+                    const failedChoice = await this.promptCloseChoice('save-failed');
+                    if (failedChoice !== 'close-anyway') return;
+                }
+            }
+            // 'discard' falls through to close
+        }
         if (this.viewerKind === VIEWER_KINDS.SLICERWEB) {
             // SlicerWeb's own frame navigation adds shared history entries, so history.back()
             // may only step the iframe. Close directly and fix the URL in place.
@@ -2274,6 +2338,22 @@ export class DirectusCasesPage extends LitElement {
         this.viewerKind = VIEWER_KINDS.SLICER_GUI;
         this.viewerClosing = false;
         this.currentFileName = '';
+        this.currentAttachmentId = '';
+        this.hasUnsavedChanges = false;
+        this.isSavingScene = false;
+        this.saveIndicatorMessage = '';
+        if (this.saveIndicatorTimeout) {
+            clearTimeout(this.saveIndicatorTimeout);
+            this.saveIndicatorTimeout = null;
+        }
+        if (this.saveIndicatorActivityCleanup) {
+            this.saveIndicatorActivityCleanup();
+            this.saveIndicatorActivityCleanup = null;
+        }
+        if (this.iframeActivityCleanup) {
+            this.iframeActivityCleanup();
+            this.iframeActivityCleanup = null;
+        }
         this._slicerWebRun += 1; // cancels any in-flight SlicerWeb load
         this._viewerOpenId += 1; // orphans any in-flight open request
         this._slicerWebPending = null;
@@ -2350,6 +2430,8 @@ export class DirectusCasesPage extends LitElement {
             this.startHeartbeat();
             this.viewerLoading = true;
             this.viewerLoadingDetail = t('cases.openingViewerReady', { viewer: viewerLabel });
+            this.currentAttachmentId = attachment.id;
+            this.hasUnsavedChanges = false;
             this.openingAttachmentId = '';
 
             this._pushViewerHistory(caseRow.id);
@@ -2443,6 +2525,121 @@ export class DirectusCasesPage extends LitElement {
         this.viewerLoading = false;
         this.viewerLoadingDetail = '';
         markViewerActivity();
+        this.attachIframeActivityTracking();
+    }
+
+    attachIframeActivityTracking() {
+        if (this.iframeActivityCleanup) {
+            this.iframeActivityCleanup();
+            this.iframeActivityCleanup = null;
+        }
+        try {
+            const iframe = this.renderRoot?.querySelector('.viewer-iframe');
+            const iframeDoc = iframe?.contentWindow?.document;
+            if (!iframeDoc) return;
+            const markDirty = () => {
+                this.hasUnsavedChanges = true;
+                markViewerActivity();
+            };
+            const events = ['pointerdown', 'keydown', 'input', 'change', 'wheel'];
+            events.forEach((ev) => iframeDoc.addEventListener(ev, markDirty, true));
+            this.iframeActivityCleanup = () => {
+                events.forEach((ev) => iframeDoc.removeEventListener(ev, markDirty, true));
+            };
+        } catch (_) {
+            // Cross-origin iframes will throw; best-effort only.
+        }
+    }
+
+    async saveCurrentScene(mode = 'overwrite') {
+        if (!this.selectedCaseId || !this.currentAttachmentId) return false;
+        if (this.isSavingScene) return false;
+        this.isSavingScene = true;
+        try {
+            // Flush pending UI edits inside the iframe before saving.
+            try {
+                const iframe = this.renderRoot?.querySelector('.viewer-iframe');
+                iframe?.contentWindow?.focus?.();
+                const active = iframe?.contentWindow?.document?.activeElement;
+                if (active && typeof active.blur === 'function') active.blur();
+            } catch (_) { /* cross-origin, best effort */ }
+            await new Promise((r) => setTimeout(r, 350));
+            const result = await saveDirectusCaseAttachmentScene(
+                this.selectedCaseId,
+                this.currentAttachmentId,
+                { saveMode: mode }
+            );
+
+            // Patch the attachment in the local cases array so the file list reflects the save.
+            if (result?.attachment) {
+                this.cases = this.cases.map((c) => {
+                    if (c.id !== this.selectedCaseId) return c;
+                    if (!Array.isArray(c.attachments)) return c;
+                    const attachments = mode === 'saveAsNew'
+                        ? [...c.attachments, result.attachment]
+                        : c.attachments.map((a) => a.id === this.currentAttachmentId ? result.attachment : a);
+                    return { ...c, attachments };
+                });
+            }
+
+            this.hasUnsavedChanges = false;
+            this.showSaveIndicator(mode === 'saveAsNew' ? t('files.savedAsNew') : t('files.saved'));
+            return true;
+        } catch (err) {
+            this.errorMessage = this.userFacingError(err, t('errors.saveSceneFailed'));
+            return false;
+        } finally {
+            this.isSavingScene = false;
+        }
+    }
+
+    saveCurrentSceneAsNew() {
+        return this.saveCurrentScene('saveAsNew');
+    }
+
+    showSaveIndicator(message) {
+        this.saveIndicatorMessage = message;
+        if (this.saveIndicatorTimeout) {
+            clearTimeout(this.saveIndicatorTimeout);
+            this.saveIndicatorTimeout = null;
+        }
+        const scheduleHide = () => {
+            if (this.saveIndicatorTimeout) clearTimeout(this.saveIndicatorTimeout);
+            this.saveIndicatorTimeout = setTimeout(() => {
+                this.saveIndicatorMessage = '';
+                if (this.saveIndicatorActivityCleanup) {
+                    this.saveIndicatorActivityCleanup();
+                    this.saveIndicatorActivityCleanup = null;
+                }
+            }, 3000);
+        };
+        if (!this.saveIndicatorActivityCleanup) {
+            const onActivity = () => scheduleHide();
+            const events = ['pointerdown', 'keydown', 'wheel', 'touchstart'];
+            events.forEach((ev) => window.addEventListener(ev, onActivity, true));
+            this.saveIndicatorActivityCleanup = () => {
+                events.forEach((ev) => window.removeEventListener(ev, onActivity, true));
+            };
+        }
+        scheduleHide();
+    }
+
+    promptCloseChoice(mode) {
+        return new Promise((resolve) => {
+            this._closePromptResolver = resolve;
+            this.closePromptMode = mode;
+            this.updateComplete.then(() => {
+                this.renderRoot?.querySelector('#viewer-close-prompt')?.openDialog();
+            });
+        });
+    }
+
+    finishClosePrompt(choice) {
+        this.renderRoot?.querySelector('#viewer-close-prompt')?.closeDialog();
+        this.closePromptMode = null;
+        const resolver = this._closePromptResolver;
+        this._closePromptResolver = null;
+        resolver?.(choice);
     }
 
     renderLanding() {
@@ -2884,6 +3081,27 @@ export class DirectusCasesPage extends LitElement {
                 <div class="iframe-header">
                     <div class="iframe-title" id="viewer-title">${viewerTitle}</div>
                     <div class="iframe-header-actions">
+                        ${this.saveIndicatorMessage ? html`
+                            <span class="save-indicator">${this.saveIndicatorMessage}</span>
+                        ` : ''}
+                        ${this.viewerKind === VIEWER_KINDS.SLICER_GUI ? html`
+                            <button
+                                class="save-scene-btn"
+                                type="button"
+                                ?disabled=${this.iframeUrl === 'about:blank' || this.isSavingScene}
+                                @click=${() => this.saveCurrentScene('overwrite')}
+                            >
+                                ${this.isSavingScene ? t('common.saving') : t('files.saveScene')}
+                            </button>
+                            <button
+                                class="save-as-new-btn"
+                                type="button"
+                                ?disabled=${this.iframeUrl === 'about:blank' || this.isSavingScene}
+                                @click=${() => this.saveCurrentSceneAsNew()}
+                            >
+                                ${t('files.saveAsNew')}
+                            </button>
+                        ` : ''}
                         <button
                             class="primary-button"
                             type="button"
@@ -2893,6 +3111,37 @@ export class DirectusCasesPage extends LitElement {
                         </button>
                     </div>
                 </div>
+                ${this.closePromptMode ? html`
+                    <app-dialog
+                        id="viewer-close-prompt"
+                        title=${this.closePromptMode === 'save-failed' ? 'Save failed' : 'Unsaved changes'}
+                        .showDefaultCloseButton=${false}
+                    >
+                        <p>${this.closePromptMode === 'save-failed'
+                            ? 'Your changes could not be saved. Close anyway?'
+                            : 'Save your changes before closing?'
+                        }</p>
+                        ${this.closePromptMode === 'unsaved' ? html`
+                            <button slot="actions" class="secondary-button" type="button"
+                                @click=${() => this.finishClosePrompt('discard')}>
+                                ${t('files.dontSave')}
+                            </button>
+                            <button slot="actions" class="primary-button" type="button"
+                                @click=${() => this.finishClosePrompt('save')}>
+                                ${t('common.save')}
+                            </button>
+                        ` : html`
+                            <button slot="actions" class="secondary-button" type="button"
+                                @click=${() => this.finishClosePrompt('keep-open')}>
+                                ${t('files.keepOpen')}
+                            </button>
+                            <button slot="actions" class="primary-button" type="button"
+                                @click=${() => this.finishClosePrompt('close-anyway')}>
+                                ${t('files.closeAnyway')}
+                            </button>
+                        `}
+                    </app-dialog>
+                ` : ''}
                 <div class="iframe-container">
                     ${this.iframeUrl !== 'about:blank' ? html`
                         <iframe

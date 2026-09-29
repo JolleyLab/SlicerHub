@@ -1476,6 +1476,28 @@ export async function deleteCaseAttachment(caseId, attachmentId, { accessToken }
 }
 
 /**
+ * Point an existing attachment at a different Directus file (overwrite save-scene path).
+ * @param {string} attachmentId  Directus attachment record id
+ * @param {string} newFileId     Directus file UUID of the newly-uploaded scene file
+ * @param {{ accessToken: string }} options
+ */
+export async function updateDirectusAttachmentFile(attachmentId, newFileId, { accessToken } = {}) {
+    if (!accessToken) {
+        throw new ValidationError(msg('directus.attachments_token_required'), null, 'directus.attachments_token_required');
+    }
+    const attachKey = String(attachmentId || '').trim();
+    const fileKey = String(newFileId || '').trim();
+    if (!attachKey || !fileKey) {
+        throw new ValidationError(msg('case.case_attachment_ids_required'), null, 'case.case_attachment_ids_required');
+    }
+    await directusFetch(`/items/attachment/${encodeURIComponent(attachKey)}`, {
+        method: 'PATCH',
+        accessToken,
+        body: { file: fileKey }
+    });
+}
+
+/**
  * Create a case in Directus as the logged-in user.
  * @param {{ title: string, description?: string, status?: string }} fields
  * @param {{ accessToken: string }} options

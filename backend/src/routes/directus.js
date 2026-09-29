@@ -1,4 +1,9 @@
 import path from 'path';
+import fs from 'fs';
+import http from 'http';
+import https from 'https';
+import storage from '../storage/index.js';
+import { resolveTrameServiceUrl } from '../gpu/sessionContext.js';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { ValidationError, NotFoundError, ForbiddenError } from '../utils/errors.js';
@@ -19,6 +24,8 @@ import {
     updateCase,
     createCaseAttachment,
     deleteCaseAttachment,
+    uploadDirectusFile,
+    updateDirectusAttachmentFile,
     fetchDirectusViewer,
     lookupDirectusUserByEmail
 } from '../services/directus.js';
@@ -66,6 +73,34 @@ import { normalizeViewerReleaseMode } from '../sessions/config.js';
 import { SESSION_KINDS } from '../sessions/kinds.js';
 import { buildViewerFrontendUrl } from '../utils/viewerUrl.js';
 import { resolveUseSimplifiedViewer } from '../slicerGui/viewerPreferences.js';
+
+function trameHttpRequest(url, options = {}) {
+    return new Promise((resolve, reject) => {
+        const urlObj = new URL(url);
+        const client = urlObj.protocol === 'https:' ? https : http;
+        const reqOptions = {
+            hostname: urlObj.hostname,
+            port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+            path: urlObj.pathname + urlObj.search,
+            method: options.method || 'GET',
+            headers: options.headers || {}
+        };
+        const req = client.request(reqOptions, (res) => {
+            let data = '';
+            res.on('data', chunk => { data += chunk; });
+            res.on('end', () => {
+                if (res.statusCode >= 200 && res.statusCode < 300) {
+                    try { resolve(JSON.parse(data)); } catch (_) { resolve(data); }
+                } else {
+                    reject(new Error(`HTTP ${res.statusCode}: ${data}`));
+                }
+            });
+        });
+        req.on('error', reject);
+        if (options.body) req.write(JSON.stringify(options.body));
+        req.end();
+    });
+}
 
 function parseOptionalSeatId(raw) {
     if (raw == null || raw === '') return null;
@@ -677,6 +712,107 @@ export default function directusRoutes(app) {
                 sessionTtlSeconds: getSessionTtlSeconds(SESSION_KINDS.SLICER_GUI),
                 warmIdleSeconds: getWarmIdleTtlSeconds(SESSION_KINDS.SLICER_GUI)
             });
+        })
+    );
+
+    /**
+     * Save the currently-running Slicer scene back to a case attachment.
+     * Body: { saveMode: 'overwrite' | 'saveAsNew' }
+     * - overwrite: re-uploads the .mrb and points the existing attachment at the new Directus file
+     * - saveAsNew: uploads and creates a new attachment on the case
+     */
+    app.post(
+        '/api/directus/cases/:caseId/attachments/:attachmentId/save-scene',
+        ...collabAuth,
+        asyncHandler(async (req, res) => {
+            const caseId = String(req.params.caseId || '').trim();
+            const attachmentId = String(req.params.attachmentId || '').trim();
+            if (!caseId || !attachmentId) {
+                throw new ValidationError(msg('case.case_attachment_ids_required'), null, 'case.case_attachment_ids_required');
+            }
+
+            const { saveMode = 'overwrite' } = req.body || {};
+
+            // Verify attachment exists on this case and get its metadata.
+            const attachment = await getCaseAttachment(caseId, attachmentId, {
+                accessToken: req.directusAccessToken
+            });
+
+            const userId = String(req.user.id);
+            const trameServiceUrl = resolveTrameServiceUrl(userId);
+
+            // Find the user's running trame session.
+            const sessions = await trameHttpRequest(`${trameServiceUrl}/api/sessions`);
+            const userSession = sessions.sessions?.find(s => s.userId === userId);
+            if (!userSession) {
+                throw new ValidationError(msg('session.not_found'), null, 'session.not_found');
+            }
+
+            // Build the target file name.
+            const baseName = path.basename(
+                attachment.filenameDownload || attachment.name || 'saved-scene.mrb'
+            );
+            let targetFileName;
+            if (saveMode === 'saveAsNew') {
+                const ext = path.extname(baseName);
+                const stem = path.basename(baseName, ext);
+                const now = new Date();
+                const pad = (n) => String(n).padStart(2, '0');
+                const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+                targetFileName = `${stem}-${stamp}${ext}`;
+            } else {
+                targetFileName = baseName;
+            }
+
+            // Ask trame to save the scene to disk.
+            const saveResult = await trameHttpRequest(
+                `${trameServiceUrl}/api/sessions/${userSession.sessionId}/save`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: { targetFileName }
+                }
+            );
+
+            const savedName = path.basename(saveResult.path || targetFileName);
+            const dbFilePath = storage.relativeDbPathForUser(userId, savedName);
+            if (!(await storage.exists(dbFilePath))) {
+                throw new ValidationError(msg('session.saved_scene_not_found'), null, 'session.saved_scene_not_found');
+            }
+            const { size } = await storage.stat(dbFilePath);
+            if (size <= 0) {
+                throw new ValidationError(msg('session.saved_scene_empty'), null, 'session.saved_scene_empty');
+            }
+
+            // Upload the saved .mrb to Directus as a new file.
+            const buffer = fs.readFileSync(storage.resolvePath(dbFilePath));
+            const uploadedFile = await uploadDirectusFile(
+                { buffer, originalname: savedName, mimetype: 'application/x-mrb' },
+                { accessToken: req.directusAccessToken }
+            );
+
+            if (saveMode === 'overwrite') {
+                await updateDirectusAttachmentFile(attachmentId, uploadedFile.id, {
+                    accessToken: req.directusAccessToken
+                });
+                const updated = await getCaseAttachment(caseId, attachmentId, {
+                    accessToken: req.directusAccessToken
+                });
+                return res.json({ success: true, saveMode: 'overwrite', attachment: updated });
+            }
+
+            // saveAsNew: create a new attachment on the case.
+            const displayName = path.basename(savedName, path.extname(savedName));
+            const newAttachment = await createCaseAttachment(caseId, uploadedFile.id, displayName, {
+                accessToken: req.directusAccessToken,
+                fileMeta: {
+                    filename_download: savedName,
+                    type: 'application/x-mrb',
+                    filesize: uploadedFile.filesize ?? size,
+                    uploaded_on: uploadedFile.uploaded_on || new Date().toISOString()
+                }
+            });
+            return res.json({ success: true, saveMode: 'saveAsNew', attachment: newAttachment });
         })
     );
 
