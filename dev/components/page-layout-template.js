@@ -234,7 +234,8 @@ export class PageShellTemplate extends LitElement {
             homeHref: { type: String },
             homeLabel: { type: String },
             compactNavOpen: { type: Boolean },
-            displayName: { type: String }
+            displayName: { type: String },
+            avatarUrl: { type: String }
         };
     }
 
@@ -243,6 +244,7 @@ export class PageShellTemplate extends LitElement {
         initializeTheme();
         this.username = t('common.guest');
         this.displayName = '';
+        this.avatarUrl = '';
         this.selectedMenuKey = DEFAULT_MENU_KEY;
         this.pageTitle = '';
         this.pageDescription = '';
@@ -379,6 +381,7 @@ export class PageShellTemplate extends LitElement {
                 <navigation-header
                     .username=${this.username}
                     .displayName=${this.displayName || this.username}
+                    .avatarUrl=${this.avatarUrl}
                     .homeHref=${this.homeHref}
                     .homeLabel=${this.homeLabel}
                 ></navigation-header>

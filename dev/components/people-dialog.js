@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
 import { isInviteEmailEnabled } from '../services/features.js';
+import { normalizeMember } from '../utils/memberNormalize.js';
 import './app-dialog.js';
 import './dropdown-select.js';
 
@@ -189,6 +190,15 @@ export class PeopleDialog extends LitElement {
                 font-size: 0.85rem;
                 font-weight: 650;
                 flex: 0 0 36px;
+                overflow: hidden;
+            }
+
+            .avatar img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                display: block;
+                border-radius: 50%;
             }
 
             :host-context([data-theme='dark']) .avatar {
@@ -480,15 +490,7 @@ export class PeopleDialog extends LitElement {
      */
     async open(members = [], options = {}) {
         this.members = this.sortMembers(
-            (members || []).map((m) => ({
-                id: String(m.id),
-                email: m.email || '',
-                username: m.username || '',
-                firstName: m.firstName || m.first_name || '',
-                lastName: m.lastName || m.last_name || '',
-                role: m.locked ? 'admin' : (m.role || 'collaborator'),
-                locked: Boolean(m.locked)
-            }))
+            (members || []).map(normalizeMember)
         );
         this._baselineIds = new Set(
             this.members.filter((m) => !m.locked).map((m) => m.id)
@@ -691,7 +693,11 @@ export class PeopleDialog extends LitElement {
         const editable = this.memberIsEditable(member);
         return html`
             <div class="row">
-                <div class="avatar" aria-hidden="true">${initialFor(member, ctx)}</div>
+                <div class="avatar" aria-hidden="true">
+                    ${member.avatarUrl
+                        ? html`<img src=${member.avatarUrl} alt="">`
+                        : initialFor(member, ctx)}
+                </div>
                 <div class="identity">
                     <span class="name">${name}</span>
                     ${secondary ? html`<span class="email">${secondary}</span>` : ''}

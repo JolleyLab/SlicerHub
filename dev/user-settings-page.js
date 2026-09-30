@@ -128,6 +128,60 @@ export class UserSettingsPage extends LitElement {
                 margin-top: 8px;
             }
 
+            .avatar-row {
+                display: flex;
+                align-items: center;
+                gap: 16px;
+                flex-wrap: wrap;
+            }
+
+            .avatar-preview {
+                width: 56px;
+                height: 56px;
+                border-radius: 50%;
+                background: var(--color-secondary);
+                color: var(--color-on-secondary);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 1.4rem;
+                font-weight: 650;
+                flex-shrink: 0;
+                overflow: hidden;
+                border: 1px solid var(--color-border);
+            }
+
+            .avatar-preview img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                display: block;
+                border-radius: 50%;
+            }
+
+            .avatar-actions {
+                display: flex;
+                gap: 8px;
+                align-items: center;
+                flex-wrap: wrap;
+            }
+
+            .avatar-hint {
+                font-size: 0.8rem;
+                color: var(--color-text-secondary);
+                margin-top: 4px;
+            }
+
+            .avatar-error {
+                font-size: 0.85rem;
+                color: #b42318;
+                margin-top: 4px;
+            }
+
+            :host-context([data-theme='dark']) .avatar-error {
+                color: #ff8a80;
+            }
+
             .name-row {
                 display: grid;
                 grid-template-columns: 1fr 1fr;
@@ -206,6 +260,35 @@ export class UserSettingsPage extends LitElement {
                 cursor: not-allowed;
             }
 
+            .small-button {
+                display: inline-flex;
+                align-items: center;
+                font: inherit;
+                font-size: 0.85rem;
+                padding: 6px 12px;
+                border-radius: var(--radius-md, 8px);
+                border: 1px solid var(--color-border);
+                background: var(--color-surface, var(--color-background));
+                color: var(--color-text-primary);
+                cursor: pointer;
+                white-space: nowrap;
+            }
+
+            .small-button:hover {
+                background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface, var(--color-background)));
+                border-color: var(--color-primary);
+            }
+
+            .small-button:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
+            }
+
+            .small-button:disabled {
+                opacity: 0.6;
+                cursor: not-allowed;
+            }
+
             .profile-status {
                 font-size: 0.85rem;
                 color: var(--color-text-secondary);
@@ -234,6 +317,7 @@ export class UserSettingsPage extends LitElement {
     static get properties() {
         return {
             username: { type: String },
+            avatarUrl: { type: String },
             user: { type: Object },
             theme: { type: String },
             useFullSlicer: { type: Boolean },
@@ -248,13 +332,16 @@ export class UserSettingsPage extends LitElement {
             profileLoading: { type: Boolean },
             profileSaving: { type: Boolean },
             profileState: { type: String },
-            profileStatusMessage: { type: String }
+            profileStatusMessage: { type: String },
+            avatarUploading: { type: Boolean },
+            avatarError: { type: String }
         };
     }
 
     constructor() {
         super();
         this.username = t('common.guest');
+        this.avatarUrl = '';
         this.user = null;
         this.errorMessage = '';
         this.saveState = 'idle';
@@ -266,6 +353,8 @@ export class UserSettingsPage extends LitElement {
         this.profileSaving = false;
         this.profileState = 'idle';
         this.profileStatusMessage = '';
+        this.avatarUploading = false;
+        this.avatarError = '';
         this._savedFirstName = '';
         this._savedLastName = '';
         this._saveTimer = null;
@@ -513,6 +602,63 @@ export class UserSettingsPage extends LitElement {
         }
     }
 
+    async handleAvatarFileChange(e) {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        e.target.value = '';
+        this.avatarUploading = true;
+        this.avatarError = '';
+        try {
+            const form = new FormData();
+            form.append('avatar', file);
+            const res = await fetch(`${API_URL}/api/auth/avatar`, {
+                method: 'POST',
+                credentials: 'include',
+                body: form
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(data.error?.message || data.message || t('settings.avatarUploadFailed'));
+            }
+            this.avatarUrl = data.avatarUrl || '/api/auth/avatar';
+            this.dispatchEvent(new CustomEvent('profile-updated', {
+                detail: { user: { avatarUrl: this.avatarUrl } },
+                bubbles: true,
+                composed: true
+            }));
+        } catch (err) {
+            this.avatarError = err.message || t('settings.avatarUploadFailed');
+        } finally {
+            this.avatarUploading = false;
+        }
+    }
+
+    async handleAvatarRemove() {
+        if (!this.avatarUrl || this.avatarUploading) return;
+        this.avatarUploading = true;
+        this.avatarError = '';
+        try {
+            const res = await fetch(`${API_URL}/api/auth/avatar`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error?.message || data.message || t('settings.avatarRemoveFailed'));
+            }
+            this.avatarUrl = '';
+            this.dispatchEvent(new CustomEvent('profile-updated', {
+                detail: { user: { avatarUrl: null } },
+                bubbles: true,
+                composed: true
+            }));
+        } catch (err) {
+            this.avatarError = err.message || t('settings.avatarRemoveFailed');
+        } finally {
+            this.avatarUploading = false;
+        }
+    }
+
     render() {
         const showProfile = !this.profileLoading && this.profileLinked;
         const dirty = this.isProfileDirty();
@@ -520,6 +666,7 @@ export class UserSettingsPage extends LitElement {
         return html`
             <page-layout-template
                 .username=${this.username}
+                .avatarUrl=${this.avatarUrl}
                 selectedMenuKey=""
                 homeHref="/file-manager"
                 homeLabel=${t('common.home')}
@@ -550,6 +697,36 @@ export class UserSettingsPage extends LitElement {
                             </button>
                         </div>
                         <div class="profile-form">
+                            <div class="avatar-row">
+                                <div class="avatar-preview">
+                                    ${this.avatarUrl
+                                        ? html`<img src=${this.avatarUrl} alt="" aria-hidden="true">`
+                                        : (this.firstName || this.username || '?').charAt(0).toUpperCase()}
+                                </div>
+                                <div>
+                                    <div class="avatar-actions">
+                                        <label class="small-button" style=${this.avatarUploading ? 'opacity:0.6;cursor:not-allowed;' : 'cursor:pointer;'}>
+                                            <input
+                                                type="file"
+                                                accept="image/*"
+                                                style="display:none"
+                                                ?disabled=${this.avatarUploading}
+                                                @change=${(e) => this.handleAvatarFileChange(e)}
+                                            >
+                                            ${this.avatarUploading ? t('settings.avatarUploading') : t('settings.avatarUpload')}
+                                        </label>
+                                        ${this.avatarUrl ? html`
+                                            <button
+                                                type="button"
+                                                class="small-button"
+                                                ?disabled=${this.avatarUploading}
+                                                @click=${() => this.handleAvatarRemove()}
+                                            >${t('settings.avatarRemove')}</button>
+                                        ` : ''}
+                                    </div>
+                                    ${this.avatarError ? html`<p class="avatar-error">${this.avatarError}</p>` : ''}
+                                </div>
+                            </div>
                             <div class="name-row">
                                 <div class="form-group">
                                     <label for="settings-firstName">${t('settings.firstName')}</label>

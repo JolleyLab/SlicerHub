@@ -136,6 +136,15 @@ export class CommentsPanel extends LitElement {
                 background: #2c3878;
                 border: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
                 flex-shrink: 0;
+                overflow: hidden;
+            }
+
+            .avatar img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                display: block;
+                border-radius: 50%;
             }
 
             .avatar.tone-a { background: #2c3878; color: #f5f6fb; }
@@ -561,8 +570,10 @@ export class CommentsPanel extends LitElement {
         const name = this.authorName(comment);
         return html`
             <div class="comment-row">
-                <div class="avatar ${this.authorTone(name)}" aria-hidden="true">
-                    ${this.authorInitials(name)}
+                <div class="avatar ${comment.author?.avatarUrl ? '' : this.authorTone(name)}" aria-hidden="true">
+                    ${comment.author?.avatarUrl
+                        ? html`<img src=${comment.author.avatarUrl} alt="">`
+                        : this.authorInitials(name)}
                 </div>
                 <div class="bubble">
                     <div class="comment-header">

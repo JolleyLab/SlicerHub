@@ -72,7 +72,7 @@ services:
       - ./nginx:/nginx
       - /var/run/docker.sock:/var/run/docker.sock
     # Re-install when a new lockfile dep is missing from the volume (e.g. nodemailer)
-    command: ["sh", "-c", "test -d node_modules/nodemailer || npm ci; exec node src/server.js"]
+    command: ["sh", "-c", "test -d node_modules/nodemailer && test -d node_modules/heic-convert || npm ci; exec node src/server.js"]
     environment:
       - NODE_ENV=development
       - DB_PATH=/app/data/users.db

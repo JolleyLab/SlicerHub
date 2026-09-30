@@ -1232,6 +1232,7 @@ export class ProjectReviewPage extends LitElement {
     static get properties() {
         return {
             username: { type: String },
+            avatarUrl: { type: String },
             projectId: { type: Number },
             loading: { type: Boolean },
             saving: { type: Boolean },
@@ -1313,6 +1314,7 @@ export class ProjectReviewPage extends LitElement {
     constructor() {
         super();
         this.username = 'Guest';
+        this.avatarUrl = '';
         this.projectId = null;
         this.loading = false;
         this.saving = false;
@@ -3911,6 +3913,7 @@ export class ProjectReviewPage extends LitElement {
         return html`
             <page-layout-template
                 .username=${this.username}
+                .avatarUrl=${this.avatarUrl}
                 selectedMenuKey="my-projects"
                 homeHref="/file-manager"
                 homeLabel="Home"

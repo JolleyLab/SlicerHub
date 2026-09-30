@@ -20,7 +20,8 @@ import {
     createCaseAttachment,
     deleteCaseAttachment,
     fetchDirectusViewer,
-    lookupDirectusUserByEmail
+    lookupDirectusUserByEmail,
+    findDirectusUserById
 } from '../services/directus.js';
 import { getCaseCollabActorContext, setCaseCollaborators } from '../services/caseCollaborators.js';
 import { attachUploadedFileToCase } from '../services/attachUploadedFile.js';
@@ -729,5 +730,23 @@ export default function directusRoutes(app) {
             success: true,
             ...result
         });
+    }));
+
+    /** Proxy a Directus user's avatar — authenticated collaborators fetch via their own Directus token. */
+    app.get('/api/directus/users/:userId/avatar', authenticateToken, requireDirectusLink, requireDirectusUserToken, asyncHandler(async (req, res) => {
+        const userId = String(req.params.userId || '').trim();
+        if (!userId) return res.status(404).end();
+        const directusUser = await findDirectusUserById(userId);
+        if (!directusUser?.avatar) return res.status(404).end();
+        const base = (config.directus?.url || '').trim().replace(/\/+$/, '');
+        if (!base) return res.status(404).end();
+        const assetRes = await fetch(`${base}/assets/${encodeURIComponent(directusUser.avatar)}`, {
+            headers: { Authorization: `Bearer ${req.directusAccessToken}` }
+        });
+        if (!assetRes.ok) return res.status(404).end();
+        const buffer = Buffer.from(await assetRes.arrayBuffer());
+        res.setHeader('Content-Type', assetRes.headers.get('content-type') || 'image/jpeg');
+        res.setHeader('Cache-Control', 'public, max-age=300');
+        res.send(buffer);
     }));
 }

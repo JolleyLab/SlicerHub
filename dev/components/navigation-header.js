@@ -151,7 +151,8 @@ export class NavigationHeader extends LitElement {
             username: { type: String },
             homeHref: { type: String },
             homeLabel: { type: String },
-            displayName: { type: String }
+            displayName: { type: String },
+            avatarUrl: { type: String }
         };
     }
 
@@ -160,6 +161,7 @@ export class NavigationHeader extends LitElement {
         initializeTheme();
         this.username = t('common.guest');
         this.displayName = '';
+        this.avatarUrl = '';
         this.homeHref = '/file-manager';
         this.homeLabel = t('common.home');
     }
@@ -198,6 +200,7 @@ export class NavigationHeader extends LitElement {
                     <user-menu
                         .username=${this.username}
                         .displayName=${this.displayName || this.username}
+                        .avatarUrl=${this.avatarUrl}
                     ></user-menu>
                 </div>
             </header>

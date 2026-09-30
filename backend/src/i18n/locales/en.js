@@ -7,6 +7,9 @@ export default {
         internal_error: 'Internal server error',
         route_not_found: 'Route {method} {path} not found'
     },
+    avatar: {
+        required: 'No file received.'
+    },
     rate_limit: {
         generic: 'Too many requests'
     },

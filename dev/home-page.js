@@ -600,6 +600,7 @@ export class HomePage extends LitElement {
     static get properties() {
         return {
             username: { type: String },
+            avatarUrl: { type: String },
             /** @type {{ id: string, kind: 'invite'|'task', title: string, detail?: string }[]} */
             todo: { type: Array },
             /** @type {{ id: string, kind: 'mention'|'approval', title: string, detail?: string }[]} */
@@ -617,6 +618,7 @@ export class HomePage extends LitElement {
     constructor() {
         super();
         this.username = '';
+        this.avatarUrl = '';
         this.todo = [];
         this.activity = [];
         this.recentCases = [];
@@ -1035,6 +1037,7 @@ export class HomePage extends LitElement {
         return html`
             <page-layout-template
                 .username=${this.username}
+                .avatarUrl=${this.avatarUrl}
                 selectedMenuKey=""
                 homeHref="/"
                 homeLabel=${t('common.home')}

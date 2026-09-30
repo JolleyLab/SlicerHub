@@ -1056,6 +1056,7 @@ export class DirectusCasesPage extends LitElement {
     static get properties() {
         return {
             username: { type: String },
+            avatarUrl: { type: String },
             loading: { type: Boolean },
             errorMessage: { type: String },
             cases: { type: Array },
@@ -1110,6 +1111,7 @@ export class DirectusCasesPage extends LitElement {
     constructor() {
         super();
         this.username = t('common.guest');
+        this.avatarUrl = '';
         this.loading = false;
         this.errorMessage = '';
         this.cases = [];
@@ -1547,6 +1549,7 @@ export class DirectusCasesPage extends LitElement {
                 username: caseRow.createdBy.username || '',
                 firstName: caseRow.createdBy.firstName || '',
                 lastName: caseRow.createdBy.lastName || '',
+                avatarUrl: caseRow.createdBy.avatarUrl || null,
                 role: 'admin',
                 locked: true
             });
@@ -1560,6 +1563,7 @@ export class DirectusCasesPage extends LitElement {
                 username: entry.username || '',
                 firstName: entry.firstName || '',
                 lastName: entry.lastName || '',
+                avatarUrl: entry.avatarUrl || null,
                 role: entry.role || 'collaborator',
                 locked: false
             });
@@ -2451,6 +2455,7 @@ export class DirectusCasesPage extends LitElement {
             <page-layout-template
                 ?inert=${this.showIframe}
                 .username=${this.username}
+                .avatarUrl=${this.avatarUrl}
                 selectedMenuKey="cases"
                 homeHref="/file-manager"
                 homeLabel="Home"
@@ -2614,6 +2619,7 @@ export class DirectusCasesPage extends LitElement {
             <page-layout-template
                 ?inert=${this.showIframe}
                 .username=${this.username}
+                .avatarUrl=${this.avatarUrl}
                 selectedMenuKey="cases"
                 homeHref="/file-manager"
                 homeLabel="Home"

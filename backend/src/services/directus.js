@@ -9,6 +9,7 @@ import { AppError, InternalError, NotFoundError, ValidationError } from '../util
 import { msg } from '../i18n/index.js';
 import {
     listMembersByCaseIds,
+    listMembersByCaseIdsAsUser,
     addCaseCreatorAsAdmin,
     parseCaseRole,
     toDisplayMember,
@@ -50,7 +51,8 @@ const CASE_CORE_FIELDS_BASE = [
     'user_created.id',
     'user_created.email',
     'user_created.first_name',
-    'user_created.last_name'
+    'user_created.last_name',
+    'user_created.avatar'
 ];
 
 /**
@@ -62,7 +64,7 @@ const CASE_CORE_FIELDS_BASE = [
  * Custom Timestamp fields (`created_at` / `updated_at`) are covered by `*` too.
  */
 const CASE_FIELDS_ATTEMPTS = Object.freeze([
-    ['*', 'user_created.id', 'user_created.email', 'user_created.first_name', 'user_created.last_name'].join(','),
+    ['*', 'user_created.id', 'user_created.email', 'user_created.first_name', 'user_created.last_name', 'user_created.avatar'].join(','),
     [...CASE_CORE_FIELDS_BASE, 'date_created', 'date_updated'].join(','),
     CASE_CORE_FIELDS_BASE.join(',')
 ]);
@@ -309,7 +311,8 @@ function mapCommentAuthor(user) {
     return {
         id: user.id ?? null,
         name: formatPersonName(user) || 'Unknown',
-        email: user.email || null
+        email: user.email || null,
+        avatarUrl: user.avatar ? `/api/directus/users/${user.id}/avatar` : null
     };
 }
 
@@ -360,7 +363,8 @@ export function mapDirectusPerson(user) {
         email,
         username: name || (email ? email.split('@')[0] : null),
         firstName: user.first_name || null,
-        lastName: user.last_name || null
+        lastName: user.last_name || null,
+        avatarUrl: user.avatar ? `/api/directus/users/${user.id}/avatar` : null
     };
 }
 
@@ -553,12 +557,15 @@ async function listCaseActivityTimestampsByCaseIds(caseIds, { accessToken } = {}
 }
 
 /**
- * Collaborators for case ids, from the Directus junction (service token). Failures return {} so the
- * case list still loads; a case with no entry falls back to the members embedded in its own row.
+ * Collaborators for case ids. Uses the caller's Directus access token when provided so that
+ * nested user fields (including `avatar`) are readable under the user's role permissions.
+ * Falls back to the service token when no accessToken is given.
  */
-async function listCollaboratorsByCaseIds(caseIds) {
+async function listCollaboratorsByCaseIds(caseIds, { accessToken } = {}) {
     try {
-        const byCase = await listMembersByCaseIds(caseIds);
+        const byCase = accessToken
+            ? await listMembersByCaseIdsAsUser(caseIds, accessToken)
+            : await listMembersByCaseIds(caseIds);
         return Object.fromEntries(
             Object.entries(byCase).map(([caseId, members]) => [caseId, members.map(toDisplayMember)])
         );
@@ -794,7 +801,7 @@ export async function findDirectusUserById(directusUserId) {
     if (!id) return null;
     try {
         const payload = await directusFetch(`/users/${encodeURIComponent(id)}`, {
-            query: { fields: 'id,email,first_name,last_name,status' }
+            query: { fields: 'id,email,first_name,last_name,status,avatar' }
         });
         return payload?.data || null;
     } catch (err) {
@@ -869,6 +876,9 @@ export async function updateDirectusUser(directusUserId, fields = {}) {
         }
         body.last_name = last;
     }
+    if ('avatar' in fields) {
+        body.avatar = fields.avatar === null ? null : String(fields.avatar);
+    }
     if (Object.keys(body).length === 0) {
         throw new ValidationError(msg('auth.profile_update_empty'), null, 'auth.profile_update_empty');
     }
@@ -878,6 +888,32 @@ export async function updateDirectusUser(directusUserId, fields = {}) {
         body
     });
     return payload?.data || null;
+}
+
+/**
+ * Upload an image buffer to Directus files using the user's access token.
+ * Returns the new file's UUID.
+ * @param {string} accessToken
+ * @param {Buffer} buffer
+ * @param {string} mimetype
+ * @param {string} filename
+ * @returns {Promise<string>} file UUID
+ */
+export async function uploadDirectusAvatar(accessToken, buffer, mimetype, filename) {
+    const base = (config.directus?.url || '').trim().replace(/\/+$/, '');
+    if (!base) throw new Error('Directus not configured');
+    const formData = new FormData();
+    formData.append('file', new Blob([buffer], { type: mimetype }), filename || 'avatar');
+    const response = await fetch(`${base}/files`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: formData
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.data?.id) {
+        throw new Error(`Avatar upload failed: ${response.status}`);
+    }
+    return data.data.id;
 }
 
 const COMMENT_FIELDS_ATTEMPTS = Object.freeze([
@@ -891,7 +927,8 @@ const COMMENT_FIELDS_ATTEMPTS = Object.freeze([
         'user_created.id',
         'user_created.first_name',
         'user_created.last_name',
-        'user_created.email'
+        'user_created.email',
+        'user_created.avatar'
     ].join(','),
     [
         'id',
@@ -902,7 +939,8 @@ const COMMENT_FIELDS_ATTEMPTS = Object.freeze([
         'user_created.id',
         'user_created.first_name',
         'user_created.last_name',
-        'user_created.email'
+        'user_created.email',
+        'user_created.avatar'
     ].join(','),
     [
         'id',
@@ -912,7 +950,8 @@ const COMMENT_FIELDS_ATTEMPTS = Object.freeze([
         'user_created.id',
         'user_created.first_name',
         'user_created.last_name',
-        'user_created.email'
+        'user_created.email',
+        'user_created.avatar'
     ].join(','),
     'id,collection,item,comment,user_created'
 ]);
@@ -1130,7 +1169,7 @@ export async function listCases({ limit = 50, accessToken } = {}) {
     const caseIds = rows.map((row) => row?.id).filter(Boolean).map((id) => String(id));
     const [attachmentsByCaseId, collaboratorsByCaseId, activityByCaseId] = await Promise.all([
         listAttachmentsByCaseIds(caseIds, { accessToken }),
-        listCollaboratorsByCaseIds(caseIds),
+        listCollaboratorsByCaseIds(caseIds, { accessToken }),
         listCaseActivityTimestampsByCaseIds(caseIds, { accessToken })
     ]);
     const cases = rows.map((row) => mapCase(

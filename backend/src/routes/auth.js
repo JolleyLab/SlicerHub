@@ -42,6 +42,14 @@ import { recordAuthEvent } from '../auth/auditLog.js';
 import { changePasswordForUser } from '../auth/changePassword.js';
 import config from '../config/index.js';
 import { msg } from '../i18n/index.js';
+import multer from 'multer';
+import heicConvert from 'heic-convert';
+import { uploadDirectusAvatar, updateDirectusUser } from '../services/directus.js';
+
+const avatarUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 }
+});
 
 const registerPerIpRateLimit = createRateLimiter({
     windowMs: 60 * 1000,
@@ -97,7 +105,8 @@ function publicUser(user) {
         displayName: fullName || email || String(user?.username || '').trim() || 'Guest',
         role: user.role,
         mustChangePassword: Boolean(user.mustChangePassword),
-        preferences: user.preferences
+        preferences: user.preferences,
+        avatarUrl: user.avatarUrl || null
     };
 }
 
@@ -320,7 +329,7 @@ export default function authRoutes(app) {
                 throw new ValidationError(msg('auth.profile_requires_directus'), null, 'auth.profile_requires_directus');
             }
 
-            const { updateDirectusUser, isDirectusConfigured } = await import('../services/directus.js');
+            const { isDirectusConfigured } = await import('../services/directus.js');
             if (!isDirectusConfigured()) {
                 throw new ValidationError(msg('directus.not_configured'), null, 'directus.not_configured');
             }
@@ -366,12 +375,14 @@ export default function authRoutes(app) {
                 let firstName = null;
                 let lastName = null;
                 let email = profile.email;
+                let avatarUrl = null;
 
                 const linked = await findDirectusUserById(directusLink.external_id);
                 if (linked) {
                     firstName = String(linked.first_name || '').trim() || null;
                     lastName = String(linked.last_name || '').trim() || null;
                     email = linked.email || email;
+                    avatarUrl = linked.avatar ? `/api/auth/avatar?v=${Date.now()}` : null;
                 }
 
                 if (!firstName && !lastName) {
@@ -393,7 +404,7 @@ export default function authRoutes(app) {
                     }
                 }
 
-                profile = { ...profile, email, firstName, lastName };
+                profile = { ...profile, email, firstName, lastName, avatarUrl };
             } catch (err) {
                 console.warn('auth/me Directus profile enrich skipped:', err.message || err);
             }
@@ -515,6 +526,52 @@ export default function authRoutes(app) {
             // genuinely expired. The reconnect modal handles that when the user
             // next performs a real Directus operation.
         }
+        res.json({ ok: true });
+    }));
+
+    /** Upload or replace the current user's Directus avatar. */
+    app.post('/api/auth/avatar', authenticateToken, avatarUpload.single('avatar'), asyncHandler(async (req, res) => {
+        if (!req.file) throw new ValidationError(msg('avatar.required'), null, 'avatar.required');
+        let { buffer, mimetype, originalname } = req.file;
+        const ext = (originalname || '').split('.').pop().toLowerCase();
+        if (ext === 'heic' || ext === 'heif') {
+            const converted = await heicConvert({ buffer, format: 'JPEG', quality: 0.85 });
+            buffer = Buffer.from(converted);
+            mimetype = 'image/jpeg';
+            originalname = originalname.replace(/\.(heic|heif)$/i, '.jpg');
+        }
+        const link = findDirectusLinkForUser(req.user.id);
+        if (!link?.external_id) throw new NotFoundError(msg('directus.not_linked'), null, 'directus.not_linked');
+        const accessToken = await getDirectusAccessTokenForAppUser(req.user, { res });
+        const fileId = await uploadDirectusAvatar(accessToken, buffer, mimetype, originalname);
+        await updateDirectusUser(link.external_id, { avatar: fileId });
+        res.json({ ok: true, avatarUrl: `/api/auth/avatar?v=${Date.now()}` });
+    }));
+
+    /** Proxy the current user's Directus avatar image. */
+    app.get('/api/auth/avatar', authenticateToken, asyncHandler(async (req, res) => {
+        const link = findDirectusLinkForUser(req.user.id);
+        if (!link?.external_id) return res.status(404).end();
+        const { findDirectusUserById } = await import('../services/directus.js');
+        const directusUser = await findDirectusUserById(link.external_id);
+        if (!directusUser?.avatar) return res.status(404).end();
+        const accessToken = await getDirectusAccessTokenForAppUser(req.user, { res });
+        const base = (config.directus?.url || '').trim().replace(/\/+$/, '');
+        const assetRes = await fetch(`${base}/assets/${encodeURIComponent(directusUser.avatar)}`, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (!assetRes.ok) return res.status(404).end();
+        const buffer = Buffer.from(await assetRes.arrayBuffer());
+        res.setHeader('Content-Type', assetRes.headers.get('content-type') || 'image/jpeg');
+        res.setHeader('Cache-Control', 'private, max-age=300');
+        res.send(buffer);
+    }));
+
+    /** Remove the current user's avatar. */
+    app.delete('/api/auth/avatar', authenticateToken, asyncHandler(async (req, res) => {
+        const link = findDirectusLinkForUser(req.user.id);
+        if (!link?.external_id) throw new NotFoundError(msg('directus.not_linked'), null, 'directus.not_linked');
+        await updateDirectusUser(link.external_id, { avatar: null });
         res.json({ ok: true });
     }));
 

@@ -1234,6 +1234,7 @@ export class SlicerApp extends LitElement {
       ${this.currentView === APP_VIEWS.HOME ? html`
         <home-page
           .username=${userDisplayName(this.user)}
+          .avatarUrl=${this.user?.avatarUrl || ''}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
@@ -1242,6 +1243,7 @@ export class SlicerApp extends LitElement {
       ${this.currentView === APP_VIEWS.FILES ? html`
         <file-manager
           .username=${userDisplayName(this.user)}
+          .avatarUrl=${this.user?.avatarUrl || ''}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
@@ -1250,6 +1252,7 @@ export class SlicerApp extends LitElement {
       ${this.currentView === APP_VIEWS.PROJECTS ? html`
         <my-projects-landing-page
           .username=${userDisplayName(this.user)}
+          .avatarUrl=${this.user?.avatarUrl || ''}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @project-selected=${this.openProjectReviewFlow}
           @settings-request=${this.openSettingsFlow}
@@ -1259,6 +1262,7 @@ export class SlicerApp extends LitElement {
       ${this.currentView === APP_VIEWS.PROJECT_REVIEW ? html`
         <project-review-page
           .username=${userDisplayName(this.user)}
+          .avatarUrl=${this.user?.avatarUrl || ''}
           .projectId=${this.selectedProjectId}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
@@ -1268,6 +1272,7 @@ export class SlicerApp extends LitElement {
       ${this.currentView === APP_VIEWS.SETTINGS && canAccessAccountSettings() ? html`
         <user-settings-page
           .username=${userDisplayName(this.user)}
+          .avatarUrl=${this.user?.avatarUrl || ''}
           .user=${this.user}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
@@ -1278,6 +1283,7 @@ export class SlicerApp extends LitElement {
       ${this.currentView === APP_VIEWS.CASES ? html`
         <directus-cases-page
           .username=${userDisplayName(this.user)}
+          .avatarUrl=${this.user?.avatarUrl || ''}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}

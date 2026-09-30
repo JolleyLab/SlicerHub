@@ -137,6 +137,7 @@ export class MyProjectsLandingPage extends LitElement {
     static get properties() {
         return {
             username: { type: String },
+            avatarUrl: { type: String },
             projects: { type: Array },
             loading: { type: Boolean },
             loadingMore: { type: Boolean },
@@ -150,6 +151,7 @@ export class MyProjectsLandingPage extends LitElement {
     constructor() {
         super();
         this.username = t('common.guest');
+        this.avatarUrl = '';
         this.projects = [];
         this.loading = false;
         this.loadingMore = false;
@@ -226,6 +228,7 @@ export class MyProjectsLandingPage extends LitElement {
         return html`
             <page-layout-template
                 .username=${this.username}
+                .avatarUrl=${this.avatarUrl}
                 selectedMenuKey="my-projects"
                 homeHref="/file-manager"
                 homeLabel="Home"
