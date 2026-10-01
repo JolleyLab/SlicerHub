@@ -2,6 +2,7 @@ import path from 'path';
 import fs from 'fs';
 import http from 'http';
 import https from 'https';
+import multer from 'multer';
 import storage from '../storage/index.js';
 import { resolveTrameServiceUrl } from '../gpu/sessionContext.js';
 import { authenticateToken } from '../middleware/authMiddleware.js';
@@ -801,14 +802,101 @@ export default function directusRoutes(app) {
                 return res.json({ success: true, saveMode: 'overwrite', attachment: updated });
             }
 
-            // saveAsNew: create a new attachment on the case.
+            // saveAsNew: create a new attachment on the case, linked back to the source.
             const displayName = path.basename(savedName, path.extname(savedName));
             const newAttachment = await createCaseAttachment(caseId, uploadedFile.id, displayName, {
                 accessToken: req.directusAccessToken,
+                parentId: attachmentId,
                 fileMeta: {
                     filename_download: savedName,
                     type: 'application/x-mrb',
                     filesize: uploadedFile.filesize ?? size,
+                    uploaded_on: uploadedFile.uploaded_on || new Date().toISOString()
+                }
+            });
+            return res.json({ success: true, saveMode: 'saveAsNew', attachment: newAttachment });
+        })
+    );
+
+    const slicerWebUpload = multer({
+        storage: multer.memoryStorage(),
+        limits: { fileSize: 500 * 1024 * 1024 }
+    });
+
+    /**
+     * Save a SlicerWeb scene (bytes from the browser) to a case attachment.
+     * Body: multipart/form-data with field `file` (the .mrb) and JSON field `saveMode`.
+     * - overwrite: upload new file, point existing attachment at it (Directus records revision)
+     * - saveAsNew: upload new file, create new attachment with parent = source attachmentId
+     */
+    app.post(
+        '/api/directus/cases/:caseId/attachments/:attachmentId/save-slicerweb',
+        ...collabAuth,
+        slicerWebUpload.single('file'),
+        asyncHandler(async (req, res) => {
+            const caseId = String(req.params.caseId || '').trim();
+            const attachmentId = String(req.params.attachmentId || '').trim();
+            if (!caseId || !attachmentId) {
+                throw new ValidationError(msg('case.case_attachment_ids_required'), null, 'case.case_attachment_ids_required');
+            }
+
+            if (!req.file) {
+                throw new ValidationError(msg('case.file_required'), null, 'case.file_required');
+            }
+
+            const saveMode = String(req.body?.saveMode || 'overwrite');
+            const userProvidedName = String(req.body?.name || '').trim();
+
+            const attachment = await getCaseAttachment(caseId, attachmentId, {
+                accessToken: req.directusAccessToken
+            });
+
+            const baseName = path.basename(
+                attachment.filenameDownload || attachment.name || 'saved-scene.mrb'
+            );
+
+            let savedName;
+            if (saveMode === 'saveAsNew') {
+                const ext = path.extname(baseName);
+                const stem = userProvidedName
+                    ? userProvidedName.replace(/[^a-zA-Z0-9._-]/g, '_')
+                    : path.basename(baseName, ext);
+                const now = new Date();
+                const pad = (n) => String(n).padStart(2, '0');
+                const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+                savedName = `${stem}-${stamp}${ext || '.mrb'}`;
+            } else {
+                savedName = baseName;
+            }
+
+            const uploadedFile = await uploadDirectusFile(
+                {
+                    buffer: req.file.buffer,
+                    originalname: savedName,
+                    mimetype: req.file.mimetype || 'application/x-mrb'
+                },
+                { accessToken: req.directusAccessToken }
+            );
+
+            if (saveMode === 'overwrite') {
+                await updateDirectusAttachmentFile(attachmentId, uploadedFile.id, {
+                    accessToken: req.directusAccessToken
+                });
+                const updated = await getCaseAttachment(caseId, attachmentId, {
+                    accessToken: req.directusAccessToken
+                });
+                return res.json({ success: true, saveMode: 'overwrite', attachment: updated });
+            }
+
+            // saveAsNew: new attachment linked back to the source.
+            const displayName = userProvidedName || path.basename(savedName, path.extname(savedName));
+            const newAttachment = await createCaseAttachment(caseId, uploadedFile.id, displayName, {
+                accessToken: req.directusAccessToken,
+                parentId: attachmentId,
+                fileMeta: {
+                    filename_download: savedName,
+                    type: uploadedFile.type || 'application/x-mrb',
+                    filesize: uploadedFile.filesize ?? req.file.size,
                     uploaded_on: uploadedFile.uploaded_on || new Date().toISOString()
                 }
             });

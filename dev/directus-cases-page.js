@@ -15,6 +15,7 @@ import {
     updateDirectusCase,
     deleteDirectusCaseAttachment,
     saveDirectusCaseAttachmentScene,
+    saveDirectusSlicerWebScene,
     lookupDirectusUserByEmail,
     updateDirectusCaseCollaborators,
     inviteDirectusCaseUser,
@@ -1048,6 +1049,18 @@ export class DirectusCasesPage extends LitElement {
                 background: color-mix(in srgb, var(--color-success, #22c55e) 12%, transparent);
                 border-radius: 4px;
                 white-space: nowrap;
+            }
+
+            .viewer-error-message {
+                font-size: 0.8rem;
+                color: var(--color-status-error-fg, #ef4444);
+                padding: 2px 8px;
+                background: color-mix(in srgb, var(--color-status-error-fg, #ef4444) 12%, transparent);
+                border-radius: 4px;
+                white-space: nowrap;
+                max-width: 300px;
+                overflow: hidden;
+                text-overflow: ellipsis;
             }
 
             .iframe-container {
@@ -2147,7 +2160,7 @@ export class DirectusCasesPage extends LitElement {
     // and the button are indistinguishable to the user; SlicerWeb closes directly (see below).
     async closeViewer() {
         if (
-            this.viewerKind === VIEWER_KINDS.SLICER_GUI
+            (this.viewerKind === VIEWER_KINDS.SLICER_GUI || this.viewerKind === VIEWER_KINDS.SLICERWEB)
             && this.hasUnsavedChanges
             && this.iframeUrl && this.iframeUrl !== 'about:blank'
         ) {
@@ -2455,6 +2468,7 @@ export class DirectusCasesPage extends LitElement {
         this._focusBeforeViewer = deepActiveElement();
         this.errorMessage = '';
         this.currentFileName = attachmentFileName(attachment);
+        this.currentAttachmentId = attachment.id;
         this.viewerKind = VIEWER_KINDS.SLICERWEB;
         this.viewerSimplified = false;
         this.viewerLoading = true;
@@ -2501,12 +2515,56 @@ export class DirectusCasesPage extends LitElement {
             this.viewerLoadingDetail = t('cases.loadingIntoSlicerWeb', { name: pending.fileName });
             const blob = await pending.download;
             if (cancelled()) return;
+            // Wait for any session-restore scene load to complete before clearing.
+            // The bridge reports ready before the restore finishes, so we use a two-phase
+            // poll: first wait for nodes to appear (restore started), then wait for the
+            // count to stabilize (restore done). Skips waiting entirely if no restore runs.
+            // Phase 1: wait for restore to start producing nodes (max 15s)
+            let hasRestore = false;
+            for (let i = 0; i < 30; i++) {
+                await new Promise((r) => setTimeout(r, 500));
+                if (cancelled()) return;
+                try {
+                    const nodes = await slicer.bridge.call('getNodes', [{}]);
+                    if (Array.isArray(nodes) && nodes.length > 0) { hasRestore = true; break; }
+                } catch (_) { break; }
+            }
+            // Phase 2: wait for node count to stabilize (restore fully loaded)
+            if (hasRestore) {
+                let prevCount = -1;
+                for (let i = 0; i < 60; i++) {
+                    await new Promise((r) => setTimeout(r, 500));
+                    if (cancelled()) return;
+                    try {
+                        const nodes = await slicer.bridge.call('getNodes', [{}]);
+                        const count = Array.isArray(nodes) ? nodes.length : 0;
+                        if (count === prevCount) break;
+                        prevCount = count;
+                    } catch (_) { break; }
+                }
+            }
+            await slicer.bridge.call('closeScene', []);
             const [path] = await slicer.writeFiles([new File([blob], pending.fileName)]);
             await slicer.bridge.call('loadFiles', [[path]]);
             if (cancelled()) return;
+            // Fit all views to the loaded data. loadFiles with a .mrb restores the saved
+            // camera state, which may not match the data extent — reset to center it.
+            await new Promise((r) => setTimeout(r, 1000));
+            if (!cancelled()) {
+                try {
+                    await slicer.bridge.call('resetViews', []);
+                } catch (e) {
+                    console.warn('[SlicerWeb] resetViews failed:', e);
+                    try { await slicer.bridge.call('fitSlicesToBackground', []); } catch (e2) {
+                        console.warn('[SlicerWeb] fitSlicesToBackground failed:', e2);
+                    }
+                }
+            }
             this._slicerWebPending = null;
             this.viewerLoading = false;
             this.viewerLoadingDetail = '';
+            this.hasUnsavedChanges = true;
+            this._attachSlicerWebSaveHandler(slicer);
         } catch (err) {
             if (cancelled()) return;
             const message = this.userFacingError(err, t('errors.openViewerFailed'));
@@ -2519,6 +2577,10 @@ export class DirectusCasesPage extends LitElement {
 
     handleViewerIframeLoad(event) {
         if (this.viewerKind === VIEWER_KINDS.SLICERWEB) {
+            // The iframe sandbox blocks allow-modals, so window.confirm() inside SlicerWeb
+            // returns false silently — no dialog shown. SlicerWeb then calls forgetSession()
+            // and loads sample data. Our two-phase poll in loadPendingIntoSlicerWeb waits
+            // for the sample data to finish, clears it with closeScene, then loads our file.
             this.loadPendingIntoSlicerWeb(event?.target);
             return;
         }
@@ -2551,24 +2613,81 @@ export class DirectusCasesPage extends LitElement {
         }
     }
 
+    _attachSlicerWebSaveHandler(slicer) {
+        slicer.saveHandler = async (path) => {
+            if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) return;
+            this.isSavingScene = true;
+            try {
+                const [file] = await slicer.readFiles([path]);
+                const result = await saveDirectusSlicerWebScene(
+                    this.selectedCaseId,
+                    this.currentAttachmentId,
+                    file,
+                    { saveMode: 'overwrite' }
+                );
+                if (result?.attachment) {
+                    this.cases = this.cases.map((c) => {
+                        if (c.id !== this.selectedCaseId) return c;
+                        if (!Array.isArray(c.attachments)) return c;
+                        return { ...c, attachments: c.attachments.map((a) => a.id === this.currentAttachmentId ? result.attachment : a) };
+                    });
+                }
+                this.hasUnsavedChanges = false;
+                this.showSaveIndicator(t('files.saved'));
+            } catch (err) {
+                this.errorMessage = this.userFacingError(err, t('errors.saveSceneFailed'));
+            } finally {
+                this.isSavingScene = false;
+            }
+        };
+    }
+
+    async _fetchSlicerWebSaveResult(mode) {
+        const iframe = this.renderRoot?.querySelector('.viewer-iframe');
+        const slicer = iframe?.contentWindow?.slicerWeb;
+        if (!slicer) throw new Error(t('errors.saveSceneFailed'));
+        const savePath = '/data/save/scene.mrb';
+        // callYielding is required for IO — it yields control until Slicer finishes writing.
+        // call() may return before the file is flushed, producing a truncated bundle.
+        if (typeof slicer.bridge.callYielding !== 'function') {
+            console.warn('[SlicerWeb] callYielding not available; save may be incomplete');
+        }
+        await (slicer.bridge.callYielding ?? slicer.bridge.call).call(slicer.bridge, 'saveScene', [savePath]);
+        const [file] = await slicer.readFiles([savePath]);
+        if (!file || file.size < 1024) {
+            throw new Error(`saveScene produced an unexpectedly small file (${file?.size ?? 0} bytes) — the scene may not have been written yet`);
+        }
+        return saveDirectusSlicerWebScene(
+            this.selectedCaseId,
+            this.currentAttachmentId,
+            file,
+            { saveMode: mode }
+        );
+    }
+
     async saveCurrentScene(mode = 'overwrite') {
         if (!this.selectedCaseId || !this.currentAttachmentId) return false;
         if (this.isSavingScene) return false;
         this.isSavingScene = true;
         try {
-            // Flush pending UI edits inside the iframe before saving.
-            try {
-                const iframe = this.renderRoot?.querySelector('.viewer-iframe');
-                iframe?.contentWindow?.focus?.();
-                const active = iframe?.contentWindow?.document?.activeElement;
-                if (active && typeof active.blur === 'function') active.blur();
-            } catch (_) { /* cross-origin, best effort */ }
-            await new Promise((r) => setTimeout(r, 350));
-            const result = await saveDirectusCaseAttachmentScene(
-                this.selectedCaseId,
-                this.currentAttachmentId,
-                { saveMode: mode }
-            );
+            let result;
+            if (this.viewerKind === VIEWER_KINDS.SLICERWEB) {
+                result = await this._fetchSlicerWebSaveResult(mode);
+            } else {
+                // SLICER_GUI: flush pending UI edits before saving via trame.
+                try {
+                    const iframe = this.renderRoot?.querySelector('.viewer-iframe');
+                    iframe?.contentWindow?.focus?.();
+                    const active = iframe?.contentWindow?.document?.activeElement;
+                    if (active && typeof active.blur === 'function') active.blur();
+                } catch (_) { /* cross-origin, best effort */ }
+                await new Promise((r) => setTimeout(r, 350));
+                result = await saveDirectusCaseAttachmentScene(
+                    this.selectedCaseId,
+                    this.currentAttachmentId,
+                    { saveMode: mode }
+                );
+            }
 
             // Patch the attachment in the local cases array so the file list reflects the save.
             if (result?.attachment) {
@@ -3084,7 +3203,10 @@ export class DirectusCasesPage extends LitElement {
                         ${this.saveIndicatorMessage ? html`
                             <span class="save-indicator">${this.saveIndicatorMessage}</span>
                         ` : ''}
-                        ${this.viewerKind === VIEWER_KINDS.SLICER_GUI ? html`
+                        ${this.errorMessage ? html`
+                            <span class="viewer-error-message">${this.errorMessage}</span>
+                        ` : ''}
+                        ${(this.viewerKind === VIEWER_KINDS.SLICER_GUI || this.viewerKind === VIEWER_KINDS.SLICERWEB) ? html`
                             <button
                                 class="save-scene-btn"
                                 type="button"
@@ -3149,6 +3271,7 @@ export class DirectusCasesPage extends LitElement {
                             title=${viewerTitle}
                             src="${this.iframeUrl}"
                             allow="clipboard-read; clipboard-write; cross-origin-isolated"
+                            sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-pointer-lock allow-storage-access-by-user-activation"
                             allowfullscreen
                             frameborder="0"
                             referrerpolicy="origin"

@@ -99,6 +99,7 @@ export default {
         invite_pending_not_found: 'Pending invite not found',
         people_list_invalid: 'People list is invalid. Please try again.',
         case_and_file_required: 'Case and file are required.',
+        file_required: 'A file is required.',
         title_required: 'Case title is required',
         title_empty: 'title cannot be empty',
         invite_pending_exists: 'That person already has a pending invite on this case',

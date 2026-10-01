@@ -457,6 +457,30 @@ export async function saveDirectusCaseAttachmentScene(caseId, attachmentId, { sa
     return data;
 }
 
+/**
+ * Save a SlicerWeb scene (bytes from the browser) to a case attachment.
+ * @param {string} caseId
+ * @param {string} attachmentId
+ * @param {File} file  The scene file from bridge.readFiles()
+ * @param {{ saveMode: 'overwrite' | 'saveAsNew', name?: string }} options
+ */
+export async function saveDirectusSlicerWebScene(caseId, attachmentId, file, { saveMode = 'overwrite', name } = {}) {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('saveMode', saveMode);
+    if (name) formData.append('name', name);
+    const response = await fetch(attachmentUrl(caseId, attachmentId, 'save-slicerweb'), {
+        method: 'POST',
+        credentials: 'include',
+        body: formData
+    });
+    const data = await parseJson(response);
+    if (!response.ok) {
+        throwApiError(response, data, t('errors.saveSceneFailed'));
+    }
+    return data;
+}
+
 /** Fetch an attachment's bytes as a Blob for the in-browser SlicerWeb viewer (any case member). */
 export async function fetchDirectusAttachmentContent(caseId, attachmentId) {
     const response = await fetch(attachmentUrl(caseId, attachmentId, 'content'), {

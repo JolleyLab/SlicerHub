@@ -1729,7 +1729,7 @@ export async function uploadDirectusFile({ buffer, originalname, mimetype } = {}
  * @param {{ accessToken: string, fileMeta?: object }} options
  * @returns {Promise<object>} mapped attachment
  */
-export async function createCaseAttachment(caseId, fileId, name, { accessToken, fileMeta } = {}) {
+export async function createCaseAttachment(caseId, fileId, name, { accessToken, fileMeta, parentId } = {}) {
     if (!accessToken) {
         throw new ValidationError(msg('directus.create_attachments_token_required'), null, 'directus.create_attachments_token_required');
     }
@@ -1739,14 +1739,18 @@ export async function createCaseAttachment(caseId, fileId, name, { accessToken, 
         throw new ValidationError(msg('case.case_and_file_ids_required'), null, 'case.case_and_file_ids_required');
     }
 
+    const body = {
+        case: caseKey,
+        file: fileKey,
+        name: String(name || '').trim() || null
+    };
+    const parentKey = String(parentId || '').trim();
+    if (parentKey) body.parent = parentKey;
+
     const payload = await directusFetch('/items/attachment', {
         method: 'POST',
         accessToken,
-        body: {
-            case: caseKey,
-            file: fileKey,
-            name: String(name || '').trim() || null
-        }
+        body
     });
 
     const row = payload?.data;
