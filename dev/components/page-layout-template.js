@@ -235,7 +235,8 @@ export class PageShellTemplate extends LitElement {
             homeLabel: { type: String },
             compactNavOpen: { type: Boolean },
             displayName: { type: String },
-            avatarUrl: { type: String }
+            avatarUrl: { type: String },
+            isOrgAdmin: { type: Boolean }
         };
     }
 
@@ -252,6 +253,8 @@ export class PageShellTemplate extends LitElement {
         this.homeHref = '/file-manager';
         this.homeLabel = t('common.home');
         this.compactNavOpen = false;
+        this.isOrgAdmin = false;
+        this._featureFlags = {};
         this._compactMq = null;
         this._onCompactMqChange = () => {
             if (!this._compactMq?.matches) {
@@ -262,13 +265,24 @@ export class PageShellTemplate extends LitElement {
         this._onDocKeyDown = (event) => this.handleDocKeyDown(event);
     }
 
+    _rebuildMenu() {
+        this.menuItems = getAppMenuItems({
+            projectCaseMigrateEnabled: this._featureFlags.projectCaseMigrate === true,
+            isOrgAdmin: this.isOrgAdmin || false
+        });
+    }
+
+    updated(changedProps) {
+        if (changedProps.has('isOrgAdmin')) {
+            this._rebuildMenu();
+        }
+    }
+
     connectedCallback() {
         super.connectedCallback();
         loadAppFeatures().then((flags) => {
-            this.menuItems = getAppMenuItems({
-                // CUTOVER (project-case-migrate)
-                projectCaseMigrateEnabled: flags.projectCaseMigrate === true
-            });
+            this._featureFlags = flags || {};
+            this._rebuildMenu();
             this.requestUpdate();
         });
         this._compactMq = window.matchMedia(COMPACT_NAV_MQ);
@@ -384,6 +398,7 @@ export class PageShellTemplate extends LitElement {
                     .avatarUrl=${this.avatarUrl}
                     .homeHref=${this.homeHref}
                     .homeLabel=${this.homeLabel}
+                    .isOrgAdmin=${this.isOrgAdmin || false}
                 ></navigation-header>
 
                 <div class="page-layout">

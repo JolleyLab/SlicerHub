@@ -107,11 +107,13 @@ export default {
             lastName: 'Last name',
             password: 'Password',
             confirmPassword: 'Confirm password',
-            submit: 'Create account & join',
-            submitting: 'Creating account…',
+            submit: 'Join',
+            submitting: 'Joining…',
             passwordMin: 'Password must be at least 8 characters.',
             passwordMismatch: 'Passwords do not match.',
-            createFailed: "Couldn't create your account."
+            createFailed: "Couldn't process your invite.",
+            sentTitle: 'Check your email',
+            sentBody: 'An invitation has been sent to {email} with a link to set your password. Once set, you can log in and access the case.'
         },
         changePassword: {
             title: 'Finish setting up your account',
@@ -143,7 +145,8 @@ export default {
         goHome: 'Go to home page',
         sectionNav: 'Section navigation',
         openMenu: 'Open navigation menu',
-        closeMenu: 'Close navigation menu'
+        closeMenu: 'Close navigation menu',
+        pendingRegistrations: 'Pending Registrations'
     },
     home: {
         greetingMorning: 'Good morning, {name}',
@@ -166,7 +169,10 @@ export default {
         todo: {
             title: 'To do',
             clear: "You're all caught up.",
-            inviteTitle: '{actor} invited {invitee} to {case}'
+            inviteTitle: '{actor} invited {invitee} to {case}',
+            pendingRegistration: 'New registration request',
+            pendingRegistrations: '{count} pending registration requests',
+            pendingRegistrationsDetail: 'Click to review and approve or reject.'
         },
         category: {
             collaboration: 'Collaboration',
@@ -282,7 +288,10 @@ export default {
         dismiss: 'Dismiss',
         dismissAria: 'Dismiss notification',
         dismissFailed: "Couldn't dismiss notification.",
-        unreadBell: 'Notifications, unread items'
+        unreadBell: 'Notifications, unread items',
+        pendingRegistration: 'New registration request',
+        pendingRegistrations: '{count} pending registration requests',
+        pendingRegistrationsBody: 'Click to review and approve or reject.'
     },
     share: {
         unableOpen: 'Unable to open shared file',
@@ -729,6 +738,27 @@ export default {
         loadProjectFailed: 'Failed to load project',
         updateCollaboratorsFailed: 'Failed to update collaborators',
         loadProjectFilesFailed: 'Failed to load project files',
-        updateFileTitleFailed: 'Failed to update file title'
+        updateFileTitleFailed: 'Failed to update file title',
+        registrationFailed: 'Failed to submit registration request. Please try again.',
+        createAccountFailed: 'Failed to create account. The link may have expired.'
+    },
+    registration: {
+        title: 'Request Access',
+        firstName: 'First name',
+        lastName: 'Last name',
+        email: 'Email address',
+        affiliation: 'Affiliation',
+        intendedUse: 'Intended use',
+        intendedUsePlaceholder: 'Briefly describe how you plan to use this platform',
+        submit: 'Request Access',
+        submitting: 'Submitting…',
+        successTitle: 'Request submitted',
+        successBody: 'Your access request has been received. An administrator will review it and you\'ll be notified when approved.',
+        duplicateTitle: 'Request already pending',
+        duplicateBody: 'A request for that email address is already pending approval. Please wait for an administrator to review it.',
+        backToLogin: 'Back to login',
+        completeTitle: 'Complete your registration',
+        completeSubcopy: 'Welcome, {name}! Choose a password to activate your account.',
+        completeSubmit: 'Create account'
     }
 };

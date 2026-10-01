@@ -7,6 +7,7 @@ import {
     markAllNotificationsRead,
     dismissNotification
 } from '../services/notifications.js';
+import { getPendingRegistrationsCount } from '../services/directus.js';
 
 /**
  * Global notification bell for the product inbox (any notification type).
@@ -365,7 +366,9 @@ export class NotificationBell extends LitElement {
             loading: { type: Boolean },
             notifications: { type: Array },
             unreadCount: { type: Number },
-            error: { type: String }
+            error: { type: String },
+            isOrgAdmin: { type: Boolean },
+            _pendingRegCount: { type: Number }
         };
     }
 
@@ -377,6 +380,8 @@ export class NotificationBell extends LitElement {
         this.notifications = [];
         this.unreadCount = 0;
         this.error = '';
+        this.isOrgAdmin = false;
+        this._pendingRegCount = 0;
         this._pollTimer = null;
         this._onDocPointer = (e) => this.handleDocPointer(e);
         this._onInvalidate = () => this.refresh({ quiet: true });
@@ -388,6 +393,12 @@ export class NotificationBell extends LitElement {
         this._pollTimer = setInterval(() => this.refresh({ quiet: true }), 60000);
         document.addEventListener('pointerdown', this._onDocPointer, true);
         window.addEventListener('notifications-invalidate', this._onInvalidate);
+    }
+
+    updated(changedProps) {
+        if (changedProps.has('isOrgAdmin') && this.isOrgAdmin) {
+            this.refresh({ quiet: true });
+        }
     }
 
     disconnectedCallback() {
@@ -406,9 +417,13 @@ export class NotificationBell extends LitElement {
     async refresh({ quiet = false } = {}) {
         if (!quiet) this.loading = true;
         try {
-            const data = await listNotifications();
+            const [data, pendingCount] = await Promise.all([
+                listNotifications(),
+                this.isOrgAdmin ? getPendingRegistrationsCount() : Promise.resolve(0)
+            ]);
             this.notifications = Array.isArray(data.notifications) ? data.notifications : [];
             this.unreadCount = Number(data.unreadCount) || 0;
+            this._pendingRegCount = pendingCount;
             this.error = '';
         } catch (err) {
             if (!quiet) {
@@ -425,7 +440,16 @@ export class NotificationBell extends LitElement {
     }
 
     hasUnread() {
-        return this.unreadCount > 0;
+        return this.unreadCount > 0 || this._pendingRegCount > 0;
+    }
+
+    _firePendingRegistrations() {
+        this.open = false;
+        this.dispatchEvent(new CustomEvent('menu-selection-change', {
+            detail: { selectedKey: 'admin-registrations' },
+            bubbles: true,
+            composed: true
+        }));
     }
 
     formatWhen(value) {
@@ -526,11 +550,28 @@ export class NotificationBell extends LitElement {
                         >${t('notifications.markAllRead')}</button>
                     </div>
                     ${this.error ? html`<p class="error">${this.error}</p>` : ''}
+                    ${this._pendingRegCount > 0 ? html`
+                        <ul class="list">
+                            <li class="item-row">
+                                <button
+                                    type="button"
+                                    class="item unread"
+                                    @click=${() => this._firePendingRegistrations()}
+                                >
+                                    <span class="item-title">${this._pendingRegCount === 1
+                                        ? t('notifications.pendingRegistration')
+                                        : t('notifications.pendingRegistrations', { count: this._pendingRegCount })
+                                    }</span>
+                                    <span class="item-body">${t('notifications.pendingRegistrationsBody')}</span>
+                                </button>
+                            </li>
+                        </ul>
+                    ` : ''}
                     ${this.loading && !this.notifications.length
                         ? html`<p class="empty">${t('common.loading')}</p>`
-                        : (!this.notifications.length
+                        : (!this.notifications.length && !this._pendingRegCount
                             ? html`<p class="empty">${t('notifications.empty')}</p>`
-                            : html`
+                            : this.notifications.length > 0 ? html`
                                 <ul class="list">
                                     ${this.notifications.map((n) => html`
                                         <li class="item-row">
@@ -555,7 +596,7 @@ export class NotificationBell extends LitElement {
                                         </li>
                                     `)}
                                 </ul>
-                            `)}
+                            ` : '')}
                 </div>
             ` : ''}
         `;

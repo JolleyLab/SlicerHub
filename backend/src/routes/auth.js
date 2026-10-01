@@ -10,7 +10,6 @@ import {
     AppError
 } from '../utils/errors.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import { createRateLimiter, getRateLimitClientIp } from '../middleware/rateLimit.js';
 import {
     getPublicAuthConfig,
     getAuthProviderName,
@@ -45,18 +44,13 @@ import { msg } from '../i18n/index.js';
 import multer from 'multer';
 import heicConvert from 'heic-convert';
 import { uploadDirectusAvatar, updateDirectusUser } from '../services/directus.js';
+import { isOrgAdminByRole } from '../auth/orgAdminUtils.js';
 
 const avatarUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 5 * 1024 * 1024 }
 });
 
-const registerPerIpRateLimit = createRateLimiter({
-    windowMs: 60 * 1000,
-    max: 10,
-    message: msg('auth.register_rate_limit'),
-    getKey: (req) => `register:ip:${getRateLimitClientIp(req)}`
-});
 
 function noteLoginFailure(req, res, { provider, identity, detail }) {
     const outcome = recordLoginFailure(req);
@@ -117,62 +111,6 @@ export default function authRoutes(app) {
     app.get('/api/auth/config', asyncHandler(async (_req, res) => {
         res.json(getPublicAuthConfig());
     }));
-
-    /**
-     * Register new user (local accounts only)
-     */
-    app.post(
-        '/api/auth/register',
-        requireAllowedWebOrigin,
-        registerPerIpRateLimit,
-        asyncHandler(async (req, res) => {
-            const authConfig = getPublicAuthConfig();
-            if (!authConfig.registrationEnabled) {
-                throw new ValidationError(msg('auth.registration_disabled'), null, 'auth.registration_disabled');
-            }
-
-            const { username, email, password, theme, preferences } = req.body;
-
-            if (!username || !email || !password) {
-                throw new ValidationError(msg('auth.register_fields_required'), null, 'auth.register_fields_required');
-            }
-
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(email)) {
-                throw new ValidationError(msg('auth.invalid_email'), null, 'auth.invalid_email');
-            }
-
-            if (password.length < 8) {
-                throw new ValidationError(msg('auth.password_min_length', { min: 8 }), null, 'auth.password_min_length');
-            }
-
-            const prefsPatch = {
-                ...(preferences && typeof preferences === 'object' ? preferences : {}),
-                ...(theme === 'dark' || theme === 'light' ? { theme } : {})
-            };
-
-            const user = await User.create({
-                username,
-                email,
-                password,
-                preferences: prefsPatch
-            });
-            const { user: sessionUser } = issueAppSession(req, res, user);
-
-            recordAuthEvent({
-                event: 'register',
-                provider: 'local',
-                userId: user.id,
-                identity: email,
-                req
-            });
-
-            res.status(201).json({
-                message: 'User created successfully',
-                user: sessionUser
-            });
-        })
-    );
 
     /**
      * Login — identity checked by active AUTH_PROVIDER; app always issues its JWT.
@@ -367,11 +305,12 @@ export default function authRoutes(app) {
 
         const directusLink = findDirectusLinkForUser(user.id);
         let profile = { ...user };
+        let isOrgAdmin = false;
         if (directusLink?.external_id) {
             try {
                 // Prefer service-token read of the linked user — clinician /users/me
                 // often omits first_name/last_name under field ACL.
-                const { findDirectusUserById, fetchDirectusViewer } = await import('../services/directus.js');
+                const { findDirectusUserById, fetchDirectusCurrentUser: fetchDirectusViewer } = await import('../services/directus.js');
                 let firstName = null;
                 let lastName = null;
                 let email = profile.email;
@@ -383,25 +322,27 @@ export default function authRoutes(app) {
                     lastName = String(linked.last_name || '').trim() || null;
                     email = linked.email || email;
                     avatarUrl = linked.avatar ? `/api/auth/avatar?v=${Date.now()}` : null;
+                    isOrgAdmin = isOrgAdminByRole(linked.role);
                 }
 
-                if (!firstName && !lastName) {
-                    try {
-                        const accessToken = await getDirectusAccessTokenForAppUser(req.user, { req, res });
-                        const viewer = await fetchDirectusViewer(accessToken);
-                        if (viewer) {
-                            firstName = viewer.firstName || null;
-                            lastName = viewer.lastName || null;
-                            if (viewer.name && !firstName && !lastName) {
-                                const parts = String(viewer.name).trim().split(/\s+/);
+                try {
+                    const accessToken = await getDirectusAccessTokenForAppUser(req.user, { req, res });
+                    const currentUser = await fetchDirectusViewer(accessToken);
+                    if (currentUser) {
+                        if (!firstName && !lastName) {
+                            firstName = currentUser.firstName || null;
+                            lastName = currentUser.lastName || null;
+                            if (currentUser.name && !firstName && !lastName) {
+                                const parts = String(currentUser.name).trim().split(/\s+/);
                                 firstName = parts[0] || null;
                                 lastName = parts.slice(1).join(' ') || null;
                             }
-                            email = viewer.email || email;
+                            email = currentUser.email || email;
                         }
-                    } catch (_) {
-                        // keep service-token result
+                        isOrgAdmin = isOrgAdminByRole(currentUser);
                     }
+                } catch (_) {
+                    // keep service-token result above
                 }
 
                 profile = { ...profile, email, firstName, lastName, avatarUrl };
@@ -412,7 +353,8 @@ export default function authRoutes(app) {
 
         res.json({
             user: publicUser(profile),
-            identity: buildIdentityPayload(user.id)
+            identity: buildIdentityPayload(user.id),
+            isOrgAdmin
         });
     }));
 
@@ -622,7 +564,7 @@ export default function authRoutes(app) {
             const { cleanupLocalViewerSessionsForUser } = await import('../sessions/cleanup.js');
             await cleanupLocalViewerSessionsForUser(req.user.id);
         } catch (err) {
-            console.log('Local viewer cleanup during logout-all:', err.message);
+            console.warn('Local viewer cleanup during logout-all:', err.message);
         }
         recordAuthEvent({
             event: 'logout_all',

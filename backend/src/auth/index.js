@@ -21,7 +21,6 @@
 
 import config from '../config/index.js';
 import { ValidationError } from '../utils/errors.js';
-import { localProvider } from './providers/local.js';
 import { directusProvider } from './providers/directus.js';
 import { issueAppSession, destroyAppSession, clearAuthCookie } from './session.js';
 import { clearProviderTokens, clearProviderTokensForUser } from './identityStore.js';
@@ -31,7 +30,6 @@ import { deleteAllUserSessions } from '../middleware/authMiddleware.js';
 import { msg } from '../i18n/index.js';
 
 const PROVIDERS = {
-    local: localProvider,
     directus: directusProvider
 };
 
@@ -67,13 +65,10 @@ export function shouldStoreProviderTokens() {
  */
 export function getPublicAuthConfig() {
     const provider = getAuthProviderName();
-    const registrationEnv = process.env.REGISTRATION_ENABLED;
-    const registrationEnabled = provider === 'local' && registrationEnv !== 'false';
 
     return {
         provider,
         methods: ['password'],
-        registrationEnabled,
         /** product direction: collab users map 1:1 to Directus */
         identityMode: config.auth?.identityMode || 'directus-linked',
         requireDirectusLink: isDirectusLinkRequired(),
@@ -81,7 +76,8 @@ export function getPublicAuthConfig() {
         identityPlaceholder: provider === 'directus'
             ? 'you@example.com'
             : 'Username or email',
-        devRelaxed: config.auth?.devRelaxed === true
+        devRelaxed: config.auth?.devRelaxed === true,
+        registrationEnabled: true
     };
 }
 

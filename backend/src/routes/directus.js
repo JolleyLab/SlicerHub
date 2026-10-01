@@ -322,18 +322,16 @@ export default function directusRoutes(app) {
         res.json(preview);
     }));
 
-    /** Public: redeem signup invite — creates Directus + app user and issues session. */
+    /** Public: redeem signup invite — sends Directus invite email for password setup. */
     app.post(
         '/api/invites/signup/:token/accept',
         requireAllowedWebOrigin,
         asyncHandler(async (req, res) => {
             const result = await acceptSignupInvite(req, res, {
                 token: req.params.token,
-                password: req.body?.password,
                 username: req.body?.username,
                 firstName: req.body?.firstName || req.body?.first_name,
-                lastName: req.body?.lastName || req.body?.last_name,
-                theme: req.body?.theme
+                lastName: req.body?.lastName || req.body?.last_name
             });
             res.status(201).json(result);
         })

@@ -107,6 +107,46 @@ export async function sendCaseSignupInviteEmail({
     });
 }
 
+/**
+ * Registration approval email — sent to the applicant with their one-time completion link.
+ */
+export async function sendRegistrationApprovalEmail({
+    to,
+    firstName,
+    completionUrl,
+    expiresAt
+} = {}) {
+    const name = String(firstName || '').trim() || 'there';
+    const expiry = expiresAt
+        ? new Date(expiresAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+        : null;
+    const subject = 'Your SlicerHeart account request has been approved';
+    const lines = [
+        `Hi ${name},`,
+        '',
+        'Your request to access SlicerHeart has been approved.',
+        '',
+        'Click the link below to set your password and activate your account:',
+        String(completionUrl || ''),
+        ''
+    ];
+    if (expiry) {
+        lines.push(`This link expires on ${expiry}.`);
+        lines.push('');
+    }
+    lines.push('If you did not request access, you can ignore this email.');
+
+    const html = `
+      <p>Hi ${escapeHtml(name)},</p>
+      <p>Your request to access <strong>SlicerHeart</strong> has been approved.</p>
+      <p><a href="${escapeAttr(completionUrl)}">Set your password and activate your account</a></p>
+      ${expiry ? `<p>This link expires on ${escapeHtml(expiry)}.</p>` : ''}
+      <p style="color:#666;font-size:13px;">If you did not request access, you can ignore this email.</p>
+    `.trim();
+
+    return sendMail({ to, subject, text: lines.join('\n'), html });
+}
+
 function escapeHtml(value) {
     return String(value || '')
         .replace(/&/g, '&amp;')

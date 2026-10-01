@@ -1,8 +1,7 @@
 /**
- * Force / voluntary password change for Directus-backed product users.
- * Local-only users update bcrypt hash on the shadow password column.
- * Directus-linked users also set first_name / last_name (provisioned accounts
- * otherwise have no Studio access to edit profile).
+ * Password change for Directus-backed product users.
+ * Also sets first_name / last_name (provisioned accounts otherwise have no
+ * Studio access to edit profile).
  *
  * After a Directus password update, returns fresh Directus login tokens so the
  * BFF can replace the session's call-as-user material (old refresh is often
@@ -17,8 +16,6 @@ import {
     updateDirectusUser
 } from '../services/directus.js';
 import { ValidationError, UnauthorizedError, AppError } from '../utils/errors.js';
-import bcrypt from 'bcrypt';
-import db from '../db/database.js';
 import { msg } from '../i18n/index.js';
 
 const minLen = () => config.security?.passwordMinLength || 8;
@@ -137,20 +134,5 @@ export async function changePasswordForUser({
         };
     }
 
-    // Local-account path (no Directus link): update SQLite password_hash
-    const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId);
-    if (!row?.password_hash || String(row.password_hash).startsWith('BRIDGED:')) {
-        throw new AppError(msg('auth.password_change_not_allowed'), 400, null, 'auth.password_change_not_allowed');
-    }
-    const valid = await bcrypt.compare(current, row.password_hash);
-    if (!valid) {
-        throw new UnauthorizedError(msg('auth.current_password_incorrect'), null, 'auth.current_password_incorrect');
-    }
-
-    const hash = await bcrypt.hash(next, config.security.bcryptRounds);
-    db.prepare(
-        'UPDATE users SET password_hash = ?, must_change_password = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-    ).run(hash, userId);
-
-    return User.findById(userId);
+    throw new AppError(msg('auth.password_change_not_allowed'), 400, null, 'auth.password_change_not_allowed');
 }

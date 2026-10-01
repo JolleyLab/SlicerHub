@@ -10,13 +10,10 @@ import {
     linkIdentity,
     findLink,
     findDirectusLinkForUser,
-    findAppUserIdByDirectusExternalId,
-    storeProviderTokens
+    findAppUserIdByDirectusExternalId
 } from '../auth/identityStore.js';
-import { issueAppSession } from '../auth/session.js';
-import { setDirectusLinkCookie } from '../auth/directusLinkCookie.js';
 import { createNotification, deleteNotificationsForInviteIds } from './notifications.js';
-import { isDirectusConfigured, createDirectusUser, findDirectusUserByEmail } from './directus.js';
+import { isDirectusConfigured, inviteDirectusUser, findDirectusUserByEmail } from './directus.js';
 import {
     CASE_COLLAB_ROLES,
     requestedCaseRole,
@@ -69,46 +66,6 @@ function inviteUrlForToken(token) {
     return `${base}/?invite=${encodeURIComponent(token)}`;
 }
 
-async function loginDirectusWithPassword(email, password) {
-    const base = (config.directus.url || '').trim().replace(/\/+$/, '');
-    if (!base) {
-        throw new ValidationError(msg('directus.not_configured'), null, 'directus.not_configured');
-    }
-    const res = await fetch(`${base}/auth/login`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json'
-        },
-        body: JSON.stringify({
-            email: String(email).toLowerCase(),
-            password: String(password)
-        })
-    });
-    let body = null;
-    try {
-        body = await res.json();
-    } catch {
-        body = null;
-    }
-    if (!res.ok) {
-        const msg = body?.errors?.[0]?.message || body?.message || 'Could not sign in to Directus after account create';
-        throw new ValidationError(msg);
-    }
-    const data = body?.data || body;
-    const accessToken = data?.access_token;
-    if (!accessToken) {
-        throw new ValidationError(msg('directus.login_no_session'), null, 'directus.login_no_session');
-    }
-    return {
-        accessToken,
-        refreshToken: data?.refresh_token || null,
-        expires: data?.expires,
-        expiresAt: data?.expires
-            ? new Date(Date.now() + Number(data.expires)).toISOString()
-            : null
-    };
-}
 
 /** A stored invite as the API returns it; a signup invite adds the link when its token is known. */
 export function withInviteUrl(invite, { includeUrlToken = null } = {}) {
@@ -364,21 +321,19 @@ export async function getSignupInvitePreview(rawToken) {
 }
 
 /**
- * Redeem signup invite: create Directus + local user, apply membership, issue session.
+ * Redeem signup invite: send a Directus invite email so the user sets their own password,
+ * create a local shadow row, apply case membership, and mark the invite accepted.
+ * The user is NOT logged in here — they must set their password via the Directus email
+ * and then log in normally.
  */
-export async function acceptSignupInvite(req, res, {
+export async function acceptSignupInvite(_req, _res, {
     token: rawToken,
-    password,
     username,
     firstName,
-    lastName,
-    theme
+    lastName
 } = {}) {
     const token = String(rawToken || '').trim();
     if (!token) throw new ValidationError(msg('case.invite_token_required'), null, 'case.invite_token_required');
-    if (!password || String(password).length < 8) {
-        throw new ValidationError(msg('auth.password_min_length_short', { min: 8 }), null, 'auth.password_min_length_short');
-    }
     if (!isDirectusConfigured() || !config.directus.defaultRoleId) {
         throw new ValidationError(
             msg('case.signup_invite_directus_misconfigured'),
@@ -407,12 +362,14 @@ export async function acceptSignupInvite(req, res, {
         uname = `${baseUname}${n}`.slice(0, 40);
     }
 
-    directusUser = await createDirectusUser({
+    // Invite email sent by Directus; user sets their own password when they click the link
+    const loginUrl = `${config.publicAppUrl || 'http://localhost:8000'}/`;
+    directusUser = await inviteDirectusUser({
         email,
-        password: String(password),
         roleId: config.directus.defaultRoleId,
         firstName,
-        lastName
+        lastName,
+        inviteUrl: loginUrl
     });
     const directusUserId = String(directusUser.id);
 
@@ -423,12 +380,7 @@ export async function acceptSignupInvite(req, res, {
             throw new ConflictError(msg('auth.email_linked_elsewhere'), null, 'auth.email_linked_elsewhere');
         }
     } else {
-        localUser = await User.create({
-            username: uname,
-            email,
-            password: String(password),
-            preferences: (theme === 'dark' || theme === 'light') ? { theme } : {}
-        });
+        localUser = await User.createExternalShadow({ email, username: uname });
     }
     if (!findLink(PROVIDER, directusUserId)) {
         linkIdentity(localUser.id, PROVIDER, directusUserId);
@@ -459,26 +411,9 @@ export async function acceptSignupInvite(req, res, {
         accepted_user: directusUserId
     });
 
-    const externalTokens = await loginDirectusWithPassword(email, password);
-    const { user: sessionUser, sessionPayload } = issueAppSession(req, res, {
-        ...localUser,
-        firstName: firstName || null,
-        lastName: lastName || null
-    });
-    if (config.auth?.storeProviderTokens && sessionPayload?.jti) {
-        storeProviderTokens(sessionPayload.jti, localUser.id, PROVIDER, externalTokens);
-        setDirectusLinkCookie(res, {
-            userId: localUser.id,
-            accessToken: externalTokens.accessToken,
-            refreshToken: externalTokens.refreshToken,
-            expiresAt: externalTokens.expiresAt,
-            expires: externalTokens.expires
-        });
-    }
-
     return {
-        status: 'accepted',
-        user: sessionUser,
+        status: 'invite_sent',
+        email,
         caseId: row.caseId,
         caseTitle: row.caseTitle,
         role: row.proposedRole

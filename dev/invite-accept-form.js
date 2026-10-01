@@ -1,25 +1,24 @@
 import { LitElement, html, css } from 'lit-element';
 import { previewSignupInvite, acceptSignupInvite } from './services/directus.js';
-import { resolvePreferredThemeForNewAccount } from './utils/userPreferences.js';
 import { authFormSharedStyles } from './styles/auth-form-shared.js';
 import { t } from './i18n/index.js';
 
 /**
  * Redeem a case signup invite (?invite=token).
- * Creates Directus + product user and issues the app session cookie.
+ * Sends a Directus invite email so the user sets their own password.
+ * No password collected here — emits `invite-accepted` with status:'invite_sent'.
  */
 export class InviteAcceptForm extends LitElement {
     static get properties() {
         return {
-            token: { type: String },
-            preview: { type: Object },
-            loading: { type: Boolean },
+            token:      { type: String },
+            preview:    { type: Object },
+            loading:    { type: Boolean },
             submitting: { type: Boolean },
-            error: { type: String },
-            password: { type: String },
-            confirmPassword: { type: String },
-            firstName: { type: String },
-            lastName: { type: String }
+            error:      { type: String },
+            firstName:  { type: String },
+            lastName:   { type: String },
+            done:       { type: Boolean }
         };
     }
 
@@ -51,10 +50,9 @@ export class InviteAcceptForm extends LitElement {
         this.loading = true;
         this.submitting = false;
         this.error = '';
-        this.password = '';
-        this.confirmPassword = '';
         this.firstName = '';
         this.lastName = '';
+        this.done = false;
     }
 
     connectedCallback() {
@@ -78,25 +76,16 @@ export class InviteAcceptForm extends LitElement {
     async handleSubmit(event) {
         event.preventDefault();
         if (this.submitting || !this.preview) return;
-        if (!this.password || this.password.length < 8) {
-            this.error = t('auth.invite.passwordMin');
-            return;
-        }
-        if (this.password !== this.confirmPassword) {
-            this.error = t('auth.invite.passwordMismatch');
-            return;
-        }
         this.submitting = true;
         this.error = '';
         try {
-            const result = await acceptSignupInvite(this.token, {
-                password: this.password,
+            await acceptSignupInvite(this.token, {
                 firstName: this.firstName,
-                lastName: this.lastName,
-                theme: resolvePreferredThemeForNewAccount()
+                lastName: this.lastName
             });
+            this.done = true;
             this.dispatchEvent(new CustomEvent('invite-accepted', {
-                detail: result,
+                detail: { status: 'invite_sent', caseId: this.preview?.caseId },
                 bubbles: true,
                 composed: true
             }));
@@ -121,6 +110,15 @@ export class InviteAcceptForm extends LitElement {
                 </div>
             `;
         }
+        if (this.done) {
+            return html`
+                <div class="auth-card">
+                    <h2>${t('auth.invite.sentTitle')}</h2>
+                    <p class="sub">${t('auth.invite.sentBody', { email: this.preview?.inviteeEmail || '' })}</p>
+                </div>
+            `;
+        }
+
         const caseTitle = this.preview.caseTitle || t('auth.invite.caseFallback');
         const role = String(this.preview.proposedRole || 'collaborator').replace('_', ' ');
         return html`
@@ -137,39 +135,13 @@ export class InviteAcceptForm extends LitElement {
                     </div>
                     <div class="form-group">
                         <label>${t('auth.invite.firstName')}</label>
-                        <input
-                            type="text"
-                            .value=${this.firstName}
-                            @input=${(e) => { this.firstName = e.target.value; }}
-                        />
+                        <input type="text" .value=${this.firstName}
+                            @input=${(e) => { this.firstName = e.target.value; }} />
                     </div>
                     <div class="form-group">
                         <label>${t('auth.invite.lastName')}</label>
-                        <input
-                            type="text"
-                            .value=${this.lastName}
-                            @input=${(e) => { this.lastName = e.target.value; }}
-                        />
-                    </div>
-                    <div class="form-group">
-                        <label>${t('auth.invite.password')}</label>
-                        <input
-                            type="password"
-                            required
-                            minlength="8"
-                            .value=${this.password}
-                            @input=${(e) => { this.password = e.target.value; }}
-                        />
-                    </div>
-                    <div class="form-group">
-                        <label>${t('auth.invite.confirmPassword')}</label>
-                        <input
-                            type="password"
-                            required
-                            minlength="8"
-                            .value=${this.confirmPassword}
-                            @input=${(e) => { this.confirmPassword = e.target.value; }}
-                        />
+                        <input type="text" .value=${this.lastName}
+                            @input=${(e) => { this.lastName = e.target.value; }} />
                     </div>
                     <button type="submit" ?disabled=${this.submitting}>
                         ${this.submitting ? t('auth.invite.submitting') : t('auth.invite.submit')}

@@ -154,6 +154,8 @@ const config = {
         casesEnabled: process.env.ENABLE_DIRECTUS_CASES === 'true',
         /** Role UUID for newly provisioned Directus users (app clinician / non-admin). */
         defaultRoleId: (process.env.DIRECTUS_DEFAULT_ROLE_ID || '').trim(),
+        /** Role UUID for OrgAdmin users. Set DIRECTUS_ORG_ADMIN_ROLE_ID in .env. */
+        orgAdminRoleId: (process.env.DIRECTUS_ORG_ADMIN_ROLE_ID || '').trim(),
         /**
          * CUTOVER (delete with projectCaseMigrate.js): per-project Migrate → Case button.
          * Default on when Cases are enabled; set ENABLE_PROJECT_CASE_MIGRATE=false to hide.

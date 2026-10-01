@@ -163,11 +163,12 @@ export class UserMenu extends LitElement {
 
     static get properties() {
         return {
-            username: { type: String },
+            username:   { type: String },
             /** Preferred label: "First Last" or email (Directus-era accounts). */
             displayName: { type: String },
-            avatarUrl: { type: String },
-            open: { type: Boolean }
+            avatarUrl:  { type: String },
+            open:       { type: Boolean },
+            isOrgAdmin: { type: Boolean }
         };
     }
 
@@ -178,6 +179,7 @@ export class UserMenu extends LitElement {
         this.displayName = '';
         this.avatarUrl = '';
         this.open = false;
+        this.isOrgAdmin = false;
     }
 
     #getDisplayLabel() {
@@ -216,6 +218,14 @@ export class UserMenu extends LitElement {
         this.closeMenu();
     }
 
+    requestPendingRegistrations() {
+        this.dispatchEvent(new CustomEvent('pending-registrations-request', {
+            bubbles: true,
+            composed: true
+        }));
+        this.closeMenu();
+    }
+
     render() {
         const label = this.#getDisplayLabel();
         const nameIsLong = label.length > 35;
@@ -231,6 +241,9 @@ export class UserMenu extends LitElement {
                     <hr>
                     ${canAccessAccountSettings() ? html`
                     <button class="menu-item" @click=${this.requestSettings}>${t('nav.settings')}</button>
+                    ` : ''}
+                    ${this.isOrgAdmin ? html`
+                    <button class="menu-item" @click=${this.requestPendingRegistrations}>${t('nav.pendingRegistrations')}</button>
                     ` : ''}
                     <button class="menu-item" @click=${this.requestLogout}>${t('nav.logOut')}</button>
                 </div>

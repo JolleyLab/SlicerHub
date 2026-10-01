@@ -20,6 +20,7 @@ export default {
         token_expired: 'Token expired',
         session_expired: 'Session expired — please sign in again',
         admin_required: 'Admin access required',
+        insufficient_role: 'You do not have the required org-level role for this action',
         origin_not_allowed: 'Request origin is not allowed',
         authentication_required: 'Authentication required',
         identity_password_required: 'Identity and password are required',
@@ -246,5 +247,13 @@ export default {
         provision_role_required: 'DIRECTUS_DEFAULT_ROLE_ID is required before provisioning users',
         provision_users_required: 'users array is required (e.g. [{ email }])',
         provision_batch_limit: 'Batch size limited to 200 users'
+    },
+    registration: {
+        rate_limit: 'Too many registration requests. Please wait and try again.',
+        duplicate: 'A registration request for this email is already pending.',
+        token_required: 'Registration token is required',
+        token_invalid: 'This registration link is invalid or has expired',
+        not_found: 'Registration request not found',
+        not_pending: 'This registration request is not in a pending state'
     }
 };

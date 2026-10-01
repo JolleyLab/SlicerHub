@@ -1,9 +1,12 @@
 /**
- * Admin bulk user provision (Pattern A first).
- * Clinicians never open Directus — admins call this from the product BFF.
+ * Org-admin bulk user provision (Pattern A first).
+ * Clinicians never open Directus — org admins call this from the product BFF.
  */
 
-import { authenticateToken, requireAdmin } from '../middleware/authMiddleware.js';
+import { authenticateToken } from '../middleware/authMiddleware.js';
+import { requireDirectusLink } from '../auth/requireDirectusLink.js';
+import { requireDirectusUserToken } from '../auth/directusUserSession.js';
+import { requireDirectusRole } from '../auth/requireDirectusRole.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAllowedWebOrigin } from '../auth/originCheck.js';
 import { recordAuthEvent } from '../auth/auditLog.js';
@@ -12,6 +15,12 @@ import { createRateLimiter, getRateLimitClientIp } from '../middleware/rateLimit
 import User from '../models/User.js';
 import { ValidationError, NotFoundError } from '../utils/errors.js';
 import { msg } from '../i18n/index.js';
+
+const requireOrgAdmin = [
+    requireDirectusLink,
+    requireDirectusUserToken,
+    requireDirectusRole('OrgAdmin')
+];
 
 const provisionRateLimit = createRateLimiter({
     windowMs: 60 * 1000,
@@ -36,7 +45,7 @@ export default function adminProvisionRoutes(app) {
         '/api/admin/users/provision',
         requireAllowedWebOrigin,
         authenticateToken,
-        requireAdmin,
+        ...requireOrgAdmin,
         provisionRateLimit,
         asyncHandler(async (req, res) => {
             const result = await provisionUsersBulk(req.body || {});
@@ -62,7 +71,7 @@ export default function adminProvisionRoutes(app) {
         '/api/admin/users/require-password-change',
         requireAllowedWebOrigin,
         authenticateToken,
-        requireAdmin,
+        ...requireOrgAdmin,
         asyncHandler(async (req, res) => {
             const updated = [];
             if (req.body?.allLinked === true) {

@@ -318,6 +318,7 @@ export class UserSettingsPage extends LitElement {
         return {
             username: { type: String },
             avatarUrl: { type: String },
+            isOrgAdmin: { type: Boolean },
             user: { type: Object },
             theme: { type: String },
             useFullSlicer: { type: Boolean },
@@ -667,6 +668,7 @@ export class UserSettingsPage extends LitElement {
             <page-layout-template
                 .username=${this.username}
                 .avatarUrl=${this.avatarUrl}
+                .isOrgAdmin=${this.isOrgAdmin || false}
                 selectedMenuKey=""
                 homeHref="/file-manager"
                 homeLabel=${t('common.home')}
