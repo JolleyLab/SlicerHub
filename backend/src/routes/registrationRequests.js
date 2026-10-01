@@ -45,7 +45,7 @@ const PROVIDER = 'directus';
 const requireOrgAdmin = [
     requireDirectusLink,
     requireDirectusUserToken,
-    requireDirectusRole('OrgAdmin')
+    requireDirectusRole('OrgAdmin', 'Administrator')
 ];
 
 const submitRateLimit = createRateLimiter({
