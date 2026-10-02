@@ -1,3 +1,7 @@
+# Private keys and secrets (never commit — but track the empty dir so the docker bind mount works)
+.secrets/*
+!.secrets/.gitkeep
+
 # Dependencies
 node_modules/
 /node_modules/
@@ -82,3 +86,5 @@ users-remote.db
 # One-off Directus role migration (run once, then delete): the script, its backup and database dumps
 backend/scripts/rebuild-collaborator-roles.mjs
 directus-backup*.sql
+slicerweb-deploy-key
+*.pub

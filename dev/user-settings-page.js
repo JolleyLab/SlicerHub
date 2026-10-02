@@ -11,6 +11,7 @@ import {
     getCachedUserPreferences,
     saveUserPreferences
 } from './utils/userPreferences.js';
+import { isSlicerWebDevModeEnabled } from './services/features.js';
 
 const AUTOSAVE_DEBOUNCE_MS = 250;
 
@@ -324,6 +325,7 @@ export class UserSettingsPage extends LitElement {
             useFullSlicer: { type: Boolean },
             homeLayout: { type: Object },
             useSimplifiedViewer: { type: Boolean },
+            slicerWebChannel: { type: String },
             saveState: { type: String },
             saveStatusMessage: { type: String },
             errorMessage: { type: String },
@@ -367,6 +369,7 @@ export class UserSettingsPage extends LitElement {
         this.useFullSlicer = prefs.useFullSlicer;
         this.homeLayout = prefs.homeLayout;
         this.useSimplifiedViewer = prefs.useSimplifiedViewer;
+        this.slicerWebChannel = prefs.slicerWebChannel ?? 'stable';
     }
 
     connectedCallback() {
@@ -506,6 +509,7 @@ export class UserSettingsPage extends LitElement {
             this.useFullSlicer = next.useFullSlicer;
             this.homeLayout = next.homeLayout;
             this.useSimplifiedViewer = next.useSimplifiedViewer;
+            this.slicerWebChannel = next.slicerWebChannel ?? 'stable';
             this.saveState = 'saved';
             this.saveStatusMessage = t('settings.saved');
             if (this._savedClearTimer) clearTimeout(this._savedClearTimer);
@@ -555,6 +559,11 @@ export class UserSettingsPage extends LitElement {
             useFullSlicer: this.useFullSlicer,
             useSimplifiedViewer: this.useSimplifiedViewer
         });
+    }
+
+    handleSlicerWebChannelChange(wantsLatest) {
+        this.slicerWebChannel = wantsLatest ? 'latest' : 'stable';
+        this.queuePersist({ slicerWebChannel: this.slicerWebChannel });
     }
 
     async handleProfileSave(e) {
@@ -800,6 +809,28 @@ export class UserSettingsPage extends LitElement {
                             @options-change=${(e) => this.handleViewerOptionsChange(e)}
                         ></local-slicer-viewer-options>
                     </section>
+
+                    ${isSlicerWebDevModeEnabled() ? html`
+                    <section class="settings-section">
+                        <h2 class="section-title">${t('settings.slicerWebChannel')}</h2>
+                        <p class="section-description">
+                            ${t('settings.slicerWebChannelHint')}
+                        </p>
+                        <label class="checkbox-row">
+                            <input
+                                type="checkbox"
+                                .checked=${this.slicerWebChannel === 'latest'}
+                                @change=${(e) => this.handleSlicerWebChannelChange(e.target.checked)}
+                            />
+                            ${t('settings.slicerWebLatestLabel')}
+                        </label>
+                        ${this.slicerWebChannel === 'latest' ? html`
+                            <p class="section-description" style="color:var(--color-warning,#b45309)">
+                                ${t('settings.slicerWebLatestWarning')}
+                            </p>
+                        ` : ''}
+                    </section>
+                    ` : ''}
 
                     ${showProfile ? html`
                     <div class="settings-footer">

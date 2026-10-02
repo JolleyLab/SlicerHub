@@ -380,6 +380,9 @@ export default function authRoutes(app) {
         if (req.body?.homeLayout !== undefined) {
             patch.homeLayout = req.body.homeLayout;
         }
+        if (req.body?.slicerWebChannel !== undefined) {
+            patch.slicerWebChannel = req.body.slicerWebChannel === 'latest' ? 'latest' : 'stable';
+        }
 
         const preferences = User.updatePreferences(req.user.id, patch);
         if (!preferences) {

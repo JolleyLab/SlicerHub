@@ -10,7 +10,8 @@ import { DEFAULT_HOME_LAYOUT, normalizeHomeLayout } from './homeLayout.js';
 export const DEFAULT_USER_PREFERENCES = Object.freeze({
     theme: 'light',
     ...DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS,
-    homeLayout: DEFAULT_HOME_LAYOUT
+    homeLayout: DEFAULT_HOME_LAYOUT,
+    slicerWebChannel: 'stable'
 });
 
 const THEME_CACHE_KEY = 'ui-theme';
@@ -23,11 +24,13 @@ let _saveGeneration = 0;
 export function normalizeUserPreferences(input = {}) {
     const theme = input?.theme === 'dark' ? 'dark' : 'light';
     const viewer = normalizeLocalSlicerViewerOptions(input);
+    const slicerWebChannel = input?.slicerWebChannel === 'latest' ? 'latest' : 'stable';
     return {
         theme,
         useFullSlicer: viewer.useFullSlicer,
         useSimplifiedViewer: viewer.useSimplifiedViewer,
-        homeLayout: normalizeHomeLayout(input?.homeLayout)
+        homeLayout: normalizeHomeLayout(input?.homeLayout),
+        slicerWebChannel
     };
 }
 

@@ -69,10 +69,16 @@ services:
       - ./backend/data:/app/data-seed:ro
       - ./data/slicer-gui:/app/data/slicer-gui
       - ./data/slicer-addons:/app/data/slicer-addons
+      - ${SLICERWEB_STABLE_DIR:-./data/slicerweb-stable}:/app/data/slicerweb-stable
+      - ${SLICERWEB_LATEST_DIR:-./data/slicerweb-latest}:/app/data/slicerweb-latest
+      # Deploy key for SlicerWeb auto-updater (read-only). Place private key at .secrets/slicerweb-deploy-key.
+      # Set SLICERWEB_DEPLOY_KEY_PATH=/run/secrets/slicerweb/slicerweb-deploy-key in .env to activate.
+      - ./.secrets:/run/secrets/slicerweb:ro
       - ./nginx:/nginx
       - /var/run/docker.sock:/var/run/docker.sock
-    # Re-install when a new lockfile dep is missing from the volume (e.g. nodemailer)
-    command: ["sh", "-c", "test -d node_modules/nodemailer && test -d node_modules/heic-convert || npm ci; exec node src/server.js"]
+    # Re-install when a new lockfile dep is missing from the volume (e.g. nodemailer).
+    # Copy deploy key to /tmp so we can chmod 600 it (Windows bind mounts always arrive as 755).
+    command: ["sh", "-c", "test -d node_modules/nodemailer && test -d node_modules/heic-convert || npm ci; if [ -f /run/secrets/slicerweb/slicerweb-deploy-key ]; then cp /run/secrets/slicerweb/slicerweb-deploy-key /tmp/slicerweb-deploy-key && chmod 600 /tmp/slicerweb-deploy-key; fi; exec node src/server.js"]
     environment:
       - NODE_ENV=development
       - DB_PATH=/app/data/users.db
@@ -135,6 +141,9 @@ services:
       - SMTP_FROM=${SMTP_FROM:-Case Invites <noreply@localhost>}
       - PUBLIC_APP_URL=${PUBLIC_APP_URL:-http://localhost:8000}
       - CASE_INVITE_TTL_DAYS=${CASE_INVITE_TTL_DAYS:-7}
+      # SlicerWeb deploy key (SSH). Set to /run/secrets/slicerweb/slicerweb-deploy-key when key is placed in .secrets/.
+      - SLICERWEB_DEPLOY_KEY_PATH=${SLICERWEB_DEPLOY_KEY_PATH:-}
+      - ENABLE_SLICERWEB_DEV_MODE=${ENABLE_SLICERWEB_DEV_MODE:-false}
     depends_on:
       - trame-job
       - mailpit
@@ -172,9 +181,11 @@ services:
       - "8000:80" # Port 8000 is open on Paperspace by default
     volumes:
       - ./nginx:/etc/nginx/conf.d:ro
-      # Prebuilt SlicerWeb site; populate with scripts/fetch-slicerweb.sh (or .ps1). SLICERWEB_DIR (in
-      # .env) moves it, for hosts where ./data is not writable by the user running the script.
-      - ${SLICERWEB_DIR:-./data/slicerweb}:/usr/share/slicerweb:ro
+      # SlicerWeb channels: stable (default) and latest (developer mode).
+      # Populate with: scripts/fetch-slicerweb.ps1 --channel stable  (and --channel latest for dev).
+      # Override dirs in .env (e.g. SLICERWEB_STABLE_DIR=~/slicerweb-stable) if ./data isn't writable.
+      - ${SLICERWEB_STABLE_DIR:-./data/slicerweb-stable}:/usr/share/slicerweb-stable:ro
+      - ${SLICERWEB_LATEST_DIR:-./data/slicerweb-latest}:/usr/share/slicerweb-latest:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

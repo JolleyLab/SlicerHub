@@ -11,17 +11,20 @@ import { normalizeHomeLayout } from '../utils/homeLayout.js';
 export const DEFAULT_USER_PREFERENCES = Object.freeze({
     theme: 'light',
     ...DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS,
-    homeLayout: normalizeHomeLayout(null)
+    homeLayout: normalizeHomeLayout(null),
+    slicerWebChannel: 'stable'
 });
 
 export function normalizeUserPreferences(input = {}) {
     const theme = input?.theme === 'dark' ? 'dark' : 'light';
     const viewer = normalizeLocalSlicerViewerOptions(input);
+    const slicerWebChannel = input?.slicerWebChannel === 'latest' ? 'latest' : 'stable';
     return {
         theme,
         useFullSlicer: viewer.useFullSlicer,
         useSimplifiedViewer: viewer.useSimplifiedViewer,
-        homeLayout: normalizeHomeLayout(input?.homeLayout)
+        homeLayout: normalizeHomeLayout(input?.homeLayout),
+        slicerWebChannel
     };
 }
 

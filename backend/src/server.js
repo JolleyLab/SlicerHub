@@ -16,6 +16,8 @@ import directusRoutes from "./routes/directus.js";
 import directusTusRoutes from "./routes/directusTus.js";
 import registrationRequestRoutes from "./routes/registrationRequests.js";
 import featuresRoutes from "./routes/features.js";
+import slicerWebRoutes from "./routes/slicerWeb.js";
+import { startStablePoller } from "./services/slicerWebUpdater.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { isDirectusConfigured } from "./services/directus.js";
 import { startBillingWatchdog } from "./gpu/billingWatchdog.js";
@@ -68,6 +70,9 @@ const app = express();
 // Behind nginx / Cloudflare — needed for secure cookies and rate limits
 app.set('trust proxy', 1);
 
+// Raw body for webhook HMAC verification (must precede express.json() — body stream is single-use)
+app.use('/api/slicerweb/webhook', express.raw({ type: '*/*' }));
+
 // Parse JSON bodies
 app.use(express.json());
 
@@ -87,6 +92,7 @@ adminProvisionRoutes(app);
 registrationRequestRoutes(app);
 
 featuresRoutes(app);
+slicerWebRoutes(app);
 
 // Register file routes
 fileRoutes(app);
@@ -133,6 +139,7 @@ app.listen(config.server.port, config.server.host, async () => {
     }
     startBillingWatchdog();
     startViewerSessionWatchdog();
+    startStablePoller();
     try {
         clearSessions();
         await stopAllPerUserSlicerGuiContainers();

@@ -1,6 +1,10 @@
 # Use a Node LTS image
 FROM node:20
 
+# Install git + SSH client for SlicerWeb deploy-key updates
+RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
 # Set working directory inside the container
 WORKDIR /app
 

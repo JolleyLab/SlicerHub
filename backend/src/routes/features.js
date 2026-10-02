@@ -16,6 +16,8 @@ export default function featuresRoutes(app) {
             ),
             /** Case signup invite email delivery (SMTP). Copy-link works either way. */
             inviteEmail: Boolean(config.mail?.enabled && config.mail?.host),
+            /** Allow users to opt into the SlicerWeb latest channel from Settings. */
+            slicerWebDevMode: Boolean(config.slicerWeb.devModeEnabled && config.slicerWeb.hasCredentials),
             auth: getPublicAuthConfig()
         });
     }));

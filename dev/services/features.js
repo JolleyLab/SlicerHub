@@ -14,6 +14,7 @@ let featuresLoaded = false;
 let features = Object.freeze({
     projectCaseMigrate: false,
     inviteEmail: false,
+    slicerWebDevMode: false,
     auth: DEFAULT_AUTH
 });
 
@@ -33,6 +34,11 @@ export function isProjectCaseMigrateEnabled() {
 /** Case signup invite emails via SMTP (copy-link always available). */
 export function isInviteEmailEnabled() {
     return features.inviteEmail === true;
+}
+
+/** Allow users to opt into the SlicerWeb latest channel from Settings. */
+export function isSlicerWebDevModeEnabled() {
+    return features.slicerWebDevMode === true;
 }
 
 /**
@@ -66,6 +72,7 @@ export function loadAppFeatures() {
             features = Object.freeze({
                 projectCaseMigrate: data?.projectCaseMigrate === true,
                 inviteEmail: data?.inviteEmail === true,
+                slicerWebDevMode: data?.slicerWebDevMode === true,
                 auth: Object.freeze(auth)
             });
             featuresLoaded = true;
