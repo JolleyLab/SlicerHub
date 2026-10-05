@@ -76,6 +76,7 @@ const ATTACHMENT_CORE_FIELDS = [
     'id',
     'name',
     'case',
+    'user_created',
     'file.id',
     'file.filename_download',
     'file.type',
@@ -260,6 +261,7 @@ function mapAttachment(row) {
         mimeType,
         filesize: Number.isFinite(filesize) ? filesize : null,
         modifiedAt,
+        uploadedBy: row?.user_created ?? null,
         ...openFlags
     };
 }
@@ -1595,7 +1597,7 @@ export function canOpenAttachmentInSlicer(attachment) {
  * Delete a case attachment record (does NOT delete the underlying Directus file).
  * Verifies ownership before deleting.
  */
-export async function deleteCaseAttachment(caseId, attachmentId, { accessToken } = {}) {
+export async function deleteCaseAttachment(caseId, attachmentId, { accessToken, asAdmin = false } = {}) {
     if (!accessToken) {
         throw new ValidationError(msg('directus.delete_attachments_token_required'), null, 'directus.delete_attachments_token_required');
     }
@@ -1605,12 +1607,14 @@ export async function deleteCaseAttachment(caseId, attachmentId, { accessToken }
         throw new ValidationError(msg('case.case_attachment_ids_required'), null, 'case.case_attachment_ids_required');
     }
 
-    // Verify attachment belongs to this case before deleting
+    // Verify attachment belongs to this case (always as the user — Directus read ACL applies).
     await getCaseAttachment(caseKey, attachmentKey, { accessToken });
 
+    // Case admins use the service token so they can delete any attachment regardless of uploader.
+    // Regular members use their own token; Directus enforces user_created = $CURRENT_USER.
     await directusFetch(`/items/attachment/${encodeURIComponent(attachmentKey)}`, {
         method: 'DELETE',
-        accessToken
+        ...(asAdmin ? {} : { accessToken })
     });
 }
 

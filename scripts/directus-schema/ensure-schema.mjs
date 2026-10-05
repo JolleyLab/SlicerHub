@@ -19,10 +19,11 @@ import { loadRepoEnv } from './lib/env.mjs';
 import { createDirectusAdminClient } from './lib/client.mjs';
 import { loginDirectusAdmin, logoutDirectus, prompt } from './lib/login.mjs';
 import { caseInvitesDefinition } from './definitions/case-invites.mjs';
+import { attachmentAccountabilityDefinition } from './definitions/attachment-accountability.mjs';
 
 loadRepoEnv();
 
-const DEFINITIONS = Object.freeze([caseInvitesDefinition]);
+const DEFINITIONS = Object.freeze([caseInvitesDefinition, attachmentAccountabilityDefinition]);
 
 function parseArgs(argv) {
     const flags = new Set();

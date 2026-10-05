@@ -88,3 +88,4 @@ backend/scripts/rebuild-collaborator-roles.mjs
 directus-backup*.sql
 slicerweb-deploy-key
 *.pub
+scripts/backfill-attachment-user-created.mjs

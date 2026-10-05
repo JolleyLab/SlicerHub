@@ -477,8 +477,18 @@ export default function directusRoutes(app) {
                 throw new ValidationError(msg('case.case_and_file_required'), null, 'case.case_and_file_required');
             }
 
+            const actorDirectusUserId = req.directusIdentity?.externalId
+                || (await fetchDirectusViewer(req.directusAccessToken))?.id;
+            const ctx = actorDirectusUserId
+                ? await getCaseCollabActorContext(caseId, {
+                    accessToken: req.directusAccessToken,
+                    actorDirectusUserId
+                })
+                : null;
+
             await deleteCaseAttachment(caseId, attachmentId, {
-                accessToken: req.directusAccessToken
+                accessToken: req.directusAccessToken,
+                asAdmin: ctx?.actorIsAdmin === true
             });
             res.status(204).end();
         })

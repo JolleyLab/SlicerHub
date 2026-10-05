@@ -1583,6 +1583,11 @@ export class DirectusCasesPage extends LitElement {
         return role === 'admin' || role === 'collaborator';
     }
 
+    isMyAttachment(attachment) {
+        const me = this.currentDirectusUserId;
+        return !!me && !!attachment?.uploadedBy && String(attachment.uploadedBy) === String(me);
+    }
+
     /** Any case member (including read_only) may comment. */
     canCommentOnCase(caseRow) {
         return Boolean(this.myCaseRole(caseRow));
@@ -1961,7 +1966,7 @@ export class DirectusCasesPage extends LitElement {
     // ── Attachment delete ──────────────────────────────────────────────────
     async handleDeleteAttachment(caseRow, attachment) {
         if (!attachment?.id || this.deletingAttachmentId) return;
-        if (!this.canEditCaseContent(caseRow)) return;
+        if (!this.isMyAttachment(attachment) && this.myCaseRole(caseRow) !== 'admin') return;
         if (!confirm(t('cases.confirmDeleteAttachment', { name: attachment.name || attachment.filenameDownload }))) return;
 
         this.deletingAttachmentId = attachment.id;
@@ -2866,6 +2871,8 @@ export class DirectusCasesPage extends LitElement {
                                                             </svg>
                                                         `}
                                                     </button>
+                                                ` : ''}
+                                                ${(this.isMyAttachment(attachment) || this.myCaseRole(caseRow) === 'admin') ? html`
                                                     <button
                                                         slot="actions"
                                                         class="file-icon-button"
