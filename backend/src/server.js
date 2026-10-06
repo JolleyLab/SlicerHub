@@ -17,7 +17,7 @@ import directusTusRoutes from "./routes/directusTus.js";
 import registrationRequestRoutes from "./routes/registrationRequests.js";
 import featuresRoutes from "./routes/features.js";
 import slicerWebRoutes from "./routes/slicerWeb.js";
-import { startStablePoller } from "./services/slicerWebUpdater.js";
+import { startStablePoller, startLatestPoller } from "./services/slicerWebUpdater.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { isDirectusConfigured } from "./services/directus.js";
 import { startBillingWatchdog } from "./gpu/billingWatchdog.js";
@@ -140,6 +140,7 @@ app.listen(config.server.port, config.server.host, async () => {
     startBillingWatchdog();
     startViewerSessionWatchdog();
     startStablePoller();
+    startLatestPoller();
     try {
         clearSessions();
         await stopAllPerUserSlicerGuiContainers();

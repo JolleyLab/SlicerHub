@@ -73,6 +73,12 @@ export default function registrationRequestRoutes(app) {
                 throw new ValidationError(msg('auth.last_name_required'), null, 'auth.last_name_required');
             }
 
+            const normalized = String(email).trim().toLowerCase();
+            const existingDirectusUser = await findDirectusUserByEmail(normalized);
+            if (existingDirectusUser) {
+                throw new ConflictError(msg('registration.email_already_registered'), 'EMAIL_ALREADY_REGISTERED', 'registration.email_already_registered');
+            }
+
             let request;
             try {
                 request = await createRegistrationRequest({ email, firstName, lastName, affiliation, intendedUse });

@@ -303,3 +303,24 @@ export function startStablePoller() {
     setInterval(run, intervalMs);
     console.log(`[SlicerWebUpdater] Stable poller started (every ${intervalMs / 60000} min)`);
 }
+
+let _latestPollerStarted = false;
+export function startLatestPoller() {
+    if (_latestPollerStarted) return;
+    _latestPollerStarted = true;
+
+    const intervalMs = config.slicerWeb.latestCheckIntervalMs;
+    if (!config.slicerWeb.devModeEnabled) return;
+    if (!intervalMs || !config.slicerWeb.hasCredentials) {
+        console.log('[SlicerWebUpdater] Latest poller not started (no credentials or interval disabled)');
+        return;
+    }
+
+    const run = () => checkAndUpdate('latest').catch(err =>
+        console.warn('[SlicerWebUpdater] Latest update check failed:', err.message)
+    );
+
+    setTimeout(run, 30 * 1000);
+    setInterval(run, intervalMs);
+    console.log(`[SlicerWebUpdater] Latest poller started (every ${intervalMs / 60000} min)`);
+}

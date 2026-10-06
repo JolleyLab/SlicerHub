@@ -251,6 +251,7 @@ export default {
     registration: {
         rate_limit: 'Too many registration requests. Please wait and try again.',
         duplicate: 'A registration request for this email is already pending.',
+        email_already_registered: 'An account with that email address already exists.',
         token_required: 'Registration token is required',
         token_invalid: 'This registration link is invalid or has expired',
         not_found: 'Registration request not found',

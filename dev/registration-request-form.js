@@ -15,10 +15,11 @@ export class RegistrationRequestForm extends LitElement {
             lastName:    { type: String },
             affiliation: { type: String },
             intendedUse: { type: String },
-            submitting:  { type: Boolean },
-            submitted:   { type: Boolean },
-            duplicate:   { type: Boolean },
-            error:       { type: String }
+            submitting:       { type: Boolean },
+            submitted:        { type: Boolean },
+            duplicate:        { type: Boolean },
+            existingAccount:  { type: Boolean },
+            error:            { type: String }
         };
     }
 
@@ -70,6 +71,7 @@ export class RegistrationRequestForm extends LitElement {
         this.submitting = false;
         this.submitted = false;
         this.duplicate = false;
+        this.existingAccount = false;
         this.error = '';
     }
 
@@ -88,7 +90,9 @@ export class RegistrationRequestForm extends LitElement {
             });
             this.submitted = true;
         } catch (err) {
-            if (err?.status === 409) {
+            if (err?.code === 'EMAIL_ALREADY_REGISTERED') {
+                this.existingAccount = true;
+            } else if (err?.status === 409) {
                 this.duplicate = true;
             } else {
                 this.error = err?.message || t('errors.registrationFailed');
@@ -99,6 +103,19 @@ export class RegistrationRequestForm extends LitElement {
     }
 
     render() {
+        if (this.existingAccount) {
+            return html`
+                <div class="auth-card">
+                    <div class="success-icon">🔑</div>
+                    <h2>${t('registration.existingAccountTitle')}</h2>
+                    <p class="success-message">${t('registration.existingAccountBody')}</p>
+                    <button type="button" @click=${() => this.dispatchEvent(new CustomEvent('show-login', { bubbles: true, composed: true }))}>
+                        ${t('registration.backToLogin')}
+                    </button>
+                </div>
+            `;
+        }
+
         if (this.submitted || this.duplicate) {
             return html`
                 <div class="auth-card">

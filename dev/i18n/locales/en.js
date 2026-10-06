@@ -761,6 +761,8 @@ export default {
         successBody: 'Your access request has been received. An administrator will review it and you\'ll be notified when approved.',
         duplicateTitle: 'Request already pending',
         duplicateBody: 'A request for that email address is already pending approval. Please wait for an administrator to review it.',
+        existingAccountTitle: 'Account already exists',
+        existingAccountBody: 'An account with that email address already exists. Please sign in instead.',
         backToLogin: 'Back to login',
         completeTitle: 'Complete your registration',
         completeSubcopy: 'Welcome, {name}! Choose a password to activate your account.',

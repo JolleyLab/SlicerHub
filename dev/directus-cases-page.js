@@ -2460,7 +2460,14 @@ export class DirectusCasesPage extends LitElement {
         const download = fetchDirectusAttachmentContent(caseRow.id, attachment.id);
         download.catch(() => {}); // surfaced when awaited
         this._slicerWebPending = { download, fileName: this.currentFileName };
-        this.iframeUrl = buildSlicerWebUrl({ channel });
+
+        // Fetch installed SHA to include as ?v= in the iframe URL, which breaks any
+        // stale service-worker cache when a new build lands.
+        const statusData = await fetch('/api/slicerweb/status', { credentials: 'include' })
+            .then((r) => r.ok ? r.json() : null)
+            .catch(() => null);
+        const sha = statusData?.[channel] ?? null;
+        this.iframeUrl = buildSlicerWebUrl({ channel, sha });
 
         this._pushViewerHistory(caseRow.id);
     }
@@ -2497,7 +2504,20 @@ export class DirectusCasesPage extends LitElement {
             const blob = await pending.download;
             if (cancelled()) return;
             const [path] = await slicer.writeFiles([new File([blob], pending.fileName)]);
-            await slicer.bridge.call('loadFiles', [[path]]);
+
+            let loadError;
+            for (let attempt = 0, delay = 500; attempt < 5; attempt++, delay *= 2) {
+                if (cancelled()) return;
+                try {
+                    await slicer.bridge.call('loadFiles', [[path]]);
+                    loadError = null;
+                    break;
+                } catch (err) {
+                    loadError = err;
+                    if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, delay));
+                }
+            }
+            if (loadError) throw loadError;
             if (cancelled()) return;
             this._slicerWebPending = null;
             this.viewerLoading = false;

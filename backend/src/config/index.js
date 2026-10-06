@@ -230,6 +230,11 @@ const config = {
                 const h = Number(process.env.SLICERWEB_STABLE_CHECK_HOURS ?? 4);
                 return Number.isFinite(h) && h > 0 ? h * 60 * 60 * 1000 : 0;
             })(),
+            /** How often to check the latest channel for updates when dev mode is on (default 5 min). 0 = disabled. */
+            latestCheckIntervalMs: (() => {
+                const m = Number(process.env.SLICERWEB_LATEST_CHECK_MINUTES ?? 5);
+                return Number.isFinite(m) && m > 0 ? m * 60 * 1000 : 0;
+            })(),
             /** Allow users to opt into the latest channel from Settings. */
             devModeEnabled: process.env.ENABLE_SLICERWEB_DEV_MODE === 'true',
             /** Shared secret for GitHub push webhook signature verification. */
