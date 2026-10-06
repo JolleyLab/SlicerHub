@@ -19,10 +19,12 @@ export function getAppMenuItems({
     const casesItem = Object.freeze({ key: 'cases', label: t('nav.myCases') });
     const projectsItem = Object.freeze({ key: 'my-projects', label: t('nav.myProjects') });
     const adminRegItem = Object.freeze({ key: 'admin-registrations', label: t('nav.pendingRegistrations') });
+    const myGroupsItem = Object.freeze({ key: 'my-groups', label: t('nav.myGroups') });
     const items = [];
     if (directusCasesEnabled) items.push(casesItem);
     if (projectCaseMigrateEnabled) items.push(projectsItem);
     items.push(filesItem);
+    items.push(myGroupsItem);
     const filtered = items.filter((item) => MY_PROJECTS_VISIBLE || item !== projectsItem);
     if (isOrgAdmin) filtered.push(adminRegItem);
     return Object.freeze(filtered);

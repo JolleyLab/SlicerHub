@@ -549,3 +549,111 @@ export async function checkDirectusAttachmentDownload(caseId, attachmentId) {
     }
 }
 
+// --- Task groups ---
+
+export async function getMyGroups() {
+    const response = await fetch(`${API_URL}/api/my-groups`, { credentials: 'include' });
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to load groups');
+    return data.data || [];
+}
+
+export async function createMyGroup({ name, description } = {}) {
+    const response = await fetch(`${API_URL}/api/my-groups`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description })
+    });
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to create group');
+    return data.data || null;
+}
+
+export async function listTaskGroups() {
+    const response = await fetch(`${API_URL}/api/admin/task-groups`, { credentials: 'include' });
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to load task groups');
+    return data.data || [];
+}
+
+export async function createTaskGroup({ name, description, canApproveRegistrations }) {
+    const response = await fetch(`${API_URL}/api/admin/task-groups`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description, canApproveRegistrations })
+    });
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to create task group');
+    return data.data;
+}
+
+export async function getTaskGroup(id) {
+    const response = await fetch(`${API_URL}/api/admin/task-groups/${encodeURIComponent(id)}`, {
+        credentials: 'include'
+    });
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to load task group');
+    return data.data;
+}
+
+export async function updateTaskGroup(id, updates) {
+    const response = await fetch(`${API_URL}/api/admin/task-groups/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+    });
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to update task group');
+    return data.data;
+}
+
+export async function deleteTaskGroup(id) {
+    const response = await fetch(`${API_URL}/api/admin/task-groups/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        credentials: 'include'
+    });
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to delete task group');
+    return data;
+}
+
+export async function addTaskGroupMember(groupId, { email, directusUserId } = {}) {
+    const response = await fetch(`${API_URL}/api/admin/task-groups/${encodeURIComponent(groupId)}/members`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, directusUserId })
+    });
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to add member');
+    return data.data;
+}
+
+export async function removeTaskGroupMember(groupId, memberId) {
+    const response = await fetch(
+        `${API_URL}/api/admin/task-groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(memberId)}`,
+        { method: 'DELETE', credentials: 'include' }
+    );
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to remove member');
+    return data;
+}
+
+export async function updateTaskGroupMember(groupId, memberId, updates) {
+    const response = await fetch(
+        `${API_URL}/api/admin/task-groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(memberId)}`,
+        {
+            method: 'PATCH',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates)
+        }
+    );
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to update member');
+    return data.data;
+}
+

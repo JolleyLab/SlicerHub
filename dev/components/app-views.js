@@ -6,7 +6,8 @@ export const APP_VIEWS = Object.freeze({
     PROJECT_REVIEW: 'project-review',
     SETTINGS: 'settings',
     CASES: 'cases',
-    ADMIN_REGISTRATIONS: 'admin-registrations'
+    ADMIN_REGISTRATIONS: 'admin-registrations',
+    MY_GROUPS: 'my-groups'
 });
 
 export const DEFAULT_APP_VIEW = APP_VIEWS.HOME;

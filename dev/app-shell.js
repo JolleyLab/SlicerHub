@@ -21,6 +21,7 @@ import './complete-registration-form.js';
 import './invite-accept-form.js';
 import './change-password-form.js';
 import './admin-registrations-page.js';
+import './admin-task-groups-page.js';
 import './file-manager.js';
 import './components/status-card.js';
 import './MyProjects/myProjectsEmptyState.js';
@@ -711,6 +712,12 @@ export class SlicerApp extends LitElement {
       this.syncViewToUrl();
       return;
     }
+    if (selectedKey === 'my-groups') {
+      this.selectedProjectId = null;
+      this.currentView = APP_VIEWS.MY_GROUPS;
+      this.syncViewToUrl();
+      return;
+    }
     if (selectedKey === 'cases') {
       this.selectedProjectId = null;
       this.currentView = APP_VIEWS.CASES;
@@ -1345,6 +1352,16 @@ export class SlicerApp extends LitElement {
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
         ></admin-registrations-page>
+      ` : ''}
+      ${this.currentView === APP_VIEWS.MY_GROUPS ? html`
+        <admin-task-groups-page
+          .username=${userDisplayName(this.user)}
+          .avatarUrl=${this.user?.avatarUrl || ''}
+          .isOrgAdmin=${this.isOrgAdmin}
+          @menu-selection-change=${this.handleProjectsMenuSelection}
+          @settings-request=${this.openSettingsFlow}
+          @logout-request=${this.handleLogout}
+        ></admin-task-groups-page>
       ` : ''}
       ${this.currentView === APP_VIEWS.CASES ? html`
         <directus-cases-page

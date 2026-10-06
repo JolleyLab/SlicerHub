@@ -38,7 +38,7 @@ import { storeProviderTokens } from '../auth/identityStore.js';
 import config from '../config/index.js';
 import { ValidationError, NotFoundError, ConflictError } from '../utils/errors.js';
 import { msg } from '../i18n/index.js';
-import { sendRegistrationApprovalEmail } from '../services/mail.js';
+import { sendRegistrationApprovalEmail, sendRegistrationReceivedEmail } from '../services/mail.js';
 
 const PROVIDER = 'directus';
 
@@ -88,6 +88,11 @@ export default function registrationRequestRoutes(app) {
                 }
                 throw err;
             }
+
+            await sendRegistrationReceivedEmail({
+                to: email,
+                firstName
+            });
 
             res.status(201).json({ status: 'pending', id: request.id });
         })

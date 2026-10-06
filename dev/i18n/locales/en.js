@@ -146,7 +146,8 @@ export default {
         sectionNav: 'Section navigation',
         openMenu: 'Open navigation menu',
         closeMenu: 'Close navigation menu',
-        pendingRegistrations: 'Pending Registrations'
+        pendingRegistrations: 'Pending Registrations',
+        myGroups: 'My Groups'
     },
     home: {
         greetingMorning: 'Good morning, {name}',
@@ -746,6 +747,34 @@ export default {
         updateFileTitleFailed: 'Failed to update file title',
         registrationFailed: 'Failed to submit registration request. Please try again.',
         createAccountFailed: 'Failed to create account. The link may have expired.'
+    },
+    taskGroups: {
+        title: 'My Groups',
+        myGroupsEmpty: 'You haven\'t been added to any groups yet.',
+        myGroupsMember: 'Member',
+        myGroupsManager: 'Manager',
+        newGroup: 'New Group',
+        createGroup: 'Create Group',
+        editGroup: 'Edit Group',
+        groupName: 'Group name',
+        namePlaceholder: 'e.g. Invite Approvers',
+        description: 'Description',
+        descriptionPlaceholder: 'What is this group for?',
+        capabilities: 'Capabilities',
+        canApproveRegistrations: 'Can approve registration requests',
+        canManageGroup: 'Can manage group',
+        members: 'Members',
+        noMembers: 'No members in this group yet.',
+        addMember: 'Add',
+        addMemberLabel: 'Add member by email',
+        emailPlaceholder: 'user@example.com',
+        save: 'Save changes',
+        saving: 'Saving…',
+        deleteGroup: 'Delete group',
+        noGroups: 'No task groups yet. Create one to get started.',
+        selectGroup: 'Select a group to manage it.',
+        saved: 'Saved.',
+        cancel: 'Cancel'
     },
     registration: {
         title: 'Request Access',

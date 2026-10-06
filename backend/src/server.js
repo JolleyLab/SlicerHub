@@ -15,6 +15,7 @@ import projectGpuRoutes from "./routes/projectGpu.js";
 import directusRoutes from "./routes/directus.js";
 import directusTusRoutes from "./routes/directusTus.js";
 import registrationRequestRoutes from "./routes/registrationRequests.js";
+import taskGroupRoutes from "./routes/taskGroups.js";
 import featuresRoutes from "./routes/features.js";
 import slicerWebRoutes from "./routes/slicerWeb.js";
 import { startStablePoller, startLatestPoller } from "./services/slicerWebUpdater.js";
@@ -90,6 +91,7 @@ app.use(cors({
 authRoutes(app);
 adminProvisionRoutes(app);
 registrationRequestRoutes(app);
+taskGroupRoutes(app);
 
 featuresRoutes(app);
 slicerWebRoutes(app);
