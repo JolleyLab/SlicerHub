@@ -280,7 +280,9 @@ export class SlicerApp extends LitElement {
       shareToken:    { type: String },
       inviteToken:   { type: String },
       registerToken: { type: String },
-      isOrgAdmin:    { type: Boolean },
+      isOrgAdmin:             { type: Boolean },
+      isRegistrationReviewer: { type: Boolean },
+      directusUserId:         { type: String },
       shareLoading: { type: Boolean },
       shareError: { type: String },
       shareErrorStatus: { type: Number },
@@ -295,7 +297,8 @@ export class SlicerApp extends LitElement {
       logoutBillingAutoSeconds: { type: Number },
       _directusReconnectBusy: { type: Boolean },
       _directusReconnectError: { type: String },
-      _directusReconnectOpen: { type: Boolean }
+      _directusReconnectOpen: { type: Boolean },
+      _canGoBack: { type: Boolean }
     };
   }
 
@@ -305,6 +308,8 @@ export class SlicerApp extends LitElement {
     // Auth state
     this.isAuthenticated = false;
     this.isOrgAdmin = false;
+    this.isRegistrationReviewer = false;
+    this.directusUserId = null;
     this.user = null;
     this.showLogin = true; // Show login by default
     this.currentView = DEFAULT_APP_VIEW;
@@ -331,6 +336,9 @@ export class SlicerApp extends LitElement {
     this._directusReconnectBusy = false;
     this._directusReconnectError = '';
     this._directusReconnectOpen = false;
+    this._canGoBack = false;
+    this._navHistory = [];
+    this._navigatingBack = false;
     this._logoutQueueWithOthers = [];
     this._logoutQueueSole = [];
     this._logoutBillingAutoTimer = null;
@@ -356,6 +364,31 @@ export class SlicerApp extends LitElement {
       }
     };
     window.addEventListener('directus-session-expired', this._onDirectusSessionExpired);
+  }
+
+  updated(changedProps) {
+    if (changedProps.has('currentView')) {
+      if (this._navigatingBack) {
+        this._navigatingBack = false;
+      } else {
+        const prev = changedProps.get('currentView');
+        if (prev) {
+          this._navHistory = [...this._navHistory.slice(-9), { view: prev }];
+          this._canGoBack = true;
+        }
+      }
+    }
+  }
+
+  _handleNavigateBack() {
+    if (!this._navHistory.length) return;
+    const history = [...this._navHistory];
+    const prev = history.pop();
+    this._navHistory = history;
+    this._canGoBack = history.length > 0;
+    this._navigatingBack = true;
+    this.currentView = prev.view;
+    this.syncViewToUrl();
   }
 
   async initializeAppView() {
@@ -495,6 +528,8 @@ export class SlicerApp extends LitElement {
         this.user = data.user;
         this.isAuthenticated = true;
         this.isOrgAdmin = data.isOrgAdmin === true;
+        this.isRegistrationReviewer = data.isRegistrationReviewer === true;
+        this.directusUserId = data.directusUserId || null;
         this.applyIdentityGate(data.identity);
         await hydrateUserPreferencesFromUser(this.user);
         this.startInactivityTimer();
@@ -522,6 +557,8 @@ export class SlicerApp extends LitElement {
       const data = await res.json();
       if (data.user) this.user = { ...(this.user || {}), ...data.user };
       if (typeof data.isOrgAdmin === 'boolean') this.isOrgAdmin = data.isOrgAdmin;
+      if (typeof data.isRegistrationReviewer === 'boolean') this.isRegistrationReviewer = data.isRegistrationReviewer;
+      if (data.directusUserId) this.directusUserId = data.directusUserId;
     } catch (_) {
       // keep the login payload; the profile fills in on the next load
     }
@@ -1103,6 +1140,8 @@ export class SlicerApp extends LitElement {
     this.user = null;
     this.isAuthenticated = false;
     this.showLogin = true;
+    this._navHistory = [];
+    this._canGoBack = false;
     clearCachedUserPreferences();
     this.clearLogoutBillingState();
 
@@ -1121,6 +1160,8 @@ export class SlicerApp extends LitElement {
     this.addEventListener('notification-open', this._onNotificationOpen);
     this._onPendingRegistrations = () => { this.currentView = APP_VIEWS.ADMIN_REGISTRATIONS; this.syncViewToUrl(); };
     this.addEventListener('pending-registrations-request', this._onPendingRegistrations);
+    this._onNavigateBack = () => this._handleNavigateBack();
+    this.addEventListener('navigate-back', this._onNavigateBack);
     this._syncAuthThemeWatch();
     if (this.shareToken) {
       this.launchSharedViewer();
@@ -1140,6 +1181,9 @@ export class SlicerApp extends LitElement {
     }
     if (this._onPendingRegistrations) {
       this.removeEventListener('pending-registrations-request', this._onPendingRegistrations);
+    }
+    if (this._onNavigateBack) {
+      this.removeEventListener('navigate-back', this._onNavigateBack);
     }
     if (this._onPopState) {
       window.removeEventListener('popstate', this._onPopState);
@@ -1295,6 +1339,7 @@ export class SlicerApp extends LitElement {
           .username=${userDisplayName(this.user)}
           .avatarUrl=${this.user?.avatarUrl || ''}
           .isOrgAdmin=${this.isOrgAdmin}
+          .isRegistrationReviewer=${this.isRegistrationReviewer}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
@@ -1306,6 +1351,7 @@ export class SlicerApp extends LitElement {
           .username=${userDisplayName(this.user)}
           .avatarUrl=${this.user?.avatarUrl || ''}
           .isOrgAdmin=${this.isOrgAdmin}
+          .isRegistrationReviewer=${this.isRegistrationReviewer}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
@@ -1337,17 +1383,19 @@ export class SlicerApp extends LitElement {
           .avatarUrl=${this.user?.avatarUrl || ''}
           .user=${this.user}
           .isOrgAdmin=${this.isOrgAdmin}
+          .isRegistrationReviewer=${this.isRegistrationReviewer}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
           @profile-updated=${this.handleProfileUpdated}
         ></user-settings-page>
       ` : ''}
-      ${this.currentView === APP_VIEWS.ADMIN_REGISTRATIONS && this.isOrgAdmin ? html`
+      ${this.currentView === APP_VIEWS.ADMIN_REGISTRATIONS && this.isRegistrationReviewer ? html`
         <admin-registrations-page
           .username=${userDisplayName(this.user)}
           .avatarUrl=${this.user?.avatarUrl || ''}
           .isOrgAdmin=${this.isOrgAdmin}
+          .canGoBack=${this._canGoBack}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
@@ -1358,6 +1406,8 @@ export class SlicerApp extends LitElement {
           .username=${userDisplayName(this.user)}
           .avatarUrl=${this.user?.avatarUrl || ''}
           .isOrgAdmin=${this.isOrgAdmin}
+          .isRegistrationReviewer=${this.isRegistrationReviewer}
+          .currentDirectusUserId=${this.directusUserId || ''}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
@@ -1368,6 +1418,7 @@ export class SlicerApp extends LitElement {
           .username=${userDisplayName(this.user)}
           .avatarUrl=${this.user?.avatarUrl || ''}
           .isOrgAdmin=${this.isOrgAdmin}
+          .isRegistrationReviewer=${this.isRegistrationReviewer}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}

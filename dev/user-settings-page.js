@@ -3,7 +3,7 @@ import { API_URL } from './config.js';
 import { t } from './i18n/index.js';
 import './components/page-layout-template.js';
 import './components/theme-toggle.js';
-import './change-password-form.js';
+import './components/change-password-dialog.js';
 import './components/local-slicer-viewer-options.js';
 import './components/home-layout-settings.js';
 import './components/page-content-message.js';
@@ -13,8 +13,6 @@ import {
 } from './utils/userPreferences.js';
 import { isSlicerWebDevModeEnabled } from './services/features.js';
 
-const AUTOSAVE_DEBOUNCE_MS = 250;
-
 export class UserSettingsPage extends LitElement {
     static get styles() {
         return css`
@@ -22,9 +20,52 @@ export class UserSettingsPage extends LitElement {
                 display: flex;
                 flex-direction: column;
                 gap: 20px;
-                margin-top: 16px;
             }
 
+            /* ── Tabs ── */
+            .tabs-bar {
+                display: flex;
+                gap: 4px;
+                padding: 4px;
+                overflow-x: auto;
+                scrollbar-width: none;
+                background: var(--color-surface, var(--color-background));
+                border: 1px solid var(--color-border);
+                border-radius: var(--radius-lg, 12px);
+                margin-bottom: 4px;
+            }
+            .tabs-bar::-webkit-scrollbar { display: none; }
+
+            .tab-btn {
+                flex: 1;
+                padding: 9px 18px;
+                font: inherit;
+                font-size: 0.9rem;
+                background: none;
+                border: none;
+                border-radius: calc(var(--radius-lg, 12px) - 4px);
+                color: var(--color-text-secondary);
+                cursor: pointer;
+                white-space: nowrap;
+                transition: color 0.12s, background 0.12s;
+                text-align: center;
+            }
+            .tab-btn:hover {
+                background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+                color: var(--color-text-primary);
+            }
+            .tab-btn:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: 2px;
+            }
+            .tab-btn[aria-selected='true'] {
+                background: var(--color-primary, #2f6fed);
+                color: #fff;
+                font-weight: 600;
+                box-shadow: 0 1px 4px rgba(0,0,0,0.18);
+            }
+
+            /* ── Sections ── */
             .settings-section {
                 border: 1px solid var(--color-border);
                 border-radius: var(--radius-lg);
@@ -219,46 +260,61 @@ export class UserSettingsPage extends LitElement {
                 opacity: 0.65;
             }
 
-            .autosave-status {
+            .settings-save-bar {
+                display: flex;
+                align-items: center;
+                justify-content: flex-end;
+                gap: 12px;
+                padding: 12px 0 4px;
+                border-top: 1px solid var(--color-border);
+            }
+
+            .save-status {
                 font-size: 0.85rem;
                 color: var(--color-text-secondary);
                 min-height: 1.2em;
             }
 
-            .autosave-status[data-state='saving'] {
-                color: var(--color-text-secondary);
+            .save-status[data-state='saved'] { color: var(--color-secondary); }
+            .save-status[data-state='error'] { color: #b42318; }
+
+            :host-context([data-theme='dark']) .save-status[data-state='error'] {
+                color: #ff8a80;
             }
 
-            .autosave-status[data-state='saved'] {
-                color: var(--color-secondary);
-            }
-
-            .autosave-status[data-state='error'] {
-                color: #b42318;
-            }
-
-            .settings-footer {
-                display: flex;
-                flex-wrap: wrap;
-                align-items: center;
-                gap: 12px;
-                margin-top: 4px;
-                padding-top: 4px;
-            }
-
-            .settings-footer button {
+            .btn-save-profile {
                 font: inherit;
-                padding: 8px 16px;
+                font-size: 0.9rem;
+                padding: 8px 20px;
+                width: fit-content;
                 border-radius: var(--radius-md, 8px);
-                border: 1px solid var(--color-border);
+                border: none;
                 background: var(--color-primary, #2f6fed);
                 color: #fff;
                 cursor: pointer;
+                font-weight: 500;
             }
 
-            .settings-footer button:disabled {
-                opacity: 0.6;
+            .btn-save-profile:disabled {
+                opacity: 0.5;
                 cursor: not-allowed;
+            }
+
+            .checkbox-row {
+                display: flex;
+                align-items: flex-start;
+                gap: 10px;
+                cursor: pointer;
+                font-size: 0.9rem;
+            }
+
+            .checkbox-row input[type='checkbox'] {
+                margin-top: 3px;
+                flex-shrink: 0;
+                width: 16px;
+                height: 16px;
+                cursor: pointer;
+                accent-color: var(--color-primary);
             }
 
             .small-button {
@@ -290,28 +346,6 @@ export class UserSettingsPage extends LitElement {
                 cursor: not-allowed;
             }
 
-            .profile-status {
-                font-size: 0.85rem;
-                color: var(--color-text-secondary);
-                min-height: 1.2em;
-            }
-
-            .profile-status[data-state='saved'] {
-                color: var(--color-secondary);
-            }
-
-            .profile-status[data-state='error'] {
-                color: #b42318;
-            }
-
-            .profile-status[data-state='dirty'] {
-                color: var(--color-text-secondary);
-            }
-
-            :host-context([data-theme='dark']) .autosave-status[data-state='error'],
-            :host-context([data-theme='dark']) .profile-status[data-state='error'] {
-                color: #ff8a80;
-            }
         `;
     }
 
@@ -320,12 +354,14 @@ export class UserSettingsPage extends LitElement {
             username: { type: String },
             avatarUrl: { type: String },
             isOrgAdmin: { type: Boolean },
+            isRegistrationReviewer: { type: Boolean },
             user: { type: Object },
             theme: { type: String },
             useFullSlicer: { type: Boolean },
             homeLayout: { type: Object },
             useSimplifiedViewer: { type: Boolean },
             slicerWebChannel: { type: String },
+            notifyRegistrationApproval: { type: Boolean },
             saveState: { type: String },
             saveStatusMessage: { type: String },
             errorMessage: { type: String },
@@ -334,10 +370,10 @@ export class UserSettingsPage extends LitElement {
             profileLinked: { type: Boolean },
             profileLoading: { type: Boolean },
             profileSaving: { type: Boolean },
-            profileState: { type: String },
-            profileStatusMessage: { type: String },
             avatarUploading: { type: Boolean },
-            avatarError: { type: String }
+            avatarError: { type: String },
+            _activeTab: { type: String },
+            _prefsDirty: { type: Boolean }
         };
     }
 
@@ -348,21 +384,19 @@ export class UserSettingsPage extends LitElement {
         this.user = null;
         this.errorMessage = '';
         this.saveState = 'idle';
-        this.saveStatusMessage = t('settings.autoSavePrefs');
+        this.saveStatusMessage = '';
         this.firstName = '';
         this.lastName = '';
         this.profileLinked = false;
         this.profileLoading = true;
         this.profileSaving = false;
-        this.profileState = 'idle';
-        this.profileStatusMessage = '';
         this.avatarUploading = false;
         this.avatarError = '';
+        this._activeTab = 'account';
         this._savedFirstName = '';
         this._savedLastName = '';
-        this._saveTimer = null;
+        this._prefsDirty = false;
         this._savedClearTimer = null;
-        this._persistGeneration = 0;
         this._onBeforeUnload = (event) => this.handleBeforeUnload(event);
         const prefs = getCachedUserPreferences();
         this.theme = prefs.theme;
@@ -370,6 +404,7 @@ export class UserSettingsPage extends LitElement {
         this.homeLayout = prefs.homeLayout;
         this.useSimplifiedViewer = prefs.useSimplifiedViewer;
         this.slicerWebChannel = prefs.slicerWebChannel ?? 'stable';
+        this.notifyRegistrationApproval = prefs.notifyRegistrationApproval !== false;
     }
 
     connectedCallback() {
@@ -381,10 +416,6 @@ export class UserSettingsPage extends LitElement {
 
     disconnectedCallback() {
         window.removeEventListener('beforeunload', this._onBeforeUnload);
-        if (this._saveTimer) {
-            clearTimeout(this._saveTimer);
-            this._saveTimer = null;
-        }
         if (this._savedClearTimer) {
             clearTimeout(this._savedClearTimer);
             this._savedClearTimer = null;
@@ -424,13 +455,17 @@ export class UserSettingsPage extends LitElement {
      * Used by slicer-app before leaving Settings (menu, back, logout).
      * @returns {boolean} true if navigation may proceed
      */
+    isAnythingDirty() {
+        return this.isProfileDirty() || this._prefsDirty;
+    }
+
     confirmLeave() {
-        if (!this.isProfileDirty()) return true;
+        if (!this.isAnythingDirty()) return true;
         return window.confirm(t('settings.unsavedWarning'));
     }
 
     handleBeforeUnload(event) {
-        if (!this.isProfileDirty()) return;
+        if (!this.isAnythingDirty()) return;
         event.preventDefault();
         event.returnValue = '';
     }
@@ -473,97 +508,80 @@ export class UserSettingsPage extends LitElement {
 
     onProfileFieldInput(field, value) {
         this[field] = value;
-        if (this.isProfileDirty()) {
-            this.profileState = 'dirty';
-            this.profileStatusMessage = t('settings.unsavedHint');
-        } else {
-            this.profileState = 'idle';
-            this.profileStatusMessage = '';
-        }
-    }
-
-    queuePersist(patch) {
-        if (this._saveTimer) {
-            clearTimeout(this._saveTimer);
-        }
-        this.saveState = 'saving';
-        this.saveStatusMessage = t('common.saving');
-        this.errorMessage = '';
-        this._saveTimer = setTimeout(() => {
-            this._saveTimer = null;
-            this.persist(patch);
-        }, AUTOSAVE_DEBOUNCE_MS);
     }
 
     async persist(patch) {
-        const generation = ++this._persistGeneration;
-        this.saveState = 'saving';
-        this.saveStatusMessage = t('common.saving');
-        this.errorMessage = '';
         try {
             const next = await saveUserPreferences(patch);
-            if (generation !== this._persistGeneration) {
-                return;
-            }
             this.theme = next.theme;
             this.useFullSlicer = next.useFullSlicer;
             this.homeLayout = next.homeLayout;
             this.useSimplifiedViewer = next.useSimplifiedViewer;
             this.slicerWebChannel = next.slicerWebChannel ?? 'stable';
-            this.saveState = 'saved';
-            this.saveStatusMessage = t('settings.saved');
-            if (this._savedClearTimer) clearTimeout(this._savedClearTimer);
-            this._savedClearTimer = setTimeout(() => {
-                if (this.saveState === 'saved') {
-                    this.saveState = 'idle';
-                    this.saveStatusMessage = t('settings.autoSavePrefs');
-                }
-                this._savedClearTimer = null;
-            }, 2000);
+            this.notifyRegistrationApproval = next.notifyRegistrationApproval !== false;
+            this._prefsDirty = false;
         } catch (error) {
-            if (generation !== this._persistGeneration) {
-                return;
-            }
             this.saveState = 'error';
             this.saveStatusMessage = t('settings.saveFailed');
             this.errorMessage = error.message || t('settings.unableToSave');
+            throw error;
+        }
+    }
+
+    async handleSaveAll() {
+        if (this.profileSaving) return;
+        this.saveState = 'saving';
+        this.saveStatusMessage = t('common.saving');
+        this.errorMessage = '';
+        try {
+            const saves = [];
+            if (this.isProfileDirty()) saves.push(this.handleProfileSave());
+            if (this._prefsDirty) saves.push(this.persist({
+                theme: this.theme,
+                useFullSlicer: this.useFullSlicer,
+                useSimplifiedViewer: this.useSimplifiedViewer,
+                homeLayout: this.homeLayout,
+                slicerWebChannel: this.slicerWebChannel,
+                notifyRegistrationApproval: this.notifyRegistrationApproval
+            }));
+            await Promise.all(saves);
+            if (this.saveState !== 'error') {
+                this.saveState = 'saved';
+                this.saveStatusMessage = t('settings.saved');
+                if (this._savedClearTimer) clearTimeout(this._savedClearTimer);
+                this._savedClearTimer = setTimeout(() => {
+                    if (this.saveState === 'saved') {
+                        this.saveState = 'idle';
+                        this.saveStatusMessage = '';
+                    }
+                    this._savedClearTimer = null;
+                }, 2000);
+            }
+        } catch {
+            // errors already set on saveState by persist/handleProfileSave
         }
     }
 
     handleThemeChange(event) {
-        const theme = event?.detail?.theme === 'dark' ? 'dark' : 'light';
-        this.theme = theme;
-        this.queuePersist({
-            theme,
-            useFullSlicer: this.useFullSlicer,
-            useSimplifiedViewer: this.useSimplifiedViewer
-        });
+        this.theme = event?.detail?.theme === 'dark' ? 'dark' : 'light';
+        this._prefsDirty = true;
     }
 
     handleHomeLayoutChange(event) {
         this.homeLayout = event?.detail?.layout;
-        this.queuePersist({
-            theme: this.theme,
-            useFullSlicer: this.useFullSlicer,
-            useSimplifiedViewer: this.useSimplifiedViewer,
-            homeLayout: this.homeLayout
-        });
+        this._prefsDirty = true;
     }
 
     handleViewerOptionsChange(event) {
         const next = event?.detail || {};
         this.useFullSlicer = next.useFullSlicer === true;
         this.useSimplifiedViewer = next.useSimplifiedViewer === true;
-        this.queuePersist({
-            theme: this.theme,
-            useFullSlicer: this.useFullSlicer,
-            useSimplifiedViewer: this.useSimplifiedViewer
-        });
+        this._prefsDirty = true;
     }
 
     handleSlicerWebChannelChange(wantsLatest) {
         this.slicerWebChannel = wantsLatest ? 'latest' : 'stable';
-        this.queuePersist({ slicerWebChannel: this.slicerWebChannel });
+        this._prefsDirty = true;
     }
 
     async handleProfileSave(e) {
@@ -573,14 +591,12 @@ export class UserSettingsPage extends LitElement {
         const firstName = String(this.firstName || '').trim();
         const lastName = String(this.lastName || '').trim();
         if (!firstName || !lastName) {
-            this.profileState = 'error';
-            this.profileStatusMessage = t('auth.changePassword.nameRequired');
+            this.saveState = 'error';
+            this.saveStatusMessage = t('auth.changePassword.nameRequired');
             return;
         }
 
         this.profileSaving = true;
-        this.profileState = 'saving';
-        this.profileStatusMessage = t('settings.savingProfile');
         try {
             const res = await fetch(`${API_URL}/api/auth/profile`, {
                 method: 'PUT',
@@ -597,16 +613,15 @@ export class UserSettingsPage extends LitElement {
                 data.user?.firstName || firstName,
                 data.user?.lastName || lastName
             );
-            this.profileState = 'saved';
-            this.profileStatusMessage = t('settings.profileSaved');
             this.dispatchEvent(new CustomEvent('profile-updated', {
                 detail: { user: data.user },
                 bubbles: true,
                 composed: true
             }));
         } catch (err) {
-            this.profileState = 'error';
-            this.profileStatusMessage = err.message || t('settings.profileFailed');
+            this.saveState = 'error';
+            this.saveStatusMessage = err.message || t('settings.profileFailed');
+            throw err;
         } finally {
             this.profileSaving = false;
         }
@@ -671,18 +686,18 @@ export class UserSettingsPage extends LitElement {
 
     render() {
         const showProfile = !this.profileLoading && this.profileLinked;
-        const dirty = this.isProfileDirty();
+        const tab = this._activeTab;
 
         return html`
             <page-layout-template
                 .username=${this.username}
                 .avatarUrl=${this.avatarUrl}
                 .isOrgAdmin=${this.isOrgAdmin || false}
+                .isRegistrationReviewer=${this.isRegistrationReviewer || false}
                 selectedMenuKey=""
                 homeHref="/file-manager"
                 homeLabel=${t('common.home')}
                 pageTitle=${t('settings.title')}
-                pageDescription=${t('settings.description')}
                 @menu-selection-change=${this.handleMenuSelectionChange}
             >
                 ${this.errorMessage ? html`
@@ -694,162 +709,184 @@ export class UserSettingsPage extends LitElement {
                 ` : ''}
 
                 <div slot="content" class="settings-stack">
-                    ${showProfile ? html`
-                    <section class="settings-section">
-                        <div class="section-title-row">
-                            <h2 class="section-title">${t('settings.profile')}</h2>
-                            <button
-                                type="button"
-                                class="section-hint"
-                                aria-label=${t('settings.profileHint')}
-                            >
-                                ?
-                                <span class="hint-bubble" role="tooltip">${t('settings.profileHint')}</span>
-                            </button>
-                        </div>
-                        <div class="profile-form">
-                            <div class="avatar-row">
-                                <div class="avatar-preview">
-                                    ${this.avatarUrl
-                                        ? html`<img src=${this.avatarUrl} alt="" aria-hidden="true">`
-                                        : (this.firstName || this.username || '?').charAt(0).toUpperCase()}
-                                </div>
-                                <div>
-                                    <div class="avatar-actions">
-                                        <label class="small-button" style=${this.avatarUploading ? 'opacity:0.6;cursor:not-allowed;' : 'cursor:pointer;'}>
-                                            <input
-                                                type="file"
-                                                accept="image/*"
-                                                style="display:none"
-                                                ?disabled=${this.avatarUploading}
-                                                @change=${(e) => this.handleAvatarFileChange(e)}
-                                            >
-                                            ${this.avatarUploading ? t('settings.avatarUploading') : t('settings.avatarUpload')}
-                                        </label>
-                                        ${this.avatarUrl ? html`
-                                            <button
-                                                type="button"
-                                                class="small-button"
-                                                ?disabled=${this.avatarUploading}
-                                                @click=${() => this.handleAvatarRemove()}
-                                            >${t('settings.avatarRemove')}</button>
-                                        ` : ''}
-                                    </div>
-                                    ${this.avatarError ? html`<p class="avatar-error">${this.avatarError}</p>` : ''}
-                                </div>
-                            </div>
-                            <div class="name-row">
-                                <div class="form-group">
-                                    <label for="settings-firstName">${t('settings.firstName')}</label>
-                                    <input
-                                        id="settings-firstName"
-                                        type="text"
-                                        autocomplete="given-name"
-                                        .value=${this.firstName}
-                                        ?disabled=${this.profileSaving}
-                                        @input=${(e) => this.onProfileFieldInput('firstName', e.target.value)}
-                                    />
-                                </div>
-                                <div class="form-group">
-                                    <label for="settings-lastName">${t('settings.lastName')}</label>
-                                    <input
-                                        id="settings-lastName"
-                                        type="text"
-                                        autocomplete="family-name"
-                                        .value=${this.lastName}
-                                        ?disabled=${this.profileSaving}
-                                        @input=${(e) => this.onProfileFieldInput('lastName', e.target.value)}
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    </section>
-                    <section class="settings-section">
-                        <h2 class="section-title">${t('auth.changePassword.settingsTitle')}</h2>
-                        <change-password-form
-                            .firstName=${this.firstName}
-                            .lastName=${this.lastName}
-                        ></change-password-form>
-                    </section>
-                    ` : ''}
 
-                    <section class="settings-section">
-                        <h2 class="section-title">${t('settings.appearance')}</h2>
-                        <p class="section-description">
-                            ${t('settings.appearanceHint')}
-                        </p>
-                        <theme-toggle
-                            .theme=${this.theme}
-                            @theme-change=${(e) => this.handleThemeChange(e)}
-                        ></theme-toggle>
-                        <div class="autosave-status" data-state=${this.saveState} aria-live="polite">
-                            ${this.saveStatusMessage}
-                        </div>
-                    </section>
-
-                    <section class="settings-section">
-                        <h2 class="section-title">${t('homeLayout.title')}</h2>
-                        <p class="section-description">${t('homeLayout.description')}</p>
-                        <home-layout-settings
-                            .layout=${this.homeLayout}
-                            @layout-change=${(e) => this.handleHomeLayoutChange(e)}
-                        ></home-layout-settings>
-                    </section>
-
-                    <section class="settings-section">
-                        <h2 class="section-title">${t('settings.localViewer')}</h2>
-                        <p class="section-description">
-                            ${t('settings.localViewerHintFull')}
-                        </p>
-                        <local-slicer-viewer-options
-                            .useFullSlicer=${this.useFullSlicer}
-                            .useSimplifiedViewer=${this.useSimplifiedViewer}
-                            .canEdit=${true}
-                            .showComposeHint=${true}
-                            @options-change=${(e) => this.handleViewerOptionsChange(e)}
-                        ></local-slicer-viewer-options>
-                    </section>
-
-                    ${isSlicerWebDevModeEnabled() ? html`
-                    <section class="settings-section">
-                        <h2 class="section-title">${t('settings.slicerWebChannel')}</h2>
-                        <p class="section-description">
-                            ${t('settings.slicerWebChannelHint')}
-                        </p>
-                        <label class="checkbox-row">
-                            <input
-                                type="checkbox"
-                                .checked=${this.slicerWebChannel === 'latest'}
-                                @change=${(e) => this.handleSlicerWebChannelChange(e.target.checked)}
-                            />
-                            ${t('settings.slicerWebLatestLabel')}
-                        </label>
-                        ${this.slicerWebChannel === 'latest' ? html`
-                            <p class="section-description" style="color:var(--color-warning,#b45309)">
-                                ${t('settings.slicerWebLatestWarning')}
-                            </p>
-                        ` : ''}
-                    </section>
-                    ` : ''}
-
-                    ${showProfile ? html`
-                    <div class="settings-footer">
-                        <button
-                            type="button"
-                            ?disabled=${this.profileSaving || !dirty}
-                            @click=${(e) => this.handleProfileSave(e)}
-                        >
-                            ${this.profileSaving
-                                ? t('settings.savingProfile')
-                                : t('settings.saveProfile')}
+                    <!-- Tab bar -->
+                    <div class="tabs-bar" role="tablist" aria-label=${t('settings.title')}>
+                        <button role="tab" class="tab-btn"
+                            aria-selected=${tab === 'account' ? 'true' : 'false'}
+                            @click=${() => { this._activeTab = 'account'; }}>
+                            ${t('settings.tabAccount')}
                         </button>
-                        <span
-                            class="profile-status"
-                            data-state=${this.profileState}
-                            aria-live="polite"
-                        >${this.profileStatusMessage}</span>
+                        <button role="tab" class="tab-btn"
+                            aria-selected=${tab === 'appearance' ? 'true' : 'false'}
+                            @click=${() => { this._activeTab = 'appearance'; }}>
+                            ${t('settings.tabAppearance')}
+                        </button>
+                        <button role="tab" class="tab-btn"
+                            aria-selected=${tab === 'viewer' ? 'true' : 'false'}
+                            @click=${() => { this._activeTab = 'viewer'; }}>
+                            ${t('settings.tabViewer')}
+                        </button>
                     </div>
+
+                    <!-- Account tab -->
+                    ${tab === 'account' ? html`
+                        ${this.profileLoading ? html`
+                            <p class="section-description" style="padding:8px 0">${t('common.loading')}</p>
+                        ` : showProfile ? html`
+                            <section class="settings-section">
+                                <div class="section-title-row">
+                                    <h2 class="section-title">${t('settings.profile')}</h2>
+                                    <button type="button" class="section-hint" aria-label=${t('settings.profileHint')}>
+                                        ?
+                                        <span class="hint-bubble" role="tooltip">${t('settings.profileHint')}</span>
+                                    </button>
+                                </div>
+                                <div class="profile-form">
+                                    <div class="avatar-row">
+                                        <div class="avatar-preview">
+                                            ${this.avatarUrl
+                                                ? html`<img src=${this.avatarUrl} alt="" aria-hidden="true">`
+                                                : (this.firstName || this.username || '?').charAt(0).toUpperCase()}
+                                        </div>
+                                        <div>
+                                            <div class="avatar-actions">
+                                                <label class="small-button" style=${this.avatarUploading ? 'opacity:0.6;cursor:not-allowed;' : 'cursor:pointer;'}>
+                                                    <input
+                                                        type="file"
+                                                        accept="image/*"
+                                                        style="display:none"
+                                                        ?disabled=${this.avatarUploading}
+                                                        @change=${(e) => this.handleAvatarFileChange(e)}
+                                                    >
+                                                    ${this.avatarUploading ? t('settings.avatarUploading') : t('settings.avatarUpload')}
+                                                </label>
+                                                ${this.avatarUrl ? html`
+                                                    <button type="button" class="small-button"
+                                                        ?disabled=${this.avatarUploading}
+                                                        @click=${() => this.handleAvatarRemove()}
+                                                    >${t('settings.avatarRemove')}</button>
+                                                ` : ''}
+                                            </div>
+                                            ${this.avatarError ? html`<p class="avatar-error">${this.avatarError}</p>` : ''}
+                                        </div>
+                                    </div>
+                                    <div class="name-row">
+                                        <div class="form-group">
+                                            <label for="settings-firstName">${t('settings.firstName')}</label>
+                                            <input id="settings-firstName" type="text" autocomplete="given-name"
+                                                .value=${this.firstName}
+                                                ?disabled=${this.profileSaving}
+                                                @input=${(e) => this.onProfileFieldInput('firstName', e.target.value)} />
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="settings-lastName">${t('settings.lastName')}</label>
+                                            <input id="settings-lastName" type="text" autocomplete="family-name"
+                                                .value=${this.lastName}
+                                                ?disabled=${this.profileSaving}
+                                                @input=${(e) => this.onProfileFieldInput('lastName', e.target.value)} />
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section class="settings-section">
+                                <h2 class="section-title">${t('settings.security')}</h2>
+                                <p class="section-description">${t('settings.securityHint')}</p>
+                                <button type="button" class="btn-save-profile"
+                                    @click=${() => this.renderRoot?.querySelector('change-password-dialog')?.open()}>
+                                    ${t('auth.changePassword.settingsTitle')}
+                                </button>
+                                <change-password-dialog
+                                    .firstName=${this.firstName}
+                                    .lastName=${this.lastName}
+                                ></change-password-dialog>
+                            </section>
+
+                            <section class="settings-section">
+                                <h2 class="section-title">${t('settings.notifications')}</h2>
+                                <p class="section-description">${t('settings.notificationsHint')}</p>
+                                <label class="checkbox-row">
+                                    <input type="checkbox"
+                                        .checked=${this.notifyRegistrationApproval}
+                                        @change=${(e) => { this.notifyRegistrationApproval = e.target.checked; this._prefsDirty = true; }} />
+                                    <span>
+                                        ${t('settings.notifyRegistrationApproval')}
+                                        <span class="section-description" style="display:block;margin-top:2px">
+                                            ${t('settings.notifyRegistrationApprovalHint')}
+                                        </span>
+                                    </span>
+                                </label>
+                            </section>
+                        ` : ''}
                     ` : ''}
+
+                    <!-- Appearance tab -->
+                    ${tab === 'appearance' ? html`
+                        <section class="settings-section">
+                            <h2 class="section-title">${t('settings.appearance')}</h2>
+                            <p class="section-description">${t('settings.appearanceHint')}</p>
+                            <theme-toggle
+                                .theme=${this.theme}
+                                @theme-change=${(e) => this.handleThemeChange(e)}
+                            ></theme-toggle>
+                        </section>
+
+                        <section class="settings-section">
+                            <h2 class="section-title">${t('homeLayout.title')}</h2>
+                            <p class="section-description">${t('homeLayout.description')}</p>
+                            <home-layout-settings
+                                .layout=${this.homeLayout}
+                                @layout-change=${(e) => this.handleHomeLayoutChange(e)}
+                            ></home-layout-settings>
+                        </section>
+                    ` : ''}
+
+                    <!-- Viewer tab -->
+                    ${tab === 'viewer' ? html`
+                        <section class="settings-section">
+                            <h2 class="section-title">${t('settings.localViewer')}</h2>
+                            <p class="section-description">${t('settings.localViewerHintFull')}</p>
+                            <local-slicer-viewer-options
+                                .useFullSlicer=${this.useFullSlicer}
+                                .useSimplifiedViewer=${this.useSimplifiedViewer}
+                                .canEdit=${true}
+                                .showComposeHint=${true}
+                                @options-change=${(e) => this.handleViewerOptionsChange(e)}
+                            ></local-slicer-viewer-options>
+                        </section>
+
+                        ${isSlicerWebDevModeEnabled() ? html`
+                            <section class="settings-section">
+                                <h2 class="section-title">${t('settings.slicerWebChannel')}</h2>
+                                <p class="section-description">${t('settings.slicerWebChannelHint')}</p>
+                                <label class="checkbox-row">
+                                    <input type="checkbox"
+                                        .checked=${this.slicerWebChannel === 'latest'}
+                                        @change=${(e) => this.handleSlicerWebChannelChange(e.target.checked)} />
+                                    ${t('settings.slicerWebLatestLabel')}
+                                </label>
+                                ${this.slicerWebChannel === 'latest' ? html`
+                                    <p class="section-description" style="color:var(--color-warning,#b45309)">
+                                        ${t('settings.slicerWebLatestWarning')}
+                                    </p>
+                                ` : ''}
+                            </section>
+                        ` : ''}
+                    ` : ''}
+
+                    <!-- Unified save bar -->
+                    <div class="settings-save-bar">
+                        <span class="save-status" data-state=${this.saveState} aria-live="polite">
+                            ${this.saveStatusMessage}
+                        </span>
+                        <button type="button" class="btn-save-profile"
+                            ?disabled=${!this.isAnythingDirty() || this.profileSaving}
+                            @click=${() => this.handleSaveAll()}>
+                            ${this.profileSaving ? t('settings.savingProfile') : t('settings.saveChanges')}
+                        </button>
+                    </div>
+
                 </div>
             </page-layout-template>
         `;

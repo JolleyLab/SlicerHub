@@ -253,8 +253,17 @@ const config = {
             if (process.env.SMTP_ENABLED === 'true') return true;
             return Boolean((process.env.SMTP_HOST || '').trim());
         })(),
-        host: (process.env.SMTP_HOST || '').trim(),
-        port: Math.max(1, Number(process.env.SMTP_PORT || 587) || 587),
+        host: (() => {
+            const h = (process.env.SMTP_HOST || '').trim();
+            if (!h && process.env.SMTP_ENABLED === 'true') return 'localhost';
+            return h;
+        })(),
+        port: (() => {
+            if (process.env.SMTP_PORT) return Math.max(1, Number(process.env.SMTP_PORT) || 587);
+            // Default to mailpit port when no host is set (local dev)
+            const h = (process.env.SMTP_HOST || '').trim();
+            return (!h && process.env.SMTP_ENABLED === 'true') ? 1025 : 587;
+        })(),
         secure: process.env.SMTP_SECURE === 'true',
         user: (process.env.SMTP_USER || '').trim(),
         pass: (process.env.SMTP_PASS || '').trim(),

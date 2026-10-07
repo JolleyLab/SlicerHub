@@ -558,6 +558,16 @@ export async function getMyGroups() {
     return data.data || [];
 }
 
+export async function getMyGroupMembers(groupId) {
+    const response = await fetch(
+        `${API_URL}/api/my-groups/${encodeURIComponent(groupId)}/members`,
+        { credentials: 'include' }
+    );
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to load group members');
+    return data.data || [];
+}
+
 export async function createMyGroup({ name, description } = {}) {
     const response = await fetch(`${API_URL}/api/my-groups`, {
         method: 'POST',
@@ -568,6 +578,61 @@ export async function createMyGroup({ name, description } = {}) {
     const data = await parseJson(response);
     if (!response.ok) throwApiError(response, data, 'Failed to create group');
     return data.data || null;
+}
+
+export async function getMyGroup(groupId) {
+    const response = await fetch(`${API_URL}/api/my-groups/${encodeURIComponent(groupId)}`, { credentials: 'include' });
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to load group');
+    return data.data || null;
+}
+
+export async function updateMyGroup(groupId, updates) {
+    const response = await fetch(`${API_URL}/api/my-groups/${encodeURIComponent(groupId)}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+    });
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to update group');
+    return data.data;
+}
+
+export async function addMyGroupMember(groupId, { email } = {}) {
+    const response = await fetch(`${API_URL}/api/my-groups/${encodeURIComponent(groupId)}/members`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+    });
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to add member');
+    return data.data;
+}
+
+export async function updateMyGroupMember(groupId, memberId, updates) {
+    const response = await fetch(
+        `${API_URL}/api/my-groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(memberId)}`,
+        {
+            method: 'PATCH',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates)
+        }
+    );
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to update member');
+    return data.data;
+}
+
+export async function removeMyGroupMember(groupId, memberId) {
+    const response = await fetch(
+        `${API_URL}/api/my-groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(memberId)}`,
+        { method: 'DELETE', credentials: 'include' }
+    );
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to remove member');
 }
 
 export async function listTaskGroups() {

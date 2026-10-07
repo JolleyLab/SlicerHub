@@ -11,7 +11,8 @@ export const DEFAULT_USER_PREFERENCES = Object.freeze({
     theme: 'light',
     ...DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS,
     homeLayout: DEFAULT_HOME_LAYOUT,
-    slicerWebChannel: 'stable'
+    slicerWebChannel: 'stable',
+    notifyRegistrationApproval: true
 });
 
 const THEME_CACHE_KEY = 'ui-theme';
@@ -30,7 +31,8 @@ export function normalizeUserPreferences(input = {}) {
         useFullSlicer: viewer.useFullSlicer,
         useSimplifiedViewer: viewer.useSimplifiedViewer,
         homeLayout: normalizeHomeLayout(input?.homeLayout),
-        slicerWebChannel
+        slicerWebChannel,
+        notifyRegistrationApproval: input?.notifyRegistrationApproval !== false
     };
 }
 

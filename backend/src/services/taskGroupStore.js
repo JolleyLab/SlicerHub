@@ -1,4 +1,4 @@
-import { directusFetch } from './directus.js';
+import { directusFetch, mapDirectusPerson } from './directus.js';
 
 const GROUPS = 'task_groups';
 const MEMBERS = 'task_group_members';
@@ -21,22 +21,23 @@ function mapGroup(row) {
         id: row.id,
         name: row.name || '',
         description: row.description || '',
-        canApproveRegistrations: row.can_approve_registrations === true,
+        canApproveRegistrations: Boolean(row.can_approve_registrations),
         createdAt: row.date_created || null
     };
 }
 
 function mapMember(row) {
     if (!row) return null;
-    const user = row.directus_user && typeof row.directus_user === 'object' ? row.directus_user : null;
+    const raw = row.directus_user && typeof row.directus_user === 'object' ? row.directus_user : null;
+    const person = mapDirectusPerson(raw);
     return {
         id: row.id,
-        directusUserId: user?.id || '',
-        email: user?.email || '',
-        firstName: user?.first_name || '',
-        lastName: user?.last_name || '',
-        avatarUrl: user?.id && user?.avatar ? `/api/directus/users/${user.id}/avatar` : null,
-        canManageGroup: row.can_manage_group === true,
+        directusUserId: person?.id || '',
+        email: person?.email || '',
+        firstName: person?.firstName || '',
+        lastName: person?.lastName || '',
+        avatarUrl: person?.avatarUrl || null,
+        canManageGroup: Boolean(row.can_manage_group),
         createdAt: row.date_created || null
     };
 }
@@ -122,6 +123,19 @@ export async function removeGroupMember(memberId) {
     await directusFetch(`/items/${MEMBERS}/${encodeURIComponent(memberId)}`, { method: 'DELETE' });
 }
 
+export async function getGroupMemberById(memberId) {
+    const payload = await directusFetch(`/items/${MEMBERS}/${encodeURIComponent(memberId)}`, {
+        query: { fields: 'id,can_manage_group,directus_user' }
+    });
+    const row = payload?.data;
+    if (!row) return null;
+    return {
+        id: row.id,
+        directusUserId: typeof row.directus_user === 'object' ? row.directus_user?.id : row.directus_user,
+        canManageGroup: Boolean(row.can_manage_group)
+    };
+}
+
 export async function updateGroupMember(memberId, { canManageGroup }) {
     const body = {};
     if (canManageGroup !== undefined) body.can_manage_group = Boolean(canManageGroup);
@@ -158,34 +172,13 @@ export async function getGroupsForUser(directusUserId) {
         .filter(row => row.task_group && typeof row.task_group === 'object')
         .map(row => ({
             membershipId: row.id,
-            canManageGroup: row.can_manage_group === true,
+            canManageGroup: Boolean(row.can_manage_group),
             group: {
                 id: row.task_group.id,
                 name: row.task_group.name || '',
                 description: row.task_group.description || '',
-                canApproveRegistrations: row.task_group.can_approve_registrations === true
+                canApproveRegistrations: Boolean(row.task_group.can_approve_registrations)
             }
         }));
 }
 
-/**
- * Returns all unique member emails across all groups that have the given capability flag set.
- * Useful for sending notification emails to the right people.
- * @param {'can_approve_registrations'} capability
- */
-export async function getMemberEmailsForCapability(capability) {
-    const payload = await directusFetch(`/items/${MEMBERS}`, {
-        query: {
-            [`filter[task_group][${capability}][_eq]`]: 'true',
-            fields: 'directus_user.email',
-            limit: '-1'
-        }
-    });
-    const rows = Array.isArray(payload?.data) ? payload.data : [];
-    const emails = new Set();
-    for (const row of rows) {
-        const email = row.directus_user?.email;
-        if (email) emails.add(String(email).toLowerCase());
-    }
-    return [...emails];
-}

@@ -603,6 +603,7 @@ export class HomePage extends LitElement {
             username:   { type: String },
             avatarUrl:  { type: String },
             isOrgAdmin: { type: Boolean },
+            isRegistrationReviewer: { type: Boolean },
             /** @type {{ id: string, kind: 'invite'|'task', title: string, detail?: string }[]} */
             todo: { type: Array },
             /** @type {{ id: string, kind: 'mention'|'approval', title: string, detail?: string }[]} */
@@ -697,7 +698,7 @@ export class HomePage extends LitElement {
     }
 
     async loadPendingRegistrationRequests() {
-        if (!this.isOrgAdmin) {
+        if (!this.isRegistrationReviewer) {
             this.todo = this.todo.filter((item) => item.kind !== 'registration');
             return;
         }
@@ -724,7 +725,7 @@ export class HomePage extends LitElement {
     }
 
     updated(changedProps) {
-        if (changedProps.has('isOrgAdmin')) {
+        if (changedProps.has('isOrgAdmin') || changedProps.has('isRegistrationReviewer')) {
             this.loadPendingRegistrationRequests();
         }
     }
@@ -1085,6 +1086,7 @@ export class HomePage extends LitElement {
                 .username=${this.username}
                 .avatarUrl=${this.avatarUrl}
                 .isOrgAdmin=${this.isOrgAdmin || false}
+                .isRegistrationReviewer=${this.isRegistrationReviewer || false}
                 selectedMenuKey=""
                 homeHref="/"
                 homeLabel=${t('common.home')}

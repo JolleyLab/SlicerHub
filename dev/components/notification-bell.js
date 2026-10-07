@@ -367,7 +367,7 @@ export class NotificationBell extends LitElement {
             notifications: { type: Array },
             unreadCount: { type: Number },
             error: { type: String },
-            isOrgAdmin: { type: Boolean },
+            isRegistrationReviewer: { type: Boolean },
             _pendingRegCount: { type: Number }
         };
     }
@@ -380,7 +380,7 @@ export class NotificationBell extends LitElement {
         this.notifications = [];
         this.unreadCount = 0;
         this.error = '';
-        this.isOrgAdmin = false;
+        this.isRegistrationReviewer = false;
         this._pendingRegCount = 0;
         this._pollTimer = null;
         this._onDocPointer = (e) => this.handleDocPointer(e);
@@ -396,7 +396,7 @@ export class NotificationBell extends LitElement {
     }
 
     updated(changedProps) {
-        if (changedProps.has('isOrgAdmin') && this.isOrgAdmin) {
+        if (changedProps.has('isRegistrationReviewer') && this.isRegistrationReviewer) {
             this.refresh({ quiet: true });
         }
     }
@@ -419,7 +419,7 @@ export class NotificationBell extends LitElement {
         try {
             const [data, pendingCount] = await Promise.all([
                 listNotifications(),
-                this.isOrgAdmin ? getPendingRegistrationsCount() : Promise.resolve(0)
+                this.isRegistrationReviewer ? getPendingRegistrationsCount() : Promise.resolve(0)
             ]);
             this.notifications = Array.isArray(data.notifications) ? data.notifications : [];
             this.unreadCount = Number(data.unreadCount) || 0;

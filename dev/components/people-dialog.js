@@ -1,9 +1,13 @@
 import { LitElement, html, css } from 'lit-element';
+import { avatarCircleStyles } from '../styles/avatar.js';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
 import { isInviteEmailEnabled } from '../services/features.js';
 import { normalizeMember } from '../utils/memberNormalize.js';
 import './app-dialog.js';
+import './app-button.js';
+import './badge-pill.js';
+import './icon-button.js';
 import './dropdown-select.js';
 
 const DEFAULT_ROLE_OPTIONS = Object.freeze([
@@ -115,7 +119,7 @@ function memberSecondaryLine(person, ctx = {}) {
  */
 export class PeopleDialog extends LitElement {
     static get styles() {
-        return css`
+        return [avatarCircleStyles, css`
             :host {
                 display: contents;
             }
@@ -180,25 +184,12 @@ export class PeopleDialog extends LitElement {
             .avatar {
                 width: 36px;
                 height: 36px;
-                border-radius: 50%;
                 border: 1px solid var(--color-border);
                 background: var(--color-primary);
                 color: var(--color-on-primary);
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
                 font-size: 0.85rem;
                 font-weight: 650;
                 flex: 0 0 36px;
-                overflow: hidden;
-            }
-
-            .avatar img {
-                width: 100%;
-                height: 100%;
-                object-fit: cover;
-                display: block;
-                border-radius: 50%;
             }
 
             :host-context([data-theme='dark']) .avatar {
@@ -237,49 +228,8 @@ export class PeopleDialog extends LitElement {
                 flex-shrink: 0;
             }
 
-            .badge {
-                font-size: 0.75rem;
-                font-weight: 550;
-                color: var(--color-text-secondary);
-                white-space: nowrap;
-                padding: 4px 8px;
-                border-radius: 999px;
-                border: 1px solid var(--color-border);
-                background: color-mix(in srgb, var(--color-border) 22%, transparent);
-            }
-
             .meta dropdown-select {
                 min-width: 140px;
-            }
-
-            .icon-button {
-                border: none;
-                border-radius: 6px;
-                background: transparent;
-                color: var(--color-text-secondary);
-                width: 32px;
-                height: 32px;
-                padding: 0;
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                cursor: pointer;
-            }
-
-            .icon-button:hover:not(:disabled),
-            .icon-button:focus-visible {
-                color: var(--color-text-primary);
-                background: color-mix(in srgb, var(--color-border) 40%, transparent);
-            }
-
-            .icon-button:focus-visible {
-                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
-                outline-offset: var(--focus-ring-offset, 2px);
-            }
-
-            .icon-button:disabled {
-                opacity: 0.4;
-                cursor: not-allowed;
             }
 
             .empty {
@@ -343,48 +293,6 @@ export class PeopleDialog extends LitElement {
                 color: #c62828;
             }
 
-            .primary-button,
-            .secondary-button {
-                border-radius: 6px;
-                padding: 8px 16px;
-                font: inherit;
-                font-size: 0.875rem;
-                font-weight: 600;
-                cursor: pointer;
-            }
-
-            .primary-button {
-                border: 1px solid transparent;
-                background: var(--color-primary);
-                color: var(--color-on-primary);
-            }
-
-            .primary-button:hover:not(:disabled) {
-                background: color-mix(in srgb, var(--color-primary) 78%, #5b7cff);
-            }
-
-            .secondary-button {
-                border: 1px solid var(--color-border);
-                background: transparent;
-                color: var(--color-text-primary);
-            }
-
-            .secondary-button:hover:not(:disabled) {
-                background: color-mix(in srgb, var(--color-border) 35%, transparent);
-            }
-
-            .primary-button:disabled,
-            .secondary-button:disabled {
-                opacity: 0.55;
-                cursor: not-allowed;
-            }
-
-            .primary-button:focus-visible,
-            .secondary-button:focus-visible {
-                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
-                outline-offset: var(--focus-ring-offset, 2px);
-            }
-
             .pending-block {
                 margin-top: 4px;
                 border: 1px dashed var(--color-border);
@@ -412,7 +320,7 @@ export class PeopleDialog extends LitElement {
                 font-size: 0.85rem;
                 color: var(--color-text-secondary);
             }
-        `;
+        `];
     }
 
     static get properties() {
@@ -439,7 +347,7 @@ export class PeopleDialog extends LitElement {
             inviteRole: { type: String },
             /** Last minted signup invite URL (copy-link) */
             lastInviteUrl: { type: String },
-            /** Directus user id of the signed-in viewer (for “Me” label) */
+            /** Directus user id of the signed-in viewer (for "Me" label) */
             currentUserId: { type: String }
         };
     }
@@ -710,20 +618,18 @@ export class PeopleDialog extends LitElement {
                             aria-label=${t('people.roleForPerson', { name })}
                             @change=${(e) => this.handleRoleChange(member.id, e)}
                         ></dropdown-select>
-                        <button
-                            class="icon-button"
-                            type="button"
+                        <icon-button
+                            label=${t('people.removePerson', { name })}
                             title=${t('common.remove')}
-                            aria-label=${t('people.removePerson', { name })}
                             ?disabled=${this.saving}
                             @click=${() => this.handleRemove(member.id)}
                         >
                             <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
                                 <path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
                             </svg>
-                        </button>
+                        </icon-button>
                     ` : html`
-                        <span class="badge">${roleLabel(member.role)}</span>
+                        <badge-pill>${roleLabel(member.role)}</badge-pill>
                     `}
                 </div>
             </div>
@@ -747,13 +653,13 @@ export class PeopleDialog extends LitElement {
                         ?disabled=${this.lookingUp || this.saving || this.inviting}
                         @input=${(e) => { this.emailQuery = e.target.value; }}
                     />
-                    <button
-                        class="secondary-button"
+                    <app-button
+                        variant="ghost"
                         type="submit"
                         ?disabled=${this.lookingUp || this.saving || this.inviting}
                     >
                         ${this.lookingUp ? t('people.finding') : t('people.find')}
-                    </button>
+                    </app-button>
                 </form>
                 ${this.lookupMessage ? html`
                     <p class="invite-status ${/added|sent|notified|waiting|ready|copied|create one|email/i.test(this.lookupMessage) ? '' : (target ? '' : 'error')}">${this.lookupMessage}</p>
@@ -761,9 +667,9 @@ export class PeopleDialog extends LitElement {
                 ${this.lastInviteUrl ? html`
                     <div class="invite-link-row">
                         <input class="invite-input" type="text" readonly .value=${this.lastInviteUrl} />
-                        <button class="secondary-button" type="button" @click=${() => this.copyInviteUrl()}>
+                        <app-button variant="ghost" @click=${() => this.copyInviteUrl()}>
                             ${t('people.copyLink')}
-                        </button>
+                        </app-button>
                     </div>
                 ` : ''}
                 ${target ? html`
@@ -784,12 +690,11 @@ export class PeopleDialog extends LitElement {
                                 aria-label=${t('people.roleForNew')}
                                 @change=${(e) => { this.inviteRole = e.target?.value || e.detail?.value || ''; }}
                             ></dropdown-select>
-                            <button
-                                class="primary-button"
-                                type="button"
+                            <app-button
+                                variant="primary"
                                 ?disabled=${addDisabled}
                                 @click=${() => this.handleAddMatched()}
-                            >${this.inviting ? t('people.sending') : (this.unknownEmail ? t('people.inviteToCreate') : t('people.invite'))}</button>
+                            >${this.inviting ? t('people.sending') : (this.unknownEmail ? t('people.inviteToCreate') : t('people.invite'))}</app-button>
                         </div>
                     </div>
                 ` : ''}
@@ -822,29 +727,27 @@ export class PeopleDialog extends LitElement {
                         ${this.canManage ? html`
                             <div class="pending-actions">
                                 ${needsApproval ? html`
-                                    <button
-                                        class="primary-button"
-                                        type="button"
+                                    <app-button
+                                        variant="primary"
                                         ?disabled=${this.saving}
                                         @click=${() => this.dispatchEvent(new CustomEvent('people-approve-invite', {
                                             detail: { inviteId: invite.id, kind: inviteKind(invite) },
                                             bubbles: true,
                                             composed: true
                                         }))}
-                                    >${t('people.approve')}</button>
+                                    >${t('people.approve')}</app-button>
                                 ` : ''}
-                                <button
-                                    class="secondary-button"
-                                    type="button"
+                                <app-button
+                                    variant="ghost"
                                     ?disabled=${this.saving}
                                     @click=${() => this.dispatchEvent(new CustomEvent('people-reject-invite', {
                                         detail: { inviteId: invite.id, kind: inviteKind(invite) },
                                         bubbles: true,
                                         composed: true
                                     }))}
-                >${awaitingSignup ? t('common.cancel') : t('people.reject')}</button>
-                    </div>
-                        ` : html`<span class="badge">${awaitingSignup ? t('people.linkSent') : t('people.pending')}</span>`}
+                                >${awaitingSignup ? t('common.cancel') : t('people.reject')}</app-button>
+                            </div>
+                        ` : html`<badge-pill>${awaitingSignup ? t('people.linkSent') : t('people.pending')}</badge-pill>`}
                     </div>
                 `;
                 })}
@@ -876,27 +779,24 @@ export class PeopleDialog extends LitElement {
                 </div>
 
                 ${this.canManage ? html`
-                    <button
+                    <app-button
                         slot="actions"
-                        class="secondary-button"
-                        type="button"
+                        variant="ghost"
                         ?disabled=${this.saving}
                         @click=${() => this.handleCancel()}
-                    >${t('common.cancel')}</button>
-                    <button
+                    >${t('common.cancel')}</app-button>
+                    <app-button
                         slot="actions"
-                        class="primary-button"
-                        type="button"
+                        variant="primary"
                         ?disabled=${this.saving}
                         @click=${() => this.handleSave()}
-                    >${t('common.save')}</button>
+                    >${t('common.save')}</app-button>
                 ` : html`
-                    <button
+                    <app-button
                         slot="actions"
-                        class="secondary-button"
-                        type="button"
+                        variant="ghost"
                         @click=${() => this.handleCancel()}
-                    >${t('common.close')}</button>
+                    >${t('common.close')}</app-button>
                 `}
             </app-dialog>
         `;

@@ -21,6 +21,8 @@ import { loginDirectusAdmin, logoutDirectus, prompt } from './lib/login.mjs';
 import { caseInvitesDefinition } from './definitions/case-invites.mjs';
 import { attachmentAccountabilityDefinition } from './definitions/attachment-accountability.mjs';
 import { taskGroupsDefinition, taskGroupMembersDefinition } from './definitions/task-groups.mjs';
+import { pendingRegistrationDefinition } from './definitions/pending-registration.mjs';
+import { siteAnnouncementDefinition } from './definitions/site-announcement.mjs';
 
 loadRepoEnv();
 
@@ -29,11 +31,13 @@ const DEFINITIONS = Object.freeze([
     caseInvitesDefinition,
     attachmentAccountabilityDefinition,
     taskGroupsDefinition,
-    taskGroupMembersDefinition
+    taskGroupMembersDefinition,
+    pendingRegistrationDefinition,
+    siteAnnouncementDefinition
 ]);
 
 // Name of the pre-configured group that can approve invitations.
-const INVITE_APPROVERS_GROUP_NAME = 'Invite Approvers';
+const INVITE_APPROVERS_GROUP_NAME = 'Registration Reviewers';
 
 // Role names (case-insensitive) whose members are seeded into that group.
 const ADMIN_ROLE_NAMES = ['administrator', 'orgadmin'];
@@ -178,7 +182,7 @@ async function ensureDefinition(client, def, { dryRun }) {
 }
 
 /**
- * Ensure the "Invite Approvers" special group exists and contains all current
+ * Ensure the "Registration Reviewers" special group exists and contains all current
  * Administrator / OrgAdmin users. Idempotent — safe to re-run.
  */
 async function seedInviteApprovers(client, { dryRun }) {
@@ -280,7 +284,7 @@ Auth (pick one; nothing admin is stored in .env):
 
 Flags:
   --dry-run             Print planned changes only
-  --seed                Also seed the "Invite Approvers" group and sync admin users into it
+  --seed                Also seed the "Registration Reviewers" group and sync admin users into it
   --only=<collection>   Limit to one definition (e.g. case_invites)
   --help
 
@@ -360,7 +364,7 @@ async function main() {
         } else {
             console.log('Done.');
             if (!args.seed) {
-                console.log('Tip: run with --seed to create the "Invite Approvers" group and sync admin users.');
+                console.log('Tip: run with --seed to create the "Registration Reviewers" group and sync admin users.');
             }
             console.log(
                 'Next: grant clinician policies on case_invites when the BFF cuts over '

@@ -153,7 +153,8 @@ export class NavigationHeader extends LitElement {
             homeLabel:  { type: String },
             displayName: { type: String },
             avatarUrl:  { type: String },
-            isOrgAdmin: { type: Boolean }
+            isOrgAdmin: { type: Boolean },
+            isRegistrationReviewer: { type: Boolean }
         };
     }
 
@@ -166,6 +167,7 @@ export class NavigationHeader extends LitElement {
         this.homeHref = '/file-manager';
         this.homeLabel = t('common.home');
         this.isOrgAdmin = false;
+        this.isRegistrationReviewer = false;
     }
 
     handleHomeClick(event) {
@@ -198,7 +200,7 @@ export class NavigationHeader extends LitElement {
                     <span class="home-text">${this.homeLabel}</span>
                 </a>
                 <div class="menu-region">
-                    <notification-bell .isOrgAdmin=${this.isOrgAdmin || false}></notification-bell>
+                    <notification-bell .isRegistrationReviewer=${this.isRegistrationReviewer || false}></notification-bell>
                     <user-menu
                         .username=${this.username}
                         .displayName=${this.displayName || this.username}

@@ -5,6 +5,8 @@ import { getAppMenuItems, DEFAULT_MENU_KEY } from './app-menu.js';
 import { loadAppFeatures } from '../services/features.js';
 import './navigation-header.js';
 import './side-menu.js';
+import './nav-back-button.js';
+import './announcement-banner.js';
 
 /** Keep in sync with side-menu desktop/compact split. */
 const COMPACT_NAV_MQ = '(max-width: 1024px)';
@@ -81,8 +83,16 @@ export class PageShellTemplate extends LitElement {
                 color: var(--color-text-secondary);
             }
 
-            .content-title {
+            .page-heading {
+                display: flex;
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 4px;
                 margin: 0 0 8px;
+            }
+
+            .content-title {
+                margin: 0;
                 font-size: 1.3rem;
             }
 
@@ -236,7 +246,10 @@ export class PageShellTemplate extends LitElement {
             compactNavOpen: { type: Boolean },
             displayName: { type: String },
             avatarUrl: { type: String },
-            isOrgAdmin: { type: Boolean }
+            isOrgAdmin: { type: Boolean },
+            isRegistrationReviewer: { type: Boolean },
+            showBackButton: { type: Boolean },
+            _announcement: { type: Object, state: true }
         };
     }
 
@@ -254,6 +267,9 @@ export class PageShellTemplate extends LitElement {
         this.homeLabel = t('common.home');
         this.compactNavOpen = false;
         this.isOrgAdmin = false;
+        this.isRegistrationReviewer = false;
+        this.showBackButton = false;
+        this._announcement = null;
         this._featureFlags = {};
         this._compactMq = null;
         this._onCompactMqChange = () => {
@@ -267,8 +283,7 @@ export class PageShellTemplate extends LitElement {
 
     _rebuildMenu() {
         this.menuItems = getAppMenuItems({
-            projectCaseMigrateEnabled: this._featureFlags.projectCaseMigrate === true,
-            isOrgAdmin: this.isOrgAdmin || false
+            projectCaseMigrateEnabled: this._featureFlags.projectCaseMigrate === true
         });
     }
 
@@ -285,6 +300,10 @@ export class PageShellTemplate extends LitElement {
             this._rebuildMenu();
             this.requestUpdate();
         });
+        fetch('/api/announcement', { credentials: 'include' })
+            .then(r => r.ok ? r.json() : null)
+            .then(body => { this._announcement = body?.announcement ?? null; })
+            .catch(() => {});
         this._compactMq = window.matchMedia(COMPACT_NAV_MQ);
         this._compactMq.addEventListener?.('change', this._onCompactMqChange);
         document.addEventListener('pointerdown', this._onDocPointerDown, true);
@@ -399,7 +418,15 @@ export class PageShellTemplate extends LitElement {
                     .homeHref=${this.homeHref}
                     .homeLabel=${this.homeLabel}
                     .isOrgAdmin=${this.isOrgAdmin || false}
+                    .isRegistrationReviewer=${this.isRegistrationReviewer || false}
                 ></navigation-header>
+
+                ${this._announcement ? html`
+                    <announcement-banner
+                        .message=${this._announcement.message}
+                        .severity=${this._announcement.severity || 'info'}
+                    ></announcement-banner>
+                ` : ''}
 
                 <div class="page-layout">
                     <div class="left-rail">
@@ -413,7 +440,14 @@ export class PageShellTemplate extends LitElement {
                     <div class="main-column">
                         ${this.renderCompactNav()}
                         <main class="content-region">
-                            ${this.pageTitle ? html`<h1 class="content-title">${this.pageTitle}</h1>` : ''}
+                            ${this.pageTitle ? html`
+                                <div class="page-heading">
+                                    ${this.showBackButton ? html`
+                                        <nav-back-button></nav-back-button>
+                                    ` : ''}
+                                    <h1 class="content-title">${this.pageTitle}</h1>
+                                </div>
+                            ` : ''}
                             ${this.pageDescription ? html`<p class="content-description">${this.pageDescription}</p>` : ''}
                             <slot name="content"></slot>
                         </main>

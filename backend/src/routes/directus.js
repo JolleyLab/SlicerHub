@@ -5,7 +5,7 @@ import { ValidationError, NotFoundError, ForbiddenError } from '../utils/errors.
 import config from '../config/index.js';
 import db from '../db/database.js';
 import { requireDirectusLink } from '../auth/requireDirectusLink.js';
-import { requireDirectusUserToken } from '../auth/directusUserSession.js';
+import { requireDirectusUserToken, requireDirectusUserTokenCached } from '../auth/directusUserSession.js';
 import {
     listCases,
     isDirectusUrlConfigured,
@@ -13,6 +13,7 @@ import {
     ensureDirectusAssetCached,
     findCachedDirectusAsset,
     fetchDirectusAsset,
+    sendDirectusAsset,
     canOpenAttachmentInSlicer,
     createCaseComment,
     createCase,
@@ -741,20 +742,11 @@ export default function directusRoutes(app) {
     }));
 
     /** Proxy a Directus user's avatar — authenticated collaborators fetch via their own Directus token. */
-    app.get('/api/directus/users/:userId/avatar', authenticateToken, requireDirectusLink, requireDirectusUserToken, asyncHandler(async (req, res) => {
+    app.get('/api/directus/users/:userId/avatar', authenticateToken, requireDirectusLink, requireDirectusUserTokenCached, asyncHandler(async (req, res) => {
         const userId = String(req.params.userId || '').trim();
         if (!userId) return res.status(404).end();
         const directusUser = await findDirectusUserById(userId);
         if (!directusUser?.avatar) return res.status(404).end();
-        const base = (config.directus?.url || '').trim().replace(/\/+$/, '');
-        if (!base) return res.status(404).end();
-        const assetRes = await fetch(`${base}/assets/${encodeURIComponent(directusUser.avatar)}`, {
-            headers: { Authorization: `Bearer ${req.directusAccessToken}` }
-        });
-        if (!assetRes.ok) return res.status(404).end();
-        const buffer = Buffer.from(await assetRes.arrayBuffer());
-        res.setHeader('Content-Type', assetRes.headers.get('content-type') || 'image/jpeg');
-        res.setHeader('Cache-Control', 'public, max-age=300');
-        res.send(buffer);
+        await sendDirectusAsset(res, directusUser.avatar, req.directusAccessToken, { cacheControl: 'public, max-age=300' });
     }));
 }

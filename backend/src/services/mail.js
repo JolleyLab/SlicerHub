@@ -173,6 +173,38 @@ export async function sendRegistrationApprovalEmail({
     return sendMail({ to, subject, text: lines.join('\n'), html });
 }
 
+/**
+ * Registration pending review — sent to each member of the approvers group.
+ * Deliberately vague: no count, no applicant details, group-task framing.
+ */
+export async function sendRegistrationPendingReviewEmail({ to, firstName, reviewUrl } = {}) {
+    const name = String(firstName || '').trim() || 'there';
+    const url = String(reviewUrl || '');
+    const subject = 'Pending registration requests to review';
+    const lines = [
+        `Hi ${name},`,
+        '',
+        'There are pending registration requests awaiting review by your group.',
+        '',
+        url ? `Review them here: ${url}` : 'Sign in to SlicerHub to review them.',
+        '',
+        'This is a shared task — no action is required from you personally if a colleague has already handled it.'
+    ];
+
+    const linkHtml = url
+        ? `<p><a href="${escapeAttr(url)}">Review pending requests</a></p>`
+        : '<p>Sign in to SlicerHub to review them.</p>';
+
+    const html = `
+      <p>Hi ${escapeHtml(name)},</p>
+      <p>There are pending registration requests awaiting review by your group.</p>
+      ${linkHtml}
+      <p style="color:#666;font-size:13px;">This is a shared task — no action is required from you personally if a colleague has already handled it.</p>
+    `.trim();
+
+    return sendMail({ to, subject, text: lines.join('\n'), html });
+}
+
 function escapeHtml(value) {
     return String(value || '')
         .replace(/&/g, '&amp;')

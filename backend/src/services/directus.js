@@ -304,6 +304,10 @@ function resolveCommentText(text, usersById = {}) {
         .trim();
 }
 
+export function directusAvatarUrl(user) {
+    return user?.id && user?.avatar ? `/api/directus/users/${user.id}/avatar` : null;
+}
+
 function mapCommentAuthor(user) {
     if (!user) return null;
     if (typeof user === 'string') {
@@ -314,7 +318,7 @@ function mapCommentAuthor(user) {
         id: user.id ?? null,
         name: formatPersonName(user) || 'Unknown',
         email: user.email || null,
-        avatarUrl: user.avatar ? `/api/directus/users/${user.id}/avatar` : null
+        avatarUrl: directusAvatarUrl(user)
     };
 }
 
@@ -366,7 +370,7 @@ export function mapDirectusPerson(user) {
         username: name || (email ? email.split('@')[0] : null),
         firstName: user.first_name || null,
         lastName: user.last_name || null,
-        avatarUrl: user.avatar ? `/api/directus/users/${user.id}/avatar` : null
+        avatarUrl: directusAvatarUrl(user)
     };
 }
 
@@ -1941,4 +1945,27 @@ export async function lookupDirectusUserByEmail(email, { accessToken } = {}) {
         throw new NotFoundError(msg('directus.user_not_found_by_email'), null, 'directus.user_not_found_by_email');
     }
     return person;
+}
+
+/**
+ * Fetch a Directus asset and pipe it to an Express response.
+ * Returns false and sends a 404 if the asset cannot be fetched.
+ *
+ * @param {import('express').Response} res
+ * @param {string} fileId
+ * @param {string} accessToken
+ * @param {{ cacheControl?: string }} [options]
+ */
+export async function sendDirectusAsset(res, fileId, accessToken, { cacheControl = 'private, max-age=300' } = {}) {
+    try {
+        const assetRes = await fetchDirectusAsset(fileId, accessToken);
+        const buffer = Buffer.from(await assetRes.arrayBuffer());
+        res.setHeader('Content-Type', assetRes.headers.get('content-type') || 'image/jpeg');
+        res.setHeader('Cache-Control', cacheControl);
+        res.send(buffer);
+        return true;
+    } catch {
+        res.status(404).end();
+        return false;
+    }
 }

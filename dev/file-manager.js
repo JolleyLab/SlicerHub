@@ -537,6 +537,7 @@ export class FileManager extends LitElement {
     static get properties() {
         return {
             isOrgAdmin: { type: Boolean },
+            isRegistrationReviewer: { type: Boolean },
             files: { type: Array },
             selectedFile: { type: Object },
             uploading: { type: Boolean },
@@ -1435,6 +1436,7 @@ export class FileManager extends LitElement {
                 .username=${this.username}
                 .avatarUrl=${this.avatarUrl}
                 .isOrgAdmin=${this.isOrgAdmin || false}
+                .isRegistrationReviewer=${this.isRegistrationReviewer || false}
                 selectedMenuKey="my-files"
                 homeHref="/file-manager"
                 homeLabel="Home"

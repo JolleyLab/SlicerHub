@@ -18,10 +18,12 @@ import registrationRequestRoutes from "./routes/registrationRequests.js";
 import taskGroupRoutes from "./routes/taskGroups.js";
 import featuresRoutes from "./routes/features.js";
 import slicerWebRoutes from "./routes/slicerWeb.js";
+import announcementRoutes from "./routes/announcement.js";
 import { startStablePoller, startLatestPoller } from "./services/slicerWebUpdater.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { isDirectusConfigured } from "./services/directus.js";
 import { startBillingWatchdog } from "./gpu/billingWatchdog.js";
+import { startPolicySyncScheduler } from "./services/directusPolicySync.js";
 import {
     startViewerSessionWatchdog,
     pruneExpiredViewerSessions,
@@ -95,6 +97,7 @@ taskGroupRoutes(app);
 
 featuresRoutes(app);
 slicerWebRoutes(app);
+announcementRoutes(app);
 
 // Register file routes
 fileRoutes(app);
@@ -140,6 +143,7 @@ app.listen(config.server.port, config.server.host, async () => {
         console.warn('GPU credential repair on startup failed:', err.message);
     }
     startBillingWatchdog();
+    startPolicySyncScheduler();
     startViewerSessionWatchdog();
     startStablePoller();
     startLatestPoller();

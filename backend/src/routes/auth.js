@@ -43,8 +43,9 @@ import config from '../config/index.js';
 import { msg } from '../i18n/index.js';
 import multer from 'multer';
 import heicConvert from 'heic-convert';
-import { uploadDirectusAvatar, updateDirectusUser } from '../services/directus.js';
+import { uploadDirectusAvatar, updateDirectusUser, findDirectusUserById, sendDirectusAsset, isDirectusConfigured, fetchDirectusCurrentUser as fetchDirectusViewer, directusFetch } from '../services/directus.js';
 import { isOrgAdminByRole } from '../auth/orgAdminUtils.js';
+import { isUserInCapabilityGroup, CAPABILITIES } from '../services/groupCapabilities.js';
 
 const avatarUpload = multer({
     storage: multer.memoryStorage(),
@@ -267,7 +268,6 @@ export default function authRoutes(app) {
                 throw new ValidationError(msg('auth.profile_requires_directus'), null, 'auth.profile_requires_directus');
             }
 
-            const { isDirectusConfigured } = await import('../services/directus.js');
             if (!isDirectusConfigured()) {
                 throw new ValidationError(msg('directus.not_configured'), null, 'directus.not_configured');
             }
@@ -310,7 +310,6 @@ export default function authRoutes(app) {
             try {
                 // Prefer service-token read of the linked user — clinician /users/me
                 // often omits first_name/last_name under field ACL.
-                const { findDirectusUserById, fetchDirectusCurrentUser: fetchDirectusViewer } = await import('../services/directus.js');
                 let firstName = null;
                 let lastName = null;
                 let email = profile.email;
@@ -351,10 +350,44 @@ export default function authRoutes(app) {
             }
         }
 
+        // Group membership is the single source of truth for reviewer access.
+        let isRegistrationReviewer = false;
+        if (directusLink?.external_id) {
+            try {
+                isRegistrationReviewer = await isUserInCapabilityGroup(
+                    directusLink.external_id,
+                    CAPABILITIES.APPROVE_REGISTRATIONS
+                );
+            } catch (_) {
+                // non-fatal — leave as false
+            }
+        }
+
+        // Read notifyRegistrationApproval from Directus — opt-out, default true.
+        let notifyRegistrationApproval = true;
+        if (directusLink?.external_id) {
+            try {
+                const prefPayload = await directusFetch(`/users/${encodeURIComponent(directusLink.external_id)}`, {
+                    query: { fields: 'notify_registration_approval' }
+                });
+                if (prefPayload?.data?.notify_registration_approval === false) {
+                    notifyRegistrationApproval = false;
+                }
+            } catch (_) {
+                // field may not exist in Directus yet — default to true
+            }
+        }
+
+        const baseUser = publicUser(profile);
         res.json({
-            user: publicUser(profile),
+            user: {
+                ...baseUser,
+                preferences: { ...baseUser.preferences, notifyRegistrationApproval }
+            },
             identity: buildIdentityPayload(user.id),
-            isOrgAdmin
+            isOrgAdmin,
+            isRegistrationReviewer,
+            directusUserId: directusLink?.external_id || null
         });
     }));
 
@@ -382,6 +415,16 @@ export default function authRoutes(app) {
         }
         if (req.body?.slicerWebChannel !== undefined) {
             patch.slicerWebChannel = req.body.slicerWebChannel === 'latest' ? 'latest' : 'stable';
+        }
+        // notifyRegistrationApproval lives on the Directus user
+        if (req.body?.notifyRegistrationApproval !== undefined) {
+            const link = findDirectusLinkForUser(req.user.id);
+            if (link?.external_id) {
+                directusFetch(`/users/${encodeURIComponent(link.external_id)}`, {
+                    method: 'PATCH',
+                    body: { notify_registration_approval: req.body.notifyRegistrationApproval === true }
+                }).catch(err => console.warn('Directus notify pref save failed:', err?.message));
+            }
         }
 
         const preferences = User.updatePreferences(req.user.id, patch);
@@ -497,19 +540,10 @@ export default function authRoutes(app) {
     app.get('/api/auth/avatar', authenticateToken, asyncHandler(async (req, res) => {
         const link = findDirectusLinkForUser(req.user.id);
         if (!link?.external_id) return res.status(404).end();
-        const { findDirectusUserById } = await import('../services/directus.js');
         const directusUser = await findDirectusUserById(link.external_id);
         if (!directusUser?.avatar) return res.status(404).end();
         const accessToken = await getDirectusAccessTokenForAppUser(req.user, { res });
-        const base = (config.directus?.url || '').trim().replace(/\/+$/, '');
-        const assetRes = await fetch(`${base}/assets/${encodeURIComponent(directusUser.avatar)}`, {
-            headers: { Authorization: `Bearer ${accessToken}` }
-        });
-        if (!assetRes.ok) return res.status(404).end();
-        const buffer = Buffer.from(await assetRes.arrayBuffer());
-        res.setHeader('Content-Type', assetRes.headers.get('content-type') || 'image/jpeg');
-        res.setHeader('Cache-Control', 'private, max-age=300');
-        res.send(buffer);
+        await sendDirectusAsset(res, directusUser.avatar, accessToken);
     }));
 
     /** Remove the current user's avatar. */

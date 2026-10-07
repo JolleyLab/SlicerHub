@@ -93,7 +93,8 @@ export default {
         update_case_token_required: 'Directus user access token is required to update a case',
         create_attachments_token_required: 'Directus user access token is required to create attachments',
         case_no_updatable_fields: 'No updatable fields provided (title, description, status)',
-        actor_directus_user_id_required: 'actorDirectusUserId is required'
+        actor_directus_user_id_required: 'actorDirectusUserId is required',
+        not_linked: 'Your account is not fully set up. Please contact an administrator.'
     },
     case: {
         id_required: 'Case is required.',
@@ -253,7 +254,8 @@ export default {
         not_found: 'Task group not found',
         user_not_found: 'No user found with that email address',
         user_id_required: 'A user ID or email address is required',
-        already_member: 'That user is already a member of this group'
+        already_member: 'That user is already a member of this group',
+        cannotRemoveOwnManage: 'You cannot remove your own manage permission'
     },
     registration: {
         rate_limit: 'Too many registration requests. Please wait and try again.',

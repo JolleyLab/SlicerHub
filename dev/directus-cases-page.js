@@ -1074,6 +1074,7 @@ export class DirectusCasesPage extends LitElement {
             username: { type: String },
             avatarUrl: { type: String },
             isOrgAdmin: { type: Boolean },
+            isRegistrationReviewer: { type: Boolean },
             loading: { type: Boolean },
             errorMessage: { type: String },
             cases: { type: Array },
@@ -2550,6 +2551,7 @@ export class DirectusCasesPage extends LitElement {
                 .username=${this.username}
                 .avatarUrl=${this.avatarUrl}
                 .isOrgAdmin=${this.isOrgAdmin || false}
+                .isRegistrationReviewer=${this.isRegistrationReviewer || false}
                 selectedMenuKey="cases"
                 homeHref="/file-manager"
                 homeLabel="Home"
@@ -2715,6 +2717,7 @@ export class DirectusCasesPage extends LitElement {
                 .username=${this.username}
                 .avatarUrl=${this.avatarUrl}
                 .isOrgAdmin=${this.isOrgAdmin || false}
+                .isRegistrationReviewer=${this.isRegistrationReviewer || false}
                 selectedMenuKey="cases"
                 homeHref="/file-manager"
                 homeLabel="Home"

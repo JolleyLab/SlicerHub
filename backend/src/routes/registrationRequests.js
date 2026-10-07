@@ -15,13 +15,15 @@
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { requireDirectusLink } from '../auth/requireDirectusLink.js';
 import { requireDirectusUserToken } from '../auth/directusUserSession.js';
-import { requireDirectusRole } from '../auth/requireDirectusRole.js';
+import { requireGroupCapability } from '../auth/requireGroupCapability.js';
+import { CAPABILITIES } from '../services/groupCapabilities.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAllowedWebOrigin } from '../auth/originCheck.js';
 import { createRateLimiter, getRateLimitClientIp } from '../middleware/rateLimit.js';
 import {
     createRegistrationRequest,
     listPending,
+    listRecentlyDecided,
     getById,
     approveRequest,
     rejectRequest,
@@ -38,14 +40,16 @@ import { storeProviderTokens } from '../auth/identityStore.js';
 import config from '../config/index.js';
 import { ValidationError, NotFoundError, ConflictError } from '../utils/errors.js';
 import { msg } from '../i18n/index.js';
-import { sendRegistrationApprovalEmail, sendRegistrationReceivedEmail } from '../services/mail.js';
+import { sendRegistrationApprovalEmail, sendRegistrationReceivedEmail, isMailConfigured } from '../services/mail.js';
+import { notifyNewRequest } from '../services/registrationGroupNotifier.js';
 
 const PROVIDER = 'directus';
 
-const requireOrgAdmin = [
+// Passes for OrgAdmin/Administrator OR any member of the registration reviewers group
+const requireRegistrationAccess = [
     requireDirectusLink,
     requireDirectusUserToken,
-    requireDirectusRole('OrgAdmin', 'Administrator')
+    requireGroupCapability(CAPABILITIES.APPROVE_REGISTRATIONS)
 ];
 
 const submitRateLimit = createRateLimiter({
@@ -93,6 +97,9 @@ export default function registrationRequestRoutes(app) {
                 to: email,
                 firstName
             });
+
+            // Notify approvers group — fire and forget, does not affect the response.
+            notifyNewRequest().catch(() => { });
 
             res.status(201).json({ status: 'pending', id: request.id });
         })
@@ -148,7 +155,7 @@ export default function registrationRequestRoutes(app) {
                 password: String(password),
                 roleId,
                 firstName: String(firstName || request.firstName || '').trim(),
-                lastName:  String(lastName  || request.lastName  || '').trim()
+                lastName: String(lastName || request.lastName || '').trim()
             });
             const directusUserId = String(directusUser.id);
 
@@ -183,10 +190,10 @@ export default function registrationRequestRoutes(app) {
             const loginBody = loginRes.ok ? await loginRes.json() : null;
             const loginData = loginBody?.data || loginBody;
             const externalTokens = loginData?.access_token ? {
-                accessToken:  loginData.access_token,
+                accessToken: loginData.access_token,
                 refreshToken: loginData.refresh_token || null,
-                expires:      loginData.expires,
-                expiresAt:    loginData.expires
+                expires: loginData.expires,
+                expiresAt: loginData.expires
                     ? new Date(Date.now() + Number(loginData.expires)).toISOString()
                     : null
             } : null;
@@ -194,17 +201,17 @@ export default function registrationRequestRoutes(app) {
             const { user: sessionUser, sessionPayload } = issueAppSession(req, res, {
                 ...localUser,
                 firstName: directusUser.first_name || '',
-                lastName:  directusUser.last_name  || ''
+                lastName: directusUser.last_name || ''
             });
 
             if (config.auth?.storeProviderTokens && externalTokens && sessionPayload?.jti) {
                 storeProviderTokens(sessionPayload.jti, localUser.id, PROVIDER, externalTokens);
                 setDirectusLinkCookie(res, {
-                    userId:       localUser.id,
-                    accessToken:  externalTokens.accessToken,
+                    userId: localUser.id,
+                    accessToken: externalTokens.accessToken,
                     refreshToken: externalTokens.refreshToken,
-                    expiresAt:    externalTokens.expiresAt,
-                    expires:      externalTokens.expires
+                    expiresAt: externalTokens.expiresAt,
+                    expires: externalTokens.expires
                 });
             }
 
@@ -212,30 +219,33 @@ export default function registrationRequestRoutes(app) {
         })
     );
 
-    // --- OrgAdmin: pending count (lightweight, used by bell + home todo) ---
+    // --- Registration reviewer: pending count (lightweight, used by bell + home todo) ---
     app.get('/api/admin/registration-requests/count',
         authenticateToken,
-        ...requireOrgAdmin,
+        ...requireRegistrationAccess,
         asyncHandler(async (_req, res) => {
             const requests = await listPending();
             res.json({ count: requests.length });
         })
     );
 
-    // --- OrgAdmin: list pending requests ---
+    // --- Registration reviewer: list pending + recently decided requests ---
     app.get('/api/admin/registration-requests',
         authenticateToken,
-        ...requireOrgAdmin,
+        ...requireRegistrationAccess,
         asyncHandler(async (_req, res) => {
-            const requests = await listPending();
-            res.json({ data: requests });
+            const [pending, decided] = await Promise.all([
+                listPending(),
+                listRecentlyDecided(7).catch(() => [])
+            ]);
+            res.json({ data: [...pending, ...decided] });
         })
     );
 
-    // --- OrgAdmin: approve a request ---
+    // --- Registration reviewer: approve a request ---
     app.post('/api/admin/registration-requests/:id/approve',
         authenticateToken,
-        ...requireOrgAdmin,
+        ...requireRegistrationAccess,
         asyncHandler(async (req, res) => {
             const request = await getById(req.params.id);
             if (!request) throw new NotFoundError(msg('registration.not_found'), null, 'registration.not_found');
@@ -243,11 +253,15 @@ export default function registrationRequestRoutes(app) {
                 throw new ValidationError(msg('registration.not_pending'), null, 'registration.not_pending');
             }
 
-            const asAdmin = req.body?.asAdmin === true;
+            // Only OrgAdmins/Administrators may grant OrgAdmin role to new users
+            //TODO: add UI to allow role elevation for existing users after the fact
+            const callerIsOrgAdmin = req.directusProfile?.adminAccess
+                || req.directusProfile?.roleName === 'OrgAdmin';
+            const asAdmin = callerIsOrgAdmin && req.body?.asAdmin === true;
             if (asAdmin && !config.directus.orgAdminRoleId) {
                 throw new ValidationError('DIRECTUS_ORG_ADMIN_ROLE_ID is not configured', null, 'registration.org_admin_role_not_configured');
             }
-            const { token, completionUrl, expiresAt } = await approveRequest(request.id, asAdmin);
+            const { token, completionUrl, expiresAt } = await approveRequest(request.id, asAdmin, req.directusAccessToken);
 
             await sendRegistrationApprovalEmail({
                 to: request.email,
@@ -256,14 +270,19 @@ export default function registrationRequestRoutes(app) {
                 expiresAt
             });
 
-            res.json({ token, completionUrl, expiresAt });
+            // Only expose the link when email is unavailable — the reviewer doesn't need it otherwise.
+            const emailWorking = isMailConfigured();
+            res.json({
+                expiresAt,
+                ...(emailWorking ? {} : { token, completionUrl })
+            });
         })
     );
 
-    // --- OrgAdmin: reject a request ---
+    // --- Registration reviewer: reject a request ---
     app.post('/api/admin/registration-requests/:id/reject',
         authenticateToken,
-        ...requireOrgAdmin,
+        ...requireRegistrationAccess,
         asyncHandler(async (req, res) => {
             const request = await getById(req.params.id);
             if (!request) throw new NotFoundError(msg('registration.not_found'), null, 'registration.not_found');
@@ -271,7 +290,7 @@ export default function registrationRequestRoutes(app) {
                 throw new ValidationError(msg('registration.not_pending'), null, 'registration.not_pending');
             }
 
-            await rejectRequest(request.id);
+            await rejectRequest(request.id, req.directusAccessToken);
             res.json({ status: 'rejected' });
         })
     );

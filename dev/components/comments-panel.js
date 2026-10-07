@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit-element';
+import { avatarCircleStyles } from '../styles/avatar.js';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
 
@@ -19,7 +20,7 @@ import { t } from '../i18n/index.js';
  */
 export class CommentsPanel extends LitElement {
     static get styles() {
-        return css`
+        return [avatarCircleStyles, css`
             :host {
                 display: flex;
                 flex-direction: column;
@@ -124,10 +125,6 @@ export class CommentsPanel extends LitElement {
             .avatar {
                 width: 36px;
                 height: 36px;
-                border-radius: 50%;
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
                 font-size: 0.72rem;
                 font-weight: 700;
                 letter-spacing: 0.02em;
@@ -136,15 +133,6 @@ export class CommentsPanel extends LitElement {
                 background: #2c3878;
                 border: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
                 flex-shrink: 0;
-                overflow: hidden;
-            }
-
-            .avatar img {
-                width: 100%;
-                height: 100%;
-                object-fit: cover;
-                display: block;
-                border-radius: 50%;
             }
 
             .avatar.tone-a { background: #2c3878; color: #f5f6fb; }
@@ -374,7 +362,7 @@ export class CommentsPanel extends LitElement {
                 opacity: 0.55;
                 cursor: not-allowed;
             }
-        `;
+        `];
     }
 
     static get properties() {

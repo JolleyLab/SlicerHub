@@ -46,6 +46,63 @@ export class RegistrationRequestForm extends LitElement {
                 background: var(--color-input-bg, #fff);
                 color: var(--color-text, #111);
               }
+              .label-row {
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                margin-bottom: 4px;
+              }
+              .label-row label {
+                margin-bottom: 0;
+              }
+              .tooltip-wrap {
+                position: relative;
+                display: inline-flex;
+                align-items: center;
+              }
+              .tooltip-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 16px;
+                height: 16px;
+                border-radius: 50%;
+                border: 1px solid var(--color-border, #d1d5db);
+                background: var(--color-surface, #f9fafb);
+                color: var(--color-text-secondary, #6b7280);
+                font-size: 10px;
+                font-weight: 700;
+                line-height: 1;
+                cursor: default;
+                padding: 0;
+                flex-shrink: 0;
+              }
+              .tooltip-btn:focus-visible {
+                outline: 2px solid var(--color-focus, var(--color-secondary));
+                outline-offset: 2px;
+              }
+              .tooltip-content {
+                display: none;
+                position: absolute;
+                left: 50%;
+                bottom: calc(100% + 6px);
+                transform: translateX(-50%);
+                width: 220px;
+                background: var(--color-surface, #fff);
+                border: 1px solid var(--color-border, #d1d5db);
+                border-radius: 6px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+                padding: 8px 10px;
+                font-size: 12px;
+                line-height: 1.5;
+                color: var(--color-text-secondary, #374151);
+                z-index: 10;
+                pointer-events: none;
+              }
+              .tooltip-wrap:hover .tooltip-content,
+              .tooltip-btn:focus-visible ~ .tooltip-content {
+                display: block;
+              }
               .success-icon {
                 font-size: 40px;
                 text-align: center;
@@ -154,12 +211,28 @@ export class RegistrationRequestForm extends LitElement {
                             @input=${(e) => { this.email = e.target.value; }} />
                     </div>
                     <div class="form-group">
-                        <label for="reg-affiliation">${t('registration.affiliation')}</label>
+                        <div class="label-row">
+                            <label for="reg-affiliation">${t('registration.affiliation')}</label>
+                            <span class="tooltip-wrap">
+                                <button type="button" class="tooltip-btn" aria-label="About the affiliation field">?</button>
+                                <span class="tooltip-content" role="tooltip">
+                                    Your institution, university, hospital, or research group. This helps reviewers understand your context and is only used to assess your access request.
+                                </span>
+                            </span>
+                        </div>
                         <input id="reg-affiliation" type="text" .value=${this.affiliation}
                             @input=${(e) => { this.affiliation = e.target.value; }} />
                     </div>
                     <div class="form-group">
-                        <label for="reg-intended-use">${t('registration.intendedUse')}</label>
+                        <div class="label-row">
+                            <label for="reg-intended-use">${t('registration.intendedUse')}</label>
+                            <span class="tooltip-wrap">
+                                <button type="button" class="tooltip-btn" aria-label="About the intended use field">?</button>
+                                <span class="tooltip-content" role="tooltip">
+                                    A brief description of how you plan to use SlicerHub. This is shared with the reviewer as context for your request and is not stored or used for any other purpose.
+                                </span>
+                            </span>
+                        </div>
                         <textarea id="reg-intended-use" .value=${this.intendedUse}
                             @input=${(e) => { this.intendedUse = e.target.value; }}
                             placeholder="${t('registration.intendedUsePlaceholder')}"></textarea>
