@@ -31,22 +31,49 @@ export async function getCapabilityGroupMembers(capability) {
                 'directus_user.id',
                 'directus_user.email',
                 'directus_user.first_name',
-                'directus_user.last_name',
-                'directus_user.notify_registration_approval'
+                'directus_user.last_name'
             ].join(','),
             limit: '-1'
         }
     });
     const rows = Array.isArray(payload?.data) ? payload.data : [];
-    return rows
+    const members = rows
         .filter(row => row.directus_user?.id)
         .map(row => ({
             directusUserId: String(row.directus_user.id),
             email: row.directus_user.email || '',
             firstName: row.directus_user.first_name || '',
             lastName: row.directus_user.last_name || '',
-            notifyRegistrationApproval: row.directus_user.notify_registration_approval !== false
+            notifyRegistrationApproval: false
         }));
+
+    // Fetch notify preference directly from directus_users to avoid relation-level
+    // field permission issues on custom fields added to system collections.
+    if (members.length) {
+        try {
+            const ids = members.map(m => m.directusUserId).join(',');
+            const prefPayload = await directusFetch('/users', {
+                query: {
+                    'filter[id][_in]': ids,
+                    fields: 'id,notify_registration_approval',
+                    limit: '-1'
+                }
+            });
+            const prefMap = new Map(
+                (Array.isArray(prefPayload?.data) ? prefPayload.data : [])
+                    .map(u => [u.id, u.notify_registration_approval])
+            );
+            for (const m of members) {
+                if (prefMap.has(m.directusUserId)) {
+                    m.notifyRegistrationApproval = prefMap.get(m.directusUserId) !== false;
+                }
+            }
+        } catch {
+            // Non-fatal — default false means we don't email if we can't confirm opt-in
+        }
+    }
+
+    return members;
 }
 
 /**
