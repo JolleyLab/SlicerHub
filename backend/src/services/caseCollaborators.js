@@ -69,7 +69,8 @@ const MEMBER_FIELDS = [
     'directus_users_id.id',
     'directus_users_id.email',
     'directus_users_id.first_name',
-    'directus_users_id.last_name'
+    'directus_users_id.last_name',
+    'directus_users_id.avatar'
 ].join(',');
 
 export function createCaseCollaborators({ fetchDirectus = directusFetch } = {}) {
@@ -282,3 +283,11 @@ export const {
     addCaseCreatorAsAdmin,
     setCaseCollaborators
 } = defaultInstance;
+
+/** listMembersByCaseIds using a specific Directus access token instead of the service token. */
+export function listMembersByCaseIdsAsUser(caseIds, accessToken) {
+    const { listMembersByCaseIds: listFn } = createCaseCollaborators({
+        fetchDirectus: (path, opts) => directusFetch(path, { ...opts, accessToken })
+    });
+    return listFn(caseIds);
+}

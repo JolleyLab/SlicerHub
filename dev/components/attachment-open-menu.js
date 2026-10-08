@@ -123,8 +123,8 @@ export class AttachmentOpenMenu extends LitElement {
             /** The attachment this menu belongs to; makes the button's accessible name specific. */
             fileName: { type: String },
             disabled: { type: Boolean },
-            /** Account default is Simplified viewer. */
-            preferSimplifiedDefault: { type: Boolean }
+            /** Which viewer is the account default: 'web' | 'full' | 'simplified' */
+            defaultViewer: { type: String }
         };
     }
 
@@ -134,7 +134,7 @@ export class AttachmentOpenMenu extends LitElement {
         this.open = false;
         this.fileName = '';
         this.disabled = false;
-        this.preferSimplifiedDefault = false;
+        this.defaultViewer = 'web';
         this._portalHost = null;
         this._onDocumentPointerDown = (event) => this.closeIfOutside(event);
         this._repositionIfOpen = () => {
@@ -158,7 +158,7 @@ export class AttachmentOpenMenu extends LitElement {
     }
 
     updated(changed) {
-        if (changed.has('open') || (this.open && changed.has('preferSimplifiedDefault'))) {
+        if (changed.has('open') || (this.open && changed.has('defaultViewer'))) {
             if (this.open) this.renderMenuPortal();
             else this.destroyMenuPortal();
         }
@@ -289,7 +289,7 @@ export class AttachmentOpenMenu extends LitElement {
 
     renderMenuPortal() {
         const { top, left } = this.menuAnchorPosition();
-        const preferSimplified = this.preferSimplifiedDefault === true;
+        const dv = this.defaultViewer || 'web';
         const host = this.ensurePortalHost();
 
         render(html`
@@ -301,20 +301,20 @@ export class AttachmentOpenMenu extends LitElement {
                 style="top:${top}px;left:${left}px;"
             >
                 ${this.menuItemTemplate({
+                    label: t('viewers.slicerWeb'),
+                    viewer: 'web',
+                    isDefault: dv === 'web',
+                    hint: t('viewers.slicerWebHint')
+                })}
+                ${this.menuItemTemplate({
                     label: t('viewers.fullSlicer'),
                     viewer: 'full',
-                    isDefault: !preferSimplified
+                    isDefault: dv === 'full'
                 })}
                 ${this.menuItemTemplate({
                     label: t('viewers.simplified'),
                     viewer: 'simplified',
-                    isDefault: preferSimplified
-                })}
-                ${this.menuItemTemplate({
-                    label: t('viewers.slicerWeb'),
-                    viewer: 'web',
-                    isDefault: false,
-                    hint: t('viewers.slicerWebHint')
+                    isDefault: dv === 'simplified'
                 })}
             </div>
         `, host);

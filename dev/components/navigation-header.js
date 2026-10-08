@@ -148,10 +148,13 @@ export class NavigationHeader extends LitElement {
 
     static get properties() {
         return {
-            username: { type: String },
-            homeHref: { type: String },
-            homeLabel: { type: String },
-            displayName: { type: String }
+            username:   { type: String },
+            homeHref:   { type: String },
+            homeLabel:  { type: String },
+            displayName: { type: String },
+            avatarUrl:  { type: String },
+            isOrgAdmin: { type: Boolean },
+            isRegistrationReviewer: { type: Boolean }
         };
     }
 
@@ -160,8 +163,11 @@ export class NavigationHeader extends LitElement {
         initializeTheme();
         this.username = t('common.guest');
         this.displayName = '';
+        this.avatarUrl = '';
         this.homeHref = '/file-manager';
         this.homeLabel = t('common.home');
+        this.isOrgAdmin = false;
+        this.isRegistrationReviewer = false;
     }
 
     handleHomeClick(event) {
@@ -194,10 +200,12 @@ export class NavigationHeader extends LitElement {
                     <span class="home-text">${this.homeLabel}</span>
                 </a>
                 <div class="menu-region">
-                    <notification-bell></notification-bell>
+                    <notification-bell .isRegistrationReviewer=${this.isRegistrationReviewer || false}></notification-bell>
                     <user-menu
                         .username=${this.username}
                         .displayName=${this.displayName || this.username}
+                        .avatarUrl=${this.avatarUrl}
+                        .isOrgAdmin=${this.isOrgAdmin}
                     ></user-menu>
                 </div>
             </header>

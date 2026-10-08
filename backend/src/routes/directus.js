@@ -11,7 +11,7 @@ import { ValidationError, NotFoundError, ForbiddenError } from '../utils/errors.
 import config from '../config/index.js';
 import db from '../db/database.js';
 import { requireDirectusLink } from '../auth/requireDirectusLink.js';
-import { requireDirectusUserToken } from '../auth/directusUserSession.js';
+import { requireDirectusUserToken, requireDirectusUserTokenCached } from '../auth/directusUserSession.js';
 import {
     listCases,
     isDirectusUrlConfigured,
@@ -19,6 +19,7 @@ import {
     ensureDirectusAssetCached,
     findCachedDirectusAsset,
     fetchDirectusAsset,
+    sendDirectusAsset,
     canOpenAttachmentInSlicer,
     createCaseComment,
     createCase,
@@ -28,7 +29,8 @@ import {
     uploadDirectusFile,
     updateDirectusAttachmentFile,
     fetchDirectusViewer,
-    lookupDirectusUserByEmail
+    lookupDirectusUserByEmail,
+    findDirectusUserById
 } from '../services/directus.js';
 import { getCaseCollabActorContext, setCaseCollaborators } from '../services/caseCollaborators.js';
 import { attachUploadedFileToCase } from '../services/attachUploadedFile.js';
@@ -357,18 +359,16 @@ export default function directusRoutes(app) {
         res.json(preview);
     }));
 
-    /** Public: redeem signup invite — creates Directus + app user and issues session. */
+    /** Public: redeem signup invite — sends Directus invite email for password setup. */
     app.post(
         '/api/invites/signup/:token/accept',
         requireAllowedWebOrigin,
         asyncHandler(async (req, res) => {
             const result = await acceptSignupInvite(req, res, {
                 token: req.params.token,
-                password: req.body?.password,
                 username: req.body?.username,
                 firstName: req.body?.firstName || req.body?.first_name,
-                lastName: req.body?.lastName || req.body?.last_name,
-                theme: req.body?.theme
+                lastName: req.body?.lastName || req.body?.last_name
             });
             res.status(201).json(result);
         })
@@ -514,8 +514,18 @@ export default function directusRoutes(app) {
                 throw new ValidationError(msg('case.case_and_file_required'), null, 'case.case_and_file_required');
             }
 
+            const actorDirectusUserId = req.directusIdentity?.externalId
+                || (await fetchDirectusViewer(req.directusAccessToken))?.id;
+            const ctx = actorDirectusUserId
+                ? await getCaseCollabActorContext(caseId, {
+                    accessToken: req.directusAccessToken,
+                    actorDirectusUserId
+                })
+                : null;
+
             await deleteCaseAttachment(caseId, attachmentId, {
-                accessToken: req.directusAccessToken
+                accessToken: req.directusAccessToken,
+                asAdmin: ctx?.actorIsAdmin === true
             });
             res.status(204).end();
         })
@@ -953,5 +963,14 @@ export default function directusRoutes(app) {
             success: true,
             ...result
         });
+    }));
+
+    /** Proxy a Directus user's avatar — authenticated collaborators fetch via their own Directus token. */
+    app.get('/api/directus/users/:userId/avatar', authenticateToken, requireDirectusLink, requireDirectusUserTokenCached, asyncHandler(async (req, res) => {
+        const userId = String(req.params.userId || '').trim();
+        if (!userId) return res.status(404).end();
+        const directusUser = await findDirectusUserById(userId);
+        if (!directusUser?.avatar) return res.status(404).end();
+        await sendDirectusAsset(res, directusUser.avatar, req.directusAccessToken, { cacheControl: 'public, max-age=300' });
     }));
 }

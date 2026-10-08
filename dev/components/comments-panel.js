@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit-element';
+import { avatarCircleStyles } from '../styles/avatar.js';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
 
@@ -19,7 +20,7 @@ import { t } from '../i18n/index.js';
  */
 export class CommentsPanel extends LitElement {
     static get styles() {
-        return css`
+        return [avatarCircleStyles, css`
             :host {
                 display: flex;
                 flex-direction: column;
@@ -124,10 +125,6 @@ export class CommentsPanel extends LitElement {
             .avatar {
                 width: 36px;
                 height: 36px;
-                border-radius: 50%;
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
                 font-size: 0.72rem;
                 font-weight: 700;
                 letter-spacing: 0.02em;
@@ -365,7 +362,7 @@ export class CommentsPanel extends LitElement {
                 opacity: 0.55;
                 cursor: not-allowed;
             }
-        `;
+        `];
     }
 
     static get properties() {
@@ -561,8 +558,10 @@ export class CommentsPanel extends LitElement {
         const name = this.authorName(comment);
         return html`
             <div class="comment-row">
-                <div class="avatar ${this.authorTone(name)}" aria-hidden="true">
-                    ${this.authorInitials(name)}
+                <div class="avatar ${comment.author?.avatarUrl ? '' : this.authorTone(name)}" aria-hidden="true">
+                    ${comment.author?.avatarUrl
+                        ? html`<img src=${comment.author.avatarUrl} alt="">`
+                        : this.authorInitials(name)}
                 </div>
                 <div class="bubble">
                     <div class="comment-header">

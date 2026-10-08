@@ -1,21 +1,12 @@
 import bcrypt from 'bcrypt';
 import db, { flushDatabase } from '../db/database.js';
 import config from '../config/index.js';
-import { ConflictError } from '../utils/errors.js';
-import { msg } from '../i18n/index.js';
 import {
     mergeUserPreferences,
-    parseUserPreferencesJson,
-    normalizeUserPreferences
+    parseUserPreferencesJson
 } from '../gpu/userPreferences.js';
 
 const SALT_ROUNDS = config.security.bcryptRounds;
-
-/** Used only to equalize timing when identity is unknown (never a real password). */
-const TIMING_PAD_HASH = bcrypt.hashSync(
-    '__auth_timing_pad_not_a_password__',
-    Math.min(SALT_ROUNDS, 10)
-);
 
 function mapUserRow(row) {
     if (!row) return null;
@@ -34,46 +25,6 @@ function mapUserRow(row) {
 }
 
 class User {
-    /**
-     * Create a new user
-     */
-    static async create({ username, email, password, preferences } = {}) {
-        // Validate input
-        if (!username || !email || !password) {
-            throw new Error('Username, email, and password are required');
-        }
-
-        // Check if user already exists
-        const existing = db.prepare('SELECT id FROM users WHERE username = ? OR email = ?')
-            .get(username, email);
-
-        if (existing) {
-            throw new ConflictError(msg('user.username_or_email_exists'), null, 'user.username_or_email_exists');
-        }
-
-        // Hash password
-        const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-        const prefsJson = JSON.stringify(normalizeUserPreferences(preferences || {}));
-
-        // Insert user
-        const result = db.prepare(`
-            INSERT INTO users (username, email, password_hash, preferences_json)
-            VALUES (?, ?, ?, ?)
-        `).run(username, email, passwordHash, prefsJson);
-
-        console.log('Insert result:', result);
-        console.log('lastInsertRowid:', result.lastInsertRowid);
-
-        // If lastInsertRowid is null, try to find by username
-        if (!result.lastInsertRowid) {
-            const user = this.findByUsername(username);
-            if (user) return user;
-            throw new Error('Failed to create user');
-        }
-
-        return this.findById(result.lastInsertRowid);
-    }
-
     /**
      * Find user by ID
      */
@@ -112,51 +63,6 @@ class User {
         `).get(normalized);
 
         return mapUserRow(user);
-    }
-
-    /**
-     * Verify password for a user (username or email identity).
-     * Unknown identities still run a bcrypt compare to reduce timing enumeration.
-     * Disabled accounts fail the same way as bad credentials (no status leak).
-     */
-    static async verifyPassword(identity, password) {
-        const key = String(identity || '').trim();
-        if (!key) return null;
-
-        const user = db.prepare(`
-            SELECT id, username, email, password_hash, is_active, role,
-                   must_change_password, preferences_json
-            FROM users
-            WHERE username = ? OR lower(email) = lower(?)
-        `).get(key, key);
-
-        if (!user || !user.is_active) {
-            await bcrypt.compare(String(password || ''), TIMING_PAD_HASH);
-            return null;
-        }
-
-        const storedHash = String(user.password_hash || '');
-        // Rows cleared by the retired password bridge hold a BRIDGED: sentinel, not a bcrypt hash.
-        if (!storedHash || storedHash.startsWith('BRIDGED:')) {
-            await bcrypt.compare(String(password || ''), TIMING_PAD_HASH);
-            return null;
-        }
-
-        // External/shadow accounts use a random unusable hash; still require compare
-        const isValid = await bcrypt.compare(password, storedHash);
-
-        if (!isValid) {
-            return null;
-        }
-
-        this.touchLastLogin(user.id);
-
-        const { password_hash, preferences_json, must_change_password, ...rest } = user;
-        return {
-            ...rest,
-            mustChangePassword: Boolean(must_change_password),
-            preferences: parseUserPreferencesJson(preferences_json)
-        };
     }
 
     /** When true, SPA should force password change before normal app use. */
@@ -270,21 +176,6 @@ class User {
         `).run(...values);
 
         return this.findById(id);
-    }
-
-    /**
-     * Change password
-     */
-    static async changePassword(id, newPassword) {
-        const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
-
-        db.prepare(`
-            UPDATE users 
-            SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        `).run(passwordHash, id);
-
-        return true;
     }
 
     /**

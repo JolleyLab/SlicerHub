@@ -9,6 +9,7 @@ import { AppError, InternalError, NotFoundError, ValidationError } from '../util
 import { msg } from '../i18n/index.js';
 import {
     listMembersByCaseIds,
+    listMembersByCaseIdsAsUser,
     addCaseCreatorAsAdmin,
     parseCaseRole,
     toDisplayMember,
@@ -50,7 +51,8 @@ const CASE_CORE_FIELDS_BASE = [
     'user_created.id',
     'user_created.email',
     'user_created.first_name',
-    'user_created.last_name'
+    'user_created.last_name',
+    'user_created.avatar'
 ];
 
 /**
@@ -62,7 +64,7 @@ const CASE_CORE_FIELDS_BASE = [
  * Custom Timestamp fields (`created_at` / `updated_at`) are covered by `*` too.
  */
 const CASE_FIELDS_ATTEMPTS = Object.freeze([
-    ['*', 'user_created.id', 'user_created.email', 'user_created.first_name', 'user_created.last_name'].join(','),
+    ['*', 'user_created.id', 'user_created.email', 'user_created.first_name', 'user_created.last_name', 'user_created.avatar'].join(','),
     [...CASE_CORE_FIELDS_BASE, 'date_created', 'date_updated'].join(','),
     CASE_CORE_FIELDS_BASE.join(',')
 ]);
@@ -74,6 +76,7 @@ const ATTACHMENT_CORE_FIELDS = [
     'id',
     'name',
     'case',
+    'user_created',
     'file.id',
     'file.filename_download',
     'file.type',
@@ -258,6 +261,7 @@ function mapAttachment(row) {
         mimeType,
         filesize: Number.isFinite(filesize) ? filesize : null,
         modifiedAt,
+        uploadedBy: row?.user_created ?? null,
         ...openFlags
     };
 }
@@ -300,6 +304,10 @@ function resolveCommentText(text, usersById = {}) {
         .trim();
 }
 
+export function directusAvatarUrl(user) {
+    return user?.id && user?.avatar ? `/api/directus/users/${user.id}/avatar` : null;
+}
+
 function mapCommentAuthor(user) {
     if (!user) return null;
     if (typeof user === 'string') {
@@ -309,7 +317,8 @@ function mapCommentAuthor(user) {
     return {
         id: user.id ?? null,
         name: formatPersonName(user) || 'Unknown',
-        email: user.email || null
+        email: user.email || null,
+        avatarUrl: directusAvatarUrl(user)
     };
 }
 
@@ -360,7 +369,8 @@ export function mapDirectusPerson(user) {
         email,
         username: name || (email ? email.split('@')[0] : null),
         firstName: user.first_name || null,
-        lastName: user.last_name || null
+        lastName: user.last_name || null,
+        avatarUrl: directusAvatarUrl(user)
     };
 }
 
@@ -553,12 +563,15 @@ async function listCaseActivityTimestampsByCaseIds(caseIds, { accessToken } = {}
 }
 
 /**
- * Collaborators for case ids, from the Directus junction (service token). Failures return {} so the
- * case list still loads; a case with no entry falls back to the members embedded in its own row.
+ * Collaborators for case ids. Uses the caller's Directus access token when provided so that
+ * nested user fields (including `avatar`) are readable under the user's role permissions.
+ * Falls back to the service token when no accessToken is given.
  */
-async function listCollaboratorsByCaseIds(caseIds) {
+async function listCollaboratorsByCaseIds(caseIds, { accessToken } = {}) {
     try {
-        const byCase = await listMembersByCaseIds(caseIds);
+        const byCase = accessToken
+            ? await listMembersByCaseIdsAsUser(caseIds, accessToken)
+            : await listMembersByCaseIds(caseIds);
         return Object.fromEntries(
             Object.entries(byCase).map(([caseId, members]) => [caseId, members.map(toDisplayMember)])
         );
@@ -794,12 +807,36 @@ export async function findDirectusUserById(directusUserId) {
     if (!id) return null;
     try {
         const payload = await directusFetch(`/users/${encodeURIComponent(id)}`, {
-            query: { fields: 'id,email,first_name,last_name,status' }
+            query: { fields: 'id,email,first_name,last_name,status,avatar,role.id,role.name' }
         });
-        return payload?.data || null;
+        const user = payload?.data || null;
+        // If role came back as a plain UUID (no read access on directus_roles),
+        // resolve it separately via service token.
+        if (user && typeof user.role === 'string' && user.role) {
+            const role = await fetchRoleById(user.role);
+            if (role) user.role = role;
+        }
+        return user;
     } catch (err) {
         console.warn('findDirectusUserById failed:', err.message || err);
         return null;
+    }
+}
+
+/** List all Directus users that have a specific role name. Uses service token. */
+export async function listDirectusUsersByRoleName(roleName) {
+    try {
+        const payload = await directusFetch('/users', {
+            query: {
+                'filter[role][name][_eq]': String(roleName),
+                fields: 'id',
+                limit: '100'
+            }
+        });
+        return Array.isArray(payload?.data) ? payload.data : [];
+    } catch (err) {
+        console.warn('listDirectusUsersByRoleName failed:', err.message || err);
+        return [];
     }
 }
 
@@ -838,6 +875,49 @@ export async function createDirectusUser({ email, password, roleId, firstName, l
 }
 
 /**
+ * Send a Directus invite email. Creates the user with status:invited if they don't exist.
+ * The user sets their own password by clicking the link in the invite email.
+ * Requires SMTP configured on the Directus container.
+ * @param {{ email: string, roleId: string, firstName?: string, lastName?: string, inviteUrl?: string }} input
+ * @returns {Promise<object>} the Directus user object (fetched after invite)
+ */
+export async function inviteDirectusUser({ email, roleId, firstName, lastName, inviteUrl } = {}) {
+    const normalized = String(email || '').trim().toLowerCase();
+    if (!normalized) {
+        throw new ValidationError(msg('auth.email_required'), null, 'auth.email_required');
+    }
+    const role = String(roleId || '').trim();
+    if (!role) {
+        throw new ValidationError(msg('directus.role_id_required'), null, 'directus.role_id_required');
+    }
+
+    const body = { email: normalized, role };
+    if (inviteUrl) body.invite_url = String(inviteUrl);
+
+    // POST /users/invite returns 200 with no body on success
+    await directusFetch('/users/invite', { method: 'POST', body });
+
+    // Patch name fields immediately so they appear before password is set
+    let user = await findDirectusUserByEmail(normalized);
+    if (user?.id && (firstName || lastName)) {
+        const patch = {};
+        if (firstName) patch.first_name = String(firstName).trim();
+        if (lastName) patch.last_name = String(lastName).trim();
+        try {
+            await directusFetch(`/users/${encodeURIComponent(user.id)}`, { method: 'PATCH', body: patch });
+            user = { ...user, ...patch };
+        } catch (err) {
+            console.warn('inviteDirectusUser: name patch failed (non-fatal):', err.message || err);
+        }
+    }
+
+    if (!user?.id) {
+        throw new InternalError('Directus invite succeeded but user not found afterwards');
+    }
+    return user;
+}
+
+/**
  * Patch Directus user fields via service token (password, first_name, last_name, …).
  * @param {string} directusUserId
  * @param {{ password?: string, firstName?: string, lastName?: string }} fields
@@ -869,6 +949,9 @@ export async function updateDirectusUser(directusUserId, fields = {}) {
         }
         body.last_name = last;
     }
+    if ('avatar' in fields) {
+        body.avatar = fields.avatar === null ? null : String(fields.avatar);
+    }
     if (Object.keys(body).length === 0) {
         throw new ValidationError(msg('auth.profile_update_empty'), null, 'auth.profile_update_empty');
     }
@@ -878,6 +961,32 @@ export async function updateDirectusUser(directusUserId, fields = {}) {
         body
     });
     return payload?.data || null;
+}
+
+/**
+ * Upload an image buffer to Directus files using the user's access token.
+ * Returns the new file's UUID.
+ * @param {string} accessToken
+ * @param {Buffer} buffer
+ * @param {string} mimetype
+ * @param {string} filename
+ * @returns {Promise<string>} file UUID
+ */
+export async function uploadDirectusAvatar(accessToken, buffer, mimetype, filename) {
+    const base = (config.directus?.url || '').trim().replace(/\/+$/, '');
+    if (!base) throw new Error('Directus not configured');
+    const formData = new FormData();
+    formData.append('file', new Blob([buffer], { type: mimetype }), filename || 'avatar');
+    const response = await fetch(`${base}/files`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: formData
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.data?.id) {
+        throw new Error(`Avatar upload failed: ${response.status}`);
+    }
+    return data.data.id;
 }
 
 const COMMENT_FIELDS_ATTEMPTS = Object.freeze([
@@ -891,7 +1000,8 @@ const COMMENT_FIELDS_ATTEMPTS = Object.freeze([
         'user_created.id',
         'user_created.first_name',
         'user_created.last_name',
-        'user_created.email'
+        'user_created.email',
+        'user_created.avatar'
     ].join(','),
     [
         'id',
@@ -902,7 +1012,8 @@ const COMMENT_FIELDS_ATTEMPTS = Object.freeze([
         'user_created.id',
         'user_created.first_name',
         'user_created.last_name',
-        'user_created.email'
+        'user_created.email',
+        'user_created.avatar'
     ].join(','),
     [
         'id',
@@ -912,7 +1023,8 @@ const COMMENT_FIELDS_ATTEMPTS = Object.freeze([
         'user_created.id',
         'user_created.first_name',
         'user_created.last_name',
-        'user_created.email'
+        'user_created.email',
+        'user_created.avatar'
     ].join(','),
     'id,collection,item,comment,user_created'
 ]);
@@ -1130,7 +1242,7 @@ export async function listCases({ limit = 50, accessToken } = {}) {
     const caseIds = rows.map((row) => row?.id).filter(Boolean).map((id) => String(id));
     const [attachmentsByCaseId, collaboratorsByCaseId, activityByCaseId] = await Promise.all([
         listAttachmentsByCaseIds(caseIds, { accessToken }),
-        listCollaboratorsByCaseIds(caseIds),
+        listCollaboratorsByCaseIds(caseIds, { accessToken }),
         listCaseActivityTimestampsByCaseIds(caseIds, { accessToken })
     ]);
     const cases = rows.map((row) => mapCase(
@@ -1173,34 +1285,67 @@ export async function listCases({ limit = 50, accessToken } = {}) {
 }
 
 /**
- * Who the access token represents (for Cases meta / debugging session mismatches).
+ * Fetch role details by UUID using the service token.
+ * Falls back gracefully when the service token can't read directus_roles.
  */
-export async function fetchDirectusViewer(accessToken) {
+// Directus v10+: admin_access lives on directus_policies, not directus_roles.
+// Roles only have id, name, icon, description.
+async function fetchRoleById(roleId) {
+    if (!roleId) return null;
+    try {
+        const payload = await directusFetch(`/roles/${encodeURIComponent(roleId)}`, {
+            query: { fields: 'id,name' }
+        });
+        return payload?.data || null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Who the access token represents (for Cases meta / role checks).
+ * Renamed from fetchDirectusViewer — "viewer" has a distinct meaning in this app.
+ */
+export async function fetchDirectusCurrentUser(accessToken) {
     if (!accessToken) return null;
     try {
         const payload = await directusFetch('/users/me', {
             accessToken,
             query: {
-                fields: 'id,email,first_name,last_name,role.id,role.name,role.admin_access'
+                fields: 'id,email,first_name,last_name,role.id,role.name'
             }
         });
         const u = payload?.data;
         if (!u?.id) return null;
+
+        // Directus returns role as a plain UUID when the user's role lacks read
+        // access on directus_roles — expand it via the service token instead.
+        let roleName = u.role?.name || null;
+        const roleId = u.role?.id || (typeof u.role === 'string' ? u.role : null);
+
+        if (roleId && !roleName) {
+            const role = await fetchRoleById(roleId);
+            if (role) roleName = role.name || null;
+        }
+
         return {
             id: u.id,
             email: u.email || null,
             firstName: u.first_name || null,
             lastName: u.last_name || null,
             name: [u.first_name, u.last_name].filter(Boolean).join(' ').trim() || null,
-            roleId: u.role?.id || (typeof u.role === 'string' ? u.role : null),
-            roleName: u.role?.name || null,
-            adminAccess: u.role?.admin_access === true
+            roleId,
+            roleName,
+            adminAccess: false  // v10+: admin_access is on policies, not roles
         };
     } catch (err) {
         console.warn('Directus /users/me failed:', err.message || err);
         return null;
     }
 }
+
+/** @deprecated Use fetchDirectusCurrentUser */
+export const fetchDirectusViewer = fetchDirectusCurrentUser;
 
 /**
  * Fetch one attachment row with field fallbacks (dates often blocked for clinicians).
@@ -1456,7 +1601,7 @@ export function canOpenAttachmentInSlicer(attachment) {
  * Delete a case attachment record (does NOT delete the underlying Directus file).
  * Verifies ownership before deleting.
  */
-export async function deleteCaseAttachment(caseId, attachmentId, { accessToken } = {}) {
+export async function deleteCaseAttachment(caseId, attachmentId, { accessToken, asAdmin = false } = {}) {
     if (!accessToken) {
         throw new ValidationError(msg('directus.delete_attachments_token_required'), null, 'directus.delete_attachments_token_required');
     }
@@ -1466,12 +1611,14 @@ export async function deleteCaseAttachment(caseId, attachmentId, { accessToken }
         throw new ValidationError(msg('case.case_attachment_ids_required'), null, 'case.case_attachment_ids_required');
     }
 
-    // Verify attachment belongs to this case before deleting
+    // Verify attachment belongs to this case (always as the user — Directus read ACL applies).
     await getCaseAttachment(caseKey, attachmentKey, { accessToken });
 
+    // Case admins use the service token so they can delete any attachment regardless of uploader.
+    // Regular members use their own token; Directus enforces user_created = $CURRENT_USER.
     await directusFetch(`/items/attachment/${encodeURIComponent(attachmentKey)}`, {
         method: 'DELETE',
-        accessToken
+        ...(asAdmin ? {} : { accessToken })
     });
 }
 
@@ -1824,4 +1971,27 @@ export async function lookupDirectusUserByEmail(email, { accessToken } = {}) {
         throw new NotFoundError(msg('directus.user_not_found_by_email'), null, 'directus.user_not_found_by_email');
     }
     return person;
+}
+
+/**
+ * Fetch a Directus asset and pipe it to an Express response.
+ * Returns false and sends a 404 if the asset cannot be fetched.
+ *
+ * @param {import('express').Response} res
+ * @param {string} fileId
+ * @param {string} accessToken
+ * @param {{ cacheControl?: string }} [options]
+ */
+export async function sendDirectusAsset(res, fileId, accessToken, { cacheControl = 'private, max-age=300' } = {}) {
+    try {
+        const assetRes = await fetchDirectusAsset(fileId, accessToken);
+        const buffer = Buffer.from(await assetRes.arrayBuffer());
+        res.setHeader('Content-Type', assetRes.headers.get('content-type') || 'image/jpeg');
+        res.setHeader('Cache-Control', cacheControl);
+        res.send(buffer);
+        return true;
+    } catch {
+        res.status(404).end();
+        return false;
+    }
 }

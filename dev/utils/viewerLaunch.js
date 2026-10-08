@@ -195,9 +195,14 @@ export function buildSlicerGuiLoaderUrl({
     return loader.href;
 }
 
-/** In-browser SlicerWeb build, served same-origin by nginx (see scripts/fetch-slicerweb.*). */
-export function buildSlicerWebUrl({ layout = 'FourUp' } = {}) {
-    return `/slicerweb/?layout=${encodeURIComponent(layout)}&sample=`;
+/**
+ * In-browser SlicerWeb build, served same-origin by nginx (see scripts/fetch-slicerweb.*).
+ * channel: 'stable' (default) or 'latest' (developer mode).
+ */
+export function buildSlicerWebUrl({ layout = 'FourUp', channel = 'stable', sha } = {}) {
+    const ch = channel === 'latest' ? 'latest' : 'stable';
+    const v = sha ? `&v=${encodeURIComponent(sha.slice(0, 8))}` : '';
+    return `/slicerweb/${ch}/?layout=${encodeURIComponent(layout)}&sample=${v}`;
 }
 
 export function viewerDisplayName(kind, { simplified = false } = {}) {

@@ -7,9 +7,20 @@ const keys = (options) => getAppMenuItems(options).map((item) => item.key);
 
 test('My Projects is hidden while MY_PROJECTS_VISIBLE is false', () => {
     assert.equal(MY_PROJECTS_VISIBLE, false);
-    assert.deepEqual(keys({ directusCasesEnabled: true, projectCaseMigrateEnabled: true }), ['cases', 'my-files']);
-    assert.deepEqual(keys({ directusCasesEnabled: true, projectCaseMigrateEnabled: false }), ['cases', 'my-files']);
-    assert.deepEqual(keys({ directusCasesEnabled: false }), ['my-files']);
+    assert.deepEqual(keys({ directusCasesEnabled: true, projectCaseMigrateEnabled: true }), ['cases', 'my-files', 'my-groups']);
+    assert.deepEqual(keys({ directusCasesEnabled: true, projectCaseMigrateEnabled: false }), ['cases', 'my-files', 'my-groups']);
+    assert.deepEqual(keys({ directusCasesEnabled: false }), ['my-files', 'my-groups']);
+});
+
+test('Pending Registrations is not a nav item — it lives in My Groups task section', () => {
+    assert.deepEqual(
+        keys({ directusCasesEnabled: true, isRegistrationReviewer: true }),
+        ['cases', 'my-files', 'my-groups']
+    );
+    assert.deepEqual(
+        keys({ directusCasesEnabled: true, isRegistrationReviewer: false }),
+        ['cases', 'my-files', 'my-groups']
+    );
 });
 
 test('every My Projects view is covered by the redirect guard', () => {

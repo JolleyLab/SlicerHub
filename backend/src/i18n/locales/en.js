@@ -7,6 +7,9 @@ export default {
         internal_error: 'Internal server error',
         route_not_found: 'Route {method} {path} not found'
     },
+    avatar: {
+        required: 'No file received.'
+    },
     rate_limit: {
         generic: 'Too many requests'
     },
@@ -17,6 +20,7 @@ export default {
         token_expired: 'Token expired',
         session_expired: 'Session expired — please sign in again',
         admin_required: 'Admin access required',
+        insufficient_role: 'You do not have the required org-level role for this action',
         origin_not_allowed: 'Request origin is not allowed',
         authentication_required: 'Authentication required',
         identity_password_required: 'Identity and password are required',
@@ -89,7 +93,8 @@ export default {
         update_case_token_required: 'Directus user access token is required to update a case',
         create_attachments_token_required: 'Directus user access token is required to create attachments',
         case_no_updatable_fields: 'No updatable fields provided (title, description, status)',
-        actor_directus_user_id_required: 'actorDirectusUserId is required'
+        actor_directus_user_id_required: 'actorDirectusUserId is required',
+        not_linked: 'Your account is not fully set up. Please contact an administrator.'
     },
     case: {
         id_required: 'Case is required.',
@@ -244,5 +249,22 @@ export default {
         provision_role_required: 'DIRECTUS_DEFAULT_ROLE_ID is required before provisioning users',
         provision_users_required: 'users array is required (e.g. [{ email }])',
         provision_batch_limit: 'Batch size limited to 200 users'
+    },
+    taskGroups: {
+        name_required: 'Group name is required',
+        not_found: 'Task group not found',
+        user_not_found: 'No user found with that email address',
+        user_id_required: 'A user ID or email address is required',
+        already_member: 'That user is already a member of this group',
+        cannotRemoveOwnManage: 'You cannot remove your own manage permission'
+    },
+    registration: {
+        rate_limit: 'Too many registration requests. Please wait and try again.',
+        duplicate: 'A registration request for this email is already pending.',
+        email_already_registered: 'An account with that email address already exists.',
+        token_required: 'Registration token is required',
+        token_invalid: 'This registration link is invalid or has expired',
+        not_found: 'Registration request not found',
+        not_pending: 'This registration request is not in a pending state'
     }
 };

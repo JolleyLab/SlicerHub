@@ -14,10 +14,16 @@ import projectRoutes from "./routes/projects.js";
 import projectGpuRoutes from "./routes/projectGpu.js";
 import directusRoutes from "./routes/directus.js";
 import directusTusRoutes from "./routes/directusTus.js";
+import registrationRequestRoutes from "./routes/registrationRequests.js";
+import taskGroupRoutes from "./routes/taskGroups.js";
 import featuresRoutes from "./routes/features.js";
+import slicerWebRoutes from "./routes/slicerWeb.js";
+import announcementRoutes from "./routes/announcement.js";
+import { startStablePoller, startLatestPoller } from "./services/slicerWebUpdater.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { isDirectusConfigured } from "./services/directus.js";
 import { startBillingWatchdog } from "./gpu/billingWatchdog.js";
+import { startPolicySyncScheduler } from "./services/directusPolicySync.js";
 import {
     startViewerSessionWatchdog,
     pruneExpiredViewerSessions,
@@ -67,6 +73,9 @@ const app = express();
 // Behind nginx / Cloudflare — needed for secure cookies and rate limits
 app.set('trust proxy', 1);
 
+// Raw body for webhook HMAC verification (must precede express.json() — body stream is single-use)
+app.use('/api/slicerweb/webhook', express.raw({ type: '*/*' }));
+
 // Parse JSON bodies
 app.use(express.json());
 
@@ -83,8 +92,12 @@ app.use(cors({
 // Register authentication routes
 authRoutes(app);
 adminProvisionRoutes(app);
+registrationRequestRoutes(app);
+taskGroupRoutes(app);
 
 featuresRoutes(app);
+slicerWebRoutes(app);
+announcementRoutes(app);
 
 // Register file routes
 fileRoutes(app);
@@ -130,7 +143,10 @@ app.listen(config.server.port, config.server.host, async () => {
         console.warn('GPU credential repair on startup failed:', err.message);
     }
     startBillingWatchdog();
+    startPolicySyncScheduler();
     startViewerSessionWatchdog();
+    startStablePoller();
+    startLatestPoller();
     try {
         clearSessions();
         await stopAllPerUserSlicerGuiContainers();

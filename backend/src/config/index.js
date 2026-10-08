@@ -154,6 +154,8 @@ const config = {
         casesEnabled: process.env.ENABLE_DIRECTUS_CASES === 'true',
         /** Role UUID for newly provisioned Directus users (app clinician / non-admin). */
         defaultRoleId: (process.env.DIRECTUS_DEFAULT_ROLE_ID || '').trim(),
+        /** Role UUID for OrgAdmin users. Set DIRECTUS_ORG_ADMIN_ROLE_ID in .env. */
+        orgAdminRoleId: (process.env.DIRECTUS_ORG_ADMIN_ROLE_ID || '').trim(),
         /**
          * CUTOVER (delete with projectCaseMigrate.js): per-project Migrate → Case button.
          * Default on when Cases are enabled; set ENABLE_PROJECT_CASE_MIGRATE=false to hide.
@@ -186,6 +188,61 @@ const config = {
     caseInviteTtlDays: Math.max(1, Math.min(30, Number(process.env.CASE_INVITE_TTL_DAYS || 7) || 7)),
 
     /**
+     * SlicerWeb channel update service.
+     * Requires SLICERWEB_GITHUB_TOKEN (fine-grained PAT, read-only Contents on the deploy repo).
+     * ENABLE_SLICERWEB_DEV_MODE=true exposes the latest-channel opt-in in user settings.
+     */
+    slicerWeb: (() => {
+        const repoUrl = (process.env.SLICERWEB_REPO_URL || '').trim();
+        // Parse "https://github.com/Owner/Repo.git" or "Owner/Repo"
+        const match = repoUrl.match(/github\.com[/:]([\w-]+)\/([\w.-]+?)(?:\.git)?$/)
+            || repoUrl.match(/^([\w-]+)\/([\w.-]+)$/);
+        // GitHub App private key: accept literal PEM or \n-escaped string from env
+        const rawKey = (process.env.SLICERWEB_GITHUB_APP_PRIVATE_KEY || '').trim();
+        const appPrivateKey = rawKey.replace(/\\n/g, '\n');
+        const hasAppCreds = Boolean(
+            process.env.SLICERWEB_GITHUB_APP_ID?.trim()
+            && process.env.SLICERWEB_GITHUB_APP_INSTALLATION_ID?.trim()
+            && appPrivateKey
+        );
+        const hasPatCreds = Boolean((process.env.SLICERWEB_GITHUB_TOKEN || '').trim());
+        const deployKeyPath = (process.env.SLICERWEB_DEPLOY_KEY_PATH || '').trim();
+        const hasDeployKey = Boolean(deployKeyPath);
+        return {
+            // GitHub App credentials (preferred — org-owned, short-lived tokens)
+            app: {
+                id: (process.env.SLICERWEB_GITHUB_APP_ID || '').trim(),
+                installationId: (process.env.SLICERWEB_GITHUB_APP_INSTALLATION_ID || '').trim(),
+                privateKey: appPrivateKey
+            },
+            // PAT fallback for local dev
+            githubToken: (process.env.SLICERWEB_GITHUB_TOKEN || '').trim(),
+            /** Path to the SSH deploy key (inside container). Set SLICERWEB_DEPLOY_KEY_PATH in .env. */
+            deployKeyPath,
+            /** True if any GitHub credentials are configured. */
+            hasCredentials: hasAppCreds || hasPatCreds || hasDeployKey,
+            owner: match?.[1] || '',
+            repo: match?.[2] || '',
+            stableDir: (process.env.SLICERWEB_STABLE_DIR || '/app/data/slicerweb-stable').trim(),
+            latestDir: (process.env.SLICERWEB_LATEST_DIR || '/app/data/slicerweb-latest').trim(),
+            /** How often to check the stable channel for updates (default 4 hours). 0 = disabled. */
+            stableCheckIntervalMs: (() => {
+                const h = Number(process.env.SLICERWEB_STABLE_CHECK_HOURS ?? 4);
+                return Number.isFinite(h) && h > 0 ? h * 60 * 60 * 1000 : 0;
+            })(),
+            /** How often to check the latest channel for updates when dev mode is on (default 5 min). 0 = disabled. */
+            latestCheckIntervalMs: (() => {
+                const m = Number(process.env.SLICERWEB_LATEST_CHECK_MINUTES ?? 5);
+                return Number.isFinite(m) && m > 0 ? m * 60 * 1000 : 0;
+            })(),
+            /** Allow users to opt into the latest channel from Settings. */
+            devModeEnabled: process.env.ENABLE_SLICERWEB_DEV_MODE === 'true',
+            /** Shared secret for GitHub push webhook signature verification. */
+            webhookSecret: (process.env.SLICERWEB_WEBHOOK_SECRET || '').trim()
+        };
+    })(),
+
+    /**
      * Outbound SMTP for case signup invite emails.
      * Default off until SMTP_ENABLED=true (copy-link after approve still works).
      * Local compose can point at Mailpit; leave SMTP_ENABLED=false until ready to send.
@@ -196,8 +253,17 @@ const config = {
             if (process.env.SMTP_ENABLED === 'true') return true;
             return Boolean((process.env.SMTP_HOST || '').trim());
         })(),
-        host: (process.env.SMTP_HOST || '').trim(),
-        port: Math.max(1, Number(process.env.SMTP_PORT || 587) || 587),
+        host: (() => {
+            const h = (process.env.SMTP_HOST || '').trim();
+            if (!h && process.env.SMTP_ENABLED === 'true') return 'localhost';
+            return h;
+        })(),
+        port: (() => {
+            if (process.env.SMTP_PORT) return Math.max(1, Number(process.env.SMTP_PORT) || 587);
+            // Default to mailpit port when no host is set (local dev)
+            const h = (process.env.SMTP_HOST || '').trim();
+            return (!h && process.env.SMTP_ENABLED === 'true') ? 1025 : 587;
+        })(),
         secure: process.env.SMTP_SECURE === 'true',
         user: (process.env.SMTP_USER || '').trim(),
         pass: (process.env.SMTP_PASS || '').trim(),

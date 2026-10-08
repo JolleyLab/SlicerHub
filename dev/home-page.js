@@ -6,7 +6,8 @@ import {
     listInvitesAwaitingMyApproval,
     listRecentActivity,
     approveDirectusCaseInvite,
-    rejectDirectusCaseInvite
+    rejectDirectusCaseInvite,
+    getPendingRegistrationsCount
 } from './services/directus.js';
 import { invalidateNotifications, listMentionNotifications } from './services/notifications.js';
 import { eventToActivity, mentionToActivity } from './utils/activityItems.js';
@@ -599,7 +600,10 @@ export class HomePage extends LitElement {
 
     static get properties() {
         return {
-            username: { type: String },
+            username:   { type: String },
+            avatarUrl:  { type: String },
+            isOrgAdmin: { type: Boolean },
+            isRegistrationReviewer: { type: Boolean },
             /** @type {{ id: string, kind: 'invite'|'task', title: string, detail?: string }[]} */
             todo: { type: Array },
             /** @type {{ id: string, kind: 'mention'|'approval', title: string, detail?: string }[]} */
@@ -617,6 +621,7 @@ export class HomePage extends LitElement {
     constructor() {
         super();
         this.username = '';
+        this.avatarUrl = '';
         this.todo = [];
         this.activity = [];
         this.recentCases = [];
@@ -689,6 +694,39 @@ export class HomePage extends LitElement {
             ];
         } catch (err) {
             console.warn('Could not load pending invites:', err.message);
+        }
+    }
+
+    async loadPendingRegistrationRequests() {
+        if (!this.isRegistrationReviewer) {
+            this.todo = this.todo.filter((item) => item.kind !== 'registration');
+            return;
+        }
+        try {
+            const count = await getPendingRegistrationsCount();
+            const regItem = count > 0 ? [{
+                id: 'pending-registrations',
+                kind: 'registration',
+                category: 'task',
+                title: count === 1
+                    ? t('home.todo.pendingRegistration')
+                    : t('home.todo.pendingRegistrations', { count }),
+                detail: t('home.todo.pendingRegistrationsDetail'),
+                actionRequired: true,
+                at: new Date().toISOString()
+            }] : [];
+            this.todo = [
+                ...regItem,
+                ...this.todo.filter((item) => item.kind !== 'registration')
+            ];
+        } catch (err) {
+            console.warn('Could not load pending registrations:', err.message);
+        }
+    }
+
+    updated(changedProps) {
+        if (changedProps.has('isOrgAdmin') || changedProps.has('isRegistrationReviewer')) {
+            this.loadPendingRegistrationRequests();
         }
     }
 
@@ -881,6 +919,17 @@ export class HomePage extends LitElement {
             </div>
         `;
 
+        if (item.kind === 'registration') {
+            return html`
+                <li>
+                    <button type="button" class="card card-clickable cat-${item.category}"
+                        @click=${() => this.dispatchEvent(new CustomEvent('menu-selection-change', { detail: { selectedKey: 'admin-registrations' }, bubbles: true, composed: true }))}>
+                        ${cardInner}
+                    </button>
+                </li>
+            `;
+        }
+
         if (!item.invite && item.caseId) {
             const ariaLabel = item.category === 'mention'
                 ? t('home.card.openCaseAria', { case: item.caseTitle || t('home.invite.untitledCase') })
@@ -1035,6 +1084,9 @@ export class HomePage extends LitElement {
         return html`
             <page-layout-template
                 .username=${this.username}
+                .avatarUrl=${this.avatarUrl}
+                .isOrgAdmin=${this.isOrgAdmin || false}
+                .isRegistrationReviewer=${this.isRegistrationReviewer || false}
                 selectedMenuKey=""
                 homeHref="/"
                 homeLabel=${t('common.home')}

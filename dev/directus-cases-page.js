@@ -43,9 +43,9 @@ import {
     buildSlicerWebUrl,
     viewerDisplayName
 } from './utils/viewerLaunch.js';
-import { getCachedLocalSlicerViewerOptions } from './utils/userPreferences.js';
+import { getCachedLocalSlicerViewerOptions, getCachedUserPreferences } from './utils/userPreferences.js';
 import { resolveSimplifiedViewerChoice } from './utils/localSlicerViewerOptions.js';
-import { isInviteEmailEnabled } from './services/features.js';
+import { isInviteEmailEnabled, isSlicerWebDevModeEnabled, loadAppFeatures } from './services/features.js';
 import { sendViewerHeartbeat } from './utils/viewerHeartbeat.js';
 import { stopViewerSession } from './utils/viewerSessionLifecycle.js';
 import {
@@ -1098,12 +1098,31 @@ export class DirectusCasesPage extends LitElement {
                 color: var(--color-text-secondary);
                 font-size: 0.9rem;
             }
+
+            .toast {
+                position: fixed;
+                right: 20px;
+                bottom: 20px;
+                z-index: 1200;
+                background: var(--color-success, #2e7d32);
+                color: #fff;
+                border-radius: var(--radius-md, 6px);
+                padding: 10px 16px;
+                box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
+                max-width: min(380px, calc(100vw - 40px));
+                font-weight: 500;
+                font-size: 0.9rem;
+                line-height: 1.4;
+            }
         `;
     }
 
     static get properties() {
         return {
             username: { type: String },
+            avatarUrl: { type: String },
+            isOrgAdmin: { type: Boolean },
+            isRegistrationReviewer: { type: Boolean },
             loading: { type: Boolean },
             errorMessage: { type: String },
             cases: { type: Array },
@@ -1116,6 +1135,7 @@ export class DirectusCasesPage extends LitElement {
             iframeUrl: { type: String },
             viewerLoading: { type: Boolean },
             viewerLoadingDetail: { type: String },
+            toastMessage: { type: String },
             viewerSimplified: { type: Boolean },
             viewerKind: { type: String },
             viewerClosing: { type: Boolean },
@@ -1163,6 +1183,7 @@ export class DirectusCasesPage extends LitElement {
     constructor() {
         super();
         this.username = t('common.guest');
+        this.avatarUrl = '';
         this.loading = false;
         this.errorMessage = '';
         this.cases = [];
@@ -1194,6 +1215,9 @@ export class DirectusCasesPage extends LitElement {
         this._focusBeforeViewer = null;
         this._slicerWebRun = 0;
         this._slicerWebPending = null;
+        this._slicerWebDownloadPromise = null;
+        this.toastMessage = '';
+        this._toastTimeout = null;
         this._heartbeatInterval = null;
         this._handleBeforeUnload = null;
         this._popStateHandler = null;
@@ -1329,9 +1353,41 @@ export class DirectusCasesPage extends LitElement {
         this.syncUploadState();
 
         this.loadCases();
+
+        // Peek for a new SlicerWeb build. If one is found, clone runs in the background
+        // and a toast notifies when done. Features load async so we wait before checking.
+        loadAppFeatures().then(() => {
+            if (isSlicerWebDevModeEnabled() && getCachedUserPreferences().slicerWebChannel === 'latest') {
+                fetch('/api/slicerweb/check-update?channel=latest', { credentials: 'include' })
+                    .then(r => r.ok ? r.json() : null)
+                    .then(data => {
+                        if (data && !data.upToDate) {
+                            this._slicerWebDownloadPromise = fetch('/api/slicerweb/check-update?channel=latest', {
+                                method: 'POST', credentials: 'include'
+                            })
+                                .then(() => {
+                                    this._slicerWebDownloadPromise = null;
+                                    this.showToast(t('cases.slicerWebUpdated'));
+                                })
+                                .catch(() => { this._slicerWebDownloadPromise = null; });
+                        }
+                    })
+                    .catch(() => {});
+            }
+        });
+    }
+
+    showToast(message) {
+        this.toastMessage = message || '';
+        if (this._toastTimeout) clearTimeout(this._toastTimeout);
+        this._toastTimeout = setTimeout(() => {
+            this.toastMessage = '';
+            this._toastTimeout = null;
+        }, 6000);
     }
 
     disconnectedCallback() {
+        if (this._toastTimeout) clearTimeout(this._toastTimeout);
         uploadManager.removeEventListener('change', this._onUploadChange);
         uploadManager.removeEventListener('attached', this._onUploadAttached);
         window.removeEventListener('beforeunload', this._handleBeforeUnload);
@@ -1590,6 +1646,11 @@ export class DirectusCasesPage extends LitElement {
         return role === 'admin' || role === 'collaborator';
     }
 
+    isMyAttachment(attachment) {
+        const me = this.currentDirectusUserId;
+        return !!me && !!attachment?.uploadedBy && String(attachment.uploadedBy) === String(me);
+    }
+
     /** Any case member (including read_only) may comment. */
     canCommentOnCase(caseRow) {
         return Boolean(this.myCaseRole(caseRow));
@@ -1609,6 +1670,7 @@ export class DirectusCasesPage extends LitElement {
                 username: caseRow.createdBy.username || '',
                 firstName: caseRow.createdBy.firstName || '',
                 lastName: caseRow.createdBy.lastName || '',
+                avatarUrl: caseRow.createdBy.avatarUrl || null,
                 role: 'admin',
                 locked: true
             });
@@ -1622,6 +1684,7 @@ export class DirectusCasesPage extends LitElement {
                 username: entry.username || '',
                 firstName: entry.firstName || '',
                 lastName: entry.lastName || '',
+                avatarUrl: entry.avatarUrl || null,
                 role: entry.role || 'collaborator',
                 locked: false
             });
@@ -1966,7 +2029,7 @@ export class DirectusCasesPage extends LitElement {
     // ── Attachment delete ──────────────────────────────────────────────────
     async handleDeleteAttachment(caseRow, attachment) {
         if (!attachment?.id || this.deletingAttachmentId) return;
-        if (!this.canEditCaseContent(caseRow)) return;
+        if (!this.isMyAttachment(attachment) && this.myCaseRole(caseRow) !== 'admin') return;
         if (!confirm(t('cases.confirmDeleteAttachment', { name: attachment.name || attachment.filenameDownload }))) return;
 
         this.deletingAttachmentId = attachment.id;
@@ -2325,9 +2388,10 @@ export class DirectusCasesPage extends LitElement {
 
     attachmentOpenTitle(attachment) {
         if (attachment?.canOpenInSlicer) {
-            const label = viewerDisplayName(VIEWER_KINDS.SLICER_GUI, {
-                simplified: this.accountPrefersSimplifiedViewer()
-            });
+            const dv = this.accountDefaultViewer();
+            const label = dv === 'web'
+                ? viewerDisplayName(VIEWER_KINDS.SLICERWEB)
+                : viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified: dv === 'simplified' });
             return t('cases.openInDefault', { viewer: label });
         }
         if (attachment?.canPreviewInBrowser) return t('cases.browserPreviewSoon');
@@ -2338,8 +2402,11 @@ export class DirectusCasesPage extends LitElement {
         return Boolean(attachment?.canOpenInSlicer || attachment?.canPreviewInBrowser);
     }
 
-    accountPrefersSimplifiedViewer() {
-        return getCachedLocalSlicerViewerOptions().useSimplifiedViewer === true;
+    accountDefaultViewer() {
+        const { useFullSlicer, useSimplifiedViewer } = getCachedLocalSlicerViewerOptions();
+        if (useFullSlicer && useSimplifiedViewer) return 'simplified';
+        if (useFullSlicer) return 'full';
+        return 'web';
     }
 
     clearViewerUiState() {
@@ -2472,6 +2539,17 @@ export class DirectusCasesPage extends LitElement {
         this.viewerKind = VIEWER_KINDS.SLICERWEB;
         this.viewerSimplified = false;
         this.viewerLoading = true;
+        this.showIframe = true;
+        this.currentAttachmentId = attachment.id;
+        this.selectedCaseId = caseRow.id;
+
+        const channel = (isSlicerWebDevModeEnabled() && getCachedUserPreferences().slicerWebChannel === 'latest')
+            ? 'latest' : 'stable';
+
+        // For the latest channel: open immediately with whatever is installed.
+        // A background download may already be in progress (started on page load).
+        // When it finishes, a toast notifies the user so they can reopen for the new version.
+
         this.viewerLoadingDetail = t('cases.openingSlicerWeb');
         this.showIframe = true;
         this._slicerWebRun += 1;
@@ -2479,7 +2557,14 @@ export class DirectusCasesPage extends LitElement {
         const download = fetchDirectusAttachmentContent(caseRow.id, attachment.id);
         download.catch(() => {}); // surfaced when awaited
         this._slicerWebPending = { download, fileName: this.currentFileName };
-        this.iframeUrl = buildSlicerWebUrl();
+
+        // Fetch installed SHA to include as ?v= in the iframe URL, which breaks any
+        // stale service-worker cache when a new build lands.
+        const statusData = await fetch('/api/slicerweb/status', { credentials: 'include' })
+            .then((r) => r.ok ? r.json() : null)
+            .catch(() => null);
+        const sha = statusData?.[channel] ?? null;
+        this.iframeUrl = buildSlicerWebUrl({ channel, sha });
 
         this._pushViewerHistory(caseRow.id);
     }
@@ -2545,7 +2630,20 @@ export class DirectusCasesPage extends LitElement {
             }
             await slicer.bridge.call('closeScene', []);
             const [path] = await slicer.writeFiles([new File([blob], pending.fileName)]);
-            await slicer.bridge.call('loadFiles', [[path]]);
+
+            let loadError;
+            for (let attempt = 0, delay = 500; attempt < 5; attempt++, delay *= 2) {
+                if (cancelled()) return;
+                try {
+                    await slicer.bridge.call('loadFiles', [[path]]);
+                    loadError = null;
+                    break;
+                } catch (err) {
+                    loadError = err;
+                    if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, delay));
+                }
+            }
+            if (loadError) throw loadError;
             if (cancelled()) return;
             // Fit all views to the loaded data. loadFiles with a .mrb restores the saved
             // camera state, which may not match the data extent — reset to center it.
@@ -2767,6 +2865,9 @@ export class DirectusCasesPage extends LitElement {
             <page-layout-template
                 ?inert=${this.showIframe}
                 .username=${this.username}
+                .avatarUrl=${this.avatarUrl}
+                .isOrgAdmin=${this.isOrgAdmin || false}
+                .isRegistrationReviewer=${this.isRegistrationReviewer || false}
                 selectedMenuKey="cases"
                 homeHref="/file-manager"
                 homeLabel="Home"
@@ -2930,6 +3031,9 @@ export class DirectusCasesPage extends LitElement {
             <page-layout-template
                 ?inert=${this.showIframe}
                 .username=${this.username}
+                .avatarUrl=${this.avatarUrl}
+                .isOrgAdmin=${this.isOrgAdmin || false}
+                .isRegistrationReviewer=${this.isRegistrationReviewer || false}
                 selectedMenuKey="cases"
                 homeHref="/file-manager"
                 homeLabel="Home"
@@ -3076,13 +3180,13 @@ export class DirectusCasesPage extends LitElement {
                                                     || !!this.openingAttachmentId
                                                     || this.viewerLoading}
                                                 .nameButtonTitle=${this.attachmentOpenTitle(attachment)}
-                                                @name-click=${() => this.handleOpenAttachment(caseRow, attachment)}
+                                                @name-click=${() => this.handleOpenViewer(caseRow, attachment, this.accountDefaultViewer())}
                                             >
                                                 ${attachment?.canOpenInSlicer ? html`
                                                     <attachment-open-menu
                                                         slot="title-trailing"
                                                         .fileName=${this.attachmentTitle(attachment)}
-                                                        .preferSimplifiedDefault=${this.accountPrefersSimplifiedViewer()}
+                                                        .defaultViewer=${this.accountDefaultViewer()}
                                                         ?disabled=${!!this.openingAttachmentId || this.viewerLoading}
                                                         @open-viewer=${(e) => this.handleOpenViewer(caseRow, attachment, e.detail?.viewer)}
                                                     ></attachment-open-menu>
@@ -3106,6 +3210,8 @@ export class DirectusCasesPage extends LitElement {
                                                             </svg>
                                                         `}
                                                     </button>
+                                                ` : ''}
+                                                ${(this.isMyAttachment(attachment) || this.myCaseRole(caseRow) === 'admin') ? html`
                                                     <button
                                                         slot="actions"
                                                         class="file-icon-button"
@@ -3295,6 +3401,7 @@ export class DirectusCasesPage extends LitElement {
         return html`
             ${detail ? this.renderCaseDetail(detail) : this.renderLanding()}
             ${this.renderViewerOverlay()}
+            ${this.toastMessage ? html`<div class="toast" role="status">${this.toastMessage}</div>` : ''}
             <people-dialog
                 id="case-people-dialog"
                 title=${t('cases.peopleDialog')}

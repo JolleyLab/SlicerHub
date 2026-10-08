@@ -1,48 +1,68 @@
-# Fetch the prebuilt SlicerWeb site (github.com/lassoan/slicerweb-app) at the commit pinned in
-# slicerweb/VERSION, where nginx serves it at /slicerweb/.
+# Fetch a prebuilt SlicerWeb channel into its local data directory.
 #
-# Destination: data/slicerweb/ (git-ignored), or $env:SLICERWEB_DIR when set. Set the same value in .env
-# so docker compose mounts that folder.
+# Usage:
+#   scripts/fetch-slicerweb.ps1                  # stable channel (default)
+#   scripts/fetch-slicerweb.ps1 --channel stable
+#   scripts/fetch-slicerweb.ps1 --channel latest
 #
-# To upgrade: put a new commit SHA in slicerweb/VERSION and re-run.
+# The channel maps to a git branch in the deploy repo:
+#   stable  →  deploy/stable   →  data/slicerweb-stable/
+#   latest  →  deploy/latest   →  data/slicerweb-latest/
+#
+# Override the destination with $env:SLICERWEB_STABLE_DIR or $env:SLICERWEB_LATEST_DIR.
+# Set the same value in .env so docker compose mounts the same folder.
+#
+# The deploy branches are single-commit histories that are force-pushed on each build,
+# so we fetch by branch name rather than a pinned SHA.
+param(
+    [string]$Channel = 'stable'
+)
 $ErrorActionPreference = 'Stop'
 
-$root = Split-Path -Parent $PSScriptRoot
-$repoUrl = if ($env:SLICERWEB_REPO_URL) { $env:SLICERWEB_REPO_URL } else { 'https://github.com/lassoan/slicerweb-app.git' }
-$sha = (Get-Content (Join-Path $root 'slicerweb/VERSION') -Raw).Trim()
-$dest = if ($env:SLICERWEB_DIR) { $env:SLICERWEB_DIR } else { Join-Path $root 'data/slicerweb' }
-$versionFile = Join-Path $dest '.version'
-
-if ((Test-Path $versionFile) -and ((Get-Content $versionFile -Raw).Trim() -eq $sha)) {
-    Write-Host "SlicerWeb $sha already present in $dest"
-    return
+if ($Channel -notin @('stable', 'latest')) {
+    throw "Unknown channel '$Channel'. Use 'stable' or 'latest'."
 }
+
+$root    = Split-Path -Parent $PSScriptRoot
+$repoUrl = if ($env:SLICERWEB_REPO_URL) { $env:SLICERWEB_REPO_URL } else { 'https://github.com/lassoan/slicerweb-app.git' }
+$ref     = "deploy/$Channel"
+
+$destEnvVar = if ($Channel -eq 'stable') { $env:SLICERWEB_STABLE_DIR } else { $env:SLICERWEB_LATEST_DIR }
+$dest    = if ($destEnvVar) { $destEnvVar } else { Join-Path $root "data/slicerweb-$Channel" }
+$versionFile = Join-Path $dest '.version'
 
 try {
     New-Item -ItemType Directory -Force $dest | Out-Null
     $probe = Join-Path $dest '.write-test'
     Set-Content -Path $probe -Value '' ; Remove-Item $probe
 } catch {
-    throw "Cannot write to $dest. Set SLICERWEB_DIR to a folder you can write to (and in .env), then run this again. If Docker created that folder (because docker compose ran first), stop nginx and remove the empty folder."
+    throw "Cannot write to $dest. Set SLICERWEB_$($Channel.ToUpper())_DIR to a folder you can write to (and in .env), then run this again."
 }
 
-# Work in the system temp folder, so nothing is needed beyond the destination itself.
+# Fetch the latest SHA on the branch so we can skip if already current.
+Write-Host "Resolving latest SHA for $ref ..."
 $tmp = Join-Path ([IO.Path]::GetTempPath()) "slicerweb-fetch-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Force $tmp | Out-Null
 try {
     git -C $tmp init -q
     git -C $tmp remote add origin $repoUrl
-    # The upstream repo keeps one build and rewrites history; if this SHA is gone, pin a newer one.
-    git -C $tmp fetch -q --depth 1 origin $sha
-    if ($LASTEXITCODE -ne 0) { throw "Could not fetch $sha from $repoUrl - update slicerweb/VERSION" }
+    git -C $tmp fetch -q --depth 1 origin $ref
+    if ($LASTEXITCODE -ne 0) { throw "Could not fetch $ref from $repoUrl" }
+    $sha = (git -C $tmp rev-parse FETCH_HEAD).Trim()
+
+    if ((Test-Path $versionFile) -and ((Get-Content $versionFile -Raw).Trim() -eq $sha)) {
+        Write-Host "SlicerWeb $Channel ($sha) already present in $dest"
+        return
+    }
+
     git -C $tmp checkout -q FETCH_HEAD
     Remove-Item -Recurse -Force (Join-Path $tmp '.git'), (Join-Path $tmp '.github') -ErrorAction SilentlyContinue
 
-    # Replace the contents (not the folder itself, which may be a mount point or owned by someone else).
+    # Replace contents (not the folder itself — may be a mount point).
     Get-ChildItem $dest -Force | Remove-Item -Recurse -Force
     Get-ChildItem $tmp -Force | Copy-Item -Destination $dest -Recurse -Force
     Set-Content -Path $versionFile -Value $sha -NoNewline
-    Write-Host "SlicerWeb $sha installed in $dest"
+    Write-Host "SlicerWeb $Channel $($sha.Substring(0,12)) installed in $dest"
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }

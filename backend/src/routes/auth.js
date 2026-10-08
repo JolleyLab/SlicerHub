@@ -10,7 +10,6 @@ import {
     AppError
 } from '../utils/errors.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import { createRateLimiter, getRateLimitClientIp } from '../middleware/rateLimit.js';
 import {
     getPublicAuthConfig,
     getAuthProviderName,
@@ -42,13 +41,17 @@ import { recordAuthEvent } from '../auth/auditLog.js';
 import { changePasswordForUser } from '../auth/changePassword.js';
 import config from '../config/index.js';
 import { msg } from '../i18n/index.js';
+import multer from 'multer';
+import heicConvert from 'heic-convert';
+import { uploadDirectusAvatar, updateDirectusUser, findDirectusUserById, sendDirectusAsset, isDirectusConfigured, fetchDirectusCurrentUser as fetchDirectusViewer, directusFetch } from '../services/directus.js';
+import { isOrgAdminByRole } from '../auth/orgAdminUtils.js';
+import { isUserInCapabilityGroup, CAPABILITIES } from '../services/groupCapabilities.js';
 
-const registerPerIpRateLimit = createRateLimiter({
-    windowMs: 60 * 1000,
-    max: 10,
-    message: msg('auth.register_rate_limit'),
-    getKey: (req) => `register:ip:${getRateLimitClientIp(req)}`
+const avatarUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 }
 });
+
 
 function noteLoginFailure(req, res, { provider, identity, detail }) {
     const outcome = recordLoginFailure(req);
@@ -97,7 +100,8 @@ function publicUser(user) {
         displayName: fullName || email || String(user?.username || '').trim() || 'Guest',
         role: user.role,
         mustChangePassword: Boolean(user.mustChangePassword),
-        preferences: user.preferences
+        preferences: user.preferences,
+        avatarUrl: user.avatarUrl || null
     };
 }
 
@@ -108,62 +112,6 @@ export default function authRoutes(app) {
     app.get('/api/auth/config', asyncHandler(async (_req, res) => {
         res.json(getPublicAuthConfig());
     }));
-
-    /**
-     * Register new user (local accounts only)
-     */
-    app.post(
-        '/api/auth/register',
-        requireAllowedWebOrigin,
-        registerPerIpRateLimit,
-        asyncHandler(async (req, res) => {
-            const authConfig = getPublicAuthConfig();
-            if (!authConfig.registrationEnabled) {
-                throw new ValidationError(msg('auth.registration_disabled'), null, 'auth.registration_disabled');
-            }
-
-            const { username, email, password, theme, preferences } = req.body;
-
-            if (!username || !email || !password) {
-                throw new ValidationError(msg('auth.register_fields_required'), null, 'auth.register_fields_required');
-            }
-
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(email)) {
-                throw new ValidationError(msg('auth.invalid_email'), null, 'auth.invalid_email');
-            }
-
-            if (password.length < 8) {
-                throw new ValidationError(msg('auth.password_min_length', { min: 8 }), null, 'auth.password_min_length');
-            }
-
-            const prefsPatch = {
-                ...(preferences && typeof preferences === 'object' ? preferences : {}),
-                ...(theme === 'dark' || theme === 'light' ? { theme } : {})
-            };
-
-            const user = await User.create({
-                username,
-                email,
-                password,
-                preferences: prefsPatch
-            });
-            const { user: sessionUser } = issueAppSession(req, res, user);
-
-            recordAuthEvent({
-                event: 'register',
-                provider: 'local',
-                userId: user.id,
-                identity: email,
-                req
-            });
-
-            res.status(201).json({
-                message: 'User created successfully',
-                user: sessionUser
-            });
-        })
-    );
 
     /**
      * Login — identity checked by active AUTH_PROVIDER; app always issues its JWT.
@@ -320,7 +268,6 @@ export default function authRoutes(app) {
                 throw new ValidationError(msg('auth.profile_requires_directus'), null, 'auth.profile_requires_directus');
             }
 
-            const { updateDirectusUser, isDirectusConfigured } = await import('../services/directus.js');
             if (!isDirectusConfigured()) {
                 throw new ValidationError(msg('directus.not_configured'), null, 'directus.not_configured');
             }
@@ -358,50 +305,89 @@ export default function authRoutes(app) {
 
         const directusLink = findDirectusLinkForUser(user.id);
         let profile = { ...user };
+        let isOrgAdmin = false;
         if (directusLink?.external_id) {
             try {
                 // Prefer service-token read of the linked user — clinician /users/me
                 // often omits first_name/last_name under field ACL.
-                const { findDirectusUserById, fetchDirectusViewer } = await import('../services/directus.js');
                 let firstName = null;
                 let lastName = null;
                 let email = profile.email;
+                let avatarUrl = null;
 
                 const linked = await findDirectusUserById(directusLink.external_id);
                 if (linked) {
                     firstName = String(linked.first_name || '').trim() || null;
                     lastName = String(linked.last_name || '').trim() || null;
                     email = linked.email || email;
+                    avatarUrl = linked.avatar ? `/api/auth/avatar?v=${Date.now()}` : null;
+                    isOrgAdmin = isOrgAdminByRole(linked.role);
                 }
 
-                if (!firstName && !lastName) {
-                    try {
-                        const accessToken = await getDirectusAccessTokenForAppUser(req.user, { req, res });
-                        const viewer = await fetchDirectusViewer(accessToken);
-                        if (viewer) {
-                            firstName = viewer.firstName || null;
-                            lastName = viewer.lastName || null;
-                            if (viewer.name && !firstName && !lastName) {
-                                const parts = String(viewer.name).trim().split(/\s+/);
+                try {
+                    const accessToken = await getDirectusAccessTokenForAppUser(req.user, { req, res });
+                    const currentUser = await fetchDirectusViewer(accessToken);
+                    if (currentUser) {
+                        if (!firstName && !lastName) {
+                            firstName = currentUser.firstName || null;
+                            lastName = currentUser.lastName || null;
+                            if (currentUser.name && !firstName && !lastName) {
+                                const parts = String(currentUser.name).trim().split(/\s+/);
                                 firstName = parts[0] || null;
                                 lastName = parts.slice(1).join(' ') || null;
                             }
-                            email = viewer.email || email;
+                            email = currentUser.email || email;
                         }
-                    } catch (_) {
-                        // keep service-token result
+                        isOrgAdmin = isOrgAdminByRole(currentUser);
                     }
+                } catch (_) {
+                    // keep service-token result above
                 }
 
-                profile = { ...profile, email, firstName, lastName };
+                profile = { ...profile, email, firstName, lastName, avatarUrl };
             } catch (err) {
                 console.warn('auth/me Directus profile enrich skipped:', err.message || err);
             }
         }
 
+        // Group membership is the single source of truth for reviewer access.
+        let isRegistrationReviewer = false;
+        if (directusLink?.external_id) {
+            try {
+                isRegistrationReviewer = await isUserInCapabilityGroup(
+                    directusLink.external_id,
+                    CAPABILITIES.APPROVE_REGISTRATIONS
+                );
+            } catch (_) {
+                // non-fatal — leave as false
+            }
+        }
+
+        // Read notifyRegistrationApproval from Directus — opt-out, default true.
+        let notifyRegistrationApproval = true;
+        if (directusLink?.external_id) {
+            try {
+                const prefPayload = await directusFetch(`/users/${encodeURIComponent(directusLink.external_id)}`, {
+                    query: { fields: 'notify_registration_approval' }
+                });
+                if (prefPayload?.data?.notify_registration_approval === false) {
+                    notifyRegistrationApproval = false;
+                }
+            } catch (_) {
+                // field may not exist in Directus yet — default to true
+            }
+        }
+
+        const baseUser = publicUser(profile);
         res.json({
-            user: publicUser(profile),
-            identity: buildIdentityPayload(user.id)
+            user: {
+                ...baseUser,
+                preferences: { ...baseUser.preferences, notifyRegistrationApproval }
+            },
+            identity: buildIdentityPayload(user.id),
+            isOrgAdmin,
+            isRegistrationReviewer,
+            directusUserId: directusLink?.external_id || null
         });
     }));
 
@@ -426,6 +412,19 @@ export default function authRoutes(app) {
         }
         if (req.body?.homeLayout !== undefined) {
             patch.homeLayout = req.body.homeLayout;
+        }
+        if (req.body?.slicerWebChannel !== undefined) {
+            patch.slicerWebChannel = req.body.slicerWebChannel === 'latest' ? 'latest' : 'stable';
+        }
+        // notifyRegistrationApproval lives on the Directus user
+        if (req.body?.notifyRegistrationApproval !== undefined) {
+            const link = findDirectusLinkForUser(req.user.id);
+            if (link?.external_id) {
+                directusFetch(`/users/${encodeURIComponent(link.external_id)}`, {
+                    method: 'PATCH',
+                    body: { notify_registration_approval: req.body.notifyRegistrationApproval === true }
+                }).catch(err => console.warn('Directus notify pref save failed:', err?.message));
+            }
         }
 
         const preferences = User.updatePreferences(req.user.id, patch);
@@ -518,6 +517,43 @@ export default function authRoutes(app) {
         res.json({ ok: true });
     }));
 
+    /** Upload or replace the current user's Directus avatar. */
+    app.post('/api/auth/avatar', authenticateToken, avatarUpload.single('avatar'), asyncHandler(async (req, res) => {
+        if (!req.file) throw new ValidationError(msg('avatar.required'), null, 'avatar.required');
+        let { buffer, mimetype, originalname } = req.file;
+        const ext = (originalname || '').split('.').pop().toLowerCase();
+        if (ext === 'heic' || ext === 'heif') {
+            const converted = await heicConvert({ buffer, format: 'JPEG', quality: 0.85 });
+            buffer = Buffer.from(converted);
+            mimetype = 'image/jpeg';
+            originalname = originalname.replace(/\.(heic|heif)$/i, '.jpg');
+        }
+        const link = findDirectusLinkForUser(req.user.id);
+        if (!link?.external_id) throw new NotFoundError(msg('directus.not_linked'), null, 'directus.not_linked');
+        const accessToken = await getDirectusAccessTokenForAppUser(req.user, { res });
+        const fileId = await uploadDirectusAvatar(accessToken, buffer, mimetype, originalname);
+        await updateDirectusUser(link.external_id, { avatar: fileId });
+        res.json({ ok: true, avatarUrl: `/api/auth/avatar?v=${Date.now()}` });
+    }));
+
+    /** Proxy the current user's Directus avatar image. */
+    app.get('/api/auth/avatar', authenticateToken, asyncHandler(async (req, res) => {
+        const link = findDirectusLinkForUser(req.user.id);
+        if (!link?.external_id) return res.status(404).end();
+        const directusUser = await findDirectusUserById(link.external_id);
+        if (!directusUser?.avatar) return res.status(404).end();
+        const accessToken = await getDirectusAccessTokenForAppUser(req.user, { res });
+        await sendDirectusAsset(res, directusUser.avatar, accessToken);
+    }));
+
+    /** Remove the current user's avatar. */
+    app.delete('/api/auth/avatar', authenticateToken, asyncHandler(async (req, res) => {
+        const link = findDirectusLinkForUser(req.user.id);
+        if (!link?.external_id) throw new NotFoundError(msg('directus.not_linked'), null, 'directus.not_linked');
+        await updateDirectusUser(link.external_id, { avatar: null });
+        res.json({ ok: true });
+    }));
+
     /**
      * Refresh token (optional - extends session)
      */
@@ -565,7 +601,7 @@ export default function authRoutes(app) {
             const { cleanupLocalViewerSessionsForUser } = await import('../sessions/cleanup.js');
             await cleanupLocalViewerSessionsForUser(req.user.id);
         } catch (err) {
-            console.log('Local viewer cleanup during logout-all:', err.message);
+            console.warn('Local viewer cleanup during logout-all:', err.message);
         }
         recordAuthEvent({
             event: 'logout_all',

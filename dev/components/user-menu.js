@@ -28,6 +28,11 @@ export class UserMenu extends LitElement {
                 font-family: inherit;
                 font-weight: 650;
                 box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+                overflow: hidden;
+            }
+
+            .user-menu-button.has-avatar {
+                padding: 0;
             }
 
             .user-menu-button:hover,
@@ -56,6 +61,14 @@ export class UserMenu extends LitElement {
                 outline: 3px solid var(--color-focus, #0057c2);
                 outline-offset: 2px;
                 box-shadow: var(--focus-ring-shadow, 0 0 0 2px #fff, 0 0 0 5px #0057c2);
+            }
+
+            .avatar-img {
+                width: 100%;
+                height: 100%;
+                border-radius: 50%;
+                object-fit: cover;
+                display: block;
             }
 
             .menu {
@@ -150,10 +163,12 @@ export class UserMenu extends LitElement {
 
     static get properties() {
         return {
-            username: { type: String },
+            username:   { type: String },
             /** Preferred label: "First Last" or email (Directus-era accounts). */
             displayName: { type: String },
-            open: { type: Boolean }
+            avatarUrl:  { type: String },
+            open:       { type: Boolean },
+            isOrgAdmin: { type: Boolean }
         };
     }
 
@@ -162,7 +177,9 @@ export class UserMenu extends LitElement {
         initializeTheme();
         this.username = t('common.guest');
         this.displayName = '';
+        this.avatarUrl = '';
         this.open = false;
+        this.isOrgAdmin = false;
     }
 
     #getDisplayLabel() {
@@ -201,12 +218,22 @@ export class UserMenu extends LitElement {
         this.closeMenu();
     }
 
+    requestPendingRegistrations() {
+        this.dispatchEvent(new CustomEvent('pending-registrations-request', {
+            bubbles: true,
+            composed: true
+        }));
+        this.closeMenu();
+    }
+
     render() {
         const label = this.#getDisplayLabel();
         const nameIsLong = label.length > 35;
         return html`
-            <button class="user-menu-button" @click=${this.toggleMenu}>
-                ${this.#getUNFirstLetter()}
+            <button class="user-menu-button ${this.avatarUrl ? 'has-avatar' : ''}" @click=${this.toggleMenu} aria-label=${label}>
+                ${this.avatarUrl
+                    ? html`<img class="avatar-img" src=${this.avatarUrl} alt="" aria-hidden="true">`
+                    : this.#getUNFirstLetter()}
             </button>
             ${this.open ? html`
                 <div class="menu">
@@ -214,6 +241,9 @@ export class UserMenu extends LitElement {
                     <hr>
                     ${canAccessAccountSettings() ? html`
                     <button class="menu-item" @click=${this.requestSettings}>${t('nav.settings')}</button>
+                    ` : ''}
+                    ${this.isOrgAdmin ? html`
+                    <button class="menu-item" @click=${this.requestPendingRegistrations}>${t('nav.pendingRegistrations')}</button>
                     ` : ''}
                     <button class="menu-item" @click=${this.requestLogout}>${t('nav.logOut')}</button>
                 </div>

@@ -1,6 +1,9 @@
 import { LitElement, html, css } from 'lit-element';
 import { t } from '../i18n/index.js';
 import '../components/dropdown-select.js';
+import '../components/app-button.js';
+import '../components/icon-button.js';
+import '../components/person-chip.js';
 
 export class CollaboratorResultRow extends LitElement {
     static get styles() {
@@ -24,30 +27,8 @@ export class CollaboratorResultRow extends LitElement {
                 min-width: 0;
             }
 
-            .user-initial {
-                border: 1px solid var(--color-border);
-                border-radius: 50%;
-                background: var(--color-primary);
-                color: var(--color-on-primary);
-                width: 40px;
-                height: 40px;
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                font-weight: 600;
-                flex: 0 0 40px;
-            }
-
-            :host-context([data-theme='dark']) .user-initial {
-                background: color-mix(in srgb, #c5cce6 55%, #5b7cff);
-                color: var(--color-primary);
-                border-color: color-mix(in srgb, #c5cce6 45%, var(--color-border));
-            }
-
-            .user-name {
-                color: var(--color-text-primary);
-                font-weight: 500;
-                min-width: 120px;
+            person-chip {
+                --person-chip-size: 40px;
             }
 
             .result-actions {
@@ -65,62 +46,6 @@ export class CollaboratorResultRow extends LitElement {
 
             .result-actions dropdown-select {
                 min-width: 160px;
-            }
-
-            .add-user-button {
-                border: 1px solid var(--color-border);
-                border-radius: var(--radius-md);
-                background: var(--color-primary);
-                color: var(--color-on-primary);
-                min-height: 38px;
-                padding: 8px 14px;
-                font: inherit;
-                line-height: 1.2;
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                cursor: pointer;
-            }
-
-            .add-user-button:hover:not(:disabled) {
-                background: color-mix(in srgb, var(--color-primary) 78%, #5b7cff);
-            }
-
-            .add-user-button:focus-visible {
-                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
-                outline-offset: var(--focus-ring-offset, 2px);
-            }
-
-            .add-user-button:disabled {
-                opacity: 0.6;
-                cursor: not-allowed;
-            }
-
-            .remove-icon-button {
-                border: none;
-                border-radius: var(--radius-lg);
-                background: transparent;
-                color: var(--color-text-primary);
-                width: 34px;
-                height: 34px;
-                padding: 0;
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                cursor: pointer;
-            }
-
-            .remove-icon-button:hover,
-            .remove-icon-button:focus-visible {
-                background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
-                outline-offset: var(--focus-ring-offset, 2px);
-            }
-
-            .remove-icon {
-                width: 16px;
-                height: 16px;
-                display: block;
             }
 
             .tooltip-bubble {
@@ -237,8 +162,8 @@ export class CollaboratorResultRow extends LitElement {
     render() {
         if (!this.user) return html``;
 
-        const displayName = this.user.username || this.user.email || '?';
-        const firstInitial = displayName.charAt(0).toUpperCase();
+        const name = this.user.username || this.user.email || '?';
+        const secondaryLine = this.user.email && this.user.email !== name ? this.user.email : '';
         const roleValue = this.selectedRole || this.role || '';
         const addDisabled = this.isAddDisabled || (!this.hideRoles && !this.selectedRole);
         const addButtonTooltip = this.isAddDisabled
@@ -248,10 +173,11 @@ export class CollaboratorResultRow extends LitElement {
         return html`
             <div class="result-row">
                 <div class="result-user">
-                    <div class="user-initial">${firstInitial}</div>
-                    <div class="user-name">${displayName}${this.user.email && this.user.email !== displayName
-                        ? html`<div style="font-size:0.85em;opacity:0.75;font-weight:400">${this.user.email}</div>`
-                        : ''}</div>
+                    <person-chip
+                        .name=${name}
+                        .secondaryLine=${secondaryLine}
+                        .avatarUrl=${this.user.avatarUrl || ''}
+                    ></person-chip>
                 </div>
                 <div class="result-actions">
                     ${!this.hideRoles ? html`
@@ -265,35 +191,33 @@ export class CollaboratorResultRow extends LitElement {
                     ` : ''}
                     ${this.mode === 'search' ? html`
                         <div class="add-button-wrapper ${addDisabled ? 'show-tooltip' : ''}">
-                            <button
-                                class="add-user-button"
-                                type="button"
+                            <app-button
+                                variant="primary"
                                 ?disabled=${addDisabled}
                                 aria-describedby=${addDisabled ? 'pending-tooltip' : ''}
                                 @click=${() => this.emitAdd()}
                             >
                                 ${t('collaborators.addCollaborator')}
-                            </button>
+                            </app-button>
                             ${addDisabled ? html`
                                 <div id="pending-tooltip" class="tooltip-bubble">${addButtonTooltip}</div>
                             ` : ''}
                         </div>
                     ` : ''}
                     ${this.mode === 'selected' && this.showRemoveButton ? html`
-                        <button
-                            class="remove-icon-button"
-                            type="button"
-                            aria-label=${t('collaborators.removeAria')}
+                        <icon-button
+                            size="lg"
+                            label=${t('collaborators.removeAria')}
                             title=${t('collaborators.removeAria')}
                             @click=${() => this.emitRemove()}
                         >
-                            <svg class="remove-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
                                 <path
                                     fill="currentColor"
                                     d="M9 3h6l1 2h4v2h-2v13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7H4V5h4l1-2zm7 4H8v13h8V7zm-6 3h2v7h-2v-7zm4 0h2v7h-2v-7z"
                                 ></path>
                             </svg>
-                        </button>
+                        </icon-button>
                     ` : ''}
                 </div>
             </div>

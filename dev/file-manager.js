@@ -536,6 +536,8 @@ export class FileManager extends LitElement {
 
     static get properties() {
         return {
+            isOrgAdmin: { type: Boolean },
+            isRegistrationReviewer: { type: Boolean },
             files: { type: Array },
             selectedFile: { type: Object },
             uploading: { type: Boolean },
@@ -565,6 +567,7 @@ export class FileManager extends LitElement {
             shareMode: { type: String },
             viewerShareMode: { type: String },
             username: { type: String },
+            avatarUrl: { type: String },
             fileListSearch: { type: String },
             fileListSearchDraft: { type: String },
             fileListOrder: { type: String },
@@ -579,6 +582,7 @@ export class FileManager extends LitElement {
         super();
         initializeTheme();
         this.files = [];
+        this.avatarUrl = '';
         this.selectedFile = null;
         this.uploading = false;
         this.loading = false;
@@ -1430,6 +1434,9 @@ export class FileManager extends LitElement {
         return html`
             <page-layout-template
                 .username=${this.username}
+                .avatarUrl=${this.avatarUrl}
+                .isOrgAdmin=${this.isOrgAdmin || false}
+                .isRegistrationReviewer=${this.isRegistrationReviewer || false}
                 selectedMenuKey="my-files"
                 homeHref="/file-manager"
                 homeLabel="Home"
