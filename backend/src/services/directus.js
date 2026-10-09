@@ -441,12 +441,7 @@ function mapCase(
     // Prefer item accountability/app date fields when present; otherwise Activity
     // (Studio Revisions). `case` often has no date_created column.
     const createdAt = pickTimestamp(row?.date_created, row?.created_at, activity.createdAt);
-    const updatedAt = pickTimestamp(
-        row?.date_updated,
-        row?.updated_at,
-        activity.updatedAt,
-        createdAt
-    );
+    const updatedAt = pickTimestamp(row?.date_updated, activity.updatedAt, createdAt);
     return {
         id: caseId,
         title: row?.title ?? null,
@@ -1774,29 +1769,21 @@ export async function updateCase(caseId, updates = {}, { accessToken } = {}) {
         throw new ValidationError(msg('case.title_empty'), null, 'case.title_empty');
     }
 
-    const updatedStamp = new Date().toISOString();
-    const bodyWithAppUpdated = { ...body, updated_at: updatedStamp };
-
     let payload;
-    try {
-        payload = await directusFetch(`/items/case/${encodeURIComponent(caseKey)}`, {
-            method: 'PATCH',
-            accessToken,
-            body: bodyWithAppUpdated,
-            query: { fields: CASE_CORE_FIELDS }
-        });
-    } catch (err) {
-        const status = Number(err?.statusCode || err?.status || 0);
-        const message = String(err?.message || err || '');
-        const unknownUpdatedAt = status === 400
-            || /updated_at|unknown field|doesn't exist|invalid payload/i.test(message);
-        if (!unknownUpdatedAt) throw err;
-        payload = await directusFetch(`/items/case/${encodeURIComponent(caseKey)}`, {
-            method: 'PATCH',
-            accessToken,
-            body,
-            query: { fields: CASE_CORE_FIELDS }
-        });
+    for (const fields of CASE_FIELDS_ATTEMPTS) {
+        try {
+            payload = await directusFetch(`/items/case/${encodeURIComponent(caseKey)}`, {
+                method: 'PATCH',
+                accessToken,
+                body,
+                query: { fields }
+            });
+            break;
+        } catch (err) {
+            const status = Number(err?.statusCode || err?.status || 0);
+            if (status !== 400 && status !== 500) throw err;
+            if (fields === CASE_FIELDS_ATTEMPTS.at(-1)) throw err;
+        }
     }
 
     return mapCase(payload?.data || { id: caseKey, ...body }, {});

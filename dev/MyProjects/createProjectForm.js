@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit-element';
 import { t } from '../i18n/index.js';
+import { roleOrder } from '../utils/casePermissions.js';
 import '../components/page-layout-template.js';
 import '../components/add-button.js';
 import '../components/toggle-switch.js';
@@ -234,15 +235,9 @@ export class CreateProjectForm extends LitElement {
         this.formError = '';
     }
 
-    getRoleSortValue(role) {
-        if (role === 'admin') return 0;
-        if (role === 'collaborator') return 1;
-        return 2;
-    }
-
     sortCollaborators(collaborators = []) {
         return [...collaborators].sort((a, b) => {
-            const roleDiff = this.getRoleSortValue(a.role) - this.getRoleSortValue(b.role);
+            const roleDiff = roleOrder(a.role) - roleOrder(b.role);
             if (roleDiff !== 0) return roleDiff;
             const userA = (a.user?.username || '').toLowerCase();
             const userB = (b.user?.username || '').toLowerCase();

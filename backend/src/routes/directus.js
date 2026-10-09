@@ -30,13 +30,15 @@ import {
     updateDirectusAttachmentFile,
     fetchDirectusViewer,
     lookupDirectusUserByEmail,
-    findDirectusUserById
+    findDirectusUserById,
+    directusFetch
 } from '../services/directus.js';
 import { getCaseCollabActorContext, setCaseCollaborators } from '../services/caseCollaborators.js';
 import { attachUploadedFileToCase } from '../services/attachUploadedFile.js';
-import { issueUploadToken } from '../services/uploadTokens.js';
+import { issueUploadToken, verifyUploadToken, uploadMarker } from '../services/uploadTokens.js';
 import { listInvitesAwaitingApproval } from '../services/pendingApprovals.js';
 import { listRecentActivity } from '../services/recentActivity.js';
+import { createVersion } from '../services/attachmentVersions.js';
 import { createAttachmentDownloadHandler } from '../services/attachmentDownload.js';
 import {
     inviteExistingUserToCase,
@@ -850,10 +852,6 @@ export default function directusRoutes(app) {
                 throw new ValidationError(msg('case.case_attachment_ids_required'), null, 'case.case_attachment_ids_required');
             }
 
-            if (!req.file) {
-                throw new ValidationError(msg('case.file_required'), null, 'case.file_required');
-            }
-
             const saveMode = String(req.body?.saveMode || 'overwrite');
             const userProvidedName = String(req.body?.name || '').trim();
 
@@ -865,6 +863,7 @@ export default function directusRoutes(app) {
                 attachment.filenameDownload || attachment.name || 'saved-scene.mrb'
             );
 
+            const pad = (n) => String(n).padStart(2, '0');
             let savedName;
             if (saveMode === 'saveAsNew') {
                 const ext = path.extname(baseName);
@@ -872,11 +871,65 @@ export default function directusRoutes(app) {
                     ? userProvidedName.replace(/[^a-zA-Z0-9._-]/g, '_')
                     : path.basename(baseName, ext);
                 const now = new Date();
-                const pad = (n) => String(n).padStart(2, '0');
                 const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
                 savedName = `${stem}-${stamp}${ext || '.mrb'}`;
             } else {
                 savedName = baseName;
+            }
+
+            // TUS path: file already uploaded to Directus; commit using upload token.
+            if (req.body?.uploadToken) {
+                const userId = String(req.user.id);
+                const nonce = verifyUploadToken(req.body.uploadToken, userId);
+                const found = await directusFetch('/files', {
+                    accessToken: req.directusAccessToken,
+                    query: { 'filter[description][_eq]': uploadMarker(nonce), fields: 'id', limit: 2 }
+                });
+                const rows = Array.isArray(found?.data) ? found.data : [];
+                if (rows.length !== 1 || !rows[0].id) {
+                    throw new ValidationError(msg('upload.file_not_linkable'), null, 'UPLOAD_FILE_NOT_LINKABLE');
+                }
+                const fileId = rows[0].id;
+                await directusFetch(`/files/${encodeURIComponent(fileId)}`, {
+                    method: 'PATCH',
+                    accessToken: req.directusAccessToken,
+                    body: { filename_download: savedName, description: null }
+                });
+
+                if (saveMode === 'overwrite') {
+                    await updateDirectusAttachmentFile(attachmentId, fileId, {
+                        accessToken: req.directusAccessToken
+                    });
+                    createVersion(
+                        { attachmentId, caseId, fileId, userId: req.user?.id ?? null },
+                        { accessToken: req.directusAccessToken }
+                    ).catch((err) => console.warn('[versions] createVersion failed (overwrite/tus):', err.message));
+                    const updated = await getCaseAttachment(caseId, attachmentId, {
+                        accessToken: req.directusAccessToken
+                    });
+                    return res.json({ success: true, saveMode: 'overwrite', attachment: updated });
+                }
+
+                const displayName = userProvidedName || path.basename(savedName, path.extname(savedName));
+                const newAttachment = await createCaseAttachment(caseId, fileId, displayName, {
+                    accessToken: req.directusAccessToken,
+                    parentId: attachmentId,
+                    fileMeta: {
+                        filename_download: savedName,
+                        type: 'application/x-mrb',
+                        uploaded_on: new Date().toISOString()
+                    }
+                });
+                createVersion(
+                    { attachmentId: newAttachment.id, caseId, fileId, userId: req.user?.id ?? null },
+                    { accessToken: req.directusAccessToken }
+                ).catch((err) => console.warn('[versions] createVersion failed (saveAsNew/tus):', err.message));
+                return res.json({ success: true, saveMode: 'saveAsNew', attachment: newAttachment });
+            }
+
+            // Legacy path: file bytes posted as multipart.
+            if (!req.file) {
+                throw new ValidationError(msg('case.file_required'), null, 'case.file_required');
             }
 
             const uploadedFile = await uploadDirectusFile(
@@ -892,13 +945,16 @@ export default function directusRoutes(app) {
                 await updateDirectusAttachmentFile(attachmentId, uploadedFile.id, {
                     accessToken: req.directusAccessToken
                 });
+                createVersion(
+                    { attachmentId, caseId, fileId: uploadedFile.id, userId: req.user?.id ?? null },
+                    { accessToken: req.directusAccessToken }
+                ).catch((err) => console.warn('[versions] createVersion failed (overwrite/multipart):', err.message));
                 const updated = await getCaseAttachment(caseId, attachmentId, {
                     accessToken: req.directusAccessToken
                 });
                 return res.json({ success: true, saveMode: 'overwrite', attachment: updated });
             }
 
-            // saveAsNew: new attachment linked back to the source.
             const displayName = userProvidedName || path.basename(savedName, path.extname(savedName));
             const newAttachment = await createCaseAttachment(caseId, uploadedFile.id, displayName, {
                 accessToken: req.directusAccessToken,
@@ -910,6 +966,10 @@ export default function directusRoutes(app) {
                     uploaded_on: uploadedFile.uploaded_on || new Date().toISOString()
                 }
             });
+            createVersion(
+                { attachmentId: newAttachment.id, caseId, fileId: uploadedFile.id, userId: req.user?.id ?? null },
+                { accessToken: req.directusAccessToken }
+            ).catch((err) => console.warn('[versions] createVersion failed (saveAsNew/multipart):', err.message));
             return res.json({ success: true, saveMode: 'saveAsNew', attachment: newAttachment });
         })
     );

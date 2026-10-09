@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit-element';
 import { t } from '../i18n/index.js';
 import { API_URL } from '../config.js';
+import { canManageCollaborators, canEditCase, roleOrder } from '../utils/casePermissions.js';
 import '../components/page-layout-template.js';
 import '../components/add-button.js';
 import '../components/file-list-row.js';
@@ -1682,15 +1683,9 @@ export class ProjectReviewPage extends LitElement {
             .sort((a, b) => a.userId - b.userId);
     }
 
-    getRoleSortValue(role) {
-        if (role === 'admin') return 0;
-        if (role === 'collaborator') return 1;
-        return 2;
-    }
-
     sortCollaborators(collaborators = []) {
         return [...collaborators].sort((a, b) => {
-            const roleDiff = this.getRoleSortValue(a.role) - this.getRoleSortValue(b.role);
+            const roleDiff = roleOrder(a.role) - roleOrder(b.role);
             if (roleDiff !== 0) return roleDiff;
             const userA = (a.user?.username || '').toLowerCase();
             const userB = (b.user?.username || '').toLowerCase();
@@ -1712,9 +1707,9 @@ export class ProjectReviewPage extends LitElement {
             this.projectName = data.project?.name || '';
             const role = data.project?.role;
             this.projectRole = role || '';
-            this.canEditCollaborators = role === 'admin';
-            this.canUploadFiles = role === 'admin' || role === 'collaborator';
-            this.canDeleteProjectFiles = role === 'admin' || role === 'collaborator';
+            this.canEditCollaborators = canManageCollaborators(role);
+            this.canUploadFiles = canEditCase(role);
+            this.canDeleteProjectFiles = canEditCase(role);
             const collaborators = data.collaborators || [];
             this.collaborators = this.sortCollaborators(collaborators.map((entry) => ({ ...entry })));
             this.originalCollaborators = this.sortCollaborators(collaborators.map((entry) => ({ ...entry })));

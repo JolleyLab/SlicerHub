@@ -1,4 +1,6 @@
-import { LitElement, html, css } from 'lit-element';
+import { LitElement, html } from 'lit-element';
+import { appShellStyles } from './app-shell.styles.js';
+import { buttonStyles } from './styles/buttons.js';
 import { API_URL } from './config.js';
 import { t } from './i18n/index.js';
 import {
@@ -15,20 +17,20 @@ import {
   clearDirectusLinkGate,
   canAccessAccountSettings
 } from './utils/directusLinkGate.js';
-import './login-form.js';
-import './registration-request-form.js';
-import './complete-registration-form.js';
-import './invite-accept-form.js';
-import './change-password-form.js';
-import './admin-registrations-page.js';
-import './admin-task-groups-page.js';
-import './file-manager.js';
+import './auth/login-form.js';
+import './auth/registration-request-form.js';
+import './auth/complete-registration-form.js';
+import './auth/invite-accept-form.js';
+import './auth/change-password-form.js';
+import './pages/admin-registrations-page.js';
+import './pages/admin-task-groups-page.js';
+import './pages/file-manager.js';
 import './components/status-card.js';
 import './MyProjects/myProjectsEmptyState.js';
 import './MyProjects/projectReviewPage.js';
-import './user-settings-page.js';
-import './directus-cases-page.js';
-import './home-page.js';
+import './pages/user-settings-page.js';
+import './pages/directus-cases-page.js';
+import './pages/home-page.js';
 import { buildSlicerGuiLoaderUrl, VIEWER_KINDS } from './utils/viewerLaunch.js';
 import {
   installViewerActivityListeners
@@ -63,210 +65,7 @@ function userDisplayName(user) {
 
 export class SlicerApp extends LitElement {
   static get styles() {
-    return css`
-      :host {
-        display: block;
-        padding: 0;
-      }
-
-      .header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 10px 16px;
-        background: #f5f5f5;
-        border-bottom: 1px solid #ddd;
-        margin: 0 0 16px 0;
-      }
-
-      .user-info {
-        display: flex;
-        align-items: center;
-        gap: 15px;
-      }
-
-      .user-name {
-        font-weight: 500;
-        color: #333;
-      }
-
-      .logout-btn {
-        padding: 8px 16px;
-        background: #f44336;
-        color: white;
-        border: none;
-        border-radius: var(--radius-sm);
-        cursor: pointer;
-        font-size: 14px;
-      }
-
-      .logout-btn:hover {
-        background: #d32f2f;
-      }
-
-      iframe {
-        width: 100%;
-        height: calc(100vh - 200px);
-        border: 1px solid #ccc;
-        margin-top: 10px;
-      }
-
-      .auth-container {
-        min-height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 24px 16px;
-        box-sizing: border-box;
-        background: var(--color-background, #ecf4f9);
-        color: var(--color-text-primary, #040316);
-        font-family: var(--font-family-base, Inter, system-ui, sans-serif);
-      }
-
-      .logout-billing-dialog {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        min-width: min(420px, 85vw);
-        max-width: 520px;
-      }
-
-      .directus-reconnect-form {
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-        min-width: min(380px, 85vw);
-      }
-
-      .directus-reconnect-hint {
-        margin: 0;
-        line-height: 1.45;
-        color: var(--color-text-secondary, #555);
-        font-size: 0.93rem;
-      }
-
-      .directus-reconnect-field {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-
-      .directus-reconnect-field label {
-        font-size: 0.85rem;
-        font-weight: 600;
-        color: var(--color-text-primary, #333);
-      }
-
-      .directus-reconnect-field input {
-        border: 1px solid var(--color-border, #ddd);
-        border-radius: var(--radius-md);
-        padding: 8px 12px;
-        font: inherit;
-        font-size: 0.95rem;
-        background: var(--color-surface, var(--color-background, #fff));
-        color: var(--color-text-primary, #333);
-        min-height: 40px;
-        box-sizing: border-box;
-        width: 100%;
-      }
-
-      .directus-reconnect-field input:focus {
-        outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
-        outline-offset: var(--focus-ring-offset, 2px);
-        border-color: var(--color-primary);
-      }
-
-      .directus-reconnect-error {
-        margin: 0;
-        font-size: 0.88rem;
-        color: var(--color-error, #c62828);
-      }
-
-      .directus-reconnect-actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 8px;
-        margin-top: 4px;
-      }
-
-      .logout-billing-dialog p {
-        margin: 0;
-        line-height: 1.45;
-        color: var(--color-text-primary, #333);
-      }
-
-      .logout-billing-auto-hint {
-        font-size: 13px;
-        color: var(--color-text-secondary, #666);
-      }
-
-      .logout-billing-sessions {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        max-height: 240px;
-        overflow: auto;
-      }
-
-      .logout-billing-session {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 10px 12px;
-        border: 1px solid var(--color-border, #ddd);
-        border-radius: var(--radius-md);
-        background: var(--color-panel, var(--color-surface, var(--color-background, #fafafa)));
-      }
-
-      .logout-billing-session-name {
-        font-weight: 600;
-        color: var(--color-text-primary, #222);
-      }
-
-      .logout-billing-session-meta {
-        font-size: 12px;
-        color: var(--color-text-secondary, #666);
-      }
-
-      .logout-billing-actions {
-        display: flex;
-        justify-content: flex-end;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 8px;
-      }
-
-      .secondary-button,
-      .primary-button {
-        border: 1px solid var(--color-border, #ddd);
-        border-radius: var(--radius-md);
-        min-height: 40px;
-        padding: 8px 14px;
-        font: inherit;
-        font-weight: 600;
-        cursor: pointer;
-      }
-
-      .secondary-button {
-        background: transparent;
-        color: var(--color-text-primary, #333);
-      }
-
-      .primary-button {
-        background: var(--color-primary, #1976d2);
-        color: var(--color-on-primary, #fff);
-      }
-
-      .primary-button:disabled,
-      .secondary-button:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
-    `;
+    return [buttonStyles, appShellStyles];
   }
 
   static get properties() {
@@ -277,12 +76,12 @@ export class SlicerApp extends LitElement {
       showLogin: { type: Boolean },
       currentView: { type: String },
       selectedProjectId: { type: Number },
-      shareToken:    { type: String },
-      inviteToken:   { type: String },
+      shareToken: { type: String },
+      inviteToken: { type: String },
       registerToken: { type: String },
-      isOrgAdmin:             { type: Boolean },
+      isOrgAdmin: { type: Boolean },
       isRegistrationReviewer: { type: Boolean },
-      directusUserId:         { type: String },
+      directusUserId: { type: String },
       shareLoading: { type: Boolean },
       shareError: { type: String },
       shareErrorStatus: { type: Number },
@@ -315,8 +114,8 @@ export class SlicerApp extends LitElement {
     this.currentView = DEFAULT_APP_VIEW;
     this.selectedProjectId = null;
     this.inactivityTimeout = null;
-    this.shareToken    = new URLSearchParams(window.location.search).get('share')    || '';
-    this.inviteToken   = new URLSearchParams(window.location.search).get('invite')   || '';
+    this.shareToken = new URLSearchParams(window.location.search).get('share') || '';
+    this.inviteToken = new URLSearchParams(window.location.search).get('invite') || '';
     this.registerToken = new URLSearchParams(window.location.search).get('register') || '';
     this.shareLoading = false;
     this.shareError = '';
@@ -1273,8 +1072,8 @@ export class SlicerApp extends LitElement {
         <div class="header">
           <div class="user-info">
             <span class="user-name">${this.shareViewerKind === VIEWER_KINDS.SLICER_GUI
-              ? t('share.simplifiedHeader', { file: this.shareFileName || t('share.fileFallback') })
-              : t('share.readonlyHeader', { file: this.shareFileName || t('share.fileFallback') })}</span>
+          ? t('share.simplifiedHeader', { file: this.shareFileName || t('share.fileFallback') })
+          : t('share.readonlyHeader', { file: this.shareFileName || t('share.fileFallback') })}</span>
             ${this.shareReplayStatus ? html`<span style="margin-left:10px; color:#666; font-size:12px;">${this.shareReplayStatus}</span>` : ''}
           </div>
         </div>
@@ -1430,8 +1229,8 @@ export class SlicerApp extends LitElement {
       <app-dialog
         id="logout-billing-dialog"
         title=${this.logoutBillingMode === 'transfer'
-          ? t('gpu.billingStillActive')
-          : t('gpu.stopBeforeLogout')}
+        ? t('gpu.billingStillActive')
+        : t('gpu.stopBeforeLogout')}
         .lightDismiss=${false}
       >
         ${this.logoutBillingMode === 'transfer' && this.logoutTransferSession ? html`
@@ -1563,10 +1362,10 @@ export class SlicerApp extends LitElement {
                 class="secondary-button"
                 ?disabled=${this._directusReconnectBusy}
                 @click=${() => {
-                  this._directusReconnectOpen = false;
-                  this.renderRoot?.querySelector('#directus-reconnect-dialog')?.closeDialog?.();
-                  window.dispatchEvent(new CustomEvent('directus-session-reconnect-cancelled'));
-                }}
+          this._directusReconnectOpen = false;
+          this.renderRoot?.querySelector('#directus-reconnect-dialog')?.closeDialog?.();
+          window.dispatchEvent(new CustomEvent('directus-session-reconnect-cancelled'));
+        }}
               >${t('directusReconnect.cancel')}</button>
               <button
                 type="submit"

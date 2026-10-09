@@ -1,37 +1,47 @@
-import { LitElement, html, css } from 'lit-element';
-import { t } from './i18n/index.js';
-import './components/page-layout-template.js';
-import './components/page-content-message.js';
-import './components/file-list-row.js';
-import './components/comments-panel.js';
+﻿import { LitElement, html } from 'lit-element';
+import { casesPageStyles } from './directus-cases-page.styles.js';
+import { buttonStyles } from '../styles/buttons.js';
+import { formStyles } from '../styles/forms.js';
+import { utilStyles } from '../styles/utils.js';
+import { t } from '../i18n/index.js';
+import '../components/page-layout-template.js';
+import '../components/page-content-message.js';
+import '../components/file-list-row.js';
+import '../components/comments-panel.js';
+import '../components/audit-log.js';
 import {
-    listDirectusCases,
-    openDirectusAttachmentFullSlicer,
-    fetchDirectusAttachmentContent,
-    checkDirectusAttachmentDownload,
-    directusAttachmentDownloadUrl,
-    createDirectusCaseComment,
-    createDirectusCase,
-    updateDirectusCase,
-    deleteDirectusCaseAttachment,
-    saveDirectusCaseAttachmentScene,
-    saveDirectusSlicerWebScene,
-    lookupDirectusUserByEmail,
-    updateDirectusCaseCollaborators,
-    inviteDirectusCaseUser,
-    listDirectusCaseInvites,
-    approveDirectusCaseInvite,
-    rejectDirectusCaseInvite,
-    invalidateNotifications,
-    friendlyCasesError
-} from './services/directus.js';
-import './components/people-dialog.js';
-import './components/app-dialog.js';
-import './components/list-filter-tools.js';
-import './components/attachment-open-menu.js';
-import { uploadManager } from './services/uploadManager.js';
-import { formatBytes } from './utils/formatBytes.js';
-import { deepActiveElement } from './utils/focus.js';
+    listCases,
+    createCase,
+    updateCase,
+    postComment,
+    lookupUserByEmail,
+    updateCollaborators,
+    listInvites,
+    inviteUser,
+    approveInvite,
+    rejectInvite,
+    fetchCaseActivity,
+    friendlyError,
+} from '../services/cases.js';
+import {
+    openAttachmentInViewer,
+    fetchAttachmentContent,
+    checkAttachmentDownload,
+    getAttachmentDownloadUrl,
+    deleteAttachment,
+    saveAttachmentScene,
+    saveSlicerWebScene,
+} from '../services/files.js';
+import { invalidateNotifications } from '../services/notifications.js';
+import '../components/people-dialog.js';
+import '../components/app-dialog.js';
+import '../components/list-filter-tools.js';
+import '../components/attachment-open-menu.js';
+import { uploadManager } from '../services/uploadManager.js';
+import { saveWithDirectusReconnect } from '../services/directusRetry.js';
+import { formatBytes } from '../utils/formatBytes.js';
+import { getCaseRole, canManageCollaborators, canInvite, canEditCase, isAttachmentOwner } from '../utils/casePermissions.js';
+import { deepActiveElement } from '../utils/focus.js';
 import {
     VIEWER_KINDS,
     VIEWER_RELEASE_MODES,
@@ -42,17 +52,17 @@ import {
     buildSlicerGuiLoaderUrl,
     buildSlicerWebUrl,
     viewerDisplayName
-} from './utils/viewerLaunch.js';
-import { getCachedLocalSlicerViewerOptions, getCachedUserPreferences } from './utils/userPreferences.js';
-import { resolveSimplifiedViewerChoice } from './utils/localSlicerViewerOptions.js';
-import { isInviteEmailEnabled, isSlicerWebDevModeEnabled, loadAppFeatures } from './services/features.js';
-import { sendViewerHeartbeat } from './utils/viewerHeartbeat.js';
-import { stopViewerSession } from './utils/viewerSessionLifecycle.js';
+} from '../utils/viewerLaunch.js';
+import { getCachedLocalSlicerViewerOptions, getCachedUserPreferences } from '../utils/userPreferences.js';
+import { resolveSimplifiedViewerChoice } from '../utils/localSlicerViewerOptions.js';
+import { isInviteEmailEnabled, isSlicerWebDevModeEnabled, loadAppFeatures } from '../services/features.js';
+import { sendViewerHeartbeat } from '../utils/viewerHeartbeat.js';
+import { stopViewerSession } from '../utils/viewerSessionLifecycle.js';
 import {
     installViewerActivityListeners,
     markViewerActivity,
     resetViewerActivity
-} from './utils/viewerActivity.js';
+} from '../utils/viewerActivity.js';
 
 const CASE_INVITE_ROLE_OPTIONS = Object.freeze([
     Object.freeze({ value: '', label: t('roles.selectRole'), disabled: true }),
@@ -119,1002 +129,7 @@ function writeCaseCommentSeenMap(map) {
  */
 export class DirectusCasesPage extends LitElement {
     static get styles() {
-        return css`
-            :host {
-                display: block;
-                width: 100%;
-                min-width: 0;
-                box-sizing: border-box;
-            }
-
-            /* ─── Base ─────────────────────────────────────────────── */
-            .status-note {
-                color: var(--color-text-secondary);
-                font-size: 0.9rem;
-                padding: 8px 0;
-            }
-
-            /* ─── Landing: page header ──────────────────────────────── */
-            .page-header-row {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 16px;
-                margin-bottom: 20px;
-                padding-bottom: 16px;
-                border-bottom: 1px solid var(--color-border);
-            }
-
-            .page-header-actions {
-                display: inline-flex;
-                align-items: center;
-                gap: 10px;
-                flex-shrink: 0;
-            }
-
-            .page-heading {
-                margin: 0;
-                font-size: 1.15rem;
-                font-weight: 650;
-                color: var(--color-text-primary);
-                letter-spacing: -0.01em;
-            }
-
-            .page-header-row .primary-button::before {
-                content: '+';
-                margin-right: 5px;
-                font-weight: 300;
-                font-size: 1.15em;
-                line-height: 1;
-            }
-
-            .page-header-row .primary-button.is-cancel::before {
-                content: none;
-            }
-
-            .cases-empty-filter {
-                margin: 0;
-                color: var(--color-text-secondary);
-                font-size: 0.9rem;
-            }
-
-            /* ─── Landing: case grid ────────────────────────────────── */
-            .case-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-                gap: 10px;
-                width: 100%;
-                min-width: 0;
-            }
-
-            .case-card {
-                position: relative;
-                border: 1px solid var(--color-border);
-                border-left: 3px solid var(--color-primary);
-                border-radius: 8px;
-                background: var(--color-surface, var(--color-background));
-                padding: 14px 16px;
-                display: flex;
-                flex-direction: column;
-                gap: 5px;
-                cursor: pointer;
-                transition: box-shadow 0.14s ease, transform 0.14s ease, border-color 0.14s ease;
-                text-align: left;
-                font: inherit;
-                color: inherit;
-                width: 100%;
-                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-                appearance: none;
-                -webkit-appearance: none;
-            }
-
-            .case-card.is-archived {
-                border-left-color: var(--color-text-secondary);
-                opacity: 0.7;
-            }
-
-            .case-card:hover {
-                transform: translateY(-1px);
-                box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
-                border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
-                border-left-color: var(--color-primary);
-            }
-
-            .case-card.is-archived:hover {
-                border-left-color: var(--color-text-secondary);
-                border-color: var(--color-border);
-            }
-
-            .case-card:focus-visible {
-                outline: 2px solid var(--color-primary);
-                outline-offset: 2px;
-                box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary) 18%, transparent);
-            }
-
-            .case-card-title-row {
-                display: flex;
-                align-items: flex-start;
-                justify-content: space-between;
-                gap: 10px;
-            }
-
-            .case-card-title {
-                font-size: 0.925rem;
-                font-weight: 600;
-                color: var(--color-text-primary);
-                line-height: 1.3;
-                min-width: 0;
-            }
-
-            .case-card-new-badge {
-                flex-shrink: 0;
-                display: inline-flex;
-                align-items: center;
-                font-size: 0.68rem;
-                font-weight: 700;
-                letter-spacing: 0.04em;
-                text-transform: uppercase;
-                padding: 2px 7px;
-                border-radius: 4px;
-                border: 1px solid color-mix(in srgb, var(--color-secondary) 45%, var(--color-border));
-                background: color-mix(in srgb, var(--color-secondary) 16%, transparent);
-                color: var(--color-primary);
-                line-height: 1.3;
-            }
-
-            :host-context([data-theme='dark']) .case-card-new-badge {
-                border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
-                background: color-mix(in srgb, var(--color-accent) 18%, transparent);
-                color: var(--color-text-primary);
-            }
-
-            .case-card-desc {
-                font-size: 0.85rem;
-                color: var(--color-text-secondary);
-                line-height: 1.45;
-                display: -webkit-box;
-                -webkit-line-clamp: 2;
-                -webkit-box-orient: vertical;
-                overflow: hidden;
-                margin: 0;
-            }
-
-            .case-card-meta-row {
-                display: flex;
-                align-items: center;
-                gap: 0;
-                margin-top: 6px;
-                flex-wrap: wrap;
-            }
-
-            .case-card-meta-item {
-                font-size: 0.78rem;
-                color: var(--color-text-secondary);
-            }
-
-            .case-card-meta-item + .case-card-meta-item::before {
-                content: '·';
-                margin: 0 5px;
-                opacity: 0.45;
-            }
-
-            /* ─── Status chip ───────────────────────────────────────── */
-            .status-chip {
-                display: inline-flex;
-                align-items: center;
-                font-size: 0.7rem;
-                font-weight: 650;
-                letter-spacing: 0.05em;
-                text-transform: uppercase;
-                padding: 2px 7px;
-                border-radius: 4px;
-                border: 1px solid var(--color-border);
-                background: color-mix(in srgb, var(--color-border) 18%, transparent);
-                color: var(--color-text-secondary);
-            }
-
-            /* ─── Detail: layout ────────────────────────────────────── */
-            .case-detail {
-                display: flex;
-                flex-direction: column;
-                gap: 18px;
-                width: 100%;
-                min-width: 0;
-                max-width: 100%;
-                box-sizing: border-box;
-            }
-
-            .case-detail-grid {
-                display: grid;
-                grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
-                gap: 16px;
-                align-items: stretch;
-                width: 100%;
-                min-width: 0;
-                /* Shared pane height: both panels fill and scroll internally. */
-                height: min(560px, 60vh);
-                min-height: 380px;
-            }
-
-            .case-detail-grid .files-panel {
-                order: 1;
-                min-width: 0;
-                min-height: 0;
-                height: 100%;
-                max-height: 100%;
-            }
-
-            .case-detail-grid comments-panel {
-                --comments-panel-height: 100%;
-                --comments-panel-max-height: 100%;
-                min-height: 0;
-                height: 100%;
-                order: 2;
-                min-width: 0;
-            }
-
-            /* Stacked when content column is narrow (tablet / DevTools), set via ResizeObserver */
-            .case-detail[data-stack] .case-detail-grid {
-                grid-template-columns: 1fr;
-                align-items: start;
-                height: auto;
-                min-height: 0;
-            }
-
-            .case-detail[data-stack] .case-detail-grid .files-panel {
-                height: auto;
-                max-height: none;
-                min-height: 0;
-                width: 100%;
-            }
-
-            .case-detail[data-stack] .case-detail-grid comments-panel {
-                --comments-panel-height: auto;
-                --comments-panel-max-height: min(420px, 55vh);
-                height: auto;
-                min-height: 260px;
-                width: 100%;
-            }
-
-            @media (max-width: 1100px) {
-                .case-detail-grid {
-                    grid-template-columns: 1fr;
-                    align-items: start;
-                    height: auto;
-                    min-height: 0;
-                }
-
-                .case-detail-grid .files-panel {
-                    height: auto;
-                    max-height: none;
-                    min-height: 0;
-                    width: 100%;
-                }
-
-                .case-detail-grid comments-panel {
-                    --comments-panel-height: auto;
-                    --comments-panel-max-height: min(420px, 55vh);
-                    height: auto;
-                    min-height: 260px;
-                    width: 100%;
-                }
-            }
-
-            /* ─── Detail: toolbar + header ──────────────────────────── */
-            .detail-toolbar {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 12px;
-                flex-wrap: wrap;
-            }
-
-            .back-link {
-                border: none;
-                background: transparent;
-                padding: 4px 0;
-                margin: 0;
-                font: inherit;
-                font-size: 0.875rem;
-                font-weight: 600;
-                color: var(--color-focus);
-                cursor: pointer;
-                display: inline-flex;
-                align-items: center;
-                gap: 4px;
-            }
-
-            .back-link:hover,
-            .back-link:focus-visible {
-                color: var(--color-text-primary);
-            }
-
-            .back-link:focus-visible {
-                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
-                outline-offset: var(--focus-ring-offset, 2px);
-                border-radius: 4px;
-            }
-
-            .detail-toolbar-actions {
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                flex-wrap: wrap;
-            }
-
-            .detail-header {
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-                padding: 14px 16px 16px;
-                border: 1px solid var(--color-border);
-                border-radius: var(--radius-lg);
-                background: var(--color-panel, #fff);
-                box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
-                border-left: 4px solid var(--color-primary);
-            }
-
-            .detail-title-row {
-                display: flex;
-                align-items: center;
-                gap: 10px;
-                flex-wrap: wrap;
-            }
-
-            .detail-title {
-                margin: 0;
-                font-size: 1.4rem;
-                font-weight: 700;
-                color: var(--color-primary);
-                letter-spacing: -0.02em;
-                line-height: 1.25;
-            }
-
-            .detail-desc {
-                margin: 0;
-                font-size: 0.95rem;
-                color: var(--color-text-secondary);
-                line-height: 1.55;
-                max-width: 46rem;
-            }
-
-            .quiet-button {
-                border: 1px solid var(--color-border);
-                border-radius: 6px;
-                padding: 6px 12px;
-                font: inherit;
-                font-size: 0.8rem;
-                font-weight: 600;
-                background: var(--color-panel, #fff);
-                color: var(--color-text-primary);
-                cursor: pointer;
-            }
-
-            .quiet-button:hover:not(:disabled),
-            .quiet-button:focus-visible {
-                color: var(--color-on-secondary);
-                background: var(--color-secondary);
-                border-color: var(--color-secondary);
-            }
-
-            .quiet-button:focus-visible {
-                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
-                outline-offset: var(--focus-ring-offset, 2px);
-            }
-
-            .quiet-button:disabled {
-                opacity: 0.55;
-                cursor: not-allowed;
-            }
-
-            .people-pending-badge {
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                min-width: 1.25rem;
-                height: 1.25rem;
-                margin-left: 6px;
-                padding: 0 5px;
-                border-radius: 999px;
-                background: var(--color-primary);
-                color: var(--color-on-primary);
-                font-size: 0.7rem;
-                font-weight: 700;
-                line-height: 1;
-                vertical-align: middle;
-            }
-
-            /* ─── Detail: files panel ───────────────────────────────── */
-            .files-panel {
-                border: 1px solid var(--color-border);
-                border-left: 4px solid var(--color-primary);
-                border-radius: var(--radius-lg);
-                background: var(--color-panel, #fff);
-                display: flex;
-                flex-direction: column;
-                min-height: 360px;
-                overflow: hidden;
-                box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
-            }
-
-            .panel-header {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 10px;
-                min-height: 44px;
-                padding: 0 16px;
-                border-bottom: 1px solid var(--color-border);
-                background: var(--color-panel, #fff);
-                box-sizing: border-box;
-                flex-shrink: 0;
-            }
-
-            .panel-header-start {
-                display: inline-flex;
-                align-items: center;
-                gap: 8px;
-                min-width: 0;
-            }
-
-            .panel-title {
-                margin: 0;
-                font-size: 0.72rem;
-                font-weight: 700;
-                letter-spacing: 0.07em;
-                text-transform: uppercase;
-                color: var(--color-text-secondary);
-            }
-
-            .panel-count {
-                font-size: 0.72rem;
-                font-weight: 650;
-                color: var(--color-text-secondary);
-                background: color-mix(in srgb, var(--color-border) 16%, transparent);
-                border: 1px solid var(--color-border);
-                border-radius: 999px;
-                padding: 2px 8px;
-                line-height: 1.3;
-            }
-
-            .files-body {
-                position: relative;
-                padding: 12px 16px;
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-                flex: 1;
-                min-height: 0;
-                overflow: hidden;
-                background: color-mix(in srgb, var(--color-background) 55%, var(--color-panel, #fff));
-            }
-
-            .file-list {
-                display: flex;
-                flex-direction: column;
-                gap: 6px;
-                flex: 1;
-                min-height: 0;
-                overflow-y: auto;
-            }
-
-            .files-panel file-list-row {
-                --file-row-accent: var(--color-primary);
-            }
-
-            .empty-note {
-                color: var(--color-text-secondary);
-                font-size: 0.875rem;
-                font-style: italic;
-            }
-
-            /* ─── File upload ───────────────────────────────────────── */
-            .upload-action-row {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 12px;
-                min-height: 56px;
-                margin: 0 -16px -12px;
-                padding: 10px 16px;
-                border-top: 1px solid var(--color-border);
-                background: var(--color-panel, #fff);
-                box-sizing: border-box;
-                flex-shrink: 0;
-            }
-
-            .upload-action-row .secondary-button {
-                min-height: 36px;
-            }
-
-            .upload-status {
-                color: var(--color-text-secondary);
-                font-size: 0.85rem;
-                flex: 1;
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-
-            .upload-progress {
-                flex: 1;
-                min-width: 0;
-                display: flex;
-                flex-direction: column;
-                gap: 4px;
-            }
-
-            .upload-progress progress {
-                width: 100%;
-                height: 8px;
-                accent-color: var(--color-focus, var(--color-primary));
-            }
-
-            .upload-error {
-                color: var(--color-status-error-fg, #8a1212);
-                font-size: 0.85rem;
-                flex: 1;
-            }
-
-            /* Download button: a spinner while the access check runs (still, if reduced motion is asked for) */
-            .download-spinner {
-                width: 14px;
-                height: 14px;
-                box-sizing: border-box;
-                border: 2px solid currentColor;
-                border-right-color: transparent;
-                border-radius: 50%;
-                animation: download-spin 0.8s linear infinite;
-            }
-
-            @keyframes download-spin {
-                to { transform: rotate(360deg); }
-            }
-
-            @media (prefers-reduced-motion: reduce) {
-                .download-spinner {
-                    animation: none;
-                    border-right-color: currentColor;
-                }
-            }
-
-            /* Read by screen readers only */
-            .visually-hidden {
-                position: absolute;
-                width: 1px;
-                height: 1px;
-                margin: -1px;
-                padding: 0;
-                overflow: hidden;
-                clip: rect(0 0 0 0);
-                white-space: nowrap;
-                border: 0;
-            }
-
-            /* Drag-and-drop attach */
-            .files-body.drag-over {
-                outline: 2px dashed var(--color-focus, var(--color-primary));
-                outline-offset: -6px;
-            }
-
-            .drop-hint {
-                position: absolute;
-                inset: 0;
-                z-index: 1;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                /* text-primary on a lightly tinted panel keeps AA contrast in both themes */
-                background: color-mix(in srgb, var(--color-focus, var(--color-primary)) 14%, var(--color-panel, #fff));
-                color: var(--color-text-primary);
-                font-weight: 600;
-                pointer-events: none;
-            }
-
-            /* ─── New Case form ─────────────────────────────────────── */
-            .new-case-form {
-                border: 1px solid var(--color-border);
-                border-radius: 8px;
-                background: var(--color-surface, var(--color-background));
-                padding: 18px 20px 16px;
-                display: flex;
-                flex-direction: column;
-                gap: 14px;
-            }
-
-            .form-group {
-                display: flex;
-                flex-direction: column;
-                gap: 5px;
-            }
-
-            .form-label {
-                font-size: 0.72rem;
-                font-weight: 650;
-                letter-spacing: 0.06em;
-                text-transform: uppercase;
-                color: var(--color-text-secondary);
-            }
-
-            .form-input,
-            .form-textarea {
-                border: 1px solid var(--color-border);
-                border-radius: 6px;
-                padding: 9px 12px;
-                font: inherit;
-                font-size: 0.925rem;
-                background: var(--color-background);
-                color: var(--color-text-primary);
-                width: 100%;
-                box-sizing: border-box;
-                transition: border-color 0.14s, box-shadow 0.14s;
-            }
-
-            .form-input:focus,
-            .form-textarea:focus {
-                outline: none;
-                border-color: var(--color-primary);
-                box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 16%, transparent);
-            }
-
-            .form-textarea {
-                resize: vertical;
-                min-height: 76px;
-            }
-
-            .form-error-msg {
-                color: #c62828;
-                font-size: 0.875rem;
-            }
-
-            .form-actions {
-                display: flex;
-                justify-content: flex-end;
-                align-items: center;
-                gap: 8px;
-                padding-top: 6px;
-                border-top: 1px solid var(--color-border);
-            }
-
-            .form-actions-spacer {
-                margin-right: auto;
-            }
-
-            /* ─── Buttons ───────────────────────────────────────────── */
-            .primary-button,
-            .secondary-button {
-                border-radius: 6px;
-                padding: 8px 18px;
-                font: inherit;
-                font-size: 0.875rem;
-                font-weight: 600;
-                cursor: pointer;
-                transition: opacity 0.14s, box-shadow 0.14s, background 0.14s;
-                display: inline-flex;
-                align-items: center;
-                line-height: 1.2;
-                white-space: nowrap;
-            }
-
-            .primary-button {
-                background: var(--color-primary);
-                color: var(--color-on-primary);
-                border: 1px solid transparent;
-            }
-
-            .primary-button:hover:not(:disabled) {
-                opacity: 0.87;
-                box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 32%, transparent);
-            }
-
-            .secondary-button {
-                background: transparent;
-                color: var(--color-text-primary);
-                border: 1px solid var(--color-border);
-            }
-
-            .secondary-button:hover:not(:disabled) {
-                background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface, var(--color-background)));
-                border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
-            }
-
-            .primary-button:focus-visible,
-            .secondary-button:focus-visible {
-                outline: 2px solid var(--color-primary);
-                outline-offset: 2px;
-            }
-
-            .primary-button:disabled,
-            .secondary-button:disabled {
-                opacity: 0.42;
-                cursor: not-allowed;
-            }
-
-            /* ─── Dark mode overrides ──────────────────────────────── */
-
-            /* Cards: lift them above the page background using --color-panel */
-            :host-context([data-theme='dark']) .case-card {
-                background: var(--color-panel);
-                border-left-color: var(--color-accent);
-            }
-
-            :host-context([data-theme='dark']) .case-card.is-archived {
-                border-left-color: var(--color-text-secondary);
-                opacity: 0.55;
-            }
-
-            :host-context([data-theme='dark']) .case-card:hover {
-                background: color-mix(in srgb, var(--color-panel) 80%, var(--color-accent));
-                border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
-                border-left-color: var(--color-accent);
-            }
-
-            /* Panels: lift above page background */
-            :host-context([data-theme='dark']) .files-panel,
-            :host-context([data-theme='dark']) .new-case-form,
-            :host-context([data-theme='dark']) .detail-header {
-                background: var(--color-panel);
-                border-color: var(--color-border);
-                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
-            }
-
-            :host-context([data-theme='dark']) .detail-header {
-                border-left-color: var(--color-accent);
-            }
-
-            :host-context([data-theme='dark']) .detail-title {
-                color: var(--color-text-primary);
-            }
-
-            :host-context([data-theme='dark']) .panel-header {
-                background: var(--color-panel);
-                border-bottom-color: var(--color-border);
-            }
-
-            :host-context([data-theme='dark']) .files-panel {
-                border-left-color: var(--color-accent);
-            }
-
-            :host-context([data-theme='dark']) .panel-title,
-            :host-context([data-theme='dark']) .panel-count {
-                color: var(--color-text-secondary);
-            }
-
-            :host-context([data-theme='dark']) .panel-count {
-                background: color-mix(in srgb, var(--color-border) 40%, transparent);
-                border-color: var(--color-border);
-            }
-
-            :host-context([data-theme='dark']) .files-body {
-                background: var(--color-background);
-            }
-
-            :host-context([data-theme='dark']) .upload-action-row {
-                background: var(--color-panel);
-                border-top-color: var(--color-border);
-            }
-
-            :host-context([data-theme='dark']) .quiet-button {
-                color: var(--color-text-primary);
-                border-color: var(--color-border);
-                background: var(--color-panel);
-            }
-
-            :host-context([data-theme='dark']) .quiet-button:hover:not(:disabled),
-            :host-context([data-theme='dark']) .quiet-button:focus-visible {
-                color: var(--color-on-secondary);
-                background: var(--color-accent);
-                border-color: var(--color-accent);
-            }
-
-            /* Inputs: sunken below the panel surface for legibility */
-            :host-context([data-theme='dark']) .form-input,
-            :host-context([data-theme='dark']) .form-textarea {
-                background: var(--color-background);
-                border-color: color-mix(in srgb, var(--color-border) 140%, transparent);
-                color: var(--color-text-primary);
-            }
-
-            :host-context([data-theme='dark']) .form-input:focus,
-            :host-context([data-theme='dark']) .form-textarea:focus {
-                border-color: var(--color-accent);
-                box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent);
-            }
-
-            /* Primary button: use the brighter accent so it doesn't vanish */
-            :host-context([data-theme='dark']) .primary-button {
-                background: var(--color-secondary);
-                color: var(--color-on-primary);
-            }
-
-            :host-context([data-theme='dark']) .primary-button:hover:not(:disabled) {
-                opacity: 0.85;
-                box-shadow: 0 2px 10px color-mix(in srgb, var(--color-accent) 30%, transparent);
-            }
-
-            /* Secondary button: visible ghost on dark panel */
-            :host-context([data-theme='dark']) .secondary-button {
-                color: var(--color-text-primary);
-                border-color: var(--color-border);
-            }
-
-            :host-context([data-theme='dark']) .secondary-button:hover:not(:disabled) {
-                background: color-mix(in srgb, var(--color-accent) 10%, var(--color-panel));
-                border-color: color-mix(in srgb, var(--color-accent) 50%, var(--color-border));
-            }
-
-            /* Status chip */
-            :host-context([data-theme='dark']) .status-chip {
-                border-color: var(--color-border);
-                background: color-mix(in srgb, var(--color-border) 35%, transparent);
-                color: var(--color-text-secondary);
-            }
-
-            /* Detail header separator */
-            :host-context([data-theme='dark']) .detail-header {
-                border-bottom-color: var(--color-border);
-            }
-
-            /* Page header separator */
-            :host-context([data-theme='dark']) .page-header-row {
-                border-bottom-color: var(--color-border);
-            }
-
-            /* Upload row separator */
-            :host-context([data-theme='dark']) .upload-action-row {
-                border-top-color: var(--color-border);
-            }
-
-            /* Form actions separator */
-            :host-context([data-theme='dark']) .form-actions {
-                border-top-color: var(--color-border);
-            }
-
-            /* ─── Viewer overlay (edge-to-edge; header is the only chrome) ── */
-            .iframe-overlay {
-                position: fixed;
-                inset: 0;
-                z-index: 1000;
-                display: flex;
-                flex-direction: column;
-                gap: 0;
-                padding: 0;
-                box-sizing: border-box;
-                background: #090b14;
-                color: var(--color-text-primary);
-                font-family: var(--font-family-base);
-                font-feature-settings: var(--font-feature-defaults);
-            }
-
-            .iframe-header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                gap: 16px;
-                flex-shrink: 0;
-                padding: 10px 14px;
-                border: none;
-                border-bottom: 1px solid var(--color-border);
-                border-radius: 0;
-                background: var(--color-surface, var(--color-background));
-                color: var(--color-text-primary);
-                box-shadow: none;
-            }
-
-            .iframe-title {
-                min-width: 0;
-                font-size: 0.925rem;
-                font-weight: 600;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-                color: var(--color-text-primary);
-            }
-
-            .iframe-header-actions {
-                display: flex;
-                flex-shrink: 0;
-                gap: 10px;
-                align-items: center;
-            }
-
-            .save-scene-btn,
-            .save-as-new-btn {
-                padding: 6px 14px;
-                border-radius: 6px;
-                border: 1px solid var(--color-border);
-                background: var(--color-surface, var(--color-background));
-                color: var(--color-text-primary);
-                cursor: pointer;
-                font-size: 0.875rem;
-                white-space: nowrap;
-            }
-
-            .save-scene-btn:hover:not(:disabled),
-            .save-as-new-btn:hover:not(:disabled) {
-                background: var(--color-surface-hover, color-mix(in srgb, var(--color-primary) 10%, var(--color-background)));
-                border-color: var(--color-primary);
-            }
-
-            .save-scene-btn:disabled,
-            .save-as-new-btn:disabled {
-                opacity: 0.5;
-                cursor: not-allowed;
-            }
-
-            .save-indicator {
-                font-size: 0.8rem;
-                color: var(--color-success, #22c55e);
-                padding: 2px 8px;
-                background: color-mix(in srgb, var(--color-success, #22c55e) 12%, transparent);
-                border-radius: 4px;
-                white-space: nowrap;
-            }
-
-            .viewer-error-message {
-                font-size: 0.8rem;
-                color: var(--color-status-error-fg, #ef4444);
-                padding: 2px 8px;
-                background: color-mix(in srgb, var(--color-status-error-fg, #ef4444) 12%, transparent);
-                border-radius: 4px;
-                white-space: nowrap;
-                max-width: 300px;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-
-            .iframe-container {
-                flex: 1;
-                display: flex;
-                position: relative;
-                min-height: 0;
-                overflow: hidden;
-                border: none;
-                border-radius: 0;
-                background: #090b14;
-            }
-
-            .viewer-iframe {
-                flex: 1;
-                width: 100%;
-                height: 100%;
-                border: 0;
-                background: #090b14;
-            }
-
-            .loading-overlay {
-                position: absolute;
-                inset: 0;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                background: color-mix(in srgb, var(--color-background) 80%, transparent);
-                pointer-events: none;
-            }
-
-            .viewer-loading {
-                text-align: center;
-                padding: 16px;
-                color: var(--color-text-secondary);
-                font-size: 0.9rem;
-            }
-
-            .toast {
-                position: fixed;
-                right: 20px;
-                bottom: 20px;
-                z-index: 1200;
-                background: var(--color-success, #2e7d32);
-                color: #fff;
-                border-radius: var(--radius-md, 6px);
-                padding: 10px 16px;
-                box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
-                max-width: min(380px, calc(100vw - 40px));
-                font-weight: 500;
-                font-size: 0.9rem;
-                line-height: 1.4;
-            }
-        `;
+        return [buttonStyles, formStyles, utilStyles, casesPageStyles];
     }
 
     static get properties() {
@@ -1143,8 +158,17 @@ export class DirectusCasesPage extends LitElement {
             currentAttachmentId: { type: String },
             hasUnsavedChanges: { type: Boolean },
             isSavingScene: { type: Boolean },
+            _backgroundSave: { type: Object },
             saveIndicatorMessage: { type: String },
+            _saveAsNewName: { type: String },
             closePromptMode: { type: String },
+            // Audit view
+            _auditRows: { type: Array },
+            _auditLoading: { type: Boolean },
+            _auditError: { type: String },
+            _auditHasMore: { type: Boolean },
+            _auditOffset: { type: Number },
+            _toolbarMenuOpen: { type: Boolean },
             // New Case form
             showNewCaseForm: { type: Boolean },
             newCaseTitle: { type: String },
@@ -1201,12 +225,21 @@ export class DirectusCasesPage extends LitElement {
         this.currentAttachmentId = '';
         this.hasUnsavedChanges = false;
         this.isSavingScene = false;
+        this._lastSavedAttachmentId = null;
         this.saveIndicatorMessage = '';
         this.saveIndicatorTimeout = null;
         this.saveIndicatorActivityCleanup = null;
         this.iframeActivityCleanup = null;
         this.closePromptMode = null;
         this._closePromptResolver = null;
+        this._auditRows = [];
+        this._auditLoading = false;
+        this._auditError = null;
+        this._auditHasMore = false;
+        this._auditOffset = 0;
+        this._toolbarMenuOpen = false;
+        this._saveAsNewName = '';
+        this._saveAsNewResolver = null;
         this._viewerSessionToken = null;
         this._viewerSeatId = null;
         this.viewerKind = VIEWER_KINDS.SLICER_GUI;
@@ -1275,7 +308,20 @@ export class DirectusCasesPage extends LitElement {
             url.searchParams.delete('case');
         }
         url.searchParams.delete('viewer');
+        url.searchParams.delete('view');
         return url.toString();
+    }
+
+    _buildAuditUrl(caseId) {
+        const url = new URL(location.href);
+        url.searchParams.set('case', caseId);
+        url.searchParams.set('view', 'history');
+        url.searchParams.delete('viewer');
+        return url.toString();
+    }
+
+    _getViewFromUrl() {
+        return new URLSearchParams(location.search).get('view') || '';
     }
 
     _buildViewerUrl() {
@@ -1310,6 +356,19 @@ export class DirectusCasesPage extends LitElement {
         const caseId = event.state?.caseId ?? this._getCaseIdFromUrl();
         this.selectedCaseId = caseId || '';
         this.errorMessage = '';
+
+        // If navigating to history view, load it; if navigating away, clear state.
+        const view = event.state?.view || new URLSearchParams(location.search).get('view') || '';
+        if (view === 'history' && caseId) {
+            if (!this._auditRows.length && !this._auditLoading) {
+                this._loadAuditLog(caseId);
+            }
+        } else {
+            this._auditRows = [];
+            this._auditOffset = 0;
+            this._auditHasMore = false;
+            this._auditError = null;
+        }
     }
 
     connectedCallback() {
@@ -1319,14 +378,23 @@ export class DirectusCasesPage extends LitElement {
         // Restore case from URL; strip ?viewer — the container is gone after a reload
         const initialCaseId = this._getCaseIdFromUrl();
         if (initialCaseId) this.selectedCaseId = initialCaseId;
-        if (new URLSearchParams(location.search).has('viewer')) {
+        const initialParams = new URLSearchParams(location.search);
+        if (initialParams.has('viewer') || initialParams.has('view')) {
             history.replaceState({ caseId: initialCaseId }, '', this._buildCaseUrl(initialCaseId));
         }
 
         this._popStateHandler = (e) => this._handlePopState(e);
         window.addEventListener('popstate', this._popStateHandler);
 
-        this._handleBeforeUnload = () => {
+        this._closeToolbarMenu = () => { this._toolbarMenuOpen = false; };
+        window.addEventListener('click', this._closeToolbarMenu);
+
+        this._handleBeforeUnload = (e) => {
+            // Warn if a scene is being saved in the background (file bytes only live in memory).
+            if (this._backgroundSave && !this._backgroundSave.error) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
             if (!this.showIframe || !this._viewerSessionToken) return;
             const { stopUrl } = getViewerSessionEndpoints({
                 kind: VIEWER_KINDS.SLICER_GUI,
@@ -1396,6 +464,10 @@ export class DirectusCasesPage extends LitElement {
             window.removeEventListener('popstate', this._popStateHandler);
             this._popStateHandler = null;
         }
+        if (this._closeToolbarMenu) {
+            window.removeEventListener('click', this._closeToolbarMenu);
+            this._closeToolbarMenu = null;
+        }
         this.closeListFilterMenus();
         this.teardownDetailLayoutObserver();
         // Stop the container if the user navigates away via the side menu
@@ -1459,7 +531,7 @@ export class DirectusCasesPage extends LitElement {
     }
 
     userFacingError(err, fallback) {
-        return friendlyCasesError(err?.message, fallback, err?.status, err?.code);
+        return friendlyError(err?.message, fallback, err?.status, err?.code);
     }
 
     async loadCases() {
@@ -1467,7 +539,7 @@ export class DirectusCasesPage extends LitElement {
         this.errorMessage = '';
         const keepSelected = this.selectedCaseId;
         try {
-            const data = await listDirectusCases({ limit: 50 });
+            const data = await listCases({ limit: 50 });
             this.cases = Array.isArray(data.cases) ? data.cases : [];
             this.sessionMeta = data.meta || null;
             if (keepSelected && !this.cases.some((row) => row.id === keepSelected)) {
@@ -1520,7 +592,7 @@ export class DirectusCasesPage extends LitElement {
             return;
         }
         try {
-            const invites = await listDirectusCaseInvites(id);
+            const invites = await listInvites(id);
             this.pendingInviteCount = Array.isArray(invites)
                 ? invites.filter((inv) => inv && inv.status !== 'expired').length
                 : 0;
@@ -1589,8 +661,8 @@ export class DirectusCasesPage extends LitElement {
     countNewCaseComments(caseRow) {
         const seenAt = this.getCaseCommentSeenAt(caseRow?.id);
         if (seenAt == null) return 0;
-        const myId = this.currentDirectusUserId
-            ? String(this.currentDirectusUserId).toLowerCase()
+        const myId = this.currentUserId
+            ? String(this.currentUserId).toLowerCase()
             : '';
         let count = 0;
         for (const comment of caseRow?.comments || []) {
@@ -1614,41 +686,30 @@ export class DirectusCasesPage extends LitElement {
         history.pushState({}, '', this._buildCaseUrl(''));
     }
 
-    get currentDirectusUserId() {
+    get currentUserId() {
         return this.sessionMeta?.directusViewer?.id
             || this.sessionMeta?.directusUserId
             || null;
     }
 
-    canManageCollaborators(caseRow) {
-        const role = this.myCaseRole(caseRow);
-        return role === 'admin';
-    }
-
-    /** Owner/admin/collaborator can invite; read_only cannot. */
-    canInviteCollaborators(caseRow) {
-        const role = this.myCaseRole(caseRow);
-        return role === 'admin' || role === 'collaborator';
-    }
-
     myCaseRole(caseRow) {
-        const me = this.currentDirectusUserId;
-        if (!me || !caseRow) return null;
-        if (caseRow.createdBy?.id && String(caseRow.createdBy.id) === String(me)) {
-            return 'admin';
-        }
-        const membership = (caseRow.collaborators || []).find((c) => String(c.id) === String(me));
-        return membership?.role || null;
+        return getCaseRole(caseRow, this.currentUserId);
+    }
+
+    canManageCollaborators(caseRow) {
+        return canManageCollaborators(this.myCaseRole(caseRow));
+    }
+
+    canInviteCollaborators(caseRow) {
+        return canInvite(this.myCaseRole(caseRow));
     }
 
     canEditCaseContent(caseRow) {
-        const role = this.myCaseRole(caseRow);
-        return role === 'admin' || role === 'collaborator';
+        return canEditCase(this.myCaseRole(caseRow));
     }
 
     isMyAttachment(attachment) {
-        const me = this.currentDirectusUserId;
-        return !!me && !!attachment?.uploadedBy && String(attachment.uploadedBy) === String(me);
+        return isAttachmentOwner(attachment, this.currentUserId);
     }
 
     /** Any case member (including read_only) may comment. */
@@ -1701,14 +762,14 @@ export class DirectusCasesPage extends LitElement {
         dialog.canInvite = canInvite;
         dialog.canManage = canManage;
         dialog.roleOptions = canManage ? null : CASE_INVITE_ROLE_OPTIONS;
-        dialog.lookupFn = lookupDirectusUserByEmail;
-        dialog.inviteFn = ({ email, role }) => inviteDirectusCaseUser(caseRow.id, { email, role });
-        dialog.currentUserId = this.currentDirectusUserId || '';
+        dialog.lookupFn = lookupUserByEmail;
+        dialog.inviteFn = ({ email, role }) => inviteUser(caseRow.id, { email, role });
+        dialog.currentUserId = this.currentUserId || '';
         dialog.saving = this.savingCollaborators;
         dialog.error = '';
         let pendingInvites = [];
         try {
-            pendingInvites = await listDirectusCaseInvites(caseRow.id);
+            pendingInvites = await listInvites(caseRow.id);
         } catch {
             pendingInvites = [];
         }
@@ -1736,7 +797,7 @@ export class DirectusCasesPage extends LitElement {
         if (dialog && caseRow) {
             let pendingInvites = [];
             try {
-                pendingInvites = await listDirectusCaseInvites(caseRow.id);
+                pendingInvites = await listInvites(caseRow.id);
             } catch {
                 pendingInvites = [];
             }
@@ -1755,7 +816,7 @@ export class DirectusCasesPage extends LitElement {
         if (!caseRow?.id || !inviteId || this.savingCollaborators) return;
         this.savingCollaborators = true;
         try {
-            const data = await approveDirectusCaseInvite(caseRow.id, inviteId, { kind });
+            const data = await approveInvite(caseRow.id, inviteId, { kind });
             if (Array.isArray(data.collaborators)) {
                 this.cases = this.cases.map((row) => (
                     row.id === caseRow.id ? { ...row, collaborators: data.collaborators } : row
@@ -1789,7 +850,7 @@ export class DirectusCasesPage extends LitElement {
         if (!caseRow?.id || !inviteId || this.savingCollaborators) return;
         this.savingCollaborators = true;
         try {
-            await rejectDirectusCaseInvite(caseRow.id, inviteId, { kind });
+            await rejectInvite(caseRow.id, inviteId, { kind });
             await this.handlePeopleInvited({ detail: { status: 'rejected' } });
         } catch (err) {
             const dialog = this.renderRoot?.querySelector('#case-people-dialog');
@@ -1819,7 +880,7 @@ export class DirectusCasesPage extends LitElement {
             dialog.error = '';
         }
         try {
-            const data = await updateDirectusCaseCollaborators(caseRow.id, collaborators);
+            const data = await updateCollaborators(caseRow.id, collaborators);
             const next = Array.isArray(data.collaborators) ? data.collaborators : [];
             this.cases = this.cases.map((row) => (
                 row.id === caseRow.id ? { ...row, collaborators: next } : row
@@ -1846,7 +907,7 @@ export class DirectusCasesPage extends LitElement {
         this.postingComment = true;
         this.errorMessage = '';
         try {
-            const data = await createDirectusCaseComment(caseRow.id, text);
+            const data = await postComment(caseRow.id, text);
             const created = data.comment;
             panel?.clearDraft?.();
             this.cases = this.cases.map((row) => {
@@ -1897,7 +958,7 @@ export class DirectusCasesPage extends LitElement {
         this.creatingCase = true;
         this.newCaseError = '';
         try {
-            const data = await createDirectusCase({
+            const data = await createCase({
                 title,
                 description: this.newCaseDescription.trim() || undefined,
                 status: 'active'
@@ -1931,7 +992,7 @@ export class DirectusCasesPage extends LitElement {
         this.archivingCase = true;
         this.errorMessage = '';
         try {
-            const data = await updateDirectusCase(caseRow.id, { status: 'archived' });
+            const data = await updateCase(caseRow.id, { status: 'archived' });
             const updated = data.case;
             this.cases = this.cases.map((row) =>
                 row.id === caseRow.id ? this.mergeCaseUpdate(row, updated) : row
@@ -1973,7 +1034,7 @@ export class DirectusCasesPage extends LitElement {
         this.savingCaseEdit = true;
         this.caseEditError = '';
         try {
-            const data = await updateDirectusCase(caseRow.id, {
+            const data = await updateCase(caseRow.id, {
                 title,
                 description: this.editCaseDesc.trim() || null
             });
@@ -2001,10 +1062,10 @@ export class DirectusCasesPage extends LitElement {
         try {
             // A quick access check (it does not wait for the file), so a refusal is a message and not a
             // saved error page. Then the browser takes over and shows the download's progress itself.
-            await checkDirectusAttachmentDownload(caseRow.id, attachment.id);
+            await checkAttachmentDownload(caseRow.id, attachment.id);
             if (!this.isConnected) return; // user left the page during the check
             const link = document.createElement('a');
-            link.href = directusAttachmentDownloadUrl(caseRow.id, attachment.id);
+            link.href = getAttachmentDownloadUrl(caseRow.id, attachment.id);
             link.download = name;
             document.body.appendChild(link);
             link.click();
@@ -2035,7 +1096,7 @@ export class DirectusCasesPage extends LitElement {
         this.deletingAttachmentId = attachment.id;
         this.uploadError = '';
         try {
-            await deleteDirectusCaseAttachment(caseRow.id, attachment.id);
+            await deleteAttachment(caseRow.id, attachment.id);
             this.cases = this.cases.map((row) => {
                 if (row.id !== caseRow.id) return row;
                 return {
@@ -2225,6 +1286,7 @@ export class DirectusCasesPage extends LitElement {
         if (
             (this.viewerKind === VIEWER_KINDS.SLICER_GUI || this.viewerKind === VIEWER_KINDS.SLICERWEB)
             && this.hasUnsavedChanges
+            && !this._backgroundSave
             && this.iframeUrl && this.iframeUrl !== 'about:blank'
         ) {
             const choice = await this.promptCloseChoice('unsaved');
@@ -2421,6 +1483,7 @@ export class DirectusCasesPage extends LitElement {
         this.currentAttachmentId = '';
         this.hasUnsavedChanges = false;
         this.isSavingScene = false;
+        this._lastSavedAttachmentId = null;
         this.saveIndicatorMessage = '';
         if (this.saveIndicatorTimeout) {
             clearTimeout(this.saveIndicatorTimeout);
@@ -2477,7 +1540,7 @@ export class DirectusCasesPage extends LitElement {
 
         try {
             this.stopHeartbeat();
-            const data = await openDirectusAttachmentFullSlicer(caseRow.id, attachment.id, {
+            const data = await openAttachmentInViewer(caseRow.id, attachment.id, {
                 useSimplifiedViewer: useSimplified
             });
             if (isSuperseded()) {
@@ -2554,7 +1617,7 @@ export class DirectusCasesPage extends LitElement {
         this.showIframe = true;
         this._slicerWebRun += 1;
         // Download while the runtime starts; both are awaited in loadPendingIntoSlicerWeb.
-        const download = fetchDirectusAttachmentContent(caseRow.id, attachment.id);
+        const download = fetchAttachmentContent(caseRow.id, attachment.id);
         download.catch(() => {}); // surfaced when awaited
         this._slicerWebPending = { download, fileName: this.currentFileName };
 
@@ -2675,10 +1738,15 @@ export class DirectusCasesPage extends LitElement {
 
     handleViewerIframeLoad(event) {
         if (this.viewerKind === VIEWER_KINDS.SLICERWEB) {
-            // The iframe sandbox blocks allow-modals, so window.confirm() inside SlicerWeb
-            // returns false silently — no dialog shown. SlicerWeb then calls forgetSession()
-            // and loads sample data. Our two-phase poll in loadPendingIntoSlicerWeb waits
-            // for the sample data to finish, clears it with closeScene, then loads our file.
+            // SlicerWeb shows a confirm() on startup ("restore session?"). We suppress it by
+            // overriding window.confirm to return false — same net effect as blocking allow-modals,
+            // but explicit. Returning false causes forgetSession() + sample data load; our
+            // two-phase poll in loadPendingIntoSlicerWeb waits for that to settle, then loads
+            // the real file.
+            try {
+                const cw = event?.target?.contentWindow;
+                if (cw) cw.confirm = () => false;
+            } catch (_) {}
             this.loadPendingIntoSlicerWeb(event?.target);
             return;
         }
@@ -2711,27 +1779,60 @@ export class DirectusCasesPage extends LitElement {
         }
     }
 
+    async _loadAuditLog(caseId, { append = false } = {}) {
+        if (this._auditLoading) return;
+        const offset = append ? this._auditOffset : 0;
+        this._auditLoading = true;
+        this._auditError = null;
+        try {
+            const result = await fetchCaseActivity(caseId, { limit: 50, offset });
+            const rows = Array.isArray(result?.activity) ? result.activity : [];
+            this._auditRows = append ? [...this._auditRows, ...rows] : rows;
+            this._auditOffset = offset + rows.length;
+            this._auditHasMore = rows.length === 50;
+        } catch (err) {
+            this._auditError = this.userFacingError?.(err, t('audit.caseHistory')) ?? err.message;
+        } finally {
+            this._auditLoading = false;
+        }
+    }
+
+    _openAuditView(caseId) {
+        history.pushState({ caseId, view: 'history' }, '', this._buildAuditUrl(caseId));
+        this._auditRows = [];
+        this._auditOffset = 0;
+        this._loadAuditLog(caseId);
+    }
+
+    _closeAuditView() {
+        history.pushState({ caseId: this.selectedCaseId }, '', this._buildCaseUrl(this.selectedCaseId));
+        this._auditRows = [];
+        this._auditOffset = 0;
+        this._auditHasMore = false;
+        this._auditError = null;
+    }
+
     _attachSlicerWebSaveHandler(slicer) {
+        // Override prompt so the built-in Slicer save button doesn't show a filename dialog.
+        // SlicerWeb calls prompt() to ask for a filename before invoking saveHandler; returning
+        // the current filename here lets the save proceed silently to our handler.
+        try {
+            const iframe = this.renderRoot?.querySelector('.viewer-iframe');
+            if (iframe?.contentWindow) {
+                iframe.contentWindow.prompt = () => this.currentFileName || 'scene.mrb';
+            }
+        } catch (_) {}
+
         slicer.saveHandler = async (path) => {
-            if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) return;
+if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) return;
+            const caseId = this.selectedCaseId;
+            const attachmentId = this.currentAttachmentId;
             this.isSavingScene = true;
             try {
+                // readFiles copies bytes into JS memory — once it returns the iframe is no longer needed.
                 const [file] = await slicer.readFiles([path]);
-                const result = await saveDirectusSlicerWebScene(
-                    this.selectedCaseId,
-                    this.currentAttachmentId,
-                    file,
-                    { saveMode: 'overwrite' }
-                );
-                if (result?.attachment) {
-                    this.cases = this.cases.map((c) => {
-                        if (c.id !== this.selectedCaseId) return c;
-                        if (!Array.isArray(c.attachments)) return c;
-                        return { ...c, attachments: c.attachments.map((a) => a.id === this.currentAttachmentId ? result.attachment : a) };
-                    });
-                }
-                this.hasUnsavedChanges = false;
-                this.showSaveIndicator(t('files.saved'));
+                this.isSavingScene = false;
+                this._runBackgroundSave(file, { caseId, attachmentId, saveMode: 'overwrite' });
             } catch (err) {
                 this.errorMessage = this.userFacingError(err, t('errors.saveSceneFailed'));
             } finally {
@@ -2740,7 +1841,8 @@ export class DirectusCasesPage extends LitElement {
         };
     }
 
-    async _fetchSlicerWebSaveResult(mode) {
+    /** Phase 1: trigger WASM scene serialization and copy bytes into JS. Returns the File. */
+    async _writeSlicerWebScene() {
         const iframe = this.renderRoot?.querySelector('.viewer-iframe');
         const slicer = iframe?.contentWindow?.slicerWeb;
         if (!slicer) throw new Error(t('errors.saveSceneFailed'));
@@ -2755,39 +1857,108 @@ export class DirectusCasesPage extends LitElement {
         if (!file || file.size < 1024) {
             throw new Error(`saveScene produced an unexpectedly small file (${file?.size ?? 0} bytes) — the scene may not have been written yet`);
         }
-        return saveDirectusSlicerWebScene(
-            this.selectedCaseId,
-            this.currentAttachmentId,
-            file,
-            { saveMode: mode }
-        );
+        return file;
     }
 
-    async saveCurrentScene(mode = 'overwrite') {
+    /** Phase 2: upload the serialized file in the background. Safe to call after closing the viewer. */
+    _runBackgroundSave(file, { caseId, attachmentId, saveMode, name, _attempt = 1 } = {}) {
+        // Abort an in-flight overwrite for the same attachment — the newer data supersedes it.
+        // SaveAsNew is independent (creates a new attachment) so let both run concurrently.
+        const prev = this._backgroundSave;
+        if (prev?.abortCtrl && saveMode === 'overwrite' && prev.saveMode === 'overwrite' && prev.attachmentId === attachmentId) {
+            prev.abortCtrl.abort();
+        }
+        const abortCtrl = new AbortController();
+        // Keep file + params so the error banner can offer a retry.
+        this._backgroundSave = { file, caseId, attachmentId, saveMode, name, error: null, abortCtrl };
+        this.hasUnsavedChanges = false;
+        saveWithDirectusReconnect(() => saveSlicerWebScene(caseId, attachmentId, file, { saveMode, name, signal: abortCtrl.signal }))
+            .then((result) => {
+                if (abortCtrl.signal.aborted) return; // superseded — a newer save already owns _backgroundSave
+                this._backgroundSave = null;
+                if (result?.attachment) {
+                    this.cases = this.cases.map((c) => {
+                        if (c.id !== caseId) return c;
+                        if (!Array.isArray(c.attachments)) return c;
+                        const attachments = saveMode === 'saveAsNew'
+                            ? [...c.attachments, result.attachment]
+                            : c.attachments.map((a) => a.id === attachmentId ? result.attachment : a);
+                        return { ...c, attachments };
+                    });
+                }
+                if (saveMode === 'overwrite') this._lastSavedAttachmentId = attachmentId;
+                const msg = saveMode === 'saveAsNew' ? t('files.savedAsNew') : t('files.saved');
+                if (this.showIframe) {
+                    this.showSaveIndicator(msg);
+                } else {
+                    this.showToast(msg);
+                }
+            })
+            .catch((err) => {
+                if (err?.name === 'AbortError') return; // superseded by a newer save — discard silently
+                // Session errors mean the user explicitly cancelled reconnect — don't auto-retry,
+                // as that would immediately re-open the reconnect dialog.
+                const isSessionError = err.code === 'DIRECTUS_SESSION_EXPIRED' || err.code === 'DIRECTUS_SESSION_REQUIRED';
+                if (_attempt < 2 && !isSessionError) {
+                    setTimeout(() => {
+                        if (this._backgroundSave && !this._backgroundSave.error) {
+                            this._runBackgroundSave(file, { caseId, attachmentId, saveMode, name, _attempt: _attempt + 1 });
+                        }
+                    }, 2000);
+                    return;
+                }
+                this._backgroundSave = {
+                    ...this._backgroundSave,
+                    error: this.userFacingError(err, t('errors.saveSceneFailed'))
+                };
+            });
+    }
+
+    _retryBackgroundSave() {
+        if (!this._backgroundSave) return;
+        const { file, caseId, attachmentId, saveMode, name } = this._backgroundSave;
+        // Reset attempt counter so the manual retry also gets one silent auto-retry.
+        this._runBackgroundSave(file, { caseId, attachmentId, saveMode, name, _attempt: 1 });
+    }
+
+    async saveCurrentScene(mode = 'overwrite', name) {
         if (!this.selectedCaseId || !this.currentAttachmentId) return false;
         if (this.isSavingScene) return false;
         this.isSavingScene = true;
         try {
-            let result;
             if (this.viewerKind === VIEWER_KINDS.SLICERWEB) {
-                result = await this._fetchSlicerWebSaveResult(mode);
-            } else {
-                // SLICER_GUI: flush pending UI edits before saving via trame.
-                try {
-                    const iframe = this.renderRoot?.querySelector('.viewer-iframe');
-                    iframe?.contentWindow?.focus?.();
-                    const active = iframe?.contentWindow?.document?.activeElement;
-                    if (active && typeof active.blur === 'function') active.blur();
-                } catch (_) { /* cross-origin, best effort */ }
-                await new Promise((r) => setTimeout(r, 350));
-                result = await saveDirectusCaseAttachmentScene(
+                // Skip if nothing has changed since the last successful save.
+                if (mode === 'overwrite' && !this.hasUnsavedChanges && this._lastSavedAttachmentId === this.currentAttachmentId) {
+                    this.isSavingScene = false;
+                    this.showSaveIndicator(t('files.saved'));
+                    return true;
+                }
+                // Phase 1: WASM serialization (requires the viewer iframe).
+                const caseId = this.selectedCaseId;
+                const attachmentId = this.currentAttachmentId;
+                const file = await this._writeSlicerWebScene();
+                // Phase 2: upload runs in the background; viewer is unblocked immediately.
+                this.isSavingScene = false;
+                this._runBackgroundSave(file, { caseId, attachmentId, saveMode: mode, name });
+                return true;
+            }
+
+            // SLICER_GUI: flush pending UI edits before saving via trame.
+            try {
+                const iframe = this.renderRoot?.querySelector('.viewer-iframe');
+                iframe?.contentWindow?.focus?.();
+                const active = iframe?.contentWindow?.document?.activeElement;
+                if (active && typeof active.blur === 'function') active.blur();
+            } catch (_) { /* cross-origin, best effort */ }
+            await new Promise((r) => setTimeout(r, 350));
+            const result = await saveWithDirectusReconnect(() =>
+                saveAttachmentScene(
                     this.selectedCaseId,
                     this.currentAttachmentId,
                     { saveMode: mode }
-                );
-            }
+                )
+            );
 
-            // Patch the attachment in the local cases array so the file list reflects the save.
             if (result?.attachment) {
                 this.cases = this.cases.map((c) => {
                     if (c.id !== this.selectedCaseId) return c;
@@ -2810,8 +1981,36 @@ export class DirectusCasesPage extends LitElement {
         }
     }
 
-    saveCurrentSceneAsNew() {
-        return this.saveCurrentScene('saveAsNew');
+    async saveCurrentSceneAsNew() {
+        const defaultName = this.currentFileName
+            ? this.currentFileName.replace(/\.[^.]+$/, '')
+            : '';
+        const name = await this.promptSaveAsNewName(defaultName);
+        if (name === null) return;
+        return this.saveCurrentScene('saveAsNew', name);
+    }
+
+    promptSaveAsNewName(defaultName = '') {
+        this._saveAsNewName = defaultName;
+        this._saveAsNewResolver = null;
+        const dialog = this.renderRoot?.querySelector('#save-as-new-dialog');
+        dialog?.openDialog();
+        // Focus and select the input after the dialog is visible.
+        requestAnimationFrame(() => {
+            const input = dialog?.querySelector('#save-as-new-name');
+            if (input) { input.focus(); input.select(); }
+        });
+        return new Promise((resolve) => {
+            this._saveAsNewResolver = resolve;
+        });
+    }
+
+    finishSaveAsNew(confirmed) {
+        const name = confirmed ? (this._saveAsNewName || '').trim() : null;
+        this.renderRoot?.querySelector('#save-as-new-dialog')?.closeDialog();
+        const resolver = this._saveAsNewResolver;
+        this._saveAsNewResolver = null;
+        if (resolver) resolver(name);
     }
 
     showSaveIndicator(message) {
@@ -3044,6 +2243,11 @@ export class DirectusCasesPage extends LitElement {
                         <button class="back-link" type="button" @click=${() => this.backToCaseList()}>
                             ${t('cases.backToList')}
                         </button>
+                        ${this._getViewFromUrl() === 'history' ? html`
+                            <button class="back-link" type="button" @click=${() => this._closeAuditView()}>
+                                ${caseRow.title || t('cases.untitledCase')}
+                            </button>
+                        ` : ''}
                         <div class="detail-toolbar-actions">
                             <button
                                 class="quiet-button"
@@ -3063,8 +2267,37 @@ export class DirectusCasesPage extends LitElement {
                                     @click=${() => this.startEditCase(caseRow)}
                                 >${t('cases.editDetails')}</button>
                             ` : ''}
+                            <div class="toolbar-more-menu">
+                                <button
+                                    class="quiet-button toolbar-more-btn"
+                                    type="button"
+                                    aria-label=${t('common.moreOptions')}
+                                    @click=${(e) => { e.stopPropagation(); this._toolbarMenuOpen = !this._toolbarMenuOpen; }}
+                                >⋯</button>
+                                ${this._toolbarMenuOpen ? html`
+                                    <div class="toolbar-more-dropdown" @click=${(e) => e.stopPropagation()}>
+                                        <button
+                                            class="toolbar-more-item"
+                                            type="button"
+                                            @click=${() => { this._toolbarMenuOpen = false; this._openAuditView(caseRow.id); }}
+                                        >${t('audit.viewHistory')}</button>
+                                    </div>
+                                ` : ''}
+                            </div>
                         </div>
                     </div>
+
+                    ${this._getViewFromUrl() === 'history' ? html`
+                        <div class="audit-view-container">
+                            <audit-log
+                                .rows=${this._auditRows}
+                                .loading=${this._auditLoading}
+                                .error=${this._auditError || ''}
+                                .hasMore=${this._auditHasMore}
+                                @load-more=${() => this._loadAuditLog(caseRow.id, { append: true })}
+                            ></audit-log>
+                        </div>
+                    ` : html`
 
                     ${this.editingCase ? html`
                         <form class="new-case-form" @submit=${(e) => { e.preventDefault(); this.saveEditCase(caseRow); }} novalidate>
@@ -3284,6 +2517,7 @@ export class DirectusCasesPage extends LitElement {
                             @post-comment=${(e) => this.handlePostComment(e, caseRow)}
                         ></comments-panel>
                     </div>
+                `}
                 </div>
             </page-layout-template>
         `;
@@ -3314,17 +2548,17 @@ export class DirectusCasesPage extends LitElement {
                         ` : ''}
                         ${(this.viewerKind === VIEWER_KINDS.SLICER_GUI || this.viewerKind === VIEWER_KINDS.SLICERWEB) ? html`
                             <button
-                                class="save-scene-btn"
+                                class="secondary-button"
                                 type="button"
-                                ?disabled=${this.iframeUrl === 'about:blank' || this.isSavingScene}
+                                ?disabled=${this.viewerLoading || this.iframeUrl === 'about:blank' || this.isSavingScene}
                                 @click=${() => this.saveCurrentScene('overwrite')}
                             >
                                 ${this.isSavingScene ? t('common.saving') : t('files.saveScene')}
                             </button>
                             <button
-                                class="save-as-new-btn"
+                                class="secondary-button"
                                 type="button"
-                                ?disabled=${this.iframeUrl === 'about:blank' || this.isSavingScene}
+                                ?disabled=${this.viewerLoading || this.iframeUrl === 'about:blank' || this.isSavingScene}
                                 @click=${() => this.saveCurrentSceneAsNew()}
                             >
                                 ${t('files.saveAsNew')}
@@ -3339,6 +2573,33 @@ export class DirectusCasesPage extends LitElement {
                         </button>
                     </div>
                 </div>
+                <app-dialog
+                    id="save-as-new-dialog"
+                    title=${t('files.saveAsNewTitle')}
+                    .lightDismiss=${false}
+                >
+                    <div class="form-group">
+                        <label class="form-label" for="save-as-new-name">${t('files.saveAsNewLabel')}</label>
+                        <input
+                            id="save-as-new-name"
+                            type="text"
+                            class="form-input"
+                            autocomplete="off"
+                            .value=${this._saveAsNewName}
+                            @input=${(e) => { this._saveAsNewName = e.target.value; }}
+                            @keydown=${(e) => { if (e.key === 'Enter' && this._saveAsNewName.trim()) this.finishSaveAsNew(true); if (e.key === 'Escape') this.finishSaveAsNew(false); }}
+                        />
+                    </div>
+                    <button slot="actions" class="secondary-button" type="button"
+                        @click=${() => this.finishSaveAsNew(false)}>
+                        ${t('common.cancel')}
+                    </button>
+                    <button slot="actions" class="primary-button" type="button"
+                        ?disabled=${!this._saveAsNewName.trim()}
+                        @click=${() => this.finishSaveAsNew(true)}>
+                        ${t('common.save')}
+                    </button>
+                </app-dialog>
                 ${this.closePromptMode ? html`
                     <app-dialog
                         id="viewer-close-prompt"
@@ -3401,6 +2662,21 @@ export class DirectusCasesPage extends LitElement {
         return html`
             ${detail ? this.renderCaseDetail(detail) : this.renderLanding()}
             ${this.renderViewerOverlay()}
+            ${this._backgroundSave ? html`
+                <div class="background-save-banner" role="status" aria-live="polite">
+                    ${this._backgroundSave.error ? html`
+                        <span class="background-save-spinner background-save-spinner--error" aria-hidden="true"></span>
+                        <span class="background-save-error">${this._backgroundSave.error}</span>
+                        <button class="secondary-button" type="button" style="padding:2px 10px;font-size:0.8rem"
+                            @click=${() => this._retryBackgroundSave()}>${t('common.tryAgain')}</button>
+                        <button class="link-button" type="button"
+                            @click=${() => { this._backgroundSave = null; }}>${t('common.dismiss')}</button>
+                    ` : html`
+                        <span class="background-save-spinner" aria-hidden="true"></span>
+                        <span>${t('files.savingBackground')}</span>
+                    `}
+                </div>
+            ` : ''}
             ${this.toastMessage ? html`<div class="toast" role="status">${this.toastMessage}</div>` : ''}
             <people-dialog
                 id="case-people-dialog"

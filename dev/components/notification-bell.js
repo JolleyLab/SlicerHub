@@ -7,7 +7,7 @@ import {
     markAllNotificationsRead,
     dismissNotification
 } from '../services/notifications.js';
-import { getPendingRegistrationsCount } from '../services/directus.js';
+import { getPendingRegistrationsCount } from '../services/registrations.js';
 
 /**
  * Global notification bell for the product inbox (any notification type).

@@ -17,12 +17,15 @@ export default {
         previous: 'Previous',
         next: 'Next',
         menu: 'Menu',
+        moreOptions: 'More options',
         default: 'Default',
         remove: 'Remove',
         back: 'Back',
         networkError: 'Network error. Please try again.',
         somethingWentWrong: 'Something went wrong. Please try again.',
-        requestFailed: 'Request failed'
+        requestFailed: 'Request failed',
+        tryAgain: 'Try again',
+        dismiss: 'Dismiss'
     },
     roles: {
         admin: 'Admin',
@@ -472,6 +475,13 @@ export default {
         browserPreviewNote: 'Browser preview for documents and images is not available yet.',
         commentsLoadFailed: 'Comments could not be loaded. Contact your administrator to check permissions for this role.'
     },
+    audit: {
+        caseHistory: 'Case History',
+        noActivity: 'No activity recorded yet.',
+        loading: 'Loading…',
+        loadMore: 'Load more',
+        viewHistory: 'View Case History'
+    },
     files: {
         title: 'My Files',
         description: 'Upload, open, and manage your scene files.',
@@ -497,6 +507,8 @@ export default {
         share: 'Share',
         saveScene: 'Save scene',
         saveAsNew: 'Save as new',
+        saveAsNewTitle: 'Save as new',
+        saveAsNewLabel: 'File name',
         closeViewer: 'Close viewer',
         loadingViewer: 'Loading viewer',
         dontSave: "Don't save",
@@ -519,6 +531,7 @@ export default {
         zeroBytes: '0 Bytes',
         saved: 'Saved',
         savedAsNew: 'Saved as new file',
+        savingBackground: 'Saving scene…',
         duration1h: '1 hour',
         duration7d: '7 days',
         duration30d: '30 days',

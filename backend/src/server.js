@@ -14,12 +14,16 @@ import projectRoutes from "./routes/projects.js";
 import projectGpuRoutes from "./routes/projectGpu.js";
 import directusRoutes from "./routes/directus.js";
 import directusTusRoutes from "./routes/directusTus.js";
+import directusVersionRoutes from "./routes/directusVersions.js";
+import directusCaseActivityRoutes from "./routes/directusCaseActivity.js";
 import registrationRequestRoutes from "./routes/registrationRequests.js";
 import taskGroupRoutes from "./routes/taskGroups.js";
 import featuresRoutes from "./routes/features.js";
 import slicerWebRoutes from "./routes/slicerWeb.js";
 import announcementRoutes from "./routes/announcement.js";
 import { startStablePoller, startLatestPoller } from "./services/slicerWebUpdater.js";
+import { ensureVersionsCollection } from "./services/attachmentVersions.js";
+import { startPruneScheduler } from "./jobs/pruneVersions.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { isDirectusConfigured } from "./services/directus.js";
 import { startBillingWatchdog } from "./gpu/billingWatchdog.js";
@@ -85,7 +89,7 @@ app.use(cookieParser());
 // Enable CORS for your frontend
 app.use(cors({
     origin: config.server.corsOrigins,
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     credentials: true
 }));
 
@@ -112,6 +116,8 @@ projectGpuRoutes(app);
 // Directus PoC (headless case list behind app auth)
 directusRoutes(app);
 directusTusRoutes(app);
+directusVersionRoutes(app);
+directusCaseActivityRoutes(app);
 
 // Register container routes
 containerRoutes(app);
@@ -126,10 +132,16 @@ app.listen(config.server.port, config.server.host, async () => {
     console.log(`Environment: ${config.env}`);
     if (config.directus.casesEnabled && isDirectusConfigured()) {
         console.log('Directus Cases: enabled (BFF /api/directus/*)');
+        ensureVersionsCollection().catch((err) =>
+            console.warn('Version collection bootstrap failed:', err.message)
+        );
     } else if (isDirectusConfigured()) {
         console.log('Directus Cases: disabled (set ENABLE_DIRECTUS_CASES=true to expose)');
     } else {
         console.log('Directus PoC: not configured (set DIRECTUS_URL + DIRECTUS_TOKEN)');
+    }
+    if (config.directus.casesEnabled && config.versioning.retentionEnabled) {
+        startPruneScheduler();
     }
     warnIfWeakDemoSecrets();
     warnIfGpuCredentialsKeyMissing();

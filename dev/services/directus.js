@@ -536,21 +536,32 @@ export async function saveDirectusCaseAttachmentScene(caseId, attachmentId, { sa
 }
 
 /**
- * Save a SlicerWeb scene (bytes from the browser) to a case attachment.
+ * Save a SlicerWeb scene to a case attachment via a TUS upload + commit.
+ * Uploads the file directly to Directus (chunked, resumable, with progress) then
+ * POSTs a commit request so the backend can update the attachment record.
  * @param {string} caseId
  * @param {string} attachmentId
  * @param {File} file  The scene file from bridge.readFiles()
- * @param {{ saveMode: 'overwrite' | 'saveAsNew', name?: string }} options
+ * @param {{ saveMode?: 'overwrite'|'saveAsNew', name?: string,
+ *   onProgress?: (sent: number, total: number) => void, signal?: AbortSignal }} options
  */
-export async function saveDirectusSlicerWebScene(caseId, attachmentId, file, { saveMode = 'overwrite', name } = {}) {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('saveMode', saveMode);
-    if (name) formData.append('name', name);
+export async function saveDirectusSlicerWebScene(caseId, attachmentId, file, { saveMode = 'overwrite', name, onProgress, signal } = {}) {
+    const { uploadToken, metadata } = await requestUploadToken();
+    await tusUpload({
+        file,
+        endpoint: `${API_URL}/api/directus/files/tus`,
+        metadata,
+        chunkSize: 64 * 1024 * 1024,
+        onProgress,
+        signal
+    });
+    const body = { uploadToken, saveMode };
+    if (name) body.name = name;
     const response = await fetch(attachmentUrl(caseId, attachmentId, 'save-slicerweb'), {
         method: 'POST',
         credentials: 'include',
-        body: formData
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
     });
     const data = await parseJson(response);
     if (!response.ok) {
@@ -765,5 +776,27 @@ export async function updateTaskGroupMember(groupId, memberId, updates) {
     const data = await parseJson(response);
     if (!response.ok) throwApiError(response, data, 'Failed to update member');
     return data.data;
+}
+
+export async function fetchCaseActivity(caseId, { limit = 50, offset = 0 } = {}) {
+    const params = new URLSearchParams({ limit, offset });
+    const response = await fetch(
+        `${API_URL}/api/directus/cases/${encodeURIComponent(caseId)}/activity?${params}`,
+        { credentials: 'include' }
+    );
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to fetch case activity');
+    return data;
+}
+
+export async function fetchAttachmentActivity(caseId, attachmentId, { limit = 50, offset = 0 } = {}) {
+    const params = new URLSearchParams({ limit, offset });
+    const response = await fetch(
+        `${API_URL}/api/directus/cases/${encodeURIComponent(caseId)}/attachments/${encodeURIComponent(attachmentId)}/activity?${params}`,
+        { credentials: 'include' }
+    );
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to fetch attachment activity');
+    return data;
 }
 

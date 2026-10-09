@@ -1,9 +1,11 @@
-import { LitElement, html, css } from 'lit-element';
-import { avatarCircleStyles } from '../styles/avatar.js';
+import { LitElement, html } from 'lit-element';
+import { peopleDialogStyles } from './people-dialog.styles.js';
+import './person-chip.js';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
 import { isInviteEmailEnabled } from '../services/features.js';
 import { normalizeMember } from '../utils/memberNormalize.js';
+import { roleOrder } from '../utils/casePermissions.js';
 import './app-dialog.js';
 import './app-button.js';
 import './badge-pill.js';
@@ -89,13 +91,6 @@ function buildUnknownLabels(members = [], currentUserId = null) {
     return labels;
 }
 
-function initialFor(person, ctx = {}) {
-    const name = displayName(person, ctx);
-    if (name === 'Me') return 'M';
-    if (/^unknown user/i.test(name)) return '?';
-    return String(name).charAt(0).toUpperCase() || '?';
-}
-
 /** Secondary line: email when primary is not a real name (and not Me). */
 function memberSecondaryLine(person, ctx = {}) {
     const id = person?.id != null ? String(person.id) : '';
@@ -119,208 +114,7 @@ function memberSecondaryLine(person, ctx = {}) {
  */
 export class PeopleDialog extends LitElement {
     static get styles() {
-        return [avatarCircleStyles, css`
-            :host {
-                display: contents;
-            }
-
-            app-dialog {
-                --app-dialog-width: min(560px, calc(100vw - 32px));
-            }
-
-            .body {
-                display: flex;
-                flex-direction: column;
-                gap: 14px;
-            }
-
-            .error {
-                margin: 0;
-                color: #c62828;
-                font-size: 0.875rem;
-            }
-
-            .list {
-                display: flex;
-                flex-direction: column;
-                border: 1px solid var(--color-border);
-                border-radius: var(--radius-md, 8px);
-                overflow: hidden;
-                background: var(--color-background);
-                box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 4%, transparent);
-            }
-
-            .list-scroll {
-                /* ~5 rows at min-height 52px, then scroll; invite stays pinned below */
-                max-height: calc((52px * 5) + 1px);
-                overflow-y: auto;
-                overscroll-behavior: contain;
-                -webkit-overflow-scrolling: touch;
-            }
-
-            .row {
-                display: flex;
-                align-items: center;
-                gap: 12px;
-                padding: 10px 12px;
-                min-height: 52px;
-                box-sizing: border-box;
-            }
-
-            .row + .row {
-                border-top: 1px solid var(--color-border);
-            }
-
-            .invite-footer {
-                border-top: 1px solid var(--color-border);
-                padding: 12px;
-                display: flex;
-                flex-direction: column;
-                gap: 10px;
-                background: color-mix(in srgb, var(--color-border) 12%, transparent);
-                flex-shrink: 0;
-            }
-
-            .avatar {
-                width: 36px;
-                height: 36px;
-                border: 1px solid var(--color-border);
-                background: var(--color-primary);
-                color: var(--color-on-primary);
-                font-size: 0.85rem;
-                font-weight: 650;
-                flex: 0 0 36px;
-            }
-
-            :host-context([data-theme='dark']) .avatar {
-                background: color-mix(in srgb, #c5cce6 55%, #5b7cff);
-                color: var(--color-primary);
-            }
-
-            .identity {
-                display: flex;
-                flex-direction: column;
-                gap: 1px;
-                min-width: 0;
-                flex: 1;
-            }
-
-            .name {
-                font-weight: 550;
-                color: var(--color-text-primary);
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-
-            .email {
-                font-size: 0.8rem;
-                color: var(--color-text-secondary);
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-
-            .meta {
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                flex-shrink: 0;
-            }
-
-            .meta dropdown-select {
-                min-width: 140px;
-            }
-
-            .empty {
-                margin: 0;
-                padding: 18px 14px;
-                text-align: center;
-                color: var(--color-text-secondary);
-                font-size: 0.9rem;
-            }
-
-            .invite-row {
-                display: flex;
-                gap: 8px;
-                align-items: stretch;
-            }
-
-            .invite-link-row {
-                display: flex;
-                gap: 8px;
-                align-items: stretch;
-                margin-top: 8px;
-            }
-
-            .invite-input {
-                flex: 1;
-                min-width: 0;
-                border: 1px solid var(--color-border);
-                border-radius: 6px;
-                padding: 9px 12px;
-                font: inherit;
-                font-size: 0.9rem;
-                background: var(--color-background);
-                color: var(--color-text-primary);
-                box-sizing: border-box;
-            }
-
-            .invite-input:focus {
-                outline: none;
-                border-color: var(--color-primary);
-                box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 16%, transparent);
-            }
-
-            .invite-match {
-                display: flex;
-                align-items: center;
-                gap: 12px;
-                flex-wrap: wrap;
-            }
-
-            .invite-match .meta {
-                margin-left: auto;
-            }
-
-            .invite-status {
-                margin: 0;
-                font-size: 0.85rem;
-                color: var(--color-text-secondary);
-            }
-
-            .invite-status.error {
-                color: #c62828;
-            }
-
-            .pending-block {
-                margin-top: 4px;
-                border: 1px dashed var(--color-border);
-                border-radius: var(--radius-md, 8px);
-                overflow: hidden;
-            }
-
-            .pending-heading {
-                margin: 0;
-                padding: 8px 12px;
-                font-size: 0.8rem;
-                font-weight: 600;
-                color: var(--color-text-secondary);
-                background: color-mix(in srgb, var(--color-border) 35%, transparent);
-            }
-
-            .pending-actions {
-                display: flex;
-                gap: 6px;
-                flex-shrink: 0;
-            }
-
-            .saving {
-                margin: 0;
-                font-size: 0.85rem;
-                color: var(--color-text-secondary);
-            }
-        `];
+        return peopleDialogStyles;
     }
 
     static get properties() {
@@ -432,12 +226,7 @@ export class PeopleDialog extends LitElement {
             const bMe = ctx.currentUserId && String(b.id) === String(ctx.currentUserId);
             if (aMe && !bMe) return -1;
             if (!aMe && bMe) return 1;
-            const rank = (role) => {
-                if (role === 'admin') return 0;
-                if (role === 'collaborator') return 1;
-                return 2;
-            };
-            const diff = rank(a.role) - rank(b.role);
+            const diff = roleOrder(a.role) - roleOrder(b.role);
             if (diff !== 0) return diff;
             return displayName(a, ctx).localeCompare(displayName(b, ctx));
         });
@@ -601,15 +390,11 @@ export class PeopleDialog extends LitElement {
         const editable = this.memberIsEditable(member);
         return html`
             <div class="row">
-                <div class="avatar" aria-hidden="true">
-                    ${member.avatarUrl
-                        ? html`<img src=${member.avatarUrl} alt="">`
-                        : initialFor(member, ctx)}
-                </div>
-                <div class="identity">
-                    <span class="name">${name}</span>
-                    ${secondary ? html`<span class="email">${secondary}</span>` : ''}
-                </div>
+                <person-chip
+                    .avatarUrl=${member.avatarUrl || ''}
+                    .name=${name}
+                    .secondaryLine=${secondary}
+                ></person-chip>
                 <div class="meta">
                     ${editable ? html`
                         <dropdown-select
@@ -674,15 +459,10 @@ export class PeopleDialog extends LitElement {
                 ` : ''}
                 ${target ? html`
                     <div class="invite-match">
-                        <div class="avatar" aria-hidden="true">${initialFor(target)}</div>
-                        <div class="identity">
-                            <span class="name">${this.matchedUser
-                                ? displayName(this.matchedUser, this.nameContext)
-                                : this.unknownEmail}</span>
-                            ${target.email ? html`
-                                <span class="email">${target.email}${this.unknownEmail ? ` · ${t('people.newAccount')}` : ''}</span>
-                            ` : ''}
-                        </div>
+                        <person-chip
+                            .name=${this.matchedUser ? displayName(this.matchedUser, this.nameContext) : this.unknownEmail}
+                            .secondaryLine=${target.email ? (target.email + (this.unknownEmail ? ` · ${t('people.newAccount')}` : '')) : ''}
+                        ></person-chip>
                         <div class="meta">
                             <dropdown-select
                                 .value=${this.inviteRole}
@@ -710,20 +490,20 @@ export class PeopleDialog extends LitElement {
             <div class="pending-block">
                 <p class="pending-heading">${t('people.pendingInvites')}</p>
                 ${pending.map((invite) => {
-                    const isSignup = invite.kind === 'signup';
-                    const needsApproval = invite.status === 'pending'
-                        || invite.status === 'pending_approval';
-                    const awaitingSignup = invite.status === 'pending_signup';
-                    const statusSuffix = awaitingSignup
-                        ? t('people.awaitingSignup')
-                        : `${t('people.awaitingApproval')}${isSignup ? ` (${t('people.newAccount')})` : ''}`;
-                    const statusLine = `${roleLabel(invite.proposedRole)} · ${statusSuffix}`;
-                    return html`
+            const isSignup = invite.kind === 'signup';
+            const needsApproval = invite.status === 'pending'
+                || invite.status === 'pending_approval';
+            const awaitingSignup = invite.status === 'pending_signup';
+            const statusSuffix = awaitingSignup
+                ? t('people.awaitingSignup')
+                : `${t('people.awaitingApproval')}${isSignup ? ` (${t('people.newAccount')})` : ''}`;
+            const statusLine = `${roleLabel(invite.proposedRole)} · ${statusSuffix}`;
+            return html`
                     <div class="row">
-                        <div class="identity">
-                            <span class="name">${invite.inviteeEmail || invite.inviteeDirectusUserId}</span>
-                            <span class="email">${statusLine}</span>
-                        </div>
+                        <person-chip
+                            .name=${invite.inviteeEmail || invite.inviteeDirectusUserId}
+                            .secondaryLine=${statusLine}
+                        ></person-chip>
                         ${this.canManage ? html`
                             <div class="pending-actions">
                                 ${needsApproval ? html`
@@ -731,26 +511,26 @@ export class PeopleDialog extends LitElement {
                                         variant="primary"
                                         ?disabled=${this.saving}
                                         @click=${() => this.dispatchEvent(new CustomEvent('people-approve-invite', {
-                                            detail: { inviteId: invite.id, kind: inviteKind(invite) },
-                                            bubbles: true,
-                                            composed: true
-                                        }))}
+                detail: { inviteId: invite.id, kind: inviteKind(invite) },
+                bubbles: true,
+                composed: true
+            }))}
                                     >${t('people.approve')}</app-button>
                                 ` : ''}
                                 <app-button
                                     variant="ghost"
                                     ?disabled=${this.saving}
                                     @click=${() => this.dispatchEvent(new CustomEvent('people-reject-invite', {
-                                        detail: { inviteId: invite.id, kind: inviteKind(invite) },
-                                        bubbles: true,
-                                        composed: true
-                                    }))}
+                detail: { inviteId: invite.id, kind: inviteKind(invite) },
+                bubbles: true,
+                composed: true
+            }))}
                                 >${awaitingSignup ? t('common.cancel') : t('people.reject')}</app-button>
                             </div>
                         ` : html`<badge-pill>${awaitingSignup ? t('people.linkSent') : t('people.pending')}</badge-pill>`}
                     </div>
                 `;
-                })}
+        })}
             </div>
         `;
     }

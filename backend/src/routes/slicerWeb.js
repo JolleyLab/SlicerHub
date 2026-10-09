@@ -20,8 +20,13 @@ export default function slicerWebRoutes(app) {
         if (!config.slicerWeb.hasCredentials) {
             return res.status(503).json({ error: 'No GitHub credentials configured for SlicerWeb updates.' });
         }
-        const result = await peekChannelUpdate(channel);
-        res.json(result);
+        try {
+            const result = await peekChannelUpdate(channel);
+            res.json(result);
+        } catch (err) {
+            console.warn(`[slicerWeb] check-update peek failed (${channel}):`, err.message);
+            res.status(502).json({ error: `Could not reach GitHub to check for updates: ${err.message}` });
+        }
     }));
 
     // POST /api/slicerweb/check-update?channel=latest
@@ -38,8 +43,13 @@ export default function slicerWebRoutes(app) {
             return res.status(503).json({ error: 'No GitHub credentials configured for SlicerWeb updates.' });
         }
 
-        const result = await checkAndUpdate(channel);
-        res.json(result);
+        try {
+            const result = await checkAndUpdate(channel);
+            res.json(result);
+        } catch (err) {
+            console.warn(`[slicerWeb] check-update install failed (${channel}):`, err.message);
+            res.status(502).json({ error: `Update failed: ${err.message}` });
+        }
     }));
 
     // POST /api/slicerweb/webhook
