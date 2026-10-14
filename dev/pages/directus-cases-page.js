@@ -1,4 +1,4 @@
-﻿import { LitElement, html } from 'lit-element';
+import { LitElement, html } from 'lit-element';
 import { casesPageStyles } from './directus-cases-page.styles.js';
 import { buttonStyles } from '../styles/buttons.js';
 import { formStyles } from '../styles/forms.js';

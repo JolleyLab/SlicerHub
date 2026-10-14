@@ -1,4 +1,4 @@
-﻿import { LitElement, html, css } from 'lit-element';
+import { LitElement, html, css } from 'lit-element';
 import { API_URL } from '../config.js';
 import { resolvePreferredThemeForNewAccount } from '../utils/userPreferences.js';
 import { authFormStyleText } from '../styles/auth-form-shared.js';

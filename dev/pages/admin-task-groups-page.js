@@ -1,4 +1,4 @@
-﻿import { LitElement, html } from 'lit-element';
+import { LitElement, html } from 'lit-element';
 import { panelStyles } from '../styles/panel.js';
 import { buttonStyles } from '../styles/buttons.js';
 import { adminTaskGroupsStyles } from './admin-task-groups-page.styles.js';

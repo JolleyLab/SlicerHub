@@ -1,4 +1,4 @@
-﻿import { LitElement, html, css } from 'lit-element';
+import { LitElement, html, css } from 'lit-element';
 import { t } from '../i18n/index.js';
 import { API_URL } from '../config.js';
 import { initializeTheme } from '../components/theme.js';

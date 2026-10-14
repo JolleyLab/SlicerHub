@@ -6,6 +6,7 @@ import { t } from './i18n/index.js';
 import {
   APP_VIEWS,
   DEFAULT_APP_VIEW,
+  MY_FILES_VISIBLE,
   MY_PROJECTS_VISIBLE,
   PROJECT_VIEWS,
   readAppViewFromUrl,
@@ -530,6 +531,7 @@ export class SlicerApp extends LitElement {
       return;
     }
     if (selectedKey === 'my-files') {
+      if (!MY_FILES_VISIBLE) return;
       this.selectedProjectId = null;
       this.currentView = APP_VIEWS.FILES;
       this.syncViewToUrl();
@@ -1145,7 +1147,7 @@ export class SlicerApp extends LitElement {
           @pending-registrations-request=${() => { this.currentView = APP_VIEWS.ADMIN_REGISTRATIONS; this.syncViewToUrl(); }}
         ></home-page>
       ` : ''}
-      ${this.currentView === APP_VIEWS.FILES ? html`
+      ${MY_FILES_VISIBLE && this.currentView === APP_VIEWS.FILES ? html`
         <file-manager
           .username=${userDisplayName(this.user)}
           .avatarUrl=${this.user?.avatarUrl || ''}

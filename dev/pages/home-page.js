@@ -1,4 +1,4 @@
-﻿import { LitElement, html } from 'lit-element';
+import { LitElement, html } from 'lit-element';
 import { homePageStyles } from './home-page.styles.js';
 import { buttonStyles } from '../styles/buttons.js';
 import { t } from '../i18n/index.js';

@@ -2,7 +2,7 @@ import { LitElement, html } from 'lit-element';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
 import './app-dialog.js';
-import '../change-password-form.js';
+import '../auth/change-password-form.js';
 
 export class ChangePasswordDialog extends LitElement {
     static get properties() {

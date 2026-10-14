@@ -1,4 +1,4 @@
-﻿import { LitElement, html } from 'lit-element';
+import { LitElement, html } from 'lit-element';
 import { userSettingsStyles } from './user-settings-page.styles.js';
 import { API_URL } from '../config.js';
 import { t } from '../i18n/index.js';

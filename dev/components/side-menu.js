@@ -2,6 +2,7 @@ import { LitElement, html } from 'lit-element';
 import { sideMenuStyles } from './side-menu.styles.js';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
+import { MY_FILES_VISIBLE } from './app-views.js';
 
 /**
  * Desktop left-rail section menu.
@@ -24,7 +25,7 @@ export class SideMenu extends LitElement {
         initializeTheme();
         this.items = [
             { key: 'my-projects', label: t('nav.myProjects') },
-            { key: 'my-files', label: t('nav.myFiles') }
+            ...(MY_FILES_VISIBLE ? [{ key: 'my-files', label: t('nav.myFiles') }] : [])
         ];
         this.selectedKey = 'my-projects';
         this._boundHandleViewportChange = this.updateVisibleHeight.bind(this);

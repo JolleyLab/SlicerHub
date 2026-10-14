@@ -1,5 +1,5 @@
 import { t } from '../i18n/index.js';
-import { MY_PROJECTS_VISIBLE } from './app-views.js';
+import { MY_FILES_VISIBLE, MY_PROJECTS_VISIBLE } from './app-views.js';
 
 export const DEFAULT_MENU_KEY = 'cases';
 
@@ -21,7 +21,7 @@ export function getAppMenuItems({
     const items = [];
     if (directusCasesEnabled) items.push(casesItem);
     if (projectCaseMigrateEnabled) items.push(projectsItem);
-    items.push(filesItem);
+    if (MY_FILES_VISIBLE) items.push(filesItem);
     items.push(myGroupsItem);
     return Object.freeze(items.filter((item) => MY_PROJECTS_VISIBLE || item !== projectsItem));
 }
