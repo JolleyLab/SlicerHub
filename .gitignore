@@ -31,6 +31,13 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Directus schema exports — raw, per-instance extractions (export-schema.mjs). Local-only
+# working material: generate-bootstrap.mjs turns one of these into the committed,
+# hard-coded scripts/directus-schema/bootstrap.mjs; the raw extraction itself never is.
+scripts/directus-schema/exports/
+scripts/directus-schema/snapshots/
+scripts/directus-schema/reference-schema.mjs
+
 # Local dev overrides
 docker-compose.local.yml
 scripts/local/

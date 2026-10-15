@@ -17,7 +17,9 @@
 
 import { loadRepoEnv } from './lib/env.mjs';
 import { createDirectusAdminClient } from './lib/client.mjs';
-import { loginDirectusAdmin, logoutDirectus, prompt } from './lib/login.mjs';
+import { logoutDirectus } from './lib/login.mjs';
+import { resolveAuth } from './lib/auth.mjs';
+import { seedInviteApprovers } from './lib/seed.mjs';
 import { caseInvitesDefinition } from './definitions/case-invites.mjs';
 import { attachmentAccountabilityDefinition } from './definitions/attachment-accountability.mjs';
 import { taskGroupsDefinition, taskGroupMembersDefinition } from './definitions/task-groups.mjs';
@@ -35,12 +37,6 @@ const DEFINITIONS = Object.freeze([
     pendingRegistrationDefinition,
     siteAnnouncementDefinition
 ]);
-
-// Name of the pre-configured group that can approve invitations.
-const INVITE_APPROVERS_GROUP_NAME = 'Registration Reviewers';
-
-// Role names (case-insensitive) whose members are seeded into that group.
-const ADMIN_ROLE_NAMES = ['administrator', 'orgadmin'];
 
 function parseArgs(argv) {
     const flags = new Set();
@@ -60,36 +56,6 @@ function parseArgs(argv) {
         allowServiceToken: flags.has('allow-service-token'),
         help: flags.has('help') || flags.has('h'),
         only: opts.only || null
-    };
-}
-
-async function resolveAuth(url, args) {
-    if (args.pasteToken) {
-        const token = await prompt(
-            'Paste a one-run Directus admin access or static token (not saved): '
-        );
-        if (!token) throw new Error('No token pasted');
-        return { token, source: 'pasted (one-run)', refreshToken: null };
-    }
-
-    if (args.allowServiceToken) {
-        const service = (process.env.DIRECTUS_TOKEN || '').trim();
-        if (!service) {
-            throw new Error('DIRECTUS_TOKEN is empty; cannot use --allow-service-token');
-        }
-        console.warn(
-            'Warning: using DIRECTUS_TOKEN for schema. Prefer --login or --paste-token.'
-        );
-        return { token: service, source: 'DIRECTUS_TOKEN (--allow-service-token)', refreshToken: null };
-    }
-
-    // Default: interactive Directus Administrator login (short-lived session).
-    console.log('Sign in to Directus as an Administrator (session used only for this run).');
-    const session = await loginDirectusAdmin(url);
-    return {
-        token: session.accessToken,
-        source: 'interactive login (ephemeral)',
-        refreshToken: session.refreshToken
     };
 }
 
@@ -179,96 +145,6 @@ async function ensureDefinition(client, def, { dryRun }) {
         plan.push(`ok — ${name} already matches definition`);
     }
     return plan;
-}
-
-/**
- * Ensure the "Registration Reviewers" special group exists and contains all current
- * Administrator / OrgAdmin users. Idempotent — safe to re-run.
- */
-async function seedInviteApprovers(client, { dryRun }) {
-    console.log(`▸ seed: ${INVITE_APPROVERS_GROUP_NAME}`);
-    const plan = [];
-
-    // 1. Find or create the group
-    let groupId;
-    const existing = await client.get(
-        `/items/task_groups?filter[name][_eq]=${encodeURIComponent(INVITE_APPROVERS_GROUP_NAME)}&fields=id&limit=1`
-    );
-    const existingRows = Array.isArray(existing) ? existing : [];
-    if (existingRows.length > 0) {
-        groupId = existingRows[0].id;
-        plan.push(`group already exists (id: ${groupId})`);
-        // Ensure can_approve_registrations is true
-        if (!dryRun) {
-            await client.patch(`/items/task_groups/${encodeURIComponent(groupId)}`, {
-                can_approve_registrations: true
-            });
-        }
-    } else {
-        plan.push(`create group "${INVITE_APPROVERS_GROUP_NAME}" with can_approve_registrations=true`);
-        if (!dryRun) {
-            const created = await client.post('/items/task_groups', {
-                name: INVITE_APPROVERS_GROUP_NAME,
-                description: 'Members of this group can approve new user registration requests.',
-                can_approve_registrations: true
-            });
-            groupId = created?.id;
-        }
-    }
-
-    if (dryRun) {
-        plan.push('(dry-run: skipping user sync)');
-        for (const line of plan) console.log(`  - ${line}`);
-        console.log('');
-        return;
-    }
-
-    // 2. Find roles matching admin names
-    const roles = await client.get('/roles?fields=id,name&limit=-1');
-    const roleRows = Array.isArray(roles) ? roles : [];
-    const adminRoleIds = roleRows
-        .filter(r => ADMIN_ROLE_NAMES.includes(String(r.name || '').toLowerCase()))
-        .map(r => r.id);
-
-    if (adminRoleIds.length === 0) {
-        plan.push('no Administrator/OrgAdmin roles found — skipping user sync');
-        for (const line of plan) console.log(`  - ${line}`);
-        console.log('');
-        return;
-    }
-
-    // 3. Fetch all users with those roles
-    const usersFilter = adminRoleIds
-        .map(id => `filter[role][_in]=${encodeURIComponent(id)}`)
-        .join('&');
-    const users = await client.get(`/users?${usersFilter}&fields=id,email,first_name&limit=-1`);
-    const userRows = Array.isArray(users) ? users : [];
-
-    // 4. Fetch existing members to avoid duplicates
-    const membersRes = await client.get(
-        `/items/task_group_members?filter[task_group][_eq]=${encodeURIComponent(groupId)}&fields=directus_user&limit=-1`
-    );
-    const memberRows = Array.isArray(membersRes) ? membersRes : [];
-    const existingMemberIds = new Set(memberRows.map(m =>
-        typeof m.directus_user === 'object' ? m.directus_user?.id : m.directus_user
-    ).filter(Boolean));
-
-    // 5. Add missing users
-    let added = 0;
-    for (const user of userRows) {
-        if (existingMemberIds.has(user.id)) continue;
-        await client.post('/items/task_group_members', {
-            task_group: groupId,
-            directus_user: user.id,
-            can_manage_group: false
-        });
-        plan.push(`added ${user.email || user.id}`);
-        added++;
-    }
-
-    if (added === 0) plan.push('all admin users already members — nothing to add');
-    for (const line of plan) console.log(`  - ${line}`);
-    console.log('');
 }
 
 function printHelp() {
