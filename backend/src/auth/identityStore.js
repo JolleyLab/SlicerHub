@@ -14,6 +14,16 @@ export function findLink(provider, externalId) {
     `).get(provider, String(externalId));
 }
 
+/** Any provider link for a product user. */
+export function findLinkForUser(userId, provider) {
+    return db.prepare(`
+        SELECT id, user_id, provider, external_id, created_at
+        FROM auth_identity_links
+        WHERE user_id = ? AND provider = ?
+        LIMIT 1
+    `).get(userId, provider) || null;
+}
+
 /** Directus subject for a product user (1:1 content identity). */
 export function findDirectusLinkForUser(userId) {
     return db.prepare(`

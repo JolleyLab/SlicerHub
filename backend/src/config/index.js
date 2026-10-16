@@ -145,6 +145,18 @@ const config = {
             : (process.env.AUTH_REQUIRE_DIRECTUS_LINK === 'false' ? false : null),
     },
 
+    // Keycloak (AUTH_PROVIDER=keycloak)
+    keycloak: {
+        url:          (process.env.KEYCLOAK_URL    || '').trim().replace(/\/+$/, ''),
+        realm:        (process.env.KEYCLOAK_REALM  || 'slicer-web').trim(),
+        clientId:     (process.env.KEYCLOAK_CLIENT_ID     || 'slicer-web-backend').trim(),
+        clientSecret: (process.env.KEYCLOAK_CLIENT_SECRET || '').trim(),
+        // Admin credentials for user management operations (password reset).
+        // Production: replace with a service account that has only manage-users permission.
+        adminUser:     (process.env.KEYCLOAK_ADMIN_USER     || 'admin').trim(),
+        adminPassword: (process.env.KEYCLOAK_ADMIN_PASSWORD || '').trim()
+    },
+
     // Directus headless API (service credentials — Cases / system jobs, not user login)
     directus: {
         url: (process.env.DIRECTUS_URL || '').trim().replace(/\/+$/, ''),
@@ -298,6 +310,9 @@ if (config.isProduction) {
     }
     if (config.auth.provider === 'directus' && !config.directus.url) {
         throw new Error('FATAL: AUTH_PROVIDER=directus requires DIRECTUS_URL');
+    }
+    if (config.auth.provider === 'keycloak' && (!config.keycloak.url || !config.keycloak.clientSecret)) {
+        throw new Error('FATAL: AUTH_PROVIDER=keycloak requires KEYCLOAK_URL and KEYCLOAK_CLIENT_SECRET');
     }
 } else if (config.auth.devRelaxed) {
     console.warn(

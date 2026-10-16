@@ -86,6 +86,13 @@ class User {
             .run(userId);
     }
 
+    /** Sync role from IdP claims to local record (no-op when role is unchanged). */
+    static syncRole(userId, role) {
+        db.prepare('UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND role != ?')
+            .run(role, userId, role);
+    }
+
+
     /**
      * Local user row for an external IdP identity (no usable password).
      * Username collision: append short suffix.

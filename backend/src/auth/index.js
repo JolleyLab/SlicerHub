@@ -22,6 +22,7 @@
 import config from '../config/index.js';
 import { ValidationError } from '../utils/errors.js';
 import { directusProvider } from './providers/directus.js';
+import { keycloakProvider } from './providers/keycloak.js';
 import { issueAppSession, destroyAppSession, clearAuthCookie } from './session.js';
 import { clearProviderTokens, clearProviderTokensForUser } from './identityStore.js';
 import { setDirectusLinkCookie, clearDirectusLinkCookie } from './directusLinkCookie.js';
@@ -30,7 +31,8 @@ import { deleteAllUserSessions } from '../middleware/authMiddleware.js';
 import { msg } from '../i18n/index.js';
 
 const PROVIDERS = {
-    directus: directusProvider
+    directus: directusProvider,
+    keycloak: keycloakProvider
 };
 
 /** Clear leftover remember-device cookies from older builds. */
@@ -72,8 +74,8 @@ export function getPublicAuthConfig() {
         /** product direction: collab users map 1:1 to Directus */
         identityMode: config.auth?.identityMode || 'directus-linked',
         requireDirectusLink: isDirectusLinkRequired(),
-        identityLabel: provider === 'directus' ? 'Email' : 'Username or email',
-        identityPlaceholder: provider === 'directus'
+        identityLabel: (provider === 'directus' || provider === 'keycloak') ? 'Email' : 'Username or email',
+        identityPlaceholder: (provider === 'directus' || provider === 'keycloak')
             ? 'you@example.com'
             : 'Username or email',
         devRelaxed: config.auth?.devRelaxed === true,

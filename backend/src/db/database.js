@@ -657,7 +657,7 @@ const migrations = [
             DROP TABLE IF EXISTS case_signup_invites;
             DELETE FROM user_notifications WHERE invite_id IS NOT NULL;
         `
-    }
+    },
 ];
 
 function runMigrations() {

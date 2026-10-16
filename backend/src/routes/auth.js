@@ -20,6 +20,7 @@ import {
 import { issueAppSession, rotateAppSession } from '../auth/session.js';
 import {
     findDirectusLinkForUser,
+    findLinkForUser,
     getProviderTokens,
     storeProviderTokens,
     clearProviderTokens
@@ -241,8 +242,9 @@ export default function authRoutes(app) {
     );
 
     /**
-     * Update display name on the linked Directus user (service token).
-     * Body: { firstName, lastName }
+     * Update display name. Body: { firstName, lastName }
+     * Keycloak: updates Keycloak user + re-issues session JWT (no DB write).
+     * Directus: updates Directus user (legacy).
      */
     app.put(
         '/api/auth/profile',
@@ -250,37 +252,58 @@ export default function authRoutes(app) {
         authenticateToken,
         asyncHandler(async (req, res) => {
             const firstName = String(req.body?.firstName || req.body?.first_name || '').trim();
-            const lastName = String(req.body?.lastName || req.body?.last_name || '').trim();
-            if (!firstName) {
-                throw new ValidationError(msg('auth.first_name_required'), null, 'auth.first_name_required');
-            }
-            if (!lastName) {
-                throw new ValidationError(msg('auth.last_name_required'), null, 'auth.last_name_required');
-            }
+            const lastName  = String(req.body?.lastName  || req.body?.last_name  || '').trim();
+            if (!firstName) throw new ValidationError(msg('auth.first_name_required'), null, 'auth.first_name_required');
+            if (!lastName)  throw new ValidationError(msg('auth.last_name_required'),  null, 'auth.last_name_required');
 
             const user = User.findById(req.user.id);
-            if (!user) {
-                throw new NotFoundError(msg('user.not_found'), null, 'user.not_found');
+            if (!user) throw new NotFoundError(msg('user.not_found'), null, 'user.not_found');
+
+            if (config.auth.provider === 'keycloak') {
+                const kcLink = findLinkForUser(user.id, 'keycloak');
+                if (!kcLink?.external_id) {
+                    throw new ValidationError('No Keycloak identity linked to this account.', null, null);
+                }
+
+                // Update Keycloak user
+                const { url, realm, adminUser, adminPassword } = config.keycloak;
+                const tokenRes = await fetch(`${url}/realms/master/protocol/openid-connect/token`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ grant_type: 'password', client_id: 'admin-cli', username: adminUser, password: adminPassword })
+                });
+                if (!tokenRes.ok) throw new AppError('Keycloak admin token failed', 502);
+                const { access_token } = await tokenRes.json();
+
+                const patchRes = await fetch(
+                    `${url}/admin/realms/${encodeURIComponent(realm)}/users/${encodeURIComponent(kcLink.external_id)}`,
+                    {
+                        method: 'PUT',
+                        headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ firstName, lastName })
+                    }
+                );
+                if (!patchRes.ok) {
+                    const t = await patchRes.text().catch(() => '');
+                    throw new AppError(`Keycloak profile update failed (${patchRes.status}): ${t}`, 502);
+                }
+
+                // Re-issue the session JWT so the updated name is in req.user immediately
+                // without requiring the user to log out and back in.
+                const { user: updatedUser } = issueAppSession(req, res, { ...user, firstName, lastName });
+                return res.json({ user: publicUser(updatedUser) });
             }
 
+            // Directus path (unchanged)
             const link = findDirectusLinkForUser(user.id);
             if (!link?.external_id) {
                 throw new ValidationError(msg('auth.profile_requires_directus'), null, 'auth.profile_requires_directus');
             }
-
             if (!isDirectusConfigured()) {
                 throw new ValidationError(msg('directus.not_configured'), null, 'directus.not_configured');
             }
-
             await updateDirectusUser(link.external_id, { firstName, lastName });
-
-            res.json({
-                user: publicUser({
-                    ...user,
-                    firstName,
-                    lastName
-                })
-            });
+            res.json({ user: publicUser({ ...user, firstName, lastName }) });
         })
     );
 
@@ -304,7 +327,10 @@ export default function authRoutes(app) {
         }
 
         const directusLink = findDirectusLinkForUser(user.id);
-        let profile = { ...user };
+        // Keycloak: firstName/lastName live in Keycloak and are carried in the session JWT.
+        let profile = config.auth.provider === 'keycloak'
+            ? { ...user, firstName: req.user.firstName || null, lastName: req.user.lastName || null }
+            : { ...user };
         let isOrgAdmin = false;
         if (directusLink?.external_id) {
             try {

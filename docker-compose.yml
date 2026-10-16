@@ -195,6 +195,64 @@ services:
     networks:
       - trame-net
   
+  # Keycloak identity provider (opt-in: docker compose --profile keycloak up)
+  # Admin console: http://localhost:8082  (dev only — not exposed in production)
+  keycloak-db:
+    image: postgres:16-alpine
+    container_name: keycloak-db
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: ${KEYCLOAK_DB_USER:-keycloak}
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak-dev-password}
+    volumes:
+      - keycloak-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${KEYCLOAK_DB_USER:-keycloak} -d keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - keycloak
+    networks:
+      - trame-net
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: keycloak
+    command: >
+      start-dev
+      --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER:-keycloak}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak-dev-password}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # Relaxed hostname checks for local dev
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      # Realm JSON exported here is auto-imported on first start.
+      # Export: scripts/export-keycloak-realm.sh  (see keycloak/README.md)
+      - ./keycloak/realms:/opt/keycloak/data/import:ro
+    ports:
+      - "127.0.0.1:8082:8080"
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/realms/master || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    profiles:
+      - keycloak
+    networks:
+      - trame-net
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: cloudflared
@@ -283,3 +341,4 @@ volumes:
   slicer-gui-home:
   backend-node-modules:
   frontend-node-modules:
+  keycloak-db-data:

@@ -2,7 +2,9 @@ import { authenticateToken } from '../middleware/authMiddleware.js';
 import { requireDirectusLink } from '../auth/requireDirectusLink.js';
 import { requireDirectusUserToken } from '../auth/directusUserSession.js';
 import { requireDirectusRole } from '../auth/requireDirectusRole.js';
+import { requireRole } from '../auth/requireRole.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import config from '../config/index.js';
 import { ValidationError, NotFoundError, ConflictError, ForbiddenError } from '../utils/errors.js';
 import { msg } from '../i18n/index.js';
 import { findDirectusUserByEmail } from '../services/directus.js';
@@ -22,11 +24,9 @@ import {
     getGroupsForUser
 } from '../services/taskGroupStore.js';
 
-const requireOrgAdmin = [
-    requireDirectusLink,
-    requireDirectusUserToken,
-    requireDirectusRole('OrgAdmin', 'Administrator')
-];
+const requireOrgAdmin = config.auth.provider === 'keycloak'
+    ? [requireRole('org-admin')]
+    : [requireDirectusLink, requireDirectusUserToken, requireDirectusRole('OrgAdmin', 'Administrator')];
 
 // Resolves the caller's Directus user ID and verifies they have canManageGroup for groupId.
 async function assertGroupManager(req, groupId) {

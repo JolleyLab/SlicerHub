@@ -63,6 +63,34 @@ The entry point and specific storage services differ between the two options; ev
 
 ---
 
+## Keycloak in Production
+
+Authentication is handled by Keycloak using a **Backend-for-Frontend (BFF) pattern**: the browser submits credentials to the Node.js backend, which verifies them with Keycloak server-to-server. The browser never contacts Keycloak directly.
+
+```
+Browser → HTTPS → backend (/api/auth/login)
+                       ↓  server-to-server (internal network only)
+                   Keycloak
+```
+
+This has two practical consequences for cloud deployment:
+
+- **Keycloak does not need a public URL.** It communicates only with the backend over the internal container network. No Cloudflare tunnel, no public DNS entry, no ALB/Front Door rule pointing at Keycloak is required.
+- **No nginx or routing changes are needed** when moving from the current Cloudflare-tunnel setup to a cloud deployment. The backend's `KEYCLOAK_URL` env var points at the internal service address (`http://keycloak:8080` in Docker Compose; an internal hostname or private IP in cloud).
+
+### What changes on Azure vs. local
+
+| | Local (Docker Compose) | Azure (Container Apps) |
+|---|---|---|
+| Keycloak runs as | A compose service (`--profile keycloak`) | A separate Container App (same environment) |
+| Backend reaches Keycloak at | `http://keycloak:8080` (Docker network) | Internal Container Apps FQDN (e.g. `http://keycloak.internal.azurecontainerapps.io`) |
+| Admin console access | `http://localhost:8082` (host port) | Not publicly exposed — access via `az containerapp exec` or a bastion |
+| Client secret | Written to `.env` by `setup-keycloak.mjs` | Stored in Azure Key Vault; injected as an env var via Managed Identity |
+
+The `setup-keycloak.mjs` provisioning script (`node scripts/setup-keycloak.mjs`) works against any Keycloak instance reachable on the host. In cloud, set `KEYCLOAK_ADMIN_URL` to the temporarily-exposed admin endpoint, run the script once to provision the realm, then remove public exposure.
+
+---
+
 ## Option A: Microsoft Azure
 
 ### Services
