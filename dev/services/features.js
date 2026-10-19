@@ -73,6 +73,7 @@ export function loadAppFeatures() {
                 projectCaseMigrate: data?.projectCaseMigrate === true,
                 inviteEmail: data?.inviteEmail === true,
                 slicerWebDevMode: data?.slicerWebDevMode === true,
+                myFiles: data?.myFiles === true,
                 auth: Object.freeze(auth)
             });
             featuresLoaded = true;

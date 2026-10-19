@@ -54,6 +54,8 @@ Thumbs.db
 # Build outputs
 dist/
 build/
+.next/
+**/.next/
 
 # Temporary files
 tmp/

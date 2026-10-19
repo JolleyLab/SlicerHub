@@ -12,7 +12,8 @@ export const DEFAULT_MENU_KEY = 'cases';
  */
 export function getAppMenuItems({
     directusCasesEnabled = true,
-    projectCaseMigrateEnabled = false
+    projectCaseMigrateEnabled = false,
+    filesEnabled = false
 } = {}) {
     const filesItem = Object.freeze({ key: 'my-files', label: t('nav.myFiles') });
     const casesItem = Object.freeze({ key: 'cases', label: t('nav.myCases') });
@@ -21,7 +22,7 @@ export function getAppMenuItems({
     const items = [];
     if (directusCasesEnabled) items.push(casesItem);
     if (projectCaseMigrateEnabled) items.push(projectsItem);
-    items.push(filesItem);
+    if (filesEnabled) items.push(filesItem);
     items.push(myGroupsItem);
     return Object.freeze(items.filter((item) => MY_PROJECTS_VISIBLE || item !== projectsItem));
 }

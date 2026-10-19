@@ -1417,6 +1417,7 @@ export class SlicerApp extends LitElement {
         <directus-cases-page
           .username=${userDisplayName(this.user)}
           .avatarUrl=${this.user?.avatarUrl || ''}
+          .currentUserId=${this.user?.id || null}
           .isOrgAdmin=${this.isOrgAdmin}
           .isRegistrationReviewer=${this.isRegistrationReviewer}
           @menu-selection-change=${this.handleProjectsMenuSelection}

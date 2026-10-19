@@ -11,6 +11,10 @@
  *   - slicer-web-backend client (Direct Access Grants / ROPC, confidential)
  *   - Realm roles: app-user, app-org-admin, app-admin
  *   - Token mapper: roles claim in access token
+ *   - The first admin account (required — not skippable). The app's own
+ *     registration flow needs an existing admin to approve new signups, so on a
+ *     fresh instance there's no other way in. Logging in with this account at
+ *     the main app auto-provisions the local user record on first login.
  *
  * Writes KEYCLOAK_CLIENT_SECRET to .env on completion.
  *
@@ -20,6 +24,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import readline from 'readline';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -285,6 +290,134 @@ async function regenerateAndSaveSecret(token, clientUuid) {
 }
 
 // ---------------------------------------------------------------------------
+// Interactive prompts
+// ---------------------------------------------------------------------------
+
+function prompt(question) {
+    return new Promise(resolve => {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        rl.question(`  ${question}`, answer => {
+            rl.close();
+            resolve(answer.trim());
+        });
+    });
+}
+
+function promptSecret(question) {
+    return new Promise(resolve => {
+        process.stdout.write(`  ${question}`);
+        // null output suppresses echo
+        const rl = readline.createInterface({ input: process.stdin, output: null });
+        rl.once('line', answer => {
+            process.stdout.write('\n');
+            rl.close();
+            resolve(answer.trim());
+        });
+    });
+}
+
+// ---------------------------------------------------------------------------
+// First admin account — required, prompts interactively if not already in .env
+// ---------------------------------------------------------------------------
+
+async function ensureTestUser(token) {
+    const current = readEnvFile(ENV_FILE);
+    // bootstrap.mjs collects this once and passes it to both this script and
+    // setup-payload-admin.mjs via env vars (never written to .env or any file) —
+    // only used as a fallback, so running this script standalone still prompts.
+    let email    = (current.KEYCLOAK_TEST_USER_EMAIL || process.env.BOOTSTRAP_ADMIN_EMAIL || '').trim();
+    const role   = (current.KEYCLOAK_TEST_USER_ROLE  || 'app-admin').trim();
+
+    step('Create admin account');
+
+    // Not skippable: without this, there is no way to log into the app at all — the
+    // registration flow requires an existing admin to approve new accounts, and on a
+    // fresh instance there isn't one yet. This is the bootstrap out of that chicken-
+    // and-egg problem, not an optional dev convenience.
+    if (!current.KEYCLOAK_TEST_USER_EMAIL) {
+        while (!email) {
+            email = await prompt('Admin account email: ');
+            if (!email) warn('Email is required — try again');
+        }
+        upsertEnvVar(ENV_FILE, 'KEYCLOAK_TEST_USER_EMAIL', email);
+        ok(`KEYCLOAK_TEST_USER_EMAIL written to .env`);
+    } else {
+        skip(`KEYCLOAK_TEST_USER_EMAIL (${email})`);
+    }
+
+    let password = (process.env.BOOTSTRAP_ADMIN_PASSWORD || '').trim();
+    if (password.length >= 8) {
+        ok('Using admin password from bootstrap.mjs');
+    }
+    while (password.length < 8) {
+        password = await promptSecret('Admin account password (min 8 chars): ');
+        if (password && password.length >= 8) break;
+        warn(password ? 'Password must be at least 8 characters — try again' : 'Password is required — try again');
+    }
+
+    // Find by email
+    const search = await api(token, 'GET',
+        `/admin/realms/${REALM_NAME}/users?email=${encodeURIComponent(email)}&exact=true`
+    );
+    if (!search.ok) throw new Error(`User search failed (${search.status}): ${search.text}`);
+
+    let userId;
+    const existing = search.json?.find(u => u.email?.toLowerCase() === email.toLowerCase());
+
+    if (existing) {
+        userId = existing.id;
+        // Update to ensure email-verified and enabled
+        await api(token, 'PUT', `/admin/realms/${REALM_NAME}/users/${userId}`, {
+            email,
+            emailVerified: true,
+            enabled: true,
+        });
+        skip(`user "${email}" (updated)`);
+    } else {
+        const [firstName, ...rest] = email.split('@')[0].split('.');
+        const create = await api(token, 'POST', `/admin/realms/${REALM_NAME}/users`, {
+            email,
+            username:      email,
+            firstName:     firstName || 'Dev',
+            lastName:      rest.join(' ') || 'User',
+            emailVerified: true,
+            enabled:       true,
+        });
+        if (!create.ok) throw new Error(`Failed to create user (${create.status}): ${create.text}`);
+
+        // Re-fetch to get the UUID Keycloak assigned
+        const refetch = await api(token, 'GET',
+            `/admin/realms/${REALM_NAME}/users?email=${encodeURIComponent(email)}&exact=true`
+        );
+        userId = refetch.json?.[0]?.id;
+        if (!userId) throw new Error('User created but UUID could not be retrieved');
+        ok(`user "${email}" created`);
+    }
+
+    // Set / reset password
+    const pwRes = await api(token, 'PUT',
+        `/admin/realms/${REALM_NAME}/users/${userId}/reset-password`,
+        { type: 'password', value: password, temporary: false }
+    );
+    if (!pwRes.ok) {
+        throw new Error(`Failed to set password (${pwRes.status}): ${pwRes.text}`);
+    }
+    ok('password set');
+
+    // Assign realm role
+    const roleRes = await api(token, 'GET',
+        `/admin/realms/${REALM_NAME}/roles/${encodeURIComponent(role)}`
+    );
+    if (!roleRes.ok) throw new Error(`Role "${role}" not found — check KEYCLOAK_TEST_USER_ROLE`);
+
+    await api(token, 'POST',
+        `/admin/realms/${REALM_NAME}/users/${userId}/role-mappings/realm`,
+        [{ id: roleRes.json.id, name: role }]
+    );
+    ok(`role "${role}" assigned`);
+}
+
+// ---------------------------------------------------------------------------
 // .env helper
 // ---------------------------------------------------------------------------
 
@@ -361,6 +494,7 @@ async function main() {
     await ensureRolesMapper(token, clientUuid);
     await regenerateAndSaveSecret(token, clientUuid);
     await seedEnvVars();
+    await ensureTestUser(token);
 
     console.log(`
   ─────────────────────────────────────────────

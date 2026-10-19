@@ -5,14 +5,11 @@ import './components/page-content-message.js';
 import './components/file-list-row.js';
 import './components/comments-panel.js';
 import {
-    listDirectusCases,
     openDirectusAttachmentFullSlicer,
     fetchDirectusAttachmentContent,
     checkDirectusAttachmentDownload,
     directusAttachmentDownloadUrl,
     createDirectusCaseComment,
-    createDirectusCase,
-    updateDirectusCase,
     deleteDirectusCaseAttachment,
     lookupDirectusUserByEmail,
     updateDirectusCaseCollaborators,
@@ -23,6 +20,7 @@ import {
     invalidateNotifications,
     friendlyCasesError
 } from './services/directus.js';
+import { listCases, createCase, updateCase } from './services/cases.js';
 import './components/people-dialog.js';
 import './components/list-filter-tools.js';
 import './components/attachment-open-menu.js';
@@ -1073,6 +1071,7 @@ export class DirectusCasesPage extends LitElement {
         return {
             username: { type: String },
             avatarUrl: { type: String },
+            currentUserId: { type: Number },
             isOrgAdmin: { type: Boolean },
             isRegistrationReviewer: { type: Boolean },
             loading: { type: Boolean },
@@ -1131,6 +1130,7 @@ export class DirectusCasesPage extends LitElement {
         super();
         this.username = t('common.guest');
         this.avatarUrl = '';
+        this.currentUserId = null;
         this.loading = false;
         this.errorMessage = '';
         this.cases = [];
@@ -1405,7 +1405,7 @@ export class DirectusCasesPage extends LitElement {
         this.errorMessage = '';
         const keepSelected = this.selectedCaseId;
         try {
-            const data = await listDirectusCases({ limit: 50 });
+            const data = await listCases({ limit: 50 });
             this.cases = Array.isArray(data.cases) ? data.cases : [];
             this.sessionMeta = data.meta || null;
             if (keepSelected && !this.cases.some((row) => row.id === keepSelected)) {
@@ -1575,6 +1575,13 @@ export class DirectusCasesPage extends LitElement {
         if (caseRow.createdBy?.id && String(caseRow.createdBy.id) === String(me)) {
             return 'admin';
         }
+        // Payload cases: derive role from owner_id
+        if (this.sessionMeta?.source === 'payload:case') {
+            if (this.currentUserId && String(caseRow.owner_id) === String(this.currentUserId)) return 'admin';
+            if (this.isOrgAdmin) return 'admin';
+            return null;
+        }
+
         const membership = (caseRow.collaborators || []).find((c) => String(c.id) === String(me));
         return membership?.role || null;
     }
@@ -1835,7 +1842,7 @@ export class DirectusCasesPage extends LitElement {
         this.creatingCase = true;
         this.newCaseError = '';
         try {
-            const data = await createDirectusCase({
+            const data = await createCase({
                 title,
                 description: this.newCaseDescription.trim() || undefined,
                 status: 'active'
@@ -1869,7 +1876,7 @@ export class DirectusCasesPage extends LitElement {
         this.archivingCase = true;
         this.errorMessage = '';
         try {
-            const data = await updateDirectusCase(caseRow.id, { status: 'archived' });
+            const data = await updateCase(caseRow.id, { status: 'archived' });
             const updated = data.case;
             this.cases = this.cases.map((row) =>
                 row.id === caseRow.id ? this.mergeCaseUpdate(row, updated) : row
@@ -1911,7 +1918,7 @@ export class DirectusCasesPage extends LitElement {
         this.savingCaseEdit = true;
         this.caseEditError = '';
         try {
-            const data = await updateDirectusCase(caseRow.id, {
+            const data = await updateCase(caseRow.id, {
                 title,
                 description: this.editCaseDesc.trim() || null
             });

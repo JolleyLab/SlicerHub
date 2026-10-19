@@ -36,6 +36,8 @@ import { warnIfAuthTokenKeyMissing } from "./auth/tokenCrypto.js";
 import { repairGpuCredentialsFromSeed } from "./gpu/repairCredentials.js";
 import ProjectGpu from "./models/ProjectGpu.js";
 import { restoreGpuViewerProxies } from "./gpu/gpuViewerProxy.js";
+import { initPayload } from "./payload/index.js";
+import casesRoutes from "./routes/cases.js";
 
 function warnIfWeakDemoSecrets() {
     if (config.isProduction) return;
@@ -109,6 +111,9 @@ userRoutes(app);
 projectRoutes(app);
 projectGpuRoutes(app);
 
+// Payload Cases (Phase 2) — /api/cases
+casesRoutes(app);
+
 // Directus PoC (headless case list behind app auth)
 directusRoutes(app);
 directusTusRoutes(app);
@@ -164,6 +169,7 @@ app.listen(config.server.port, config.server.host, async () => {
     } catch (err) {
         console.warn('GPU viewer proxy restore on startup failed:', err.message);
     }
+    await initPayload();
     if (config.isDevelopment) {
         console.log('⚠️  Running in DEVELOPMENT mode');
     }

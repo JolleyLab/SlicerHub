@@ -19,10 +19,11 @@ The application is a web-based platform for medical imaging review and collabora
 |---|---|---|
 | Frontend | Web interface served to the browser | Lightweight — static files |
 | Backend API | Authenticates users, manages sessions, proxies data | Always-on, moderate compute |
-| Directus | Manages cases, files, and collaboration data | Always-on, moderate compute |
+| Payload CMS | Manages cases and collaboration data (replacing Directus) | Always-on, moderate compute |
 | Session Manager | Starts and stops 3D viewer sessions on demand | Low compute, occasional bursts |
 | Database | Stores users, projects, preferences, case data | Managed, persistent |
 | File Storage | Case attachments, imaging data | High capacity, tiered by access frequency |
+| Secret Manager | Stores application secrets (Infisical self-hosted → Azure Key Vault) | Always-on, low compute |
 
 **GPU viewers** (3D Slicer, Trame) are **not included** in the app hosting cost model below. Clients (or the org) provide GPU infrastructure. The session manager connects to that plane via configuration — no per-client app rewrite.
 
@@ -80,12 +81,14 @@ This has two practical consequences for cloud deployment:
 
 ### What changes on Azure vs. local
 
-| | Local (Docker Compose) | Azure (Container Apps) |
+| | Local / physical server (Docker Compose) | Azure (Container Apps) |
 |---|---|---|
 | Keycloak runs as | A compose service (`--profile keycloak`) | A separate Container App (same environment) |
 | Backend reaches Keycloak at | `http://keycloak:8080` (Docker network) | Internal Container Apps FQDN (e.g. `http://keycloak.internal.azurecontainerapps.io`) |
 | Admin console access | `http://localhost:8082` (host port) | Not publicly exposed — access via `az containerapp exec` or a bastion |
-| Client secret | Written to `.env` by `setup-keycloak.mjs` | Stored in Azure Key Vault; injected as an env var via Managed Identity |
+| Secrets storage | Infisical self-hosted (`http://localhost:8888`); secrets injected via `node scripts/start.mjs` | Azure Key Vault; injected as env vars via Managed Identity |
+| Secret injection mechanism | `scripts/start.mjs` fetches from Infisical API and passes to `docker compose` | Platform-native — Container Apps reads from Key Vault references in the app definition |
+| Client secret | Written to Infisical by `setup-keycloak.mjs`; fetched at runtime | Stored in Azure Key Vault |
 
 The `setup-keycloak.mjs` provisioning script (`node scripts/setup-keycloak.mjs`) works against any Keycloak instance reachable on the host. In cloud, set `KEYCLOAK_ADMIN_URL` to the temporarily-exposed admin endpoint, run the script once to provision the realm, then remove public exposure.
 
@@ -322,6 +325,29 @@ Details, cron, webhooks, and env vars: **[slicer-gui-addons.md](./slicer-gui-add
 Outbound HTTPS from the GPU VM is required during sync (Extension Index + git). Seats that successfully mount the sync tree do not need to talk to the Extension Index at start.
 
 Vast.ai or on-prem NVIDIA boxes use the same sync scripts; only the VM/provider differs.
+
+---
+
+## Secrets Management
+
+Application secrets (database passwords, API keys, JWT signing keys) are never stored in plaintext `.env` files in the repository or on the server. The architecture uses a secrets manager at every stage:
+
+| Stage | Secrets manager | Injection mechanism |
+|---|---|---|
+| Local dev | Infisical self-hosted (Docker Compose service) | `node scripts/start.mjs` fetches secrets and injects as env vars before `docker compose` |
+| Physical server (current prod) | Infisical self-hosted (same stack) | Same `start.mjs` wrapper, same workflow |
+| Azure (future) | Azure Key Vault + Managed Identity | Platform-native: Container Apps reads Key Vault references; no wrapper script needed |
+| AWS (future) | AWS Secrets Manager + IAM role | Platform-native: ECS task definition references Secrets Manager ARNs |
+
+**Swap-out path:** application code reads `process.env.*` throughout. When moving to Azure/AWS, replace `scripts/start.mjs` with platform-native secret injection. No application code changes.
+
+**What stays in `.env`** (non-sensitive config, not secrets):
+- Service URLs, timeouts, feature flags
+- `INFISICAL_ENCRYPTION_KEY`, `INFISICAL_AUTH_SECRET` — Infisical bootstrap vars (cannot be circular)
+- `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET` — machine identity for the bootstrap tooling
+- Profile selection (`COMPOSE_PROFILES`)
+
+See [secrets-management.md](./secrets-management.md) for the full architecture and migration runbook.
 
 ---
 

@@ -78,7 +78,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     # Re-install when a new lockfile dep is missing from the volume (e.g. nodemailer).
     # Copy deploy key to /tmp so we can chmod 600 it (Windows bind mounts always arrive as 755).
-    command: ["sh", "-c", "test -d node_modules/nodemailer && test -d node_modules/heic-convert || npm ci; if [ -f /run/secrets/slicerweb/slicerweb-deploy-key ]; then cp /run/secrets/slicerweb/slicerweb-deploy-key /tmp/slicerweb-deploy-key && chmod 600 /tmp/slicerweb-deploy-key; fi; exec node src/server.js"]
+    command: ["sh", "-c", "test -d node_modules/nodemailer && test -d node_modules/heic-convert && test -d node_modules/payload || npm ci; if [ -f /run/secrets/slicerweb/slicerweb-deploy-key ]; then cp /run/secrets/slicerweb/slicerweb-deploy-key /tmp/slicerweb-deploy-key && chmod 600 /tmp/slicerweb-deploy-key; fi; exec node src/server.js"]
     environment:
       - NODE_ENV=development
       - DB_PATH=/app/data/users.db
@@ -195,6 +195,68 @@ services:
     networks:
       - trame-net
   
+  # Secret manager (always-on — stores all application secrets)
+  # Admin UI: http://localhost:8888   First run: node scripts/setup-infisical.mjs
+  infisical-db:
+    image: postgres:16-alpine
+    container_name: infisical-db
+    environment:
+      POSTGRES_DB: infisical
+      POSTGRES_USER: infisical
+      POSTGRES_PASSWORD: ${INFISICAL_DB_PASSWORD:-infisical-dev}
+    volumes:
+      - infisical-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infisical -d infisical"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trame-net
+
+  infisical-redis:
+    image: redis:7-alpine
+    container_name: infisical-redis
+    volumes:
+      - infisical-redis-data:/data
+    networks:
+      - trame-net
+
+  infisical:
+    image: infisical/infisical:latest-postgres
+    container_name: infisical
+    ports:
+      - "127.0.0.1:8888:8080"
+    environment:
+      ENCRYPTION_KEY: ${INFISICAL_ENCRYPTION_KEY}
+      AUTH_SECRET: ${INFISICAL_AUTH_SECRET}
+      DB_CONNECTION_URI: postgresql://infisical:${INFISICAL_DB_PASSWORD:-infisical-dev}@infisical-db:5432/infisical
+      REDIS_URL: redis://infisical-redis:6379
+      SITE_URL: http://localhost:8888
+      NODE_ENV: production
+      TELEMETRY_ENABLED: "false"
+      # SMTP — shares the app's SMTP_* vars (no separate INFISICAL_SMTP_* keys needed).
+      # Local dev: SMTP_HOST is empty → Infisical skips email, admin signup works without SMTP.
+      # Production: set SMTP_HOST + other SMTP_* in .env (Resend already configured there).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_FROM_ADDRESS: ${SMTP_FROM:-infisical@localhost}
+      SMTP_FROM_NAME: Infisical
+      SMTP_USERNAME: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASS:-}
+    depends_on:
+      infisical-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8080/api/status',r=>{process.exit(r.statusCode<500?0:1)}).on('error',()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 60s
+    networks:
+      - trame-net
+
   # Keycloak identity provider (opt-in: docker compose --profile keycloak up)
   # Admin console: http://localhost:8082  (dev only — not exposed in production)
   keycloak-db:
@@ -250,6 +312,54 @@ services:
       start_period: 60s
     profiles:
       - keycloak
+    networks:
+      - trame-net
+
+  # Payload CMS admin UI (opt-in: docker compose --profile payload up)
+  # Access: http://localhost:3001/admin  First run: create account via setup-payload-admin.mjs
+  payload-admin:
+    image: node:20-alpine
+    container_name: payload-admin
+    working_dir: /app
+    volumes:
+      - ./payload-admin:/app
+      - payload-admin-modules:/app/node_modules
+    ports:
+      - "127.0.0.1:3001:3001"
+    command: ["sh", "-c", "test -d node_modules/next && test -d node_modules/payload || npm install --legacy-peer-deps; exec npm run dev -- -p 3001"]
+    environment:
+      - PAYLOAD_DATABASE_URI=${PAYLOAD_DATABASE_URI}
+      - PAYLOAD_SECRET=${PAYLOAD_SECRET}
+      - NODE_ENV=development
+      # Force polling for file-watch across Docker volume mounts on Windows
+      - WATCHPACK_POLLING=true
+      - CHOKIDAR_USEPOLLING=true
+    depends_on:
+      payload-db:
+        condition: service_healthy
+    profiles:
+      - payload
+    networks:
+      - trame-net
+
+  # Payload CMS data store (opt-in: docker compose --profile payload up)
+  # Used by the backend (Local API) and the payload-admin Next.js app.
+  payload-db:
+    image: postgres:16-alpine
+    container_name: payload-db
+    environment:
+      POSTGRES_DB: payload
+      POSTGRES_USER: ${PAYLOAD_DB_USER:-payload}
+      POSTGRES_PASSWORD: ${PAYLOAD_DB_PASSWORD:-payload-dev-password}
+    volumes:
+      - payload-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PAYLOAD_DB_USER:-payload} -d payload"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - payload
     networks:
       - trame-net
 
@@ -342,3 +452,7 @@ volumes:
   backend-node-modules:
   frontend-node-modules:
   keycloak-db-data:
+  payload-db-data:
+  payload-admin-modules:
+  infisical-db-data:
+  infisical-redis-data:

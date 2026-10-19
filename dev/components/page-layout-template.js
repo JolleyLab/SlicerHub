@@ -283,7 +283,8 @@ export class PageShellTemplate extends LitElement {
 
     _rebuildMenu() {
         this.menuItems = getAppMenuItems({
-            projectCaseMigrateEnabled: this._featureFlags.projectCaseMigrate === true
+            projectCaseMigrateEnabled: this._featureFlags.projectCaseMigrate === true,
+            filesEnabled: this._featureFlags.myFiles !== false
         });
     }
 

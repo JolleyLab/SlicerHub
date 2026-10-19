@@ -178,6 +178,11 @@ const config = {
                 || process.env.ENABLE_DIRECTUS_CASES === 'true')
     },
 
+    myFiles: {
+        // Set ENABLE_MY_FILES=true to show "My Files" in the sidebar nav (hidden by default).
+        enabled: process.env.ENABLE_MY_FILES === 'true'
+    },
+
     /**
      * Admin bulk user provision (BFF creates Directus + local link).
      * Modes: temp_password (Pattern A, default) | invite_email (Pattern B, later).

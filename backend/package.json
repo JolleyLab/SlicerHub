@@ -8,6 +8,7 @@
     "author": "The Polymer Authors",
     "license": "BSD-3-Clause",
     "dependencies": {
+        "@payloadcms/db-postgres": "^3.0.0",
         "bcrypt": "^5.1.1",
         "cookie-parser": "^1.4.6",
         "cors": "^2.8.5",
@@ -18,6 +19,8 @@
         "jsonwebtoken": "^9.0.2",
         "multer": "^2.0.2",
         "nodemailer": "^6.10.1",
+        "payload": "^3.0.0",
+        "pg": "^8.11.0",
         "sharp": "^0.35.5",
         "sql.js": "^1.12.0",
         "uuid": "^13.0.0"

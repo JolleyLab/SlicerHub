@@ -18,6 +18,8 @@ export default function featuresRoutes(app) {
             inviteEmail: Boolean(config.mail?.enabled && config.mail?.host),
             /** Allow users to opt into the SlicerWeb latest channel from Settings. */
             slicerWebDevMode: Boolean(config.slicerWeb.devModeEnabled && config.slicerWeb.hasCredentials),
+            /** Set ENABLE_MY_FILES=false to hide My Files from the sidebar. Default: true. */
+            myFiles: Boolean(config.myFiles.enabled),
             auth: getPublicAuthConfig()
         });
     }));
