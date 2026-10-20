@@ -47,6 +47,8 @@ services:
       # Host repo path for nested `docker run -v` (required on Windows Docker Desktop).
       - HOST_WORKSPACE_ROOT=${HOST_WORKSPACE_ROOT:-${PWD}}
       - TRAME_IMAGE=${TRAME_IMAGE:-slicer-web-trame:local}
+      # d3d12 = GPU OpenGL in session containers on Docker Desktop/WSL2 (see .env.example)
+      - CONTAINER_GL_MODE=${CONTAINER_GL_MODE:-}
       # Local dev / smoke-gpu-sync.ps1 (per-instance token used on Vast)
       - TRAME_SYNC_TOKEN=${TRAME_SYNC_TOKEN:-test-sync-token-local}
     networks:
