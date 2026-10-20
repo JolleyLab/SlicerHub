@@ -2360,7 +2360,7 @@ export class DirectusCasesPage extends LitElement {
 
         const useSimplified = resolveSimplifiedViewerChoice(
             simplified,
-            this.accountPrefersSimplifiedViewer()
+            this.accountDefaultViewer() === 'simplified'
         );
         const viewerLabel = viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified: useSimplified });
 
