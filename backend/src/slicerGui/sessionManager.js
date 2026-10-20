@@ -398,6 +398,16 @@ async function startOrReuseSeat({
     if (simplifiedLocal) {
         binds.push(`${toDockerBindPath(simplifiedLocal)}:/opt/slicer-modules/SimplifiedViewer:ro`);
     }
+    // Docker Desktop on Windows (WSL2) has no NVIDIA EGL in containers; Mesa's D3D12 driver
+    // renders OpenGL on the GPU through /dev/dxg and the host's WSL libraries instead.
+    if (String(process.env.CONTAINER_GL_MODE || '').trim().toLowerCase() === 'd3d12') {
+        binds.push('/usr/lib/wsl:/usr/lib/wsl:ro');
+        env.push(
+            'LD_LIBRARY_PATH=/usr/lib/wsl/lib',
+            'GALLIUM_DRIVER=d3d12',
+            'MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA'
+        );
+    }
     const mountDevScripts = /^(1|true|yes)$/i.test(
         String(process.env.SLICER_GUI_MOUNT_DEV_SCRIPTS || '').trim()
     );
