@@ -1,5 +1,5 @@
 # Cloud Hosting Plan
-**Status:** Planning  
+**Status:** Active — architecture confirmed (Keycloak + Payload + Infisical bootstrap working locally, Oct 2026)  
 **Date:** September 2026  
 **Audience:** Technical and non-technical stakeholders
 
@@ -19,7 +19,7 @@ The application is a web-based platform for medical imaging review and collabora
 |---|---|---|
 | Frontend | Web interface served to the browser | Lightweight — static files |
 | Backend API | Authenticates users, manages sessions, proxies data | Always-on, moderate compute |
-| Payload CMS | Manages cases and collaboration data (replacing Directus) | Always-on, moderate compute |
+| Payload CMS | Manages cases and collaboration data (replaced Directus) | Always-on, moderate compute |
 | Session Manager | Starts and stops 3D viewer sessions on demand | Low compute, occasional bursts |
 | Database | Stores users, projects, preferences, case data | Managed, persistent |
 | File Storage | Case attachments, imaging data | High capacity, tiered by access frequency |
@@ -39,7 +39,7 @@ Both options meet these requirements:
 - **HIPAA BAA** — both Azure and AWS offer Business Associate Agreements
 - **SSO** — the backend supports any OIDC-compliant identity provider (Okta, Entra, Ping, etc.). The client's existing SSO provider is used — no new identity vendor is introduced. This applies equally to both cloud options.
 - **No long-term rewrites** — the existing Docker containers run unchanged on either cloud
-- **One required code change** — the current SQLite database must be replaced with PostgreSQL before any cloud deployment. This is the only structural change; no business logic is affected.
+- **Database** — Payload CMS (PostgreSQL) is already running in the stack and holds cases and attachments. The remaining SQLite tables (user accounts, sessions, GPU credentials) must be migrated to PostgreSQL before cloud deployment. This is the only remaining structural change; no business logic is affected.
 
 ---
 
@@ -53,7 +53,8 @@ User's browser
 Entry point (routes requests by URL path)
     ├── /       → Frontend (serves the web app)
     └── /api/*  → Backend API
-                    ├── Auth / Cases → Directus → PostgreSQL
+                    ├── Auth → Keycloak → PostgreSQL
+                    ├── Cases → Payload CMS → PostgreSQL
                     ├── Files → Blob / Object Storage
                     └── Viewer sessions → Session Manager → Client GPU cluster
                                                               ↓
@@ -100,7 +101,7 @@ The `setup-keycloak.mjs` provisioning script (`node scripts/setup-keycloak.mjs`)
 
 | Azure Service | Role | Est. monthly cost |
 |---|---|---|
-| Azure Container Apps | Runs backend, Directus, session manager | ~$0–50 (scales to zero) |
+| Azure Container Apps | Runs backend, Payload CMS, Keycloak, session manager | ~$0–50 (scales to zero) |
 | Azure Container Registry | Stores Docker images | ~$5 |
 | PostgreSQL Flexible Server | Database | ~$15–50 |
 | Azure Blob Storage | File storage | ~$2–10 |
@@ -138,7 +139,7 @@ Azure Container Apps handles HTTPS routing and secrets access natively — there
 
 | AWS Service | Role | Est. monthly cost |
 |---|---|---|
-| Amazon ECS on Fargate | Runs backend, Directus, session manager | ~$0–60 (scales to zero) |
+| Amazon ECS on Fargate | Runs backend, Payload CMS, Keycloak, session manager | ~$0–60 (scales to zero) |
 | Amazon ECR | Stores Docker images | ~$5 |
 | Application Load Balancer | HTTPS routing — required separately | ~$16–20 |
 | Amazon RDS for PostgreSQL | Database | ~$15–50 |
@@ -162,7 +163,7 @@ CloudFront CDN and WAF. AWS Amplify Hosting replaces the frontend container. Cli
 - **Presigned S3 URLs** instead of Amazon EFS — same approach as Azure. Viewers download directly from S3. Removes shared file system cost.
 - **S3 lifecycle policy** — Standard ($0.023/GB) → Infrequent Access ($0.013) → Glacier Instant ($0.004) → Deep Archive ($0.001).
 - **S3 Gateway VPC Endpoint** — free; routes S3 traffic off NAT Gateway. Essential at Stage 2.
-- **Fargate Spot** for non-critical services (session manager, frontend) — up to 70% discount with interruption risk. Not suitable for the backend or Directus.
+- **Fargate Spot** for non-critical services (session manager, frontend) — up to 70% discount with interruption risk. Not suitable for the backend, Payload CMS, or Keycloak.
 - **CloudWatch log retention** — $0.50/GB ingested. Set a retention policy from day one.
 
 ### Setup complexity
@@ -179,7 +180,7 @@ AWS requires explicit configuration of several components that Azure handles aut
 
 | Component | Azure | AWS |
 |---|---|---|
-| App containers (backend, Directus, session manager — mostly idle) | ~$0–50/mo | ~$0–60/mo |
+| App containers (backend, Payload CMS, Keycloak, session manager — mostly idle) | ~$0–50/mo | ~$0–60/mo |
 | HTTPS routing / entry point | Included | ~$16–20/mo (ALB) |
 | Database (small instance) | ~$15–50/mo | ~$15–50/mo |
 | File storage (<100 GB, mostly hot) | ~$2–10/mo | ~$2–10/mo |
@@ -234,15 +235,16 @@ Both options scale to zero when idle, which means the first user after a quiet p
 |---|---|
 | Frontend | ~3–5 seconds |
 | Backend API | ~4–8 seconds |
-| Directus | ~15–25 seconds |
+| Payload CMS | ~10–20 seconds |
+| Keycloak | ~15–25 seconds |
 
 **Free mitigation (applies to either cloud):**
 
-1. The frontend loads in 3–5 seconds and immediately fires a silent background request to wake the backend and Directus.
-2. An identifier-first login flow (email screen → password screen) adds 8–15 seconds of natural interaction time, hiding most of the Directus warm-up behind typing.
+1. The frontend loads in 3–5 seconds and immediately fires a silent background request to wake the backend and Payload CMS.
+2. An identifier-first login flow (email screen → password screen) adds 8–15 seconds of natural interaction time, hiding most of the warm-up behind typing.
 3. By the time the user clicks Sign In, services are typically warm.
 
-**Paid mitigation:** Set minimum 1 replica on the backend and Directus (~$35/month on either cloud). Eliminates cold starts entirely.
+**Paid mitigation:** Set minimum 1 replica on the backend, Payload CMS, and Keycloak (~$50/month on either cloud). Eliminates cold starts entirely.
 
 The identifier-first login pattern is also the standard pattern for client SSO: after the user enters their email, the system detects the SSO configuration for that domain and redirects automatically — no password screen needed.
 

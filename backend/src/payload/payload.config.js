@@ -1,5 +1,6 @@
 import { buildConfig } from 'payload'
 import { postgresAdapter } from '@payloadcms/db-postgres'
+import { Users, Cases, Attachments } from './collections.js'
 
 export default buildConfig({
     secret: process.env.PAYLOAD_SECRET || 'dev-secret-please-change',
@@ -10,40 +11,9 @@ export default buildConfig({
         },
     }),
 
-    collections: [
-        {
-            slug: 'cases',
-            admin: {
-                useAsTitle: 'title',
-            },
-            fields: [
-                {
-                    name: 'title',
-                    type: 'text',
-                    required: true,
-                },
-                {
-                    name: 'description',
-                    type: 'textarea',
-                },
-                {
-                    // SQLite user ID of the owning user — temporary bridge until full user migration
-                    name: 'owner_id',
-                    type: 'number',
-                    label: 'Owner (SQLite user ID)',
-                    required: true,
-                },
-                {
-                    name: 'status',
-                    type: 'select',
-                    options: [
-                        { label: 'Active', value: 'active' },
-                        { label: 'Archived', value: 'archived' },
-                    ],
-                    defaultValue: 'active',
-                    required: true,
-                },
-            ],
-        },
-    ],
+    // Users must be listed here even though the backend doesn't use auth routes —
+    // both this config and payload-admin share the same Postgres instance, and
+    // Payload will try to DROP any column it doesn't recognise. Including Users
+    // keeps the schema in sync and prevents the interactive migration prompt.
+    collections: [Users, Cases, Attachments],
 })

@@ -1,5 +1,9 @@
 # One-time: migrating case roles into Directus (not committed)
 
+> **Obsolete.** Directus is being replaced by Payload CMS. New cases go into Payload;
+> the Directus role migration described here is no longer relevant for new deployments.
+> Retained for reference only in case an existing Directus instance needs cleanup.
+
 This is the walkthrough for the one-off change of `case_directus_users.role` from a multiple-select
 dropdown (values like `1` and `["0"]`) to a single-value string dropdown, keeping every role. The finished
 schema is described in [directus-schema.md](directus-schema.md). Delete this file once the migration is

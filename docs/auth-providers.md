@@ -4,15 +4,17 @@ This is the **product** login design — not a throwaway PoC path. Build further
 work against these contracts. Compromise only where a final platform decision
 is still open (called out below).
 
-## Freeze (2026-08): no new custom identity
+## Direction (updated 2026-10): Keycloak as auth provider
 
-**Direction:** org SSO later via **OIDC in the BFF** (Entra/Okta, or Keycloak only if a self-hosted broker is required). **Directus stays** as content/collab identity (Cases ACLs, comments, call-as-user). Product session stays this app’s httpOnly cookie.
+**Confirmed:** **Keycloak** is the chosen auth provider, running as a self-hosted Docker service (same stack, same bootstrap). Directus is being retired from auth — it will no longer be used for login, identity, or Cases ACLs once the migration is complete.
 
-**Do not add new identity features in this repo** (password stores, MFA, reset, federation, user-directory replacement). Use Directus or the future OIDC provider. Glue allowed: provision/link Directus users, session mapping, encrypted server-side IdP tokens for Cases-as-user, `providers/*` plug-ins backed by maintained libraries (e.g. `openid-client` for OIDC).
+**Active path:** Keycloak BFF pattern — browser submits credentials to the Node.js backend, which verifies server-to-server with Keycloak. Browser never contacts Keycloak directly. Product session stays this app’s httpOnly cookie.
 
-**Stop investing in:** SQLite as a production password IdP; expanding Directus password+OTP as the long-term SSO story. Local provider is a fallback, not the north star.
+**Do not add new identity features in this repo** (password stores, MFA, reset, federation, user-directory replacement). Use Keycloak or a future OIDC provider. Glue allowed: provision users via Keycloak Admin API, session mapping, `providers/*` plug-ins backed by maintained libraries (e.g. `openid-client` for OIDC).
 
-See also workspace rule `.cursor/rules/identity-no-custom-idp.mdc`.
+**Stop investing in:** SQLite as a production password IdP; Directus password+OTP as the long-term SSO story. Local provider is a fallback, not the north star. Keycloak is.
+
+**Org SSO:** later, via OIDC in the BFF (Entra/Okta). Keycloak can broker external OIDC providers if needed.
 
 ## Contracts (stable)
 
@@ -25,11 +27,11 @@ See also workspace rule `.cursor/rules/identity-no-custom-idp.mdc`.
    Routes and the login form talk to `loginWithProvider` / `getPublicAuthConfig`,
    not to Directus or a future Entra client.
 4. **Local user rows remain product session identity** (roles, projects, viewer prefs).
-   **North star:** every collab user is also a **Directus user** (non-admin mostly),
-   linked via `auth_identity_links` (`provider=directus`). Cases require that link
-   when enabled (`requireDirectusLink` / `AUTH_REQUIRE_DIRECTUS_LINK`).
+   **North star:** every user is a Keycloak account, linked via `auth_identity_links`
+   (`provider=keycloak`). Cases are managed by Payload CMS and use the SQLite user id
+   as an owner bridge until full Keycloak/Payload user migration is complete.
 5. **IdP tokens are not part of the default session.** After mapping identity,
-   Directus access/refresh material is discarded unless explicitly enabled.
+   provider access/refresh material is discarded unless explicitly enabled.
 
 ### httpOnly vs HTTPS (cookie session)
 
@@ -68,8 +70,8 @@ They are complementary: **httpOnly ≠ instead of HTTPS**. Production should hav
 
 ### When tokens *are* stored
 
-Only if a product feature must call Directus (or another IdP) **as the end user**
-from the BFF:
+Only if a product feature must call an IdP **as the end user** from the BFF.
+Currently only used for the legacy Directus Cases path:
 
 ```bash
 AUTH_STORE_PROVIDER_TOKENS=true
@@ -81,14 +83,18 @@ Production refuses to start with store-on and no `AUTH_TOKEN_KEY`. Encryption
 stays behind `tokenCrypto.encryptTokenPayload` / `decryptTokenPayload` so a
 later KMS envelope can replace the body without touching routes.
 
+New features (Payload Cases) do not require stored provider tokens — Payload uses
+the SQLite user id as a bridge and its own Postgres-backed auth.
+
 ## Providers
 
-| `AUTH_PROVIDER` | Credential check | Map to local user |
-|-----------------|------------------|-------------------|
-| `local` | SQLite password | Existing user |
-| `directus` | Directus `POST /auth/login` + `/users/me` | Link / shadow user by email + external id |
+| `AUTH_PROVIDER` | Credential check | Map to local user | Status |
+|-----------------|------------------|-------------------|--------|
+| `keycloak` | Keycloak token introspection (BFF) | Link / shadow user by Keycloak sub | **Active — use this** |
+| `local` | SQLite password | Existing user | Fallback only |
+| `directus` | Directus `POST /auth/login` + `/users/me` | Link / shadow user by email + external id | **Retired — do not use for new deployments** |
 
-Service `DIRECTUS_TOKEN` is for **system** Cases / jobs only — never for interactive login.
+Service `DIRECTUS_TOKEN` is for legacy Directus operations only. New provisioning uses the Keycloak Admin API. New data goes into Payload CMS.
 
 Schema / data-model bootstrap is a **separate** CLI concern: interactive Directus
 Administrator login (or a one-run pasted token) — not a long-lived admin token in
@@ -106,12 +112,13 @@ backend/src/auth/
   loginRateLimit.js  # attempt / failure budgets
   originCheck.js     # CORS-origin gate for cookie mutations
   auditLog.js        # hashed-identity auth events
-  changePassword.js  # provisioned-user password change
-  directusLinkCookie.js / directusUserSession.js  # Cases call-as-user
-  requireDirectusLink.js
+  changePassword.js  # provisioned-user password change (Keycloak Admin API)
   providers/
-    local.js
-    directus.js
+    local.js         # fallback
+    directus.js      # legacy — being retired
+  # Legacy Directus Cases call-as-user (retained while Directus is still live):
+  directusLinkCookie.js / directusUserSession.js
+  requireDirectusLink.js
 ```
 
 Public: `GET /api/auth/config` and `GET /api/features` → `auth` (`methods: ["password"]`, provider flags). Passkeys / remember-device were removed from the tree (SSO/OIDC later).
@@ -120,13 +127,25 @@ Public: `GET /api/auth/config` and `GET /api/features` → `auth` (`methods: ["p
 
 | Decision | Current compromise | Seam |
 |----------|-------------------|------|
-| Final IdP (Directus password vs Entra OIDC) | Directus password provider | `providers/*` |
+| ~~Final IdP~~ | **Resolved:** Keycloak (`AUTH_PROVIDER=keycloak`). Directus password provider is retired. | `providers/*` |
 | Cloud secrets (Key Vault / KMS) | Env-mounted keys; dual-key decrypt | `tokenCrypto` |
 | Multi-instance rate limits / sessions | In-process maps + SQLite sessions | `loginRateLimit`, `sessions` table |
 | Admin UI to link accounts under `strict` | Manual DB link row or brief `AUTH_LINK_POLICY=email` window | `auth_identity_links` |
 | Shared audit export / SIEM | SQLite table with prune | `auditLog.recordAuthEvent` |
+| Full user migration to Keycloak/Payload | SQLite user id used as owner bridge in Payload | `owner_id`, `uploaded_by` fields on Payload collections |
 
-## Enabling Directus login
+## Enabling Keycloak login
+
+```bash
+AUTH_PROVIDER=keycloak
+KEYCLOAK_URL=http://keycloak:8080          # internal (backend → keycloak over trame-net)
+KEYCLOAK_REALM=slicer-web
+KEYCLOAK_CLIENT_ID=slicer-web-backend
+KEYCLOAK_CLIENT_SECRET=                    # set by setup-keycloak.mjs, stored in Infisical
+# AUTH_LINK_POLICY=strict                  # default — no silent email takeover
+```
+
+## Enabling Directus login (legacy — being retired)
 
 ```bash
 AUTH_PROVIDER=directus
@@ -139,10 +158,10 @@ DIRECTUS_URL=https://your-directus-host
 
 - Strong `JWT_SECRET`; `COOKIE_SECURE` / TLS termination
 - Tight `CORS_ORIGINS` (also used for auth Origin checks)
-- Directus: no public self-register, MFA where available, HTTPS
+- `AUTH_PROVIDER=keycloak` in production; Keycloak URL is internal-only (not public)
 - Registration off unless you intentionally run local accounts
-- Prefer not enabling `AUTH_STORE_PROVIDER_TOKENS` until Cases (or similar) requires it
-- When migrating existing local users to Directus: briefly set `AUTH_LINK_POLICY=email`, or insert `auth_identity_links` admin-side
+- `AUTH_STORE_PROVIDER_TOKENS` only needed for legacy Directus Cases path — leave unset for new deployments
+- When migrating existing local users: briefly set `AUTH_LINK_POLICY=email`, or insert `auth_identity_links` admin-side
 
 ## Roadmap shape (not blocked on infra choices)
 
@@ -154,138 +173,26 @@ DIRECTUS_URL=https://your-directus-host
 6. Optional KMS envelope inside `tokenCrypto` if long-lived user IdP tokens return  
 7. Directus session revoke on logout **if** tokens are stored  
 
-### Admin user provision (first testable slice)
+### User provisioning (current)
 
-Clinicians are never created by self-register in Directus-mode sites. Product admins call:
+Keycloak owns the account lifecycle. Users are provisioned via the Keycloak Admin API
+(see `scripts/setup-keycloak.mjs` and `POST /api/admin/users/provision`).
 
-- `POST /api/admin/users/provision` — creates Directus user (service token) + local shadow + `auth_identity_links`, sets `must_change_password`
-- Env: `DIRECTUS_DEFAULT_ROLE_ID`, `USER_PROVISION_MODE=temp_password` (Pattern A)
-- `POST /api/auth/change-password` + SPA force-change UI when `mustChangePassword` is true
-- Backfill existing locals: `node scripts/migrate-local-users-to-directus.mjs` (service token)
-- The one-release SQLite→Directus password bridge (`AUTH_PASSWORD_BRIDGE`) has been removed. Local password
-  hashes are no longer used for sign-in; users sign in with their Directus password.
+- `POST /api/auth/change-password` calls the Keycloak Admin REST API to set a new password.
+  Admin password is prompted at call time and never persisted.
+- Cases are managed by Payload CMS (`/api/cases`). Ownership is tracked via the SQLite user
+  id (`owner_id`) as a bridge until full Keycloak/Payload user migration is complete.
+- Directus provisioning scripts (`migrate-local-users-to-directus.mjs`, etc.) are
+  superseded — use Keycloak Admin API for new deployments.
 
-Pattern B (`invite_email`) is intentionally deferred; local handoff lives in gitignored `docs/user-provisioning-patterns.md`.
+### Cases: Payload CMS (current)
 
-### Cases: call as user (not service token)
+Cases and attachments live in Payload CMS (PostgreSQL). No Directus account or `dx_link`
+cookie is required for the Payload Cases path. Auth is the standard product JWT cookie.
 
-When `ENABLE_DIRECTUS_CASES=true`, Cases list/comments/attachments use the signed-in user's
-Directus access token (encrypted on the app session via `AUTH_STORE_PROVIDER_TOKENS`, auto-on
-with Cases). **No service-token fallback** for those routes.
-
-- First connect Cases with `AUTH_PROVIDER=directus` (email + password). That sets an
-  encrypted httpOnly `dx_link` cookie (Directus refresh) and stores tokens on the current
-  session jti. No extra SQLite table — the cookie is the durable bridge.
-- Later passkey logins re-attach by refreshing from `dx_link` onto the new session jti.
-  If attach fails while Cases is on, **passkey login fails closed** (no app session),
-  Directus tokens/`dx_link` for that user are cleared, and the UI asks for password
-  login then auto-offers passkey enrollment.
-  Single logout clears the product session only; **logout-all** also clears `dx_link`
-  (then password login is required again).
-- Directus policies on the clinician role control what each user can see.
-- Service `DIRECTUS_TOKEN` remains for provision + password admin operations only.
-
-#### Case invites (existing Directus users)
-
-- Case **admin** or **collaborator** can invite by email (`POST /api/directus/cases/:id/invites`).
-- If the email already has a Directus user: **admin** adds immediately + in-app notify; **collaborator**
-  creates a pending invite until a case admin approves/rejects.
-- If the email has **no** Directus user yet: BFF creates a `case_signup_invites` row (no Directus user
-  until redeem). **Admin** gets a single-use expiring link (`/?invite=<token>`, default TTL 7 days via
-  `CASE_INVITE_TTL_DAYS`); **collaborator** creates `pending_approval` until an admin approves (then
-  the link is minted). People UI shows **Copy link** — SMTP is not required for this slice.
-- Redeem: `GET /api/invites/signup/:token` (preview) + `POST /api/invites/signup/:token/accept`
-  (creates Directus + local user, applies membership, issues product session + Directus call-as-user
-  tokens). Link is single-use; expired/used tokens are rejected.
-- **Email:** Off by default (`SMTP_ENABLED=false`). Minting/approving a signup invite still
-  returns a redeem link for **Copy link** in People. When ready, set `SMTP_ENABLED=true` plus
-  `SMTP_HOST` / `SMTP_PORT` / `SMTP_FROM` (and auth if required). Soft-fail: email errors never
-  block the invite.
-  - Local: compose includes **Mailpit** (`mailpit:1025`, UI [http://localhost:8025](http://localhost:8025)).
-    Keep `SMTP_ENABLED=false` for copy-link only; set `SMTP_ENABLED=true` to exercise Mailpit.
-  - Production: real SMTP + `SMTP_ENABLED=true`, or leave false for copy-link only.
-- Notifications: `GET /api/notifications` (product user).
-- Membership writes go through Directus as nested `case.collaborators` (and may fall back to
-  `/items/case_directus_users`). **Important:** Directus still enforces permissions on the
-  junction collection for those writes — enabling Update on `case` alone is not enough.
-- **Required Directus ACL (role / people updates):**
-  1. Find the **role of the user that owns `DIRECTUS_TOKEN`** (Settings → Users → that user → Role).
-     Easiest: give that role **Administrator**, or explicitly:
-     Access Control → that role’s policy → collection **`case_directus_users`** → enable
-     **Read + Create + Update** (All items) and allow field **`role`**.
-     This also lets the BFF **backfill case owners** onto the junction as `admin` (needed after
-     migration when `user_created` was never copied into `case_directus_users`).
-  2. Clinician policy on **`case_directus_users`** Update — item filter must allow **owners**
-     even before they appear on the junction:
-     ```json
-     {
-       "_or": [
-         { "case_id": { "user_created": { "_eq": "$CURRENT_USER" } } },
-         {
-           "case_id": {
-             "collaborators": {
-               "_some": {
-                 "_and": [
-                   { "directus_users_id": { "_eq": "$CURRENT_USER" } },
-                   { "role": { "_eq": "admin" } }
-                 ]
-               }
-             }
-           }
-         }
-       ]
-     }
-     ```
-     If the filter is only the second branch, Created By users missing from collaborators
-     cannot change roles until backfill succeeds.
-  3. Save → if you changed the service user role, create a **new static token** and update
-     `DIRECTUS_TOKEN` in the BFF env, then recreate the backend. Clinicians must sign out/in.
-  4. Reload Cases once (triggers owner backfill) or open People / save roles on each case.
-- **Roles:** Membership (who is on the case) lives in Directus `case_directus_users`.
-  Case roles (`admin` / `collaborator` / `read_only`) are written to Directus when that
-  field works; if Directus returns `INTERNAL_SERVER_ERROR` on `role`, the BFF stores the
-  role in SQLite `case_collaborator_roles` (product runtime) and still shows/enforces it
-  in the app. Fix the Directus dropdown later if you want roles mirrored in Studio.
-
-#### Clinician Comments ACL (required for case discussion)
-
-In Directus Studio → **Settings → Access Control** → clinician role / policies:
-
-1. **Comments** (`directus_comments`) — **Read** and **Create**
-2. Allow fields at least: `id`, `collection`, `item`, `comment`, `user_created`
-   (dates `date_created` / `date_updated` optional but useful)
-3. Prefer **no item filter** that hides other users’ comments on shared cases
-   (or filter so comments on `collection = case` items the user can read are visible)
-4. After changing policies, have the clinician **sign out and back in** so the JWT
-   picks up the new accountability
-
-#### Case list dates (Created / Modified)
-
-Studio’s Created time under **Revisions** is stored in Directus **Activity**
-(`directus_activity`), not as a column on `case`. The app already lists cases
-call-as-user; it then loads create/update timestamps from `/activity` for those
-case ids.
-
-Today both the clinician token and the service `DIRECTUS_TOKEN` are denied
-Activity Read — that is why cards have no date even though Studio shows one.
-
-**Fix (Directus-native — pick one):**
-
-1. **Preferred for clinicians staying locked down:** In Access Control, open the
-   **role used by `DIRECTUS_TOKEN`** (service / automation user) → enable
-   **System Collections** → **Activity** → **Read** (fields at least
-   `id`, `action`, `collection`, `item`, `timestamp`). The BFF already falls
-   back to the service token for Activity **only** for case ids the clinician
-   already loaded — it does not list cases as the service user.
-
-2. **Or** grant the clinician role the same Activity Read (also under System
-   Collections — it will not appear in the normal collection list).
-
-3. **Longer-term field on the item:** Data Model → `case` → enable **Date
-   Created** / **Date Updated**. New items then carry dates on the case itself;
-   existing rows may stay empty until touched unless you backfill.
-
-No product SQLite cache is used for these dates.
+- Frontend branches on `sessionMeta.source === ‘payload:case’` to use Payload vs Directus endpoints.
+- `ENABLE_DIRECTUS_CASES=true` still activates the legacy Directus Cases path for sites
+  that have not yet migrated.
 
 ---
 
@@ -509,7 +416,7 @@ Later: tenant rows in DB for multi-hospital; same `providers/oidc.js` + `clientR
 ### Suggested build order (this project)
 
 1. **Phase B (passkeys)** next — UX win you own; no waiting on hospital contracts.  
-2. Keep Directus/local + TOTP + remember-device as fallback.  
+2. Keep Keycloak + local as fallback; Directus provider is retired.  
 3. **Phase C (OIDC)** when first Entra/Okta app registration exists.  
 4. Phase D as soon as multi-instance or multi-hospital is real.
 

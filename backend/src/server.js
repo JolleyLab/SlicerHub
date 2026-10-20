@@ -36,8 +36,10 @@ import { warnIfAuthTokenKeyMissing } from "./auth/tokenCrypto.js";
 import { repairGpuCredentialsFromSeed } from "./gpu/repairCredentials.js";
 import ProjectGpu from "./models/ProjectGpu.js";
 import { restoreGpuViewerProxies } from "./gpu/gpuViewerProxy.js";
-import { initPayload } from "./payload/index.js";
+import { initPayload, getPayloadClient } from "./payload/index.js";
 import casesRoutes from "./routes/cases.js";
+import caseCollaboratorsRoutes from "./routes/caseCollaborators.js";
+import { registerCaseTusRoute } from "./routes/caseTus.js";
 
 function warnIfWeakDemoSecrets() {
     if (config.isProduction) return;
@@ -87,7 +89,7 @@ app.use(cookieParser());
 // Enable CORS for your frontend
 app.use(cors({
     origin: config.server.corsOrigins,
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     credentials: true
 }));
 
@@ -113,6 +115,7 @@ projectGpuRoutes(app);
 
 // Payload Cases (Phase 2) — /api/cases
 casesRoutes(app);
+caseCollaboratorsRoutes(app);
 
 // Directus PoC (headless case list behind app auth)
 directusRoutes(app);
@@ -120,6 +123,12 @@ directusTusRoutes(app);
 
 // Register container routes
 containerRoutes(app);
+
+// Payload TUS upload route — registered after Payload initializes.
+// Must happen before error handlers so Express can match it.
+await initPayload();
+const payloadClient = getPayloadClient();
+if (payloadClient) registerCaseTusRoute(app, payloadClient);
 
 // Error handling - MUST be after all routes
 app.use(notFoundHandler);  // Handles 404s
@@ -169,7 +178,6 @@ app.listen(config.server.port, config.server.host, async () => {
     } catch (err) {
         console.warn('GPU viewer proxy restore on startup failed:', err.message);
     }
-    await initPayload();
     if (config.isDevelopment) {
         console.log('⚠️  Running in DEVELOPMENT mode');
     }

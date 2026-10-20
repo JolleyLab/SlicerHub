@@ -12,6 +12,7 @@ node_modules/
 backend/data/
 backend/userFiles/
 userFiles/
+caseFiles/
 data/
 !data/slicer-gui/
 !data/slicer-gui/.gitkeep

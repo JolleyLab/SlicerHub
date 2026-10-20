@@ -1,5 +1,8 @@
 # Directus schema setup (site bootstrap)
 
+> **Legacy — retained for reference during Directus exit.** Directus is being replaced by Payload CMS.
+> New deployments use `node scripts/bootstrap.mjs` which provisions Keycloak + Payload instead.
+
 Programmatic data-model changes for new Directus projects — **not** something
 product / case admins do from the app.
 

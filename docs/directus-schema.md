@@ -1,5 +1,8 @@
 # Directus schema for collaborators and invites
 
+> **Legacy — retained for reference during Directus exit.** Directus is being replaced by Payload CMS.
+> This schema is still live on the production server but will not be extended. Do not use as a model for new work.
+
 What the app expects from Directus for case collaborators, roles and invites, how to create it in the
 Directus UI, and how to copy the finished schema to another server. Directus is the source of truth: the
 app keeps no copy of roles, membership or invites (invites are still in SQLite until `case_invite` exists;

@@ -1,0 +1,307 @@
+/**
+ * Keycloak Admin API helpers for case role management.
+ *
+ * Groups pattern: case:{caseId}:admin | case:{caseId}:collaborator | case:{caseId}:read_only
+ * Groups are created lazily on first collaborator addition.
+ */
+
+import config from '../config/index.js';
+import { findLinkForUser } from '../auth/identityStore.js';
+import { AppError, NotFoundError } from '../utils/errors.js';
+
+export const CASE_ROLES = ['admin', 'collaborator', 'read_only'];
+
+// ---------------------------------------------------------------------------
+// Admin token — cached until near expiry
+// ---------------------------------------------------------------------------
+
+let _cachedToken = null;
+let _tokenExpiry = 0;
+
+export async function getAdminToken() {
+    if (_cachedToken && Date.now() < _tokenExpiry - 30_000) return _cachedToken;
+
+    const { url, adminUser, adminPassword } = config.keycloak;
+    if (!url) throw new AppError('Keycloak is not configured (KEYCLOAK_URL missing)', 503);
+
+    const res = await fetch(`${url}/realms/master/protocol/openid-connect/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+            grant_type: 'password',
+            client_id:  'admin-cli',
+            username:   adminUser,
+            password:   adminPassword,
+        }),
+    });
+
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new AppError(`Keycloak admin login failed (${res.status}): ${text}`, 502);
+    }
+
+    const data = await res.json();
+    _cachedToken = data.access_token;
+    _tokenExpiry = Date.now() + (data.expires_in ?? 60) * 1000;
+    return _cachedToken;
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+function adminBase() {
+    const { url, realm } = config.keycloak;
+    return `${url}/admin/realms/${encodeURIComponent(realm)}`;
+}
+
+async function keycloakGet(path) {
+    const token = await getAdminToken();
+    const res = await fetch(`${adminBase()}${path}`, {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new AppError(`Keycloak GET ${path} failed (${res.status}): ${text}`, 502);
+    }
+    return res.json();
+}
+
+async function keycloakPost(path, body) {
+    const token = await getAdminToken();
+    const res = await fetch(`${adminBase()}${path}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (!res.ok && res.status !== 201 && res.status !== 204) {
+        const text = await res.text().catch(() => '');
+        throw new AppError(`Keycloak POST ${path} failed (${res.status}): ${text}`, 502);
+    }
+    // 201 Created has Location header; 200 may have body; 204 has none
+    const ct = res.headers.get('content-type') || '';
+    if (ct.includes('json') && res.status !== 204) {
+        return res.json().catch(() => null);
+    }
+    return null;
+}
+
+async function keycloakPut(path, body) {
+    const token = await getAdminToken();
+    const res = await fetch(`${adminBase()}${path}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new AppError(`Keycloak PUT ${path} failed (${res.status}): ${text}`, 502);
+    }
+    return null;
+}
+
+async function keycloakDelete(path) {
+    const token = await getAdminToken();
+    const res = await fetch(`${adminBase()}${path}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok && res.status !== 204) {
+        const text = await res.text().catch(() => '');
+        throw new AppError(`Keycloak DELETE ${path} failed (${res.status}): ${text}`, 502);
+    }
+    return null;
+}
+
+// ---------------------------------------------------------------------------
+// User lookup
+// ---------------------------------------------------------------------------
+
+/**
+ * Find a Keycloak user by exact email address.
+ * Returns { id, email, firstName, lastName, username } or null.
+ */
+export async function findUserByEmail(email) {
+    const results = await keycloakGet(
+        `/users?email=${encodeURIComponent(email)}&exact=true`
+    );
+    const user = results?.find(u => u.email?.toLowerCase() === email.toLowerCase());
+    if (!user) return null;
+    return {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName || '',
+        lastName:  user.lastName  || '',
+        username:  user.username  || '',
+    };
+}
+
+/**
+ * Get a Keycloak user by their Keycloak ID.
+ * Returns { id, email, firstName, lastName, username } or null.
+ */
+export async function getKeycloakUser(keycloakUserId) {
+    try {
+        const user = await keycloakGet(`/users/${encodeURIComponent(keycloakUserId)}`);
+        if (!user) return null;
+        return {
+            id: user.id,
+            email: user.email,
+            firstName: user.firstName || '',
+            lastName:  user.lastName  || '',
+            username:  user.username  || '',
+        };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Look up the Keycloak subject (sub) for a SQLite user.
+ * Returns the Keycloak user ID string or null.
+ */
+export function getKeycloakSubForUser(sqliteUserId) {
+    const link = findLinkForUser(sqliteUserId, 'keycloak');
+    return link?.external_id ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Group management
+// ---------------------------------------------------------------------------
+
+function groupName(caseId, role) {
+    return `case:${caseId}:${role}`;
+}
+
+/**
+ * Find an existing Keycloak group by exact name.
+ * Returns { id, name } or null.
+ */
+export async function findCaseGroup(caseId, role) {
+    const name = groupName(caseId, role);
+    const results = await keycloakGet(
+        `/groups?search=${encodeURIComponent(name)}&exact=true`
+    );
+    // search may return partial matches — filter for exact name at top level
+    const group = results?.find(g => g.name === name);
+    return group ? { id: group.id, name: group.name } : null;
+}
+
+/**
+ * Get (or create) the Keycloak group for a case + role.
+ * Returns the group ID.
+ */
+export async function ensureCaseGroup(caseId, role) {
+    const existing = await findCaseGroup(caseId, role);
+    if (existing) return existing.id;
+
+    // Create the group
+    const token = await getAdminToken();
+    const res = await fetch(`${adminBase()}/groups`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: groupName(caseId, role) }),
+    });
+
+    if (res.status === 409) {
+        // Race — created concurrently; fetch and return
+        const found = await findCaseGroup(caseId, role);
+        if (found) return found.id;
+    }
+
+    if (!res.ok && res.status !== 201) {
+        const text = await res.text().catch(() => '');
+        throw new AppError(`Failed to create Keycloak group (${res.status}): ${text}`, 502);
+    }
+
+    // Keycloak returns 201 with Location: .../groups/{id}
+    const location = res.headers.get('location') || '';
+    const idFromLocation = location.split('/').pop();
+    if (idFromLocation && idFromLocation.length > 8) return idFromLocation;
+
+    // Fallback: search again
+    const created = await findCaseGroup(caseId, role);
+    if (!created) throw new AppError(`Group created but not found: ${groupName(caseId, role)}`, 500);
+    return created.id;
+}
+
+/**
+ * Add a Keycloak user to a case role group.
+ * Removes them from all other role groups for this case first (one role per case).
+ */
+export async function addUserToCaseGroup(keycloakUserId, caseId, role) {
+    // Remove from any existing role groups for this case
+    await removeUserFromAllCaseGroups(keycloakUserId, caseId);
+    const groupId = await ensureCaseGroup(caseId, role);
+    await keycloakPut(`/users/${encodeURIComponent(keycloakUserId)}/groups/${encodeURIComponent(groupId)}`, {});
+}
+
+/**
+ * Remove a Keycloak user from all role groups for a given case.
+ */
+export async function removeUserFromAllCaseGroups(keycloakUserId, caseId) {
+    for (const role of CASE_ROLES) {
+        const group = await findCaseGroup(caseId, role);
+        if (!group) continue;
+        try {
+            await keycloakDelete(`/users/${encodeURIComponent(keycloakUserId)}/groups/${encodeURIComponent(group.id)}`);
+        } catch {
+            // Ignore 404 — user was not in the group
+        }
+    }
+}
+
+/**
+ * Get the case role for a Keycloak user (by checking their group membership).
+ * Returns 'admin' | 'collaborator' | 'read_only' | null.
+ */
+export async function getUserCaseRole(keycloakUserId, caseId) {
+    const groups = await keycloakGet(`/users/${encodeURIComponent(keycloakUserId)}/groups`);
+    const prefix = `case:${caseId}:`;
+    for (const g of groups ?? []) {
+        if (g.name?.startsWith(prefix)) {
+            const role = g.name.slice(prefix.length);
+            if (CASE_ROLES.includes(role)) return role;
+        }
+    }
+    return null;
+}
+
+/**
+ * Get all case roles for a Keycloak user.
+ * Returns { [caseId]: role } map derived from all case:* groups the user belongs to.
+ */
+export async function getUserCaseRoleMap(keycloakUserId) {
+    const groups = await keycloakGet(`/users/${encodeURIComponent(keycloakUserId)}/groups`);
+    const map = {};
+    for (const g of groups ?? []) {
+        const m = g.name?.match(/^case:(\d+):(\w+)$/);
+        if (m && CASE_ROLES.includes(m[2])) {
+            map[m[1]] = m[2];
+        }
+    }
+    return map;
+}
+
+/**
+ * List all collaborators on a case (from all three role groups).
+ * Returns [{ id, email, firstName, lastName, role }].
+ */
+export async function listCaseCollaborators(caseId) {
+    const results = [];
+    for (const role of CASE_ROLES) {
+        const group = await findCaseGroup(caseId, role);
+        if (!group) continue;
+        const members = await keycloakGet(`/groups/${encodeURIComponent(group.id)}/members`);
+        for (const m of members ?? []) {
+            results.push({
+                id:        m.id,
+                email:     m.email     || '',
+                firstName: m.firstName || '',
+                lastName:  m.lastName  || '',
+                role,
+            });
+        }
+    }
+    return results;
+}

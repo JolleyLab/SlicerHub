@@ -9,6 +9,8 @@
     "license": "BSD-3-Clause",
     "dependencies": {
         "@payloadcms/db-postgres": "^3.0.0",
+        "@tus/file-store": "^2.1.1",
+        "@tus/server": "^2.4.6",
         "bcrypt": "^5.1.1",
         "cookie-parser": "^1.4.6",
         "cors": "^2.8.5",

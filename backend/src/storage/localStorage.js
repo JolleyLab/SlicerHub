@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { createReadStream } from 'fs';
-import { OBJECT_KEY_PREFIX } from './contract.js';
+import { OBJECT_KEY_PREFIX, CASE_KEY_PREFIX, ALLOWED_KEY_ROOTS } from './contract.js';
 
 class LocalStorage {
     get backend() {
@@ -22,14 +22,18 @@ class LocalStorage {
         return `${OBJECT_KEY_PREFIX}/${String(userId)}/${path.basename(fileName)}`;
     }
 
+    relativeDbPathForCase(caseId, fileName) {
+        return `${CASE_KEY_PREFIX}/${String(caseId)}/${path.basename(fileName)}`;
+    }
+
     normalizeKey(filePath) {
         return String(filePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
     }
 
     resolvePath(key) {
         const normalized = this.normalizeKey(key);
-        const prefix = `${OBJECT_KEY_PREFIX}/`;
-        if (!normalized.startsWith(prefix) || normalized.includes('..')) {
+        const valid = ALLOWED_KEY_ROOTS.some(root => normalized.startsWith(`${root}/`));
+        if (!valid || normalized.includes('..')) {
             throw new Error('Invalid storage key');
         }
         return normalized;

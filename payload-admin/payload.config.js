@@ -1,43 +1,11 @@
 import { buildConfig } from 'payload'
 import { postgresAdapter } from '@payloadcms/db-postgres'
 import { lexicalEditor } from '@payloadcms/richtext-lexical'
+import { Users, Cases, Attachments } from '../backend/src/payload/collections.js'
 
-// NOTE: The `cases` collection here must stay in sync with backend/src/payload/payload.config.js.
-// Both configs share the same payload-db Postgres instance.
-
-const Users = {
-    slug: 'users',
-    auth: true,
-    admin: { useAsTitle: 'email' },
-    fields: [
-        { name: 'name', type: 'text', label: 'Full Name' },
-    ],
-}
-
-const Cases = {
-    slug: 'cases',
-    admin: { useAsTitle: 'title' },
-    fields: [
-        { name: 'title', type: 'text', required: true },
-        { name: 'description', type: 'textarea' },
-        {
-            name: 'owner_id',
-            type: 'number',
-            label: 'Owner (SQLite user ID)',
-            required: true,
-        },
-        {
-            name: 'status',
-            type: 'select',
-            options: [
-                { label: 'Active', value: 'active' },
-                { label: 'Archived', value: 'archived' },
-            ],
-            defaultValue: 'active',
-            required: true,
-        },
-    ],
-}
+// Collection definitions live in backend/src/payload/collections.js — edit there.
+// Both this file and backend/src/payload/payload.config.js share the same
+// payload-db Postgres instance and must use identical collection schemas.
 
 export default buildConfig({
     secret: process.env.PAYLOAD_SECRET || 'dev-secret-please-change',
@@ -48,5 +16,5 @@ export default buildConfig({
     admin: {
         user: Users.slug,
     },
-    collections: [Users, Cases],
+    collections: [Users, Cases, Attachments],
 })

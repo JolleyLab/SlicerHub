@@ -324,6 +324,7 @@ services:
     volumes:
       - ./payload-admin:/app
       - payload-admin-modules:/app/node_modules
+      - ./backend:/backend:ro
     ports:
       - "127.0.0.1:3001:3001"
     command: ["sh", "-c", "test -d node_modules/next && test -d node_modules/payload || npm install --legacy-peer-deps; exec npm run dev -- -p 3001"]

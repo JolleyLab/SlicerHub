@@ -20,7 +20,12 @@ import {
     invalidateNotifications,
     friendlyCasesError
 } from './services/directus.js';
-import { listCases, createCase, updateCase } from './services/cases.js';
+import { API_URL } from '../config.js';
+import {
+    listCases, createCase, updateCase, listAttachments, deleteAttachment,
+    uploadCaseAttachment, openPayloadAttachmentFullSlicer, fetchPayloadAttachmentContent,
+    listCollaborators, inviteCollaborator, updateCollaborators, lookupCaseUser,
+} from './services/cases.js';
 import './components/people-dialog.js';
 import './components/list-filter-tools.js';
 import './components/attachment-open-menu.js';
@@ -1413,6 +1418,7 @@ export class DirectusCasesPage extends LitElement {
             } else if (keepSelected) {
                 const openRow = this.cases.find((row) => row.id === keepSelected);
                 if (openRow) this.markCaseCommentsSeen(openRow);
+                if (this.isPayloadCase) this.loadCaseAttachments(keepSelected);
             }
         } catch (err) {
             this.cases = [];
@@ -1430,6 +1436,7 @@ export class DirectusCasesPage extends LitElement {
         if (caseRow) this.markCaseCommentsSeen(caseRow);
         history.pushState({ caseId }, '', this._buildCaseUrl(caseId));
         this.refreshPendingInviteCount(caseId);
+        if (this.isPayloadCase) this.loadCaseAttachments(caseId);
     }
 
     /**
@@ -1453,7 +1460,7 @@ export class DirectusCasesPage extends LitElement {
 
     async refreshPendingInviteCount(caseId = this.selectedCaseId) {
         const id = String(caseId || '').trim();
-        if (!id) {
+        if (!id || this.isPayloadCase) {
             this.pendingInviteCount = 0;
             return;
         }
@@ -1570,18 +1577,20 @@ export class DirectusCasesPage extends LitElement {
     }
 
     myCaseRole(caseRow) {
-        const me = this.currentDirectusUserId;
-        if (!me || !caseRow) return null;
-        if (caseRow.createdBy?.id && String(caseRow.createdBy.id) === String(me)) {
-            return 'admin';
-        }
-        // Payload cases: derive role from owner_id
+        if (!caseRow) return null;
+        // Payload cases: backend annotates each case with myRole (includes Keycloak group membership)
         if (this.sessionMeta?.source === 'payload:case') {
+            if (caseRow.myRole) return caseRow.myRole;
             if (this.currentUserId && String(caseRow.owner_id) === String(this.currentUserId)) return 'admin';
             if (this.isOrgAdmin) return 'admin';
             return null;
         }
-
+        // Directus path
+        const me = this.currentDirectusUserId;
+        if (!me) return null;
+        if (caseRow.createdBy?.id && String(caseRow.createdBy.id) === String(me)) {
+            return 'admin';
+        }
         const membership = (caseRow.collaborators || []).find((c) => String(c.id) === String(me));
         return membership?.role || null;
     }
@@ -1601,11 +1610,72 @@ export class DirectusCasesPage extends LitElement {
         return Boolean(this.myCaseRole(caseRow));
     }
 
+    get isPayloadCase() {
+        return this.sessionMeta?.source === 'payload:case';
+    }
+
+    normalizePayloadAttachment(att) {
+        return {
+            id: att.id,
+            name: att.original_filename,
+            filenameDownload: att.original_filename,
+            filesize: att.size_bytes ?? null,
+            mimeType: att.mime_type || 'application/octet-stream',
+            modifiedAt: att.updatedAt || att.createdAt || null,
+            canOpenInSlicer:    att.canOpenInSlicer    ?? false,
+            canPreviewInBrowser: att.canPreviewInBrowser ?? false,
+            _source: 'payload',
+        };
+    }
+
+    async loadCaseAttachments(caseId) {
+        try {
+            const data = await listAttachments(caseId);
+            const normalized = (data.attachments || []).map((a) => this.normalizePayloadAttachment(a));
+            this.cases = this.cases.map((row) =>
+                row.id === caseId ? { ...row, attachments: normalized } : row
+            );
+        } catch {
+            // non-fatal; files panel shows empty
+        }
+    }
+
     casePeopleCount(caseRow) {
         return this.buildPeopleMembers(caseRow).length;
     }
 
     buildPeopleMembers(caseRow) {
+        // Payload case: collaborators are Keycloak users loaded separately
+        if (this.isPayloadCase) {
+            const members = [];
+            // Owner row (locked)
+            if (caseRow?.owner_id != null) {
+                const ownerInfo = caseRow._ownerInfo || {};
+                members.push({
+                    id: String(caseRow.owner_id),
+                    email: ownerInfo.email || '',
+                    username: ownerInfo.email || '',
+                    firstName: ownerInfo.firstName || '',
+                    lastName: ownerInfo.lastName || '',
+                    role: 'admin',
+                    locked: true,
+                });
+            }
+            for (const entry of caseRow?.keycloakCollaborators || []) {
+                if (!entry?.id) continue;
+                members.push({
+                    id: entry.id,
+                    email: entry.email || '',
+                    username: entry.email || '',
+                    firstName: entry.firstName || '',
+                    lastName: entry.lastName || '',
+                    role: entry.role || 'collaborator',
+                    locked: false,
+                });
+            }
+            return members;
+        }
+        // Directus path
         const members = [];
         const ownerId = caseRow?.createdBy?.id ? String(caseRow.createdBy.id) : null;
         if (caseRow?.createdBy) {
@@ -1645,12 +1715,50 @@ export class DirectusCasesPage extends LitElement {
         const canManage = this.canManageCollaborators(caseRow);
         dialog.canInvite = canInvite;
         dialog.canManage = canManage;
+        dialog.saving = this.savingCollaborators;
+        dialog.error = '';
+
+        if (this.isPayloadCase) {
+            dialog.roleOptions = null;
+            dialog.currentUserId = this.currentUserId ? String(this.currentUserId) : '';
+            dialog.lookupFn = async (email) => {
+                const data = await lookupCaseUser(email);
+                return data.user;
+            };
+            dialog.inviteFn = async ({ email, role }) => {
+                const data = await inviteCollaborator(caseRow.id, { email, role });
+                // Reload collaborators list into the case row
+                try {
+                    const fresh = await listCollaborators(caseRow.id);
+                    this.cases = this.cases.map((row) =>
+                        row.id === caseRow.id
+                            ? { ...row, keycloakCollaborators: fresh.collaborators }
+                            : row
+                    );
+                } catch { /* non-fatal */ }
+                return { status: 'added', collaborator: data.collaborator };
+            };
+            // Load collaborators fresh from Keycloak
+            let collaborators = caseRow.keycloakCollaborators || [];
+            try {
+                const fresh = await listCollaborators(caseRow.id);
+                collaborators = fresh.collaborators || [];
+                this.cases = this.cases.map((row) =>
+                    row.id === caseRow.id
+                        ? { ...row, keycloakCollaborators: collaborators }
+                        : row
+                );
+            } catch { /* use cached */ }
+            const enrichedRow = { ...caseRow, keycloakCollaborators: collaborators };
+            await dialog.open(this.buildPeopleMembers(enrichedRow), { pendingInvites: [] });
+            return;
+        }
+
+        // Directus path
         dialog.roleOptions = canManage ? null : CASE_INVITE_ROLE_OPTIONS;
         dialog.lookupFn = lookupDirectusUserByEmail;
         dialog.inviteFn = ({ email, role }) => inviteDirectusCaseUser(caseRow.id, { email, role });
         dialog.currentUserId = this.currentDirectusUserId || '';
-        dialog.saving = this.savingCollaborators;
-        dialog.error = '';
         let pendingInvites = [];
         try {
             pendingInvites = await listDirectusCaseInvites(caseRow.id);
@@ -1669,12 +1777,29 @@ export class DirectusCasesPage extends LitElement {
         const caseRow = this.selectedCase;
         const detail = event.detail || {};
         if (!caseRow?.id) return;
+        const dialog = this.renderRoot?.querySelector('#case-people-dialog');
+
+        if (this.isPayloadCase) {
+            // Reload collaborators from Keycloak and refresh dialog member list
+            try {
+                const fresh = await listCollaborators(caseRow.id);
+                this.cases = this.cases.map((row) =>
+                    row.id === caseRow.id
+                        ? { ...row, keycloakCollaborators: fresh.collaborators }
+                        : row
+                );
+                const next = this.cases.find((r) => r.id === caseRow.id) || caseRow;
+                if (dialog) dialog.members = dialog.sortMembers(this.buildPeopleMembers(next));
+            } catch { /* non-fatal */ }
+            return;
+        }
+
+        // Directus path
         if (detail.status === 'added' && Array.isArray(detail.collaborators)) {
             this.cases = this.cases.map((row) => (
                 row.id === caseRow.id ? { ...row, collaborators: detail.collaborators } : row
             ));
         }
-        const dialog = this.renderRoot?.querySelector('#case-people-dialog');
         if (dialog && detail.inviteUrl) {
             dialog.lastInviteUrl = detail.inviteUrl;
         }
@@ -1750,12 +1875,6 @@ export class DirectusCasesPage extends LitElement {
         if (!this.canManageCollaborators(caseRow)) return;
 
         const members = Array.isArray(event.detail?.members) ? event.detail.members : [];
-        const collaborators = members
-            .map((entry) => ({
-                userId: entry?.userId,
-                role: entry?.role || 'collaborator'
-            }))
-            .filter((entry) => entry.userId);
 
         this.savingCollaborators = true;
         const dialog = this.renderRoot?.querySelector('#case-people-dialog');
@@ -1764,12 +1883,32 @@ export class DirectusCasesPage extends LitElement {
             dialog.error = '';
         }
         try {
-            const data = await updateDirectusCaseCollaborators(caseRow.id, collaborators);
-            const next = Array.isArray(data.collaborators) ? data.collaborators : [];
-            this.cases = this.cases.map((row) => (
-                row.id === caseRow.id ? { ...row, collaborators: next } : row
-            ));
-            this.closePeopleDialog();
+            if (this.isPayloadCase) {
+                // members[].userId is the Keycloak user ID for Payload cases
+                const collaborators = members
+                    .map((entry) => ({ id: entry?.userId, role: entry?.role || 'collaborator' }))
+                    .filter((entry) => entry.id);
+                const data = await updateCollaborators(caseRow.id, collaborators);
+                const next = Array.isArray(data.collaborators) ? data.collaborators : [];
+                this.cases = this.cases.map((row) => (
+                    row.id === caseRow.id ? { ...row, keycloakCollaborators: next } : row
+                ));
+                this.closePeopleDialog();
+            } else {
+                // Directus path
+                const collaborators = members
+                    .map((entry) => ({
+                        userId: entry?.userId,
+                        role: entry?.role || 'collaborator'
+                    }))
+                    .filter((entry) => entry.userId);
+                const data = await updateDirectusCaseCollaborators(caseRow.id, collaborators);
+                const next = Array.isArray(data.collaborators) ? data.collaborators : [];
+                this.cases = this.cases.map((row) => (
+                    row.id === caseRow.id ? { ...row, collaborators: next } : row
+                ));
+                this.closePeopleDialog();
+            }
         } catch (err) {
             if (dialog) {
                 dialog.error = this.userFacingError(err, "Couldn't update people. Please try again.");
@@ -1944,16 +2083,31 @@ export class DirectusCasesPage extends LitElement {
         this.downloadStatusText = t('cases.downloadStarting', { name });
         this.uploadError = '';
         try {
-            // A quick access check (it does not wait for the file), so a refusal is a message and not a
-            // saved error page. Then the browser takes over and shows the download's progress itself.
-            await checkDirectusAttachmentDownload(caseRow.id, attachment.id);
-            if (!this.isConnected) return; // user left the page during the check
-            const link = document.createElement('a');
-            link.href = directusAttachmentDownloadUrl(caseRow.id, attachment.id);
-            link.download = name;
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
+            if (this.isPayloadCase) {
+                const url = `${API_URL}/api/cases/${encodeURIComponent(caseRow.id)}/attachments/${encodeURIComponent(attachment.id)}`;
+                const res = await fetch(url, { credentials: 'include' });
+                if (!res.ok) throw new Error(`Download failed (${res.status})`);
+                const blob = await res.blob();
+                const blobUrl = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = blobUrl;
+                link.download = name;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(blobUrl);
+            } else {
+                // A quick access check (it does not wait for the file), so a refusal is a message and not a
+                // saved error page. Then the browser takes over and shows the download's progress itself.
+                await checkDirectusAttachmentDownload(caseRow.id, attachment.id);
+                if (!this.isConnected) return; // user left the page during the check
+                const link = document.createElement('a');
+                link.href = directusAttachmentDownloadUrl(caseRow.id, attachment.id);
+                link.download = name;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+            }
             this.downloadStatusText = t('cases.downloadStarted', { name });
         } catch (err) {
             this.downloadStatusText = '';
@@ -1980,7 +2134,11 @@ export class DirectusCasesPage extends LitElement {
         this.deletingAttachmentId = attachment.id;
         this.uploadError = '';
         try {
-            await deleteDirectusCaseAttachment(caseRow.id, attachment.id);
+            if (this.isPayloadCase) {
+                await deleteAttachment(caseRow.id, attachment.id);
+            } else {
+                await deleteDirectusCaseAttachment(caseRow.id, attachment.id);
+            }
             this.cases = this.cases.map((row) => {
                 if (row.id !== caseRow.id) return row;
                 return {
@@ -2016,7 +2174,35 @@ export class DirectusCasesPage extends LitElement {
         if (!files.length || !caseRow?.id) return;
         if (!this.canEditCaseContent(caseRow)) return;
         this.uploadError = '';
+        if (this.isPayloadCase) {
+            this.uploadFilesPayload(caseRow, files);
+            return;
+        }
         uploadManager.enqueue({ caseId: caseRow.id, caseTitle: caseRow.title || '', files });
+    }
+
+    async uploadFilesPayload(caseRow, files) {
+        // Upload files one at a time, reporting inline progress.
+        // The server creates the attachment record in onUploadFinish, so there's no separate attach step.
+        for (const file of files) {
+            if (this.uploadError) break;
+            this.uploadingFile = true;
+            this.uploadProgress = 0;
+            this.uploadStatusText = t('cases.uploadingFile', { name: file.name });
+            try {
+                await uploadCaseAttachment(caseRow.id, file, {
+                    onProgress: (sent, total) => {
+                        this.uploadProgress = total > 0 ? sent / total : 0;
+                    },
+                });
+            } catch (err) {
+                this.uploadError = this.userFacingError(err, 'Upload failed. Please try again.');
+            }
+        }
+        this.uploadingFile = false;
+        this.uploadProgress = 0;
+        this.uploadStatusText = '';
+        if (!this.uploadError) await this.loadCaseAttachments(caseRow.id);
     }
 
     /** Keyboard focus follows the viewer overlay: into it when it opens, back to where the user was when it closes. */
@@ -2036,6 +2222,7 @@ export class DirectusCasesPage extends LitElement {
 
     /** Mirror the manager's state for the selected case into the inline progress row. */
     syncUploadState() {
+        if (this.isPayloadCase) return; // uploadFilesPayload manages progress directly
         const summary = uploadManager.summary(this.selectedCaseId);
         this.uploadingFile = summary.count > 0;
         this.uploadProgress = summary.progress;
@@ -2391,7 +2578,10 @@ export class DirectusCasesPage extends LitElement {
 
         try {
             this.stopHeartbeat();
-            const data = await openDirectusAttachmentFullSlicer(caseRow.id, attachment.id, {
+            const openFn = attachment._source === 'payload'
+                ? openPayloadAttachmentFullSlicer
+                : openDirectusAttachmentFullSlicer;
+            const data = await openFn(caseRow.id, attachment.id, {
                 useSimplifiedViewer: useSimplified
             });
             if (isSuperseded()) {
@@ -2465,7 +2655,9 @@ export class DirectusCasesPage extends LitElement {
         this.showIframe = true;
         this._slicerWebRun += 1;
         // Download while the runtime starts; both are awaited in loadPendingIntoSlicerWeb.
-        const download = fetchDirectusAttachmentContent(caseRow.id, attachment.id);
+        const download = attachment._source === 'payload'
+            ? fetchPayloadAttachmentContent(caseRow.id, attachment.id)
+            : fetchDirectusAttachmentContent(caseRow.id, attachment.id);
         download.catch(() => {}); // surfaced when awaited
         this._slicerWebPending = { download, fileName: this.currentFileName };
 
