@@ -790,16 +790,36 @@ export const casesPageStyles = css`
         display: flex;
         align-items: center;
         justify-content: center;
-        background: color-mix(in srgb, var(--color-background) 80%, transparent);
+        background: var(--color-background);
         pointer-events: none;
+        z-index: 5;
     }
 
     .viewer-loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
         text-align: center;
         padding: 16px;
         color: var(--color-text-secondary);
         font-size: 0.9rem;
     }
+
+    .viewer-loading-spinner {
+        width: 28px;
+        height: 28px;
+        border: 3px solid color-mix(in srgb, var(--color-text-secondary) 25%, transparent);
+        border-top-color: var(--color-text-secondary);
+        border-radius: 50%;
+        animation: viewer-spin 0.8s linear infinite;
+        flex-shrink: 0;
+    }
+
+    @keyframes viewer-spin {
+        to { transform: rotate(360deg); }
+    }
+
 
     .toast {
         position: fixed;
@@ -816,4 +836,5 @@ export const casesPageStyles = css`
         font-size: 0.9rem;
         line-height: 1.4;
     }
+
 `;

@@ -6,6 +6,7 @@ import { utilStyles } from '../styles/utils.js';
 import { t } from '../i18n/index.js';
 import '../components/page-layout-template.js';
 import '../components/page-content-message.js';
+import '../components/app-dialog.js';
 import '../components/file-list-row.js';
 import '../components/comments-panel.js';
 import '../components/audit-log.js';
@@ -151,6 +152,8 @@ export class DirectusCasesPage extends LitElement {
             viewerLoading: { type: Boolean },
             viewerLoadingDetail: { type: String },
             toastMessage: { type: String },
+            errorDialogMessage: { type: String },
+            errorDialogTitle: { type: String },
             viewerSimplified: { type: Boolean },
             viewerKind: { type: String },
             viewerClosing: { type: Boolean },
@@ -250,6 +253,8 @@ export class DirectusCasesPage extends LitElement {
         this._slicerWebPending = null;
         this._slicerWebDownloadPromise = null;
         this.toastMessage = '';
+        this.errorDialogMessage = '';
+        this.errorDialogTitle = '';
         this._toastTimeout = null;
         this._heartbeatInterval = null;
         this._handleBeforeUnload = null;
@@ -308,7 +313,11 @@ export class DirectusCasesPage extends LitElement {
             url.searchParams.delete('case');
         }
         url.searchParams.delete('viewer');
-        url.searchParams.delete('view');
+        // Only drop the 'history' sub-view; preserve 'view=cases' so the app-shell
+        // can restore the correct page when history.back() fires after closing the viewer.
+        if (url.searchParams.get('view') === 'history') {
+            url.searchParams.delete('view');
+        }
         return url.toString();
     }
 
@@ -414,6 +423,32 @@ export class DirectusCasesPage extends LitElement {
         };
         window.addEventListener('beforeunload', this._handleBeforeUnload);
 
+        this._onSlicerViewerMessage = (event) => {
+            if (event?.origin && event.origin !== window.location.origin) return;
+            const { type, heading, detail, error: viewerError } = event?.data ?? {};
+            if (type === 'slicer-viewer-loading') {
+                if (this.viewerKind !== VIEWER_KINDS.SLICER_GUI || !this.viewerLoading) return;
+                this.viewerLoadingDetail = detail || heading || this.viewerLoadingDetail;
+            } else if (type === 'slicer-viewer-ready') {
+                if (this.viewerKind !== VIEWER_KINDS.SLICER_GUI) return;
+                if (this._slicerReadyFallback) {
+                    clearTimeout(this._slicerReadyFallback);
+                    this._slicerReadyFallback = null;
+                }
+                this.viewerLoading = false;
+                this.viewerLoadingDetail = '';
+            } else if (type === 'slicer-viewer-load-failed') {
+                if (this.viewerKind !== VIEWER_KINDS.SLICER_GUI) return;
+                this._viewerPushedState = false;
+                this._doCloseViewer();
+                this._replaceUrlWithCase();
+                this.showErrorDialog(this.viewerLoadError(viewerError));
+            } else if (type === 'slicer-viewer-disconnected') {
+                this.showToast(t('common.networkError'));
+            }
+        };
+        window.addEventListener('message', this._onSlicerViewerMessage);
+
         this._onUploadChange = () => this.syncUploadState();
         this._onUploadAttached = (event) => this.handleAttachmentUploaded(event.detail);
         uploadManager.addEventListener('change', this._onUploadChange);
@@ -454,8 +489,41 @@ export class DirectusCasesPage extends LitElement {
         }, 6000);
     }
 
+    viewerLoadError(rawError) {
+        const s = String(rawError || '').toLowerCase();
+        const formatKeywords = [
+            'load failed', 'unsupported', 'not supported', 'no reader', 'unrecognized',
+            'unable to load', 'unable to read', 'cannot read', "can't read",
+            'invalid format', 'failed to load node', 'createnodebyclass',
+        ];
+        if (formatKeywords.some((kw) => s.includes(kw))) {
+            return { title: t('errors.slicerLoadFailedTitle'), message: t('errors.slicerLoadFailedFormat') };
+        }
+        const transientKeywords = ['timeout', 'timed out', 'connection', 'network', 'crash', 'killed', 'out of memory'];
+        if (transientKeywords.some((kw) => s.includes(kw))) {
+            return { title: t('errors.slicerLoadFailedTransientTitle'), message: t('errors.slicerLoadFailedTransient') };
+        }
+        return { title: t('errors.slicerLoadFailedTitle'), message: t('errors.slicerLoadFailed') };
+    }
+
+    showErrorDialog({ title, message }) {
+        this.errorDialogTitle = title || '';
+        this.errorDialogMessage = message || '';
+        queueMicrotask(() => {
+            this.renderRoot?.querySelector('#viewer-error-dialog')?.openDialog();
+        });
+    }
+
     disconnectedCallback() {
         if (this._toastTimeout) clearTimeout(this._toastTimeout);
+        if (this._slicerReadyFallback) {
+            clearTimeout(this._slicerReadyFallback);
+            this._slicerReadyFallback = null;
+        }
+        if (this._onSlicerViewerMessage) {
+            window.removeEventListener('message', this._onSlicerViewerMessage);
+            this._onSlicerViewerMessage = null;
+        }
         uploadManager.removeEventListener('change', this._onUploadChange);
         uploadManager.removeEventListener('attached', this._onUploadAttached);
         window.removeEventListener('beforeunload', this._handleBeforeUnload);
@@ -1497,6 +1565,10 @@ export class DirectusCasesPage extends LitElement {
             this.iframeActivityCleanup();
             this.iframeActivityCleanup = null;
         }
+        if (this._slicerReadyFallback) {
+            clearTimeout(this._slicerReadyFallback);
+            this._slicerReadyFallback = null;
+        }
         this._slicerWebRun += 1; // cancels any in-flight SlicerWeb load
         this._viewerOpenId += 1; // orphans any in-flight open request
         this._slicerWebPending = null;
@@ -1516,7 +1588,7 @@ export class DirectusCasesPage extends LitElement {
 
         const useSimplified = resolveSimplifiedViewerChoice(
             simplified,
-            this.accountPrefersSimplifiedViewer()
+            this.accountDefaultViewer() === 'simplified'
         );
         const viewerLabel = viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified: useSimplified });
 
@@ -1698,7 +1770,17 @@ export class DirectusCasesPage extends LitElement {
             for (let attempt = 0, delay = 500; attempt < 5; attempt++, delay *= 2) {
                 if (cancelled()) return;
                 try {
+                    frame.contentWindow?._slicerAlertMessage != null &&
+                        (frame.contentWindow._slicerAlertMessage = null);
                     await slicer.bridge.call('loadFiles', [[path]]);
+                    // Pyodide calls alert() instead of throwing when a file cannot be loaded.
+                    // If an alert was captured during this call, treat it as a load failure.
+                    const alertMsg = frame.contentWindow?._slicerAlertMessage;
+                    if (alertMsg != null) {
+                        loadError = new Error(alertMsg || t('errors.slicerLoadFailed'));
+                        if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, delay));
+                        continue;
+                    }
                     loadError = null;
                     break;
                 } catch (err) {
@@ -1728,11 +1810,14 @@ export class DirectusCasesPage extends LitElement {
             this._attachSlicerWebSaveHandler(slicer);
         } catch (err) {
             if (cancelled()) return;
-            const message = this.userFacingError(err, t('errors.openViewerFailed'));
+            const rawErr = err?.message || String(err || '');
+            const errorInfo = rawErr
+                ? this.viewerLoadError(rawErr)
+                : { title: t('errors.slicerLoadFailedTransientTitle'), message: t('errors.openViewerFailed') };
             this._viewerPushedState = false;
             await this._doCloseViewer();
             this._replaceUrlWithCase();
-            this.errorMessage = message;
+            this.showErrorDialog(errorInfo);
         }
     }
 
@@ -1745,13 +1830,29 @@ export class DirectusCasesPage extends LitElement {
             // the real file.
             try {
                 const cw = event?.target?.contentWindow;
-                if (cw) cw.confirm = () => false;
+                if (cw) {
+                    cw.confirm = () => false;
+                    // Capture alert() calls — pyodide calls alert() on load errors
+                    // (e.g. unsupported format). Store the message so loadPendingIntoSlicerWeb
+                    // can surface it, since the sandbox blocks the dialog from appearing.
+                    cw._slicerAlertMessage = null;
+                    cw.alert = (msg) => { cw._slicerAlertMessage = String(msg ?? ''); };
+                }
             } catch (_) {}
             this.loadPendingIntoSlicerWeb(event?.target);
             return;
         }
-        this.viewerLoading = false;
-        this.viewerLoadingDetail = '';
+        // SLICER_GUI: keep viewerLoading=true so the overlay continues showing loader progress.
+        // slicer-viewer-ready will clear it. Set a 2-minute safety fallback in case the message
+        // never arrives (container crash, cross-origin loader, etc.).
+        if (this._slicerReadyFallback) clearTimeout(this._slicerReadyFallback);
+        this._slicerReadyFallback = setTimeout(() => {
+            this._slicerReadyFallback = null;
+            if (this.viewerKind === VIEWER_KINDS.SLICER_GUI && this.viewerLoading) {
+                this.viewerLoading = false;
+                this.viewerLoadingDetail = '';
+            }
+        }, 2 * 60 * 1000);
         markViewerActivity();
         this.attachIframeActivityTracking();
     }
@@ -2648,6 +2749,7 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
                     ${this.viewerLoading ? html`
                         <div class="loading-overlay">
                             <div class="viewer-loading" role="status">
+                                <div class="viewer-loading-spinner" aria-hidden="true"></div>
                                 <p>${this.viewerLoadingDetail || t('cases.loadingViewer')}</p>
                             </div>
                         </div>
@@ -2678,6 +2780,15 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
                 </div>
             ` : ''}
             ${this.toastMessage ? html`<div class="toast" role="status">${this.toastMessage}</div>` : ''}
+            <app-dialog id="viewer-error-dialog" title=${this.errorDialogTitle}>
+                <p>${this.errorDialogMessage}</p>
+                <button
+                    slot="actions"
+                    class="primary-button"
+                    type="button"
+                    @click=${() => this.renderRoot?.querySelector('#viewer-error-dialog')?.closeDialog()}
+                >${t('common.okay')}</button>
+            </app-dialog>
             <people-dialog
                 id="case-people-dialog"
                 title=${t('cases.peopleDialog')}

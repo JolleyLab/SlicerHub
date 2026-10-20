@@ -25,7 +25,8 @@ export default {
         somethingWentWrong: 'Something went wrong. Please try again.',
         requestFailed: 'Request failed',
         tryAgain: 'Try again',
-        dismiss: 'Dismiss'
+        dismiss: 'Dismiss',
+        okay: 'Okay'
     },
     roles: {
         admin: 'Admin',
@@ -763,6 +764,11 @@ export default {
         createAccountFailed: "Couldn't create your account from this invite.",
         saveSceneFailed: "Couldn't save the scene. Please try again.",
         openViewerFailed: "Couldn't open the viewer. Please try again.",
+        slicerLoadFailedTitle: "File format not supported",
+        slicerLoadFailedTransientTitle: "Something went wrong",
+        slicerLoadFailed: "Slicer wasn't able to open this file. The format may not be supported.",
+        slicerLoadFailedFormat: "Slicer wasn't able to open this file. The format is not supported.",
+        slicerLoadFailedTransient: "Slicer wasn't able to open this file. Please try again in a few minutes.",
         stopViewerFailed: "Couldn't stop the viewer.",
         createProjectFailed: 'Failed to create project',
         loadProjectsFailed: 'Failed to load projects',

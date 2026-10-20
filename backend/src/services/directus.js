@@ -232,7 +232,10 @@ function attachmentOpenFlags(filename, mimeType) {
     const isMrb = detectIsMrb(filename, mimeType);
     const canOpenInSlicer = detectCanOpenInSlicer(filename, mimeType);
     const canPreviewInBrowser = detectCanPreviewInBrowser(filename, mimeType);
-    return { isMrb, canOpenInSlicer, canPreviewInBrowser };
+    // Unknown format: not a recognised Slicer type and not browser-previewable.
+    // Let Slicer attempt to open it; it will show its own error if unsupported.
+    const isUnknownSlicerFormat = !canOpenInSlicer && !canPreviewInBrowser;
+    return { isMrb, canOpenInSlicer: canOpenInSlicer || isUnknownSlicerFormat, canPreviewInBrowser, isUnknownSlicerFormat };
 }
 
 function mapAttachment(row) {

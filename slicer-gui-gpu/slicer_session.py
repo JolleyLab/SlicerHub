@@ -1427,10 +1427,17 @@ def mark_ready() -> None:
         log(f"[slicer_session] Could not write ready file: {exc}")
 
 
+_window_synced_on_startup = False
+
+
 def maintain_ready_marker() -> None:
     """Publish readiness only once the main window UI can accept loads."""
+    global _window_synced_on_startup
     if ui_ready():
         mark_ready()
+        if not _window_synced_on_startup:
+            _window_synced_on_startup = True
+            QTimer.singleShot(800, run_window_size_sync)
         QTimer.singleShot(2000, maintain_ready_marker)
     else:
         QTimer.singleShot(500, maintain_ready_marker)

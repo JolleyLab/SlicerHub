@@ -64,7 +64,7 @@ import {
 import { msg } from '../i18n/index.js';
 
 import { stageCachedFileForSlicerGui, readSlicerGuiBusyStatus } from '../slicerGui/stageFile.js';
-import { buildSlicerGuiViewerPath } from '../slicerGui/paths.js';
+import { buildSlicerGuiViewerPath, readLoadResultFile } from '../slicerGui/paths.js';
 import {
     ensureSlicerGuiSession,
     touchSlicerGuiSessionHeartbeat,
@@ -114,7 +114,7 @@ function parseOptionalSeatId(raw) {
     return n;
 }
 
-async function ensureLocalFullSlicerSeat(req, { failureMessage, requireSlicerUiReady = true, preferFileId = null } = {}) {
+async function ensureLocalFullSlicerSeat(req, { failureMessage, requireSlicerUiReady = true, preferFileId = null, forceNew = false } = {}) {
     const useSimplifiedViewer = resolveUseSimplifiedViewer({
         body: req.body,
         userId: req.user.id
@@ -132,7 +132,8 @@ async function ensureLocalFullSlicerSeat(req, { failureMessage, requireSlicerUiR
                 ? preferFromBody
                 : null,
             useSimplifiedViewer,
-            requireSlicerUiReady
+            requireSlicerUiReady,
+            forceNew
         });
         return { launcherUserId, useSimplifiedViewer, session };
     } catch (err) {
@@ -673,7 +674,8 @@ export default function directusRoutes(app) {
             });
             const seatPromise = ensureLocalFullSlicerSeat(req, {
                 failureMessage: "Couldn't start the viewer. Please try again in a moment.",
-                requireSlicerUiReady: false
+                requireSlicerUiReady: false,
+                forceNew: attachment.isUnknownSlicerFormat === true
             });
 
             const [cached, seat] = await Promise.all([cachePromise, seatPromise]);
@@ -976,7 +978,13 @@ export default function directusRoutes(app) {
 
     app.get('/api/directus/full-slicer-status', authenticateToken, asyncHandler(async (req, res) => {
         const seatId = parseOptionalSeatId(req.query?.seatId) || 1;
-        const status = readSlicerGuiBusyStatus(String(req.user.id), seatId);
+        const userId = String(req.user.id);
+        const status = readSlicerGuiBusyStatus(userId, seatId);
+        // Include load result when idle so the loader can detect a failed file open.
+        if (!status.busy) {
+            const loadResult = readLoadResultFile(userId, seatId);
+            return res.json({ ...status, loadResult: loadResult || null });
+        }
         res.json(status);
     }));
 

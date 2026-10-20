@@ -214,7 +214,8 @@ export function readLoadResultFile(userId, seatId = 1) {
             success: parsed?.success === true,
             fileId: Number.isInteger(fileId) && fileId > 0 ? fileId : null,
             path: parsed?.path || null,
-            error: parsed?.error || null
+            error: parsed?.error || null,
+            updatedAt: parsed?.updatedAt || null
         };
     } catch {
         return null;
