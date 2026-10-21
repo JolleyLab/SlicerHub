@@ -127,8 +127,8 @@ def module_search_paths(mod: dict[str, Any]) -> list[Path]:
 
 
 def discovery_path_for_module_dir(module_dir: Path) -> Path:
-    """Prefer the parent folder so Slicer sees ModuleName/ModuleName.py."""
-    return module_dir.parent if module_dir.name else module_dir
+    """Return the module directory itself; Slicer scans only direct children of each path."""
+    return module_dir
 
 
 def simplified_viewer_module_dirs() -> list[Path]:
