@@ -34,7 +34,8 @@ ENV SLICER_ADDONS_FILE=/usr/local/share/slicer-web/slicer-addons.json \
     SLICER_EXTENSIONS=${SLICER_EXTENSIONS}
 
 RUN mkdir -p /usr/local/share/slicer-web /opt/slicer-modules && \
-    python3 /usr/local/bin/install-slicer-modules.py && \
+    python3 /usr/local/bin/install-slicer-modules.py \
+    || (echo "WARNING: scripted-module install failed (git credentials likely unavailable at build time)" && true) && \
     chown -R slicer:slicer /opt/slicer-modules /usr/local/share/slicer-web
 
 # Catalog extensions from slicer-addons.json (or SLICER_EXTENSIONS). Launch may re-ensure.
@@ -46,5 +47,20 @@ RUN mkdir -p /home/slicer/.config /home/slicer/slicer.org \
         --exit-after-startup \
         --python-script /usr/local/bin/install-slicer-extensions.py \
     || (echo "WARNING: catalog extension install failed during image build" && true)
+
+# ImportMimics (.mcs/.mxp reader) was added to SlicerHeart after the catalog build baked here.
+# Inject it directly and install its Python dependencies into Slicer's interpreter.
+USER root
+COPY ImportMimics.py /tmp/ImportMimics.py
+RUN dest=$(find /opt/Slicer/slicer.org -type d -name "qt-scripted-modules" -path "*/SlicerHeart/*" | head -1) \
+    && if [ -n "$dest" ]; then \
+         cp /tmp/ImportMimics.py "$dest/ImportMimics.py" && \
+         echo "Installed ImportMimics.py -> $dest"; \
+       else \
+         echo "WARNING: SlicerHeart scripted-modules dir not found; ImportMimics not installed"; \
+       fi \
+    && /opt/Slicer/bin/PythonSlicer -m pip install --quiet pillow pydicom \
+    && rm /tmp/ImportMimics.py
+USER slicer
 
 # Inherit ENTRYPOINT [/usr/local/bin/start.sh] from base.
