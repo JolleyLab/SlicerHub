@@ -545,7 +545,7 @@ export async function saveDirectusCaseAttachmentScene(caseId, attachmentId, { sa
  * @param {{ saveMode?: 'overwrite'|'saveAsNew', name?: string,
  *   onProgress?: (sent: number, total: number) => void, signal?: AbortSignal }} options
  */
-export async function saveDirectusSlicerWebScene(caseId, attachmentId, file, { saveMode = 'overwrite', name, onProgress, signal } = {}) {
+export async function saveDirectusSlicerWebScene(caseId, attachmentId, file, { saveMode = 'overwrite', name, conflictCheck, onProgress, signal } = {}) {
     const { uploadToken, metadata } = await requestUploadToken();
     await tusUpload({
         file,
@@ -557,6 +557,7 @@ export async function saveDirectusSlicerWebScene(caseId, attachmentId, file, { s
     });
     const body = { uploadToken, saveMode };
     if (name) body.name = name;
+    if (conflictCheck && saveMode === 'overwrite') body.conflictCheck = conflictCheck;
     const response = await fetch(attachmentUrl(caseId, attachmentId, 'save-slicerweb'), {
         method: 'POST',
         credentials: 'include',

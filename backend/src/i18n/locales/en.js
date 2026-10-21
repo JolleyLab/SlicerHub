@@ -122,6 +122,7 @@ export default {
         comment_text_required: 'Comment text is required',
         comment_too_long: 'Comment must be 5000 characters or less',
         attachment_not_found: 'Attachment not found',
+        edit_conflict: 'This file was modified by someone else after you opened it.',
         attachment_not_on_case: 'Attachment not found on this case',
         download_forbidden: 'Only case admins and collaborators can download files',
         attachment_no_directus_file: 'Attachment has no Directus file',

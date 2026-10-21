@@ -333,6 +333,35 @@ export const casesPageStyles = css`
         letter-spacing: 0.05em;
     }
 
+    /* ─── Split button (e.g. Save | ▾) ─────────────────────────── */
+    .split-button {
+        position: relative;
+        display: inline-flex;
+    }
+
+    .split-button__main {
+        border-radius: 6px 0 0 6px;
+        border-right: 1px solid rgba(255,255,255,0.25);
+    }
+
+    .split-button__arrow {
+        border-radius: 0 6px 6px 0;
+        padding: 8px 10px;
+    }
+
+    .split-button__menu {
+        position: absolute;
+        bottom: calc(100% + 4px);
+        right: 0;
+        z-index: 200;
+        background: var(--color-panel, #fff);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md, 6px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        min-width: 140px;
+        padding: 4px 0;
+    }
+
     .toolbar-more-dropdown {
         position: absolute;
         top: calc(100% + 4px);
@@ -551,6 +580,17 @@ export const casesPageStyles = css`
         color: var(--color-status-error-fg, #8a1212);
         font-size: 0.85rem;
         flex: 1;
+    }
+
+    /* Saving indicator on an attachment row while a background save is in progress */
+    .attachment-saving-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        color: var(--color-text-secondary);
+        white-space: nowrap;
+        padding: 0 4px;
     }
 
     /* Spinner while download access check runs */

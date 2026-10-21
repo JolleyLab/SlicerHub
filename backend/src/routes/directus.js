@@ -7,7 +7,7 @@ import storage from '../storage/index.js';
 import { resolveTrameServiceUrl } from '../gpu/sessionContext.js';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import { ValidationError, NotFoundError, ForbiddenError } from '../utils/errors.js';
+import { ValidationError, NotFoundError, ForbiddenError, ConflictError } from '../utils/errors.js';
 import config from '../config/index.js';
 import db from '../db/database.js';
 import { requireDirectusLink } from '../auth/requireDirectusLink.js';
@@ -856,10 +856,23 @@ export default function directusRoutes(app) {
 
             const saveMode = String(req.body?.saveMode || 'overwrite');
             const userProvidedName = String(req.body?.name || '').trim();
+            const conflictCheck = req.body?.conflictCheck || null;
 
             const attachment = await getCaseAttachment(caseId, attachmentId, {
                 accessToken: req.directusAccessToken
             });
+
+            if (saveMode === 'overwrite' && conflictCheck && attachment.modifiedAt) {
+                const openedAt = new Date(conflictCheck).getTime();
+                const serverAt = new Date(attachment.modifiedAt).getTime();
+                if (!isNaN(openedAt) && !isNaN(serverAt) && serverAt > openedAt) {
+                    throw new ConflictError(
+                        msg('case.edit_conflict'),
+                        'EDIT_CONFLICT',
+                        'case.edit_conflict'
+                    );
+                }
+            }
 
             const baseName = path.basename(
                 attachment.filenameDownload || attachment.name || 'saved-scene.mrb'

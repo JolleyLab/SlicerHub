@@ -59,6 +59,7 @@ import { resolveSimplifiedViewerChoice } from '../utils/localSlicerViewerOptions
 import { isInviteEmailEnabled, isSlicerWebDevModeEnabled, loadAppFeatures } from '../services/features.js';
 import { sendViewerHeartbeat } from '../utils/viewerHeartbeat.js';
 import { stopViewerSession } from '../utils/viewerSessionLifecycle.js';
+import { classifySlicerLoadError } from '../services/slicerErrors.js';
 import {
     installViewerActivityListeners,
     markViewerActivity,
@@ -164,6 +165,9 @@ export class DirectusCasesPage extends LitElement {
             _backgroundSave: { type: Object },
             saveIndicatorMessage: { type: String },
             _saveAsNewName: { type: String },
+            _conflictSaveName: { type: String },
+            _conflictContext: { type: Object },
+            _closePromptMenuOpen: { type: Boolean },
             closePromptMode: { type: String },
             // Audit view
             _auditRows: { type: Array },
@@ -243,6 +247,10 @@ export class DirectusCasesPage extends LitElement {
         this._toolbarMenuOpen = false;
         this._saveAsNewName = '';
         this._saveAsNewResolver = null;
+        this._openedFileModifiedAt = null;
+        this._conflictContext = null;
+        this._conflictSaveName = '';
+        this._closePromptMenuOpen = false;
         this._viewerSessionToken = null;
         this._viewerSeatId = null;
         this.viewerKind = VIEWER_KINDS.SLICER_GUI;
@@ -490,20 +498,7 @@ export class DirectusCasesPage extends LitElement {
     }
 
     viewerLoadError(rawError) {
-        const s = String(rawError || '').toLowerCase();
-        const formatKeywords = [
-            'load failed', 'unsupported', 'not supported', 'no reader', 'unrecognized',
-            'unable to load', 'unable to read', 'cannot read', "can't read",
-            'invalid format', 'failed to load node', 'createnodebyclass',
-        ];
-        if (formatKeywords.some((kw) => s.includes(kw))) {
-            return { title: t('errors.slicerLoadFailedTitle'), message: t('errors.slicerLoadFailedFormat') };
-        }
-        const transientKeywords = ['timeout', 'timed out', 'connection', 'network', 'crash', 'killed', 'out of memory'];
-        if (transientKeywords.some((kw) => s.includes(kw))) {
-            return { title: t('errors.slicerLoadFailedTransientTitle'), message: t('errors.slicerLoadFailedTransient') };
-        }
-        return { title: t('errors.slicerLoadFailedTitle'), message: t('errors.slicerLoadFailed') };
+        return classifySlicerLoadError(rawError);
     }
 
     showErrorDialog({ title, message }) {
@@ -1206,7 +1201,7 @@ export class DirectusCasesPage extends LitElement {
     /** Keyboard focus follows the viewer overlay: into it when it opens, back to where the user was when it closes. */
     syncViewerFocus() {
         if (this.showIframe) {
-            this.shadowRoot?.querySelector('.iframe-header .primary-button')?.focus();
+            this.shadowRoot?.querySelector('.iframe-header-actions button:not([disabled])')?.focus();
             return;
         }
         const previous = this._focusBeforeViewer;
@@ -1364,6 +1359,14 @@ export class DirectusCasesPage extends LitElement {
                     const failedChoice = await this.promptCloseChoice('save-failed');
                     if (failedChoice !== 'close-anyway') return;
                 }
+            } else if (choice === 'save-as-new') {
+                const defaultName = this.currentFileName ? this.currentFileName.replace(/\.[^.]+$/, '') : '';
+                const name = await this.promptSaveAsNewName(defaultName);
+                if (name === null) return; // user cancelled the name dialog — stay open
+                await this.saveCurrentScene('saveAsNew', name);
+            } else if (choice !== 'discard') {
+                // 'keep-editing' or any other non-discard choice — stay open
+                return;
             }
             // 'discard' falls through to close
         }
@@ -1552,6 +1555,8 @@ export class DirectusCasesPage extends LitElement {
         this.hasUnsavedChanges = false;
         this.isSavingScene = false;
         this._lastSavedAttachmentId = null;
+        this._openedFileModifiedAt = null;
+        this._conflictContext = null;
         this.saveIndicatorMessage = '';
         if (this.saveIndicatorTimeout) {
             clearTimeout(this.saveIndicatorTimeout);
@@ -1663,6 +1668,37 @@ export class DirectusCasesPage extends LitElement {
         return this.handleOpenAttachment(caseRow, attachment, { simplified: viewer === 'simplified' });
     }
 
+    async handleOpenBlankSlicerWeb(caseRow) {
+        if (this.viewerLoading || this.openingAttachmentId) return;
+
+        this._viewerOpenId += 1;
+        this._focusBeforeViewer = deepActiveElement();
+        this.errorMessage = '';
+        this.currentFileName = '';
+        this.currentAttachmentId = '';
+        this.viewerKind = VIEWER_KINDS.SLICERWEB;
+        this.viewerSimplified = false;
+        this.viewerLoading = true;
+        this.showIframe = true;
+        this.selectedCaseId = caseRow.id;
+        this.hasUnsavedChanges = false;
+
+        const channel = (isSlicerWebDevModeEnabled() && getCachedUserPreferences().slicerWebChannel === 'latest')
+            ? 'latest' : 'stable';
+
+        this.viewerLoadingDetail = t('cases.openingSlicerWeb');
+        this._slicerWebRun += 1;
+        this._slicerWebPending = { blank: true };
+
+        const statusData = await fetch('/api/slicerweb/status', { credentials: 'include' })
+            .then((r) => r.ok ? r.json() : null)
+            .catch(() => null);
+        const sha = statusData?.[channel] ?? null;
+        this.iframeUrl = buildSlicerWebUrl({ channel, sha });
+
+        this._pushViewerHistory(caseRow.id);
+    }
+
     async handleOpenSlicerWeb(caseRow, attachment) {
         if (this.openingAttachmentId || !attachment?.canOpenInSlicer) return;
 
@@ -1671,6 +1707,7 @@ export class DirectusCasesPage extends LitElement {
         this.errorMessage = '';
         this.currentFileName = attachmentFileName(attachment);
         this.currentAttachmentId = attachment.id;
+        this._openedFileModifiedAt = attachment.modifiedAt || null;
         this.viewerKind = VIEWER_KINDS.SLICERWEB;
         this.viewerSimplified = false;
         this.viewerLoading = true;
@@ -1730,6 +1767,20 @@ export class DirectusCasesPage extends LitElement {
                 if (Date.now() > deadline) throw new Error(t('cases.slicerWebStartFailed'));
                 await new Promise((resolve) => setTimeout(resolve, 200));
                 slicer = readyBridge();
+            }
+
+            // Blank mode: Slicer Web is ready with no file to load.
+            if (pending.blank) {
+                if (cancelled()) return;
+                this._slicerWebPending = null;
+                this.viewerLoading = false;
+                this.viewerLoadingDetail = '';
+                this.hasUnsavedChanges = false;
+                this._attachSlicerWebSaveHandler(slicer, { blank: true });
+                // Track interactions so the close button can offer to save if the user
+                // loads or creates something in the blank viewer.
+                this.attachIframeActivityTracking();
+                return;
             }
 
             this.viewerLoadingDetail = t('cases.loadingIntoSlicerWeb', { name: pending.fileName });
@@ -1806,8 +1857,9 @@ export class DirectusCasesPage extends LitElement {
             this._slicerWebPending = null;
             this.viewerLoading = false;
             this.viewerLoadingDetail = '';
-            this.hasUnsavedChanges = true;
+            this.hasUnsavedChanges = false;
             this._attachSlicerWebSaveHandler(slicer);
+            this.attachIframeActivityTracking();
         } catch (err) {
             if (cancelled()) return;
             const rawErr = err?.message || String(err || '');
@@ -1870,10 +1922,19 @@ export class DirectusCasesPage extends LitElement {
                 this.hasUnsavedChanges = true;
                 markViewerActivity();
             };
-            const events = ['pointerdown', 'keydown', 'input', 'change', 'wheel'];
-            events.forEach((ev) => iframeDoc.addEventListener(ev, markDirty, true));
+            const domEvents = ['pointerdown', 'input', 'change', 'wheel'];
+            domEvents.forEach((ev) => iframeDoc.addEventListener(ev, markDirty, true));
+
+            // Subscribe to Slicer Web's own scene-changed bridge event so that
+            // programmatic scene modifications (automation, Python scripts) also
+            // set the dirty flag. on() returns a cleanup function.
+            const slicerWeb = iframe.contentWindow?.slicerWeb;
+            const bridgeEvents = slicerWeb?.bridge?.events ?? slicerWeb?.events;
+            const removeBridgeListener = bridgeEvents?.on?.('scene-changed', markDirty) ?? null;
+
             this.iframeActivityCleanup = () => {
-                events.forEach((ev) => iframeDoc.removeEventListener(ev, markDirty, true));
+                domEvents.forEach((ev) => iframeDoc.removeEventListener(ev, markDirty, true));
+                removeBridgeListener?.();
             };
         } catch (_) {
             // Cross-origin iframes will throw; best-effort only.
@@ -1913,7 +1974,7 @@ export class DirectusCasesPage extends LitElement {
         this._auditError = null;
     }
 
-    _attachSlicerWebSaveHandler(slicer) {
+    _attachSlicerWebSaveHandler(slicer, { blank = false } = {}) {
         // Override prompt so the built-in Slicer save button doesn't show a filename dialog.
         // SlicerWeb calls prompt() to ask for a filename before invoking saveHandler; returning
         // the current filename here lets the save proceed silently to our handler.
@@ -1925,15 +1986,31 @@ export class DirectusCasesPage extends LitElement {
         } catch (_) {}
 
         slicer.saveHandler = async (path) => {
-if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) return;
+            if (!this.selectedCaseId || this.isSavingScene) return;
+            if (!blank && !this.currentAttachmentId) return;
             const caseId = this.selectedCaseId;
-            const attachmentId = this.currentAttachmentId;
             this.isSavingScene = true;
             try {
-                // readFiles copies bytes into JS memory — once it returns the iframe is no longer needed.
                 const [file] = await slicer.readFiles([path]);
                 this.isSavingScene = false;
-                this._runBackgroundSave(file, { caseId, attachmentId, saveMode: 'overwrite' });
+                if (blank && !this.currentAttachmentId) {
+                    // First save from blank mode — create a new attachment, then switch to overwrite.
+                    const name = this.currentFileName || 'scene.mrb';
+                    this._runBackgroundSave(file, {
+                        caseId,
+                        attachmentId: null,
+                        saveMode: 'saveAsNew',
+                        name,
+                        onNewAttachment: (attachment) => {
+                            if (!this.currentAttachmentId) {
+                                this.currentAttachmentId = attachment.id;
+                                this.currentFileName = attachment.filenameDownload || attachment.name || name;
+                            }
+                        }
+                    });
+                } else {
+                    this._runBackgroundSave(file, { caseId, attachmentId: this.currentAttachmentId, saveMode: 'overwrite' });
+                }
             } catch (err) {
                 this.errorMessage = this.userFacingError(err, t('errors.saveSceneFailed'));
             } finally {
@@ -1962,7 +2039,7 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
     }
 
     /** Phase 2: upload the serialized file in the background. Safe to call after closing the viewer. */
-    _runBackgroundSave(file, { caseId, attachmentId, saveMode, name, _attempt = 1 } = {}) {
+    _runBackgroundSave(file, { caseId, attachmentId, saveMode, name, onNewAttachment, _attempt = 1 } = {}) {
         // Abort an in-flight overwrite for the same attachment — the newer data supersedes it.
         // SaveAsNew is independent (creates a new attachment) so let both run concurrently.
         const prev = this._backgroundSave;
@@ -1971,9 +2048,10 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
         }
         const abortCtrl = new AbortController();
         // Keep file + params so the error banner can offer a retry.
-        this._backgroundSave = { file, caseId, attachmentId, saveMode, name, error: null, abortCtrl };
+        this._backgroundSave = { file, caseId, attachmentId, saveMode, name, onNewAttachment, error: null, abortCtrl };
         this.hasUnsavedChanges = false;
-        saveWithDirectusReconnect(() => saveSlicerWebScene(caseId, attachmentId, file, { saveMode, name, signal: abortCtrl.signal }))
+        const conflictCheck = saveMode === 'overwrite' ? this._openedFileModifiedAt : null;
+        saveWithDirectusReconnect(() => saveSlicerWebScene(caseId, attachmentId, file, { saveMode, name, conflictCheck, signal: abortCtrl.signal }))
             .then((result) => {
                 if (abortCtrl.signal.aborted) return; // superseded — a newer save already owns _backgroundSave
                 this._backgroundSave = null;
@@ -1987,7 +2065,13 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
                         return { ...c, attachments };
                     });
                 }
-                if (saveMode === 'overwrite') this._lastSavedAttachmentId = attachmentId;
+                if (saveMode === 'overwrite') {
+                    this._lastSavedAttachmentId = attachmentId;
+                    if (result?.attachment?.modifiedAt) this._openedFileModifiedAt = result.attachment.modifiedAt;
+                }
+                if (saveMode === 'saveAsNew' && result?.attachment && typeof onNewAttachment === 'function') {
+                    onNewAttachment(result.attachment);
+                }
                 const msg = saveMode === 'saveAsNew' ? t('files.savedAsNew') : t('files.saved');
                 if (this.showIframe) {
                     this.showSaveIndicator(msg);
@@ -1997,13 +2081,18 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
             })
             .catch((err) => {
                 if (err?.name === 'AbortError') return; // superseded by a newer save — discard silently
+                if (err?.code === 'EDIT_CONFLICT') {
+                    this._backgroundSave = null;
+                    this._showEditConflictDialog(file, caseId, attachmentId, onNewAttachment);
+                    return;
+                }
                 // Session errors mean the user explicitly cancelled reconnect — don't auto-retry,
                 // as that would immediately re-open the reconnect dialog.
                 const isSessionError = err.code === 'DIRECTUS_SESSION_EXPIRED' || err.code === 'DIRECTUS_SESSION_REQUIRED';
                 if (_attempt < 2 && !isSessionError) {
                     setTimeout(() => {
                         if (this._backgroundSave && !this._backgroundSave.error) {
-                            this._runBackgroundSave(file, { caseId, attachmentId, saveMode, name, _attempt: _attempt + 1 });
+                            this._runBackgroundSave(file, { caseId, attachmentId, saveMode, name, onNewAttachment, _attempt: _attempt + 1 });
                         }
                     }, 2000);
                     return;
@@ -2023,7 +2112,10 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
     }
 
     async saveCurrentScene(mode = 'overwrite', name) {
-        if (!this.selectedCaseId || !this.currentAttachmentId) return false;
+        if (!this.selectedCaseId) return false;
+        // Blank Slicer Web has no attachment yet — allow through so the first save can create one.
+        const isBlankSlicerWeb = this.viewerKind === VIEWER_KINDS.SLICERWEB && !this.currentAttachmentId;
+        if (!this.currentAttachmentId && !isBlankSlicerWeb) return false;
         if (this.isSavingScene) return false;
         this.isSavingScene = true;
         try {
@@ -2040,7 +2132,24 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
                 const file = await this._writeSlicerWebScene();
                 // Phase 2: upload runs in the background; viewer is unblocked immediately.
                 this.isSavingScene = false;
-                this._runBackgroundSave(file, { caseId, attachmentId, saveMode: mode, name });
+                if (isBlankSlicerWeb) {
+                    // First save in blank mode — create a new attachment and store its id for future saves.
+                    const saveName = this.currentFileName || name || 'scene.mrb';
+                    this._runBackgroundSave(file, {
+                        caseId,
+                        attachmentId: null,
+                        saveMode: 'saveAsNew',
+                        name: saveName,
+                        onNewAttachment: (attachment) => {
+                            if (!this.currentAttachmentId) {
+                                this.currentAttachmentId = attachment.id;
+                                this.currentFileName = attachment.filenameDownload || attachment.name || saveName;
+                            }
+                        }
+                    });
+                } else {
+                    this._runBackgroundSave(file, { caseId, attachmentId, saveMode: mode, name });
+                }
                 return true;
             }
 
@@ -2145,6 +2254,7 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
         return new Promise((resolve) => {
             this._closePromptResolver = resolve;
             this.closePromptMode = mode;
+            this._closePromptMenuOpen = false;
             this.updateComplete.then(() => {
                 this.renderRoot?.querySelector('#viewer-close-prompt')?.openDialog();
             });
@@ -2154,9 +2264,45 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
     finishClosePrompt(choice) {
         this.renderRoot?.querySelector('#viewer-close-prompt')?.closeDialog();
         this.closePromptMode = null;
+        this._closePromptMenuOpen = false;
         const resolver = this._closePromptResolver;
         this._closePromptResolver = null;
         resolver?.(choice);
+    }
+
+    _showEditConflictDialog(file, caseId, attachmentId, onNewAttachment) {
+        const defaultName = this.currentFileName
+            ? this.currentFileName.replace(/\.[^.]+$/, '')
+            : '';
+        this._conflictSaveName = defaultName;
+        this._conflictContext = { file, caseId, attachmentId, onNewAttachment };
+        this.updateComplete.then(() => {
+            this.renderRoot?.querySelector('#edit-conflict-dialog')?.openDialog();
+            requestAnimationFrame(() => {
+                const input = this.renderRoot?.querySelector('#conflict-save-as-name');
+                if (input) { input.focus(); input.select(); }
+            });
+        });
+    }
+
+    _resolveConflict(choice) {
+        const ctx = this._conflictContext;
+        this._conflictContext = null;
+        this.renderRoot?.querySelector('#edit-conflict-dialog')?.closeDialog();
+        if (choice === 'save' && ctx) {
+            const name = (this._conflictSaveName || '').trim() || this.currentFileName || 'scene.mrb';
+            this._runBackgroundSave(ctx.file, {
+                caseId: ctx.caseId,
+                attachmentId: ctx.attachmentId,
+                saveMode: 'saveAsNew',
+                name,
+                onNewAttachment: ctx.onNewAttachment
+            });
+        } else if (choice === 'keep-editing') {
+            // Restore unsaved state so the close dialog warns them if they try to leave.
+            this.hasUnsavedChanges = true;
+        }
+        // 'discard' — changes already lost, nothing to do
     }
 
     renderLanding() {
@@ -2506,14 +2652,18 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
                                     <div class="empty-note">No attachments match “${this.attachmentSearchQuery.trim()}”.</div>
                                 ` : html`
                                     <div class="file-list">
-                                        ${attachments.map((attachment) => html`
+                                        ${attachments.map((attachment) => {
+                                            const isSavingThisFile = this._backgroundSave?.saveMode === 'overwrite'
+                                                && this._backgroundSave?.attachmentId === attachment.id;
+                                            return html`
                                             <file-list-row
                                                 .fileName=${this.attachmentTitle(attachment)}
                                                 .metaLine=${this.attachmentMetaLine(attachment)}
                                                 .nameButtonDisabled=${!this.attachmentCanActivate(attachment)
                                                     || !!this.openingAttachmentId
-                                                    || this.viewerLoading}
-                                                .nameButtonTitle=${this.attachmentOpenTitle(attachment)}
+                                                    || this.viewerLoading
+                                                    || isSavingThisFile}
+                                                .nameButtonTitle=${isSavingThisFile ? t('cases.fileSavingTitle') : this.attachmentOpenTitle(attachment)}
                                                 @name-click=${() => this.handleOpenViewer(caseRow, attachment, this.accountDefaultViewer())}
                                             >
                                                 ${attachment?.canOpenInSlicer ? html`
@@ -2521,9 +2671,15 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
                                                         slot="title-trailing"
                                                         .fileName=${this.attachmentTitle(attachment)}
                                                         .defaultViewer=${this.accountDefaultViewer()}
-                                                        ?disabled=${!!this.openingAttachmentId || this.viewerLoading}
+                                                        ?disabled=${!!this.openingAttachmentId || this.viewerLoading || isSavingThisFile}
                                                         @open-viewer=${(e) => this.handleOpenViewer(caseRow, attachment, e.detail?.viewer)}
                                                     ></attachment-open-menu>
+                                                ` : ''}
+                                                ${isSavingThisFile ? html`
+                                                    <span slot="actions" class="attachment-saving-badge" aria-live="polite">
+                                                        <span class="download-spinner" aria-hidden="true"></span>
+                                                        ${t('common.saving')}
+                                                    </span>
                                                 ` : ''}
                                                 ${canEdit ? html`
                                                     <button
@@ -2561,7 +2717,7 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
                                                     </button>
                                                 ` : ''}
                                             </file-list-row>
-                                        `)}
+                                        `;})}
                                     </div>
                                 `}
 
@@ -2591,14 +2747,24 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
                                         ` : this.uploadError ? html`
                                             <span class="upload-error">${this.uploadError}</span>
                                         ` : html`<span></span>`}
-                                        <button
-                                            class="secondary-button"
-                                            type="button"
-                                            ?disabled=${!!this.openingAttachmentId}
-                                            @click=${() => this.triggerFileUpload()}
-                                        >
-                                            ${t('cases.addFile')}
-                                        </button>
+                                        <div style="display:flex;gap:8px;flex-shrink:0">
+                                            <button
+                                                class="secondary-button"
+                                                type="button"
+                                                ?disabled=${!!this.openingAttachmentId}
+                                                @click=${() => this.triggerFileUpload()}
+                                            >
+                                                ${t('cases.addFile')}
+                                            </button>
+                                            <button
+                                                class="secondary-button"
+                                                type="button"
+                                                ?disabled=${this.viewerLoading || !!this.openingAttachmentId}
+                                                @click=${() => this.handleOpenBlankSlicerWeb(caseRow)}
+                                            >
+                                                ${t('cases.openBlankSlicerWeb')}
+                                            </button>
+                                        </div>
                                     </div>
                                 ` : ''}
                             </div>
@@ -2629,7 +2795,9 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
         const viewerLabel = viewerDisplayName(this.viewerKind, {
             simplified: this.viewerSimplified
         });
-        const viewerTitle = `${viewerLabel}: ${this.currentFileName || t('common.loading')}`;
+        const viewerTitle = this.currentFileName
+            ? `${viewerLabel}: ${this.currentFileName}`
+            : viewerLabel;
         return html`
             <div
                 class="iframe-overlay"
@@ -2651,7 +2819,7 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
                             <button
                                 class="secondary-button"
                                 type="button"
-                                ?disabled=${this.viewerLoading || this.iframeUrl === 'about:blank' || this.isSavingScene}
+                                ?disabled=${this.viewerLoading || this.iframeUrl === 'about:blank' || this.isSavingScene || !this.hasUnsavedChanges}
                                 @click=${() => this.saveCurrentScene('overwrite')}
                             >
                                 ${this.isSavingScene ? t('common.saving') : t('files.saveScene')}
@@ -2713,13 +2881,39 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
                         }</p>
                         ${this.closePromptMode === 'unsaved' ? html`
                             <button slot="actions" class="secondary-button" type="button"
+                                @click=${() => this.finishClosePrompt('keep-editing')}>
+                                ${t('files.continueEditing')}
+                            </button>
+                            <button slot="actions" class="secondary-button" type="button"
                                 @click=${() => this.finishClosePrompt('discard')}>
-                                ${t('files.dontSave')}
+                                ${t('files.discardAndClose')}
                             </button>
-                            <button slot="actions" class="primary-button" type="button"
-                                @click=${() => this.finishClosePrompt('save')}>
-                                ${t('common.save')}
-                            </button>
+                            <div slot="actions" class="split-button">
+                                <button class="primary-button split-button__main" type="button"
+                                    @click=${() => this.finishClosePrompt('save')}>
+                                    ${t('common.save')}
+                                </button>
+                                <button class="primary-button split-button__arrow" type="button"
+                                    aria-label="More save options"
+                                    aria-expanded=${this._closePromptMenuOpen}
+                                    @click=${(e) => { e.stopPropagation(); this._closePromptMenuOpen = !this._closePromptMenuOpen; }}>
+                                    ▾
+                                </button>
+                                ${this._closePromptMenuOpen ? html`
+                                    <div style="position:fixed;inset:0;z-index:199"
+                                        @click=${() => { this._closePromptMenuOpen = false; }}></div>
+                                    <div class="split-button__menu">
+                                        <button class="toolbar-more-item" type="button"
+                                            @click=${() => this.finishClosePrompt('save')}>
+                                            ${t('common.save')}
+                                        </button>
+                                        <button class="toolbar-more-item" type="button"
+                                            @click=${() => this.finishClosePrompt('save-as-new')}>
+                                            ${t('files.saveAsNew')}
+                                        </button>
+                                    </div>
+                                ` : ''}
+                            </div>
                         ` : html`
                             <button slot="actions" class="secondary-button" type="button"
                                 @click=${() => this.finishClosePrompt('keep-open')}>
@@ -2730,6 +2924,41 @@ if (!this.selectedCaseId || !this.currentAttachmentId || this.isSavingScene) ret
                                 ${t('files.closeAnyway')}
                             </button>
                         `}
+                    </app-dialog>
+                ` : ''}
+                ${this._conflictContext ? html`
+                    <app-dialog
+                        id="edit-conflict-dialog"
+                        title=${t('errors.editConflictTitle')}
+                        .lightDismiss=${false}
+                        .showDefaultCloseButton=${false}
+                    >
+                        <p>${t('errors.editConflictMessage')}</p>
+                        <div class="form-group">
+                            <label class="form-label" for="conflict-save-as-name">${t('files.saveAsNewLabel')}</label>
+                            <input
+                                id="conflict-save-as-name"
+                                type="text"
+                                class="form-input"
+                                autocomplete="off"
+                                .value=${this._conflictSaveName}
+                                @input=${(e) => { this._conflictSaveName = e.target.value; }}
+                                @keydown=${(e) => { if (e.key === 'Enter' && this._conflictSaveName.trim()) this._resolveConflict('save'); if (e.key === 'Escape') this._resolveConflict('keep-editing'); }}
+                            />
+                        </div>
+                        <button slot="actions" class="secondary-button" type="button"
+                            @click=${() => this._resolveConflict('keep-editing')}>
+                            ${t('files.continueEditing')}
+                        </button>
+                        <button slot="actions" class="secondary-button" type="button"
+                            @click=${() => this._resolveConflict('discard')}>
+                            ${t('files.discardConflictChanges')}
+                        </button>
+                        <button slot="actions" class="primary-button" type="button"
+                            ?disabled=${!this._conflictSaveName.trim()}
+                            @click=${() => this._resolveConflict('save')}>
+                            ${t('files.saveConflictAsNew')}
+                        </button>
                     </app-dialog>
                 ` : ''}
                 <div class="iframe-container">
