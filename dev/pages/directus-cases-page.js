@@ -1822,6 +1822,7 @@ export class DirectusCasesPage extends LitElement {
             }
             if (cancelled()) return;
 
+            console.log('[SW-load] blob size:', blob?.size);
             await slicer.bridge.call('closeScene', []);
             if (cancelled()) return;
 
@@ -1838,7 +1839,7 @@ export class DirectusCasesPage extends LitElement {
                 console.error('[SW-load] callYielding threw:', loadErr);
                 throw loadErr;
             }
-            console.log('[SW-load] loadFiles result:', loadResult);
+            console.log('[SW-load] loadFiles result:', loadResult, 'alert:', cw._slicerAlertMessage);
             if (cancelled()) return;
 
             // alert() fires for warnings and errors alike; only treat it as a failure if
