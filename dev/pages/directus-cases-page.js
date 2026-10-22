@@ -259,7 +259,6 @@ export class DirectusCasesPage extends LitElement {
         this._focusBeforeViewer = null;
         this._slicerWebRun = 0;
         this._slicerWebPending = null;
-        this._slicerWebDownloadPromise = null;
         this.toastMessage = '';
         this.errorDialogMessage = '';
         this.errorDialogTitle = '';
@@ -1783,67 +1782,66 @@ export class DirectusCasesPage extends LitElement {
                 return;
             }
 
-            this.viewerLoadingDetail = t('cases.loadingIntoSlicerWeb', { name: pending.fileName });
-            const blob = await pending.download;
-            if (cancelled()) return;
-            // Wait for any session-restore scene load to complete before clearing.
-            // The bridge reports ready before the restore finishes, so we use a two-phase
-            // poll: first wait for nodes to appear (restore started), then wait for the
-            // count to stabilize (restore done). Skips waiting entirely if no restore runs.
-            // Phase 1: wait for restore to start producing nodes (max 15s)
-            let hasRestore = false;
-            for (let i = 0; i < 30; i++) {
-                await new Promise((r) => setTimeout(r, 500));
-                if (cancelled()) return;
-                try {
-                    const nodes = await slicer.bridge.call('getNodes', [{}]);
-                    if (Array.isArray(nodes) && nodes.length > 0) { hasRestore = true; break; }
-                } catch (_) { break; }
-            }
-            // Phase 2: wait for node count to stabilize (restore fully loaded)
-            if (hasRestore) {
-                let prevCount = -1;
-                for (let i = 0; i < 60; i++) {
-                    await new Promise((r) => setTimeout(r, 500));
-                    if (cancelled()) return;
-                    try {
-                        const nodes = await slicer.bridge.call('getNodes', [{}]);
-                        const count = Array.isArray(nodes) ? nodes.length : 0;
-                        if (count === prevCount) break;
-                        prevCount = count;
-                    } catch (_) { break; }
+            // Patch rawCall to queue behind any active JSPI call. Autosave fires sync
+            // rawCall on a 1s interval; calling sync Python while JSPI is active crashes
+            // Pyodide fatally. Must be applied here (after bridge is ready), not at iframe load.
+            try {
+                const rawBridge = slicer.bridge;
+                if (rawBridge?.rawCall && !rawBridge._rawCallPatched) {
+                    const origRawCall = rawBridge.rawCall.bind(rawBridge);
+                    rawBridge.rawCall = function rawCallSafe(methodName, argsJson) {
+                        if (rawBridge.suspendableCalls > 0) {
+                            return new Promise((resolve) => {
+                                const poll = () => {
+                                    if (rawBridge.suspendableCalls === 0) {
+                                        resolve(origRawCall(methodName, argsJson));
+                                    } else {
+                                        setTimeout(poll, 50);
+                                    }
+                                };
+                                setTimeout(poll, 50);
+                            });
+                        }
+                        return origRawCall(methodName, argsJson);
+                    };
+                    rawBridge._rawCallPatched = true;
                 }
-            }
-            await slicer.bridge.call('closeScene', []);
-            const [path] = await slicer.writeFiles([new File([blob], pending.fileName)]);
+            } catch (_) {}
 
-            let loadError;
-            for (let attempt = 0, delay = 500; attempt < 5; attempt++, delay *= 2) {
-                if (cancelled()) return;
-                try {
-                    frame.contentWindow?._slicerAlertMessage != null &&
-                        (frame.contentWindow._slicerAlertMessage = null);
-                    await slicer.bridge.call('loadFiles', [[path]]);
-                    // Pyodide calls alert() instead of throwing when a file cannot be loaded.
-                    // If an alert was captured during this call, treat it as a load failure.
-                    const alertMsg = frame.contentWindow?._slicerAlertMessage;
-                    if (alertMsg != null) {
-                        loadError = new Error(alertMsg || t('errors.slicerLoadFailed'));
-                        if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, delay));
-                        continue;
-                    }
-                    loadError = null;
-                    break;
-                } catch (err) {
-                    loadError = err;
-                    if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, delay));
-                }
-            }
-            if (loadError) throw loadError;
-            if (cancelled()) return;
-            // Fit all views to the loaded data. loadFiles with a .mrb restores the saved
-            // camera state, which may not match the data extent — reset to center it.
+            this.viewerLoadingDetail = t('cases.loadingIntoSlicerWeb', { name: pending.fileName });
+
+            // status='ready' fires before session-restore runs; give it a moment to settle.
             await new Promise((r) => setTimeout(r, 1000));
+            if (cancelled()) return;
+
+            let blob;
+            try {
+                blob = await pending.download;
+            } catch (err) {
+                throw new Error(err?.message || t('errors.slicerLoadFailed'));
+            }
+            if (cancelled()) return;
+
+            await slicer.bridge.call('closeScene', []);
+            if (cancelled()) return;
+
+            const cw = frame.contentWindow;
+            const writtenPaths = await cw.slicerWeb.writeFiles([new File([blob], pending.fileName)]);
+            if (cancelled()) return;
+
+            const filePaths = Array.isArray(writtenPaths) ? writtenPaths : [writtenPaths];
+            const loadResult = await slicer.bridge.callYielding('loadFiles', [filePaths, {}]);
+            if (cancelled()) return;
+
+            // alert() fires for warnings and errors alike; only treat it as a failure if
+            // nothing loaded.
+            cw._slicerAlertMessage = null;
+            if (!Array.isArray(loadResult) || loadResult.length === 0) {
+                throw new Error(t('errors.slicerLoadFailed'));
+            }
+
+            // Fit all views to the loaded data.
+            await new Promise((r) => setTimeout(r, 500));
             if (!cancelled()) {
                 try {
                     await slicer.bridge.call('resetViews', []);
@@ -1875,18 +1873,12 @@ export class DirectusCasesPage extends LitElement {
 
     handleViewerIframeLoad(event) {
         if (this.viewerKind === VIEWER_KINDS.SLICERWEB) {
-            // SlicerWeb shows a confirm() on startup ("restore session?"). We suppress it by
-            // overriding window.confirm to return false — same net effect as blocking allow-modals,
-            // but explicit. Returning false causes forgetSession() + sample data load; our
-            // two-phase poll in loadPendingIntoSlicerWeb waits for that to settle, then loads
-            // the real file.
             try {
                 const cw = event?.target?.contentWindow;
                 if (cw) {
+                    // Suppress the "restore session?" confirm so the viewer always starts empty.
                     cw.confirm = () => false;
-                    // Capture alert() calls — pyodide calls alert() on load errors
-                    // (e.g. unsupported format). Store the message so loadPendingIntoSlicerWeb
-                    // can surface it, since the sandbox blocks the dialog from appearing.
+                    // Capture alert() so Python-side load messages can be read back.
                     cw._slicerAlertMessage = null;
                     cw.alert = (msg) => { cw._slicerAlertMessage = String(msg ?? ''); };
                 }
