@@ -1830,7 +1830,15 @@ export class DirectusCasesPage extends LitElement {
             if (cancelled()) return;
 
             const filePaths = Array.isArray(writtenPaths) ? writtenPaths : [writtenPaths];
-            const loadResult = await slicer.bridge.callYielding('loadFiles', [filePaths, {}]);
+            console.log('[SW-load] writeFiles paths:', filePaths);
+            let loadResult;
+            try {
+                loadResult = await slicer.bridge.callYielding('loadFiles', [filePaths]);
+            } catch (loadErr) {
+                console.error('[SW-load] callYielding threw:', loadErr);
+                throw loadErr;
+            }
+            console.log('[SW-load] loadFiles result:', loadResult);
             if (cancelled()) return;
 
             // alert() fires for warnings and errors alike; only treat it as a failure if
