@@ -38,9 +38,13 @@ Once a file is saved through SlicerWeb it is no longer a Mimics project file —
 is a Slicer scene bundle. Any Mimics-specific metadata that Slicer did not import
 (e.g. masks, measurement data, Mimics object properties) is permanently lost.
 
-**Decision needed:** should the Save path in SlicerWeb write back a Mimics SQLite
-file (requires implementing Mimics export, not currently supported by SlicerHeart),
-or is promotion to a Slicer scene bundle acceptable for the case review workflow?
+**Decision deferred to Payload migration.** The right answer depends on whether the
+workflow requires round-tripping data back into Mimics (e.g. for re-segmentation),
+which is a product decision best made once Payload is the source of truth and the
+full Mimics ↔ Slicer case lifecycle is designed. Implementing Mimics export from
+Slicer is non-trivial and not currently supported by SlicerHeart.
 
-Until this is decided, the load code handles both formats so cases remain openable
-regardless of whether they have been saved before.
+Until then, the load code handles both formats so cases remain openable regardless
+of whether they have been saved before. The save issue lives in SlicerHub's
+`_attachSlicerWebSaveHandler` — SlicerWeb itself is behaving correctly by saving
+the scene in its native format.
