@@ -60,6 +60,7 @@ import { isInviteEmailEnabled, isSlicerWebDevModeEnabled, loadAppFeatures } from
 import { sendViewerHeartbeat } from '../utils/viewerHeartbeat.js';
 import { stopViewerSession } from '../utils/viewerSessionLifecycle.js';
 import { classifySlicerLoadError } from '../services/slicerErrors.js';
+import { parseNodeIdsRepr } from '../services/slicerBridgeUtils.js';
 import {
     installViewerActivityListeners,
     markViewerActivity,
@@ -1822,24 +1823,71 @@ export class DirectusCasesPage extends LitElement {
             }
             if (cancelled()) return;
 
-            console.log('[SW-load] blob size:', blob?.size);
-            await slicer.bridge.call('closeScene', []);
-            if (cancelled()) return;
 
             const cw = frame.contentWindow;
+
+            // For Mimics files (.mcs/.mxp) we fold closeScene + load into a single
+            // callYielding to avoid back-to-back JSPI calls, which can corrupt the
+            // response buffer in Pyodide/Emscripten when one JSPI hasn't fully settled
+            // before the next one starts.
+            const isMimicsFile = /\.(mcs|mxp)$/i.test(pending.fileName);
+
+            if (!isMimicsFile) {
+                await slicer.bridge.callYielding('closeScene', []);
+                if (cancelled()) return;
+            }
+
             const writtenPaths = await cw.slicerWeb.writeFiles([new File([blob], pending.fileName)]);
             if (cancelled()) return;
 
             const filePaths = Array.isArray(writtenPaths) ? writtenPaths : [writtenPaths];
-            console.log('[SW-load] writeFiles paths:', filePaths);
             let loadResult;
             try {
-                loadResult = await slicer.bridge.callYielding('loadFiles', [filePaths]);
+                if (isMimicsFile) {
+                    // .mcs/.mxp files come in two formats:
+                    //   1. ZIP bundle containing scene.mrml — rename to .mrb and load as SceneFile
+                    //   2. SQLite database (original Mimics format) — load as MimicsProject directly
+                    // In WASM, LegacyScriptedFileReader.supportedNameFilters is absent, so
+                    // canLoadFileConfidence() returns 0.0 for both; bypass loadFiles() and
+                    // call the correct loader directly.
+                    // Scene clear is done inside this evalPython (no separate closeScene call).
+                    const safePath = filePaths[0].replace(/'/g, "\\'");
+                    await slicer.bridge.callYielding('evalPython', [[
+                        'import os, zipfile, slicer, vtk',
+                        'slicer.mrmlScene.Clear(False)',
+                        '_sw_ids = []',
+                        '_sw_exc = None',
+                        'try:',
+                        `    _sw_path = "${safePath}"`,
+                        '    _sw_has_mrml = False',
+                        '    try:',
+                        '        with zipfile.ZipFile(_sw_path) as _z:',
+                        '            _sw_has_mrml = any(n.lower().endswith(".mrml") for n in _z.namelist())',
+                        '    except Exception:',
+                        '        pass',
+                        '    _sw_nodes = vtk.vtkCollection()',
+                        '    _sw_msgs = slicer.vtkMRMLMessageCollection()',
+                        '    if _sw_has_mrml:',
+                        '        _sw_mrb = os.path.splitext(_sw_path)[0] + ".mrb"',
+                        '        os.rename(_sw_path, _sw_mrb)',
+                        '        slicer.app.coreIOManager().loadNodes("SceneFile", {"fileName": _sw_mrb, "clear": False}, _sw_nodes, _sw_msgs)',
+                        '    else:',
+                        '        slicer.app.coreIOManager().loadNodes("MimicsProject", {"fileName": _sw_path}, _sw_nodes, _sw_msgs)',
+                        '    _sw_ids = [_sw_nodes.GetItemAsObject(i).GetID() for i in range(_sw_nodes.GetNumberOfItems())]',
+                        'except Exception as _e:',
+                        '    import traceback; _sw_exc = traceback.format_exc()',
+                    ].join('\n'), 'exec']);
+                    const idsRepr = await slicer.bridge.call('evalPython', ['_sw_ids', 'eval']);
+                    const excRepr = await slicer.bridge.call('evalPython', ['_sw_exc', 'eval']);
+                    if (excRepr !== 'None') console.error('[SW-load] Mimics load exc:', excRepr);
+                    loadResult = parseNodeIdsRepr(idsRepr);
+                } else {
+                    loadResult = await slicer.bridge.callYielding('loadFiles', [filePaths, {}]);
+                }
             } catch (loadErr) {
-                console.error('[SW-load] callYielding threw:', loadErr);
+                console.error('[SW-load] load threw:', loadErr);
                 throw loadErr;
             }
-            console.log('[SW-load] loadFiles result:', loadResult, 'alert:', cw._slicerAlertMessage);
             if (cancelled()) return;
 
             // alert() fires for warnings and errors alike; only treat it as a failure if
