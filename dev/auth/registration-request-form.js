@@ -1,7 +1,7 @@
 import { LitElement, html, css } from 'lit-element';
-import { submitRegistrationRequest } from './services/directus.js';
-import { authFormSharedStyles } from './styles/auth-form-shared.js';
-import { t } from './i18n/index.js';
+import { submitRegistrationRequest } from '../services/registrations.js';
+import { authFormSharedStyles } from '../styles/auth-form-shared.js';
+import { t } from '../i18n/index.js';
 
 /**
  * Request access form. Submits a pending_registration record; no account is created yet.
@@ -43,8 +43,8 @@ export class RegistrationRequestForm extends LitElement {
                 padding: 8px 10px;
                 border: 1px solid var(--color-border, #d1d5db);
                 border-radius: 6px;
-                background: var(--color-input-bg, #fff);
-                color: var(--color-text, #111);
+                background: var(--color-surface, var(--color-background, #fff));
+                color: var(--color-text-primary, #111);
               }
               .label-row {
                 display: flex;

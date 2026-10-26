@@ -1,5 +1,5 @@
 import { LitElement, html, css } from 'lit-element';
-import { listPendingRegistrations, approveRegistration, rejectRegistration } from '../services/directus.js';
+import { listPendingRegistrations, approveRegistration, rejectRegistration } from '../services/registrations.js';
 import './app-dialog.js';
 import './registration-request-row.js';
 import './approval-link-panel.js';

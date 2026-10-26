@@ -37,11 +37,7 @@ export class PersonChip extends LitElement {
                 background: var(--color-primary);
                 color: var(--color-on-primary, #fff);
                 font-size: 0.8rem;
-                font-weight: 650;
-            }
-            :host-context([data-theme='dark']) .avatar {
-                background: color-mix(in srgb, #c5cce6 55%, #5b7cff);
-                color: var(--color-primary);
+                font-weight: 600;
             }
             .identity {
                 min-width: 0;

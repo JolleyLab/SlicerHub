@@ -18,4 +18,9 @@ export const avatarCircleStyles = css`
         display: block;
         border-radius: 50%;
     }
+
+    :host-context([data-theme='dark']) .avatar {
+        background: color-mix(in srgb, #c5cce6 55%, #5b7cff);
+        color: var(--color-primary);
+    }
 `;

@@ -1,5 +1,5 @@
 import { t } from '../i18n/index.js';
-import { MY_PROJECTS_VISIBLE } from './app-views.js';
+import { MY_FILES_VISIBLE, MY_PROJECTS_VISIBLE } from './app-views.js';
 
 export const DEFAULT_MENU_KEY = 'cases';
 

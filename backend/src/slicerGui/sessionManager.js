@@ -250,7 +250,8 @@ async function startOrReuseSeat({
     seatId,
     token,
     useSimplifiedViewer,
-    requireSlicerUiReady
+    requireSlicerUiReady,
+    forceNew = false
 }) {
     const sessionKey = slicerGuiSessionKey(safeUserId, seatId);
     const containerName = slicerGuiContainerName(safeUserId, seatId);
@@ -266,7 +267,12 @@ async function startOrReuseSeat({
     try {
         const existing = docker.getContainer(containerName);
         const info = await existing.inspect();
-        if (info.State?.Running) {
+        if (info.State?.Running && forceNew) {
+            console.log(`Full Slicer ${containerName}: forceNew requested — removing existing session`);
+            clearSession(SLICER_GUI, sessionKey);
+            clearSlicerReadyFile(safeUserId, seatId);
+            await existing.remove({ force: true });
+        } else if (info.State?.Running) {
             let vncReady = await isNoVncReady(containerName, 3000);
             if (!vncReady) {
                 try {
@@ -510,7 +516,8 @@ export async function ensureSlicerGuiSession({
     seatId = null,
     preferFileId = null,
     useSimplifiedViewer = null,
-    requireSlicerUiReady = true
+    requireSlicerUiReady = true,
+    forceNew = false
 } = {}) {
     const safeUserId = safeSlicerGuiUserId(userId);
     const resolvedSeatId = allocateSlicerGuiSeatId(safeUserId, {
@@ -523,7 +530,8 @@ export async function ensureSlicerGuiSession({
         seatId: resolvedSeatId,
         token,
         useSimplifiedViewer,
-        requireSlicerUiReady
+        requireSlicerUiReady,
+        forceNew
     });
 }
 

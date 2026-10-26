@@ -1,7 +1,7 @@
 import { LitElement, html, css } from 'lit-element';
-import { previewSignupInvite, acceptSignupInvite } from './services/directus.js';
-import { authFormSharedStyles } from './styles/auth-form-shared.js';
-import { t } from './i18n/index.js';
+import { previewSignupInvite, acceptSignupInvite } from '../services/registrations.js';
+import { authFormSharedStyles } from '../styles/auth-form-shared.js';
+import { t } from '../i18n/index.js';
 
 /**
  * Redeem a case signup invite (?invite=token).

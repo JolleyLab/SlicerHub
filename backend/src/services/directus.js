@@ -232,7 +232,10 @@ function attachmentOpenFlags(filename, mimeType) {
     const isMrb = detectIsMrb(filename, mimeType);
     const canOpenInSlicer = detectCanOpenInSlicer(filename, mimeType);
     const canPreviewInBrowser = detectCanPreviewInBrowser(filename, mimeType);
-    return { isMrb, canOpenInSlicer, canPreviewInBrowser };
+    // Unknown format: not a recognised Slicer type and not browser-previewable.
+    // Let Slicer attempt to open it; it will show its own error if unsupported.
+    const isUnknownSlicerFormat = !canOpenInSlicer && !canPreviewInBrowser;
+    return { isMrb, canOpenInSlicer: canOpenInSlicer || isUnknownSlicerFormat, canPreviewInBrowser, isUnknownSlicerFormat };
 }
 
 function mapAttachment(row) {
@@ -441,12 +444,7 @@ function mapCase(
     // Prefer item accountability/app date fields when present; otherwise Activity
     // (Studio Revisions). `case` often has no date_created column.
     const createdAt = pickTimestamp(row?.date_created, row?.created_at, activity.createdAt);
-    const updatedAt = pickTimestamp(
-        row?.date_updated,
-        row?.updated_at,
-        activity.updatedAt,
-        createdAt
-    );
+    const updatedAt = pickTimestamp(row?.date_updated, activity.updatedAt, createdAt);
     return {
         id: caseId,
         title: row?.title ?? null,
@@ -1623,6 +1621,28 @@ export async function deleteCaseAttachment(caseId, attachmentId, { accessToken, 
 }
 
 /**
+ * Point an existing attachment at a different Directus file (overwrite save-scene path).
+ * @param {string} attachmentId  Directus attachment record id
+ * @param {string} newFileId     Directus file UUID of the newly-uploaded scene file
+ * @param {{ accessToken: string }} options
+ */
+export async function updateDirectusAttachmentFile(attachmentId, newFileId, { accessToken } = {}) {
+    if (!accessToken) {
+        throw new ValidationError(msg('directus.attachments_token_required'), null, 'directus.attachments_token_required');
+    }
+    const attachKey = String(attachmentId || '').trim();
+    const fileKey = String(newFileId || '').trim();
+    if (!attachKey || !fileKey) {
+        throw new ValidationError(msg('case.case_attachment_ids_required'), null, 'case.case_attachment_ids_required');
+    }
+    await directusFetch(`/items/attachment/${encodeURIComponent(attachKey)}`, {
+        method: 'PATCH',
+        accessToken,
+        body: { file: fileKey }
+    });
+}
+
+/**
  * Create a case in Directus as the logged-in user.
  * @param {{ title: string, description?: string, status?: string }} fields
  * @param {{ accessToken: string }} options
@@ -1752,29 +1772,21 @@ export async function updateCase(caseId, updates = {}, { accessToken } = {}) {
         throw new ValidationError(msg('case.title_empty'), null, 'case.title_empty');
     }
 
-    const updatedStamp = new Date().toISOString();
-    const bodyWithAppUpdated = { ...body, updated_at: updatedStamp };
-
     let payload;
-    try {
-        payload = await directusFetch(`/items/case/${encodeURIComponent(caseKey)}`, {
-            method: 'PATCH',
-            accessToken,
-            body: bodyWithAppUpdated,
-            query: { fields: CASE_CORE_FIELDS }
-        });
-    } catch (err) {
-        const status = Number(err?.statusCode || err?.status || 0);
-        const message = String(err?.message || err || '');
-        const unknownUpdatedAt = status === 400
-            || /updated_at|unknown field|doesn't exist|invalid payload/i.test(message);
-        if (!unknownUpdatedAt) throw err;
-        payload = await directusFetch(`/items/case/${encodeURIComponent(caseKey)}`, {
-            method: 'PATCH',
-            accessToken,
-            body,
-            query: { fields: CASE_CORE_FIELDS }
-        });
+    for (const fields of CASE_FIELDS_ATTEMPTS) {
+        try {
+            payload = await directusFetch(`/items/case/${encodeURIComponent(caseKey)}`, {
+                method: 'PATCH',
+                accessToken,
+                body,
+                query: { fields }
+            });
+            break;
+        } catch (err) {
+            const status = Number(err?.statusCode || err?.status || 0);
+            if (status !== 400 && status !== 500) throw err;
+            if (fields === CASE_FIELDS_ATTEMPTS.at(-1)) throw err;
+        }
     }
 
     return mapCase(payload?.data || { id: caseKey, ...body }, {});
@@ -1854,7 +1866,7 @@ export async function uploadDirectusFile({ buffer, originalname, mimetype } = {}
  * @param {{ accessToken: string, fileMeta?: object }} options
  * @returns {Promise<object>} mapped attachment
  */
-export async function createCaseAttachment(caseId, fileId, name, { accessToken, fileMeta } = {}) {
+export async function createCaseAttachment(caseId, fileId, name, { accessToken, fileMeta, parentId } = {}) {
     if (!accessToken) {
         throw new ValidationError(msg('directus.create_attachments_token_required'), null, 'directus.create_attachments_token_required');
     }
@@ -1864,14 +1876,18 @@ export async function createCaseAttachment(caseId, fileId, name, { accessToken, 
         throw new ValidationError(msg('case.case_and_file_ids_required'), null, 'case.case_and_file_ids_required');
     }
 
+    const body = {
+        case: caseKey,
+        file: fileKey,
+        name: String(name || '').trim() || null
+    };
+    const parentKey = String(parentId || '').trim();
+    if (parentKey) body.parent = parentKey;
+
     const payload = await directusFetch('/items/attachment', {
         method: 'POST',
         accessToken,
-        body: {
-            case: caseKey,
-            file: fileKey,
-            name: String(name || '').trim() || null
-        }
+        body
     });
 
     const row = payload?.data;

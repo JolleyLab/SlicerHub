@@ -1,8 +1,8 @@
 import { LitElement, html, css } from 'lit-element';
-import { previewRegistrationToken, completeRegistration } from './services/directus.js';
-import { authFormSharedStyles } from './styles/auth-form-shared.js';
-import { t } from './i18n/index.js';
-import { resolvePreferredThemeForNewAccount } from './utils/userPreferences.js';
+import { previewRegistrationToken, completeRegistration } from '../services/registrations.js';
+import { authFormSharedStyles } from '../styles/auth-form-shared.js';
+import { t } from '../i18n/index.js';
+import { resolvePreferredThemeForNewAccount } from '../utils/userPreferences.js';
 
 /**
  * Complete account setup from a ?register=<token> link.

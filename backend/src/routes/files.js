@@ -40,45 +40,11 @@ const TRAME_SERVICE_URL = process.env.TRAME_SERVICE_URL || 'http://localhost:809
 // Use memory storage - we'll save to disk ourselves after auth
 const uploadStorage = multer.memoryStorage();
 
-// File filter - validate file types
-const fileFilter = (req, file, cb) => {
-    // Allow common file types plus medical imaging formats
-    const allowedMimes = [
-        'image/jpeg',
-        'image/png',
-        'image/gif',
-        'image/webp',
-        'application/pdf',
-        'text/plain',
-        'text/csv',
-        'application/json',
-        'application/zip',
-        'application/x-zip-compressed',
-        // Medical imaging formats
-        'application/dicom',           // DICOM files (.dcm)
-        'application/x-nrrd',          // NRRD files (.nrrd)
-        'application/x-mrb',           // MRB files (.mrb - 3D Slicer Medical Reality Bundle)
-        'application/octet-stream'     // Generic binary (fallback for .nrrd, .dcm, .mrb when browser can't identify)
-    ];
-    
-    // Also check file extension for MRB files (3D Slicer Medical Reality Bundle)
-    // Browsers may report .mrb files with various MIME types
-    const fileName = file.originalname.toLowerCase();
-    const isMRBFile = fileName.endsWith('.mrb');
-
-    if (allowedMimes.includes(file.mimetype) || isMRBFile) {
-        cb(null, true);
-    } else {
-        cb(new ValidationError(`File type ${file.mimetype} is not allowed`), false);
-    }
-};
-
-// Configure multer
+// Configure multer — no file-type filter; Slicer decides what it can handle
 const upload = multer({
     storage: uploadStorage,
-    fileFilter: fileFilter,
     limits: {
-        fileSize: 500 * 1024 * 1024, // 500MB max file size (for medical imaging files)
+        fileSize: 2 * 1024 * 1024 * 1024, // 2GB max file size (for medical imaging files)
     }
 });
 

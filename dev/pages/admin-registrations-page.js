@@ -1,10 +1,10 @@
 import { LitElement, html, css } from 'lit-element';
-import { t } from './i18n/index.js';
-import './components/page-layout-template.js';
-import './components/registration-request-row.js';
-import './components/approval-link-panel.js';
-import { panelStyles } from './styles/panel.js';
-import { listPendingRegistrations, approveRegistration, rejectRegistration } from './services/directus.js';
+import { t } from '../i18n/index.js';
+import '../components/page-layout-template.js';
+import '../components/registration-request-row.js';
+import '../components/approval-link-panel.js';
+import { panelStyles } from '../styles/panel.js';
+import { listPendingRegistrations, approveRegistration, rejectRegistration } from '../services/registrations.js';
 
 export class AdminRegistrationsPage extends LitElement {
     static get properties() {

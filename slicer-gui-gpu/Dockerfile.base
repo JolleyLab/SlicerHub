@@ -72,7 +72,7 @@ ENV LC_ALL=en_US.UTF-8
 RUN useradd -m -s /bin/bash slicer && \
     echo "slicer ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
-ENV SLICER_VERSION=5.10.0
+ENV SLICER_VERSION=5.12.3
 WORKDIR /opt
 
 RUN wget -q -O /opt/Slicer-linux-amd64.tar.gz \

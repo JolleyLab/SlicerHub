@@ -1,22 +1,22 @@
 import { LitElement, html, css } from 'lit-element';
-import { t } from './i18n/index.js';
-import { API_URL } from './config.js';
-import { initializeTheme } from './components/theme.js';
-import './components/page-layout-template.js';
-import './components/page-content-message.js';
-import './components/file-storage-summary.js';
-import './components/file-list-row.js';
-import './components/add-button.js';
-import './components/app-dialog.js';
-import './components/dropdown-select.js';
-import { resolveTramePageUrl } from './utils/trameViewerUrl.js';
+import { t } from '../i18n/index.js';
+import { API_URL } from '../config.js';
+import { initializeTheme } from '../components/theme.js';
+import '../components/page-layout-template.js';
+import '../components/page-content-message.js';
+import '../components/file-storage-summary.js';
+import '../components/file-list-row.js';
+import '../components/add-button.js';
+import '../components/app-dialog.js';
+import '../components/dropdown-select.js';
+import { resolveTramePageUrl } from '../utils/trameViewerUrl.js';
 import {
     installViewerActivityListeners,
     markViewerActivity,
     resetViewerActivity
-} from './utils/viewerActivity.js';
-import { sendViewerHeartbeat } from './utils/viewerHeartbeat.js';
-import { stopViewerSession } from './utils/viewerSessionLifecycle.js';
+} from '../utils/viewerActivity.js';
+import { sendViewerHeartbeat } from '../utils/viewerHeartbeat.js';
+import { stopViewerSession } from '../utils/viewerSessionLifecycle.js';
 
 export class FileManager extends LitElement {
     static get styles() {

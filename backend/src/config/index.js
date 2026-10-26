@@ -205,6 +205,18 @@ const config = {
     caseInviteTtlDays: Math.max(1, Math.min(30, Number(process.env.CASE_INVITE_TTL_DAYS || 7) || 7)),
 
     /**
+     * Version history / retention.
+     * PRUNE_STRATEGY=delete  — delete file from Directus/storage (default)
+     * PRUNE_STRATEGY=archive — transition to cheaper storage tier and mark archived
+     */
+    versioning: {
+        pruneStrategy: (process.env.PRUNE_STRATEGY || 'delete').trim().toLowerCase(),
+        archiveTier: (process.env.PRUNE_ARCHIVE_TIER || 'glacier_ir').trim().toLowerCase(),
+        retentionEnabled: process.env.VERSION_RETENTION_ENABLED !== 'false',
+        storageDriverConfigured: Boolean(process.env.STORAGE_DRIVER?.trim())
+    },
+
+    /**
      * SlicerWeb channel update service.
      * Requires SLICERWEB_GITHUB_TOKEN (fine-grained PAT, read-only Contents on the deploy repo).
      * ENABLE_SLICERWEB_DEV_MODE=true exposes the latest-channel opt-in in user settings.

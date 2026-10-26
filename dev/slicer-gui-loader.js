@@ -106,6 +106,32 @@ function reveal() {
     setTimeout(() => {
         splash.classList.add('hidden');
     }, 380);
+    // When we saw a real busy→idle cycle, check whether the file load actually
+    // succeeded. slicer_session.py writes .load-result.json before clearing busy,
+    // so the result is already on disk by the time we reveal.
+    if (sawBusy) {
+        checkLoadResult();
+    }
+}
+
+async function checkLoadResult() {
+    const endpoints = sessionEndpoints();
+    if (!endpoints?.statusUrl) return;
+    try {
+        const statusUrl = new URL(endpoints.statusUrl, window.location.origin);
+        if (seatId) statusUrl.searchParams.set('seatId', String(seatId));
+        const response = await fetch(statusUrl.toString(), { credentials: 'include', cache: 'no-store' });
+        if (!response.ok) return;
+        const data = await response.json();
+        const lr = data.loadResult;
+        if (!lr || lr.success !== false) return;
+        // Only act if the result was written after this loader session started.
+        const updatedAt = lr.updatedAt ? new Date(lr.updatedAt).getTime() : 0;
+        if (updatedAt < startedAt) return;
+        notifyParent('slicer-viewer-load-failed', { error: lr.error || 'load failed' });
+    } catch {
+        // ignore — non-fatal
+    }
 }
 
 function hideViewer() {
@@ -481,9 +507,14 @@ async function checkStatus() {
             return;
         }
         const waitedLongEnough = Date.now() - startedAt >= minSplashMs;
-        // Reveal after a real busy→idle cycle.
         if (sawBusy && waitedLongEnough) {
-            reveal();
+            // After a busy→idle cycle, only reveal once a load result is present.
+            // Between retries slicer_session.py briefly clears busy without writing
+            // a result yet — revealing in that gap would skip the failure check.
+            if (data.loadResult != null) {
+                reveal();
+            }
+            // else: keep polling; result will appear when all retries are exhausted.
             return;
         }
         if (!sawBusy && Date.now() - startedAt > 10000 && waitedLongEnough) {

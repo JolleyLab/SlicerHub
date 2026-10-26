@@ -18,6 +18,12 @@ export const DEFAULT_APP_VIEW = APP_VIEWS.HOME;
  */
 export const MY_PROJECTS_VISIBLE = false;
 
+/**
+ * My Files is hidden by default: legacy file manager, kept while useful code is extracted.
+ * Set to true to bring back the nav entry and view.
+ */
+export const MY_FILES_VISIBLE = false;
+
 export const PROJECT_VIEWS = Object.freeze(new Set([
     APP_VIEWS.PROJECTS,
     APP_VIEWS.CREATE_PROJECT,

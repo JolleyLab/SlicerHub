@@ -1316,6 +1316,57 @@ def load_mrb_scene(path: str) -> bool:
                 pass
 
 
+def _load_mimics_project(path: str) -> bool:
+    """Load a Materialise Mimics (.mcs) or 3-matic (.mxp) project via ImportMimicsLogic.
+
+    Tries three resolution strategies in order:
+    1. sys.modules["ImportMimics"]   – already loaded by Slicer's scripted module factory
+    2. direct import                 – works if the extension dir is on sys.path
+    3. slicer.util.getModuleLogic    – works if the widget has already been created
+    """
+    log(f"[slicer_session] Mimics project load: {path}")
+    import sys as _sys
+
+    ImportMimicsLogic = None
+
+    # Strategy 1: module already in sys.modules
+    _mod = _sys.modules.get("ImportMimics")
+    if _mod is not None:
+        ImportMimicsLogic = getattr(_mod, "ImportMimicsLogic", None)
+
+    # Strategy 2: direct import (works when extension dir is on sys.path)
+    if ImportMimicsLogic is None:
+        try:
+            from ImportMimics import ImportMimicsLogic  # noqa: PLC0415
+        except ImportError:
+            pass
+
+    # Strategy 3: get logic via the module widget (only works after widget creation)
+    if ImportMimicsLogic is None:
+        try:
+            _logic_inst = slicer.util.getModuleLogic("ImportMimics")
+            ImportMimicsLogic = type(_logic_inst)
+        except Exception:
+            pass
+
+    if ImportMimicsLogic is None:
+        log("[slicer_session] ImportMimics module not available; cannot open .mcs/.mxp")
+        return False
+
+    try:
+        logic = ImportMimicsLogic()
+        volume_nodes, model_nodes, curve_nodes, markups_nodes = logic.importProject(
+            path, loadIntoScene=True, exportDir=None, exportDicom=False
+        )
+        loaded_count = sum(len(n) for n in (volume_nodes, model_nodes, curve_nodes, markups_nodes))
+        log(f"[slicer_session] Mimics import loaded {loaded_count} nodes")
+        return loaded_count > 0
+    except Exception as exc:
+        log(f"[slicer_session] Mimics import exception: {exc}")
+        log(traceback.format_exc())
+        return False
+
+
 def load_staged_file(path: str, defer_view_refresh: bool = False) -> bool:
     global _last_load_error
     if not os.path.isfile(path):
@@ -1331,6 +1382,8 @@ def load_staged_file(path: str, defer_view_refresh: bool = False) -> bool:
     try:
         if lower.endswith(".mrb"):
             ok = load_mrb_scene(path)
+        elif lower.endswith((".mcs", ".mxp")):
+            ok = _load_mimics_project(path)
         else:
             log(f"[slicer_session] Add Data via ioManager: {path}")
             ok = bool(slicer.app.ioManager().loadFile(path, False))
@@ -1427,10 +1480,17 @@ def mark_ready() -> None:
         log(f"[slicer_session] Could not write ready file: {exc}")
 
 
+_window_synced_on_startup = False
+
+
 def maintain_ready_marker() -> None:
     """Publish readiness only once the main window UI can accept loads."""
+    global _window_synced_on_startup
     if ui_ready():
         mark_ready()
+        if not _window_synced_on_startup:
+            _window_synced_on_startup = True
+            QTimer.singleShot(800, run_window_size_sync)
         QTimer.singleShot(2000, maintain_ready_marker)
     else:
         QTimer.singleShot(500, maintain_ready_marker)

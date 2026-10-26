@@ -514,6 +514,63 @@ function attachmentUrl(caseId, attachmentId, suffix) {
     return `${API_URL}/api/directus/cases/${encodeURIComponent(caseId)}/attachments/${encodeURIComponent(attachmentId)}/${suffix}`;
 }
 
+/**
+ * Save the currently-running Slicer scene back to a case attachment.
+ * @param {string} caseId
+ * @param {string} attachmentId
+ * @param {{ saveMode: 'overwrite' | 'saveAsNew' }} options
+ * @returns {Promise<{ success: boolean, saveMode: string, attachment: object }>}
+ */
+export async function saveDirectusCaseAttachmentScene(caseId, attachmentId, { saveMode = 'overwrite' } = {}) {
+    const response = await fetch(attachmentUrl(caseId, attachmentId, 'save-scene'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ saveMode })
+    });
+    const data = await parseJson(response);
+    if (!response.ok) {
+        throwApiError(response, data, t('errors.saveSceneFailed'));
+    }
+    return data;
+}
+
+/**
+ * Save a SlicerWeb scene to a case attachment via a TUS upload + commit.
+ * Uploads the file directly to Directus (chunked, resumable, with progress) then
+ * POSTs a commit request so the backend can update the attachment record.
+ * @param {string} caseId
+ * @param {string} attachmentId
+ * @param {File} file  The scene file from bridge.readFiles()
+ * @param {{ saveMode?: 'overwrite'|'saveAsNew', name?: string,
+ *   onProgress?: (sent: number, total: number) => void, signal?: AbortSignal }} options
+ */
+export async function saveDirectusSlicerWebScene(caseId, attachmentId, file, { saveMode = 'overwrite', name, conflictCheck, onProgress, signal } = {}) {
+    const { uploadToken, metadata } = await requestUploadToken();
+    await tusUpload({
+        file,
+        endpoint: `${API_URL}/api/directus/files/tus`,
+        metadata,
+        chunkSize: 64 * 1024 * 1024,
+        onProgress,
+        signal
+    });
+    const body = { uploadToken, saveMode };
+    if (name) body.name = name;
+    if (conflictCheck && saveMode === 'overwrite') body.conflictCheck = conflictCheck;
+    const response = await fetch(attachmentUrl(caseId, attachmentId, 'save-slicerweb'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+    const data = await parseJson(response);
+    if (!response.ok) {
+        throwApiError(response, data, t('errors.saveSceneFailed'));
+    }
+    return data;
+}
+
 /** Fetch an attachment's bytes as a Blob for the in-browser SlicerWeb viewer (any case member). */
 export async function fetchDirectusAttachmentContent(caseId, attachmentId) {
     const response = await fetch(attachmentUrl(caseId, attachmentId, 'content'), {
@@ -720,5 +777,27 @@ export async function updateTaskGroupMember(groupId, memberId, updates) {
     const data = await parseJson(response);
     if (!response.ok) throwApiError(response, data, 'Failed to update member');
     return data.data;
+}
+
+export async function fetchCaseActivity(caseId, { limit = 50, offset = 0 } = {}) {
+    const params = new URLSearchParams({ limit, offset });
+    const response = await fetch(
+        `${API_URL}/api/directus/cases/${encodeURIComponent(caseId)}/activity?${params}`,
+        { credentials: 'include' }
+    );
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to fetch case activity');
+    return data;
+}
+
+export async function fetchAttachmentActivity(caseId, attachmentId, { limit = 50, offset = 0 } = {}) {
+    const params = new URLSearchParams({ limit, offset });
+    const response = await fetch(
+        `${API_URL}/api/directus/cases/${encodeURIComponent(caseId)}/attachments/${encodeURIComponent(attachmentId)}/activity?${params}`,
+        { credentials: 'include' }
+    );
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to fetch attachment activity');
+    return data;
 }
 

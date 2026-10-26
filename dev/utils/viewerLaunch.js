@@ -199,10 +199,11 @@ export function buildSlicerGuiLoaderUrl({
  * In-browser SlicerWeb build, served same-origin by nginx (see scripts/fetch-slicerweb.*).
  * channel: 'stable' (default) or 'latest' (developer mode).
  */
-export function buildSlicerWebUrl({ layout = 'FourUp', channel = 'stable', sha } = {}) {
+export function buildSlicerWebUrl({ layout = 'FourUp', channel = 'stable', sha, extensions = ['SlicerHeart'] } = {}) {
     const ch = channel === 'latest' ? 'latest' : 'stable';
     const v = sha ? `&v=${encodeURIComponent(sha.slice(0, 8))}` : '';
-    return `/slicerweb/${ch}/?layout=${encodeURIComponent(layout)}&sample=${v}`;
+    const ext = extensions.length ? `&extensions=${extensions.map(encodeURIComponent).join(',')}` : '';
+    return `/slicerweb/${ch}/?layout=${encodeURIComponent(layout)}${ext}&sample=${v}`;
 }
 
 export function viewerDisplayName(kind, { simplified = false } = {}) {

@@ -1,8 +1,8 @@
 import { LitElement, html, css } from 'lit-element';
-import { API_URL } from './config.js';
-import { loadAppFeatures, getAppFeatures } from './services/features.js';
-import { authFormStyleText } from './styles/auth-form-shared.js';
-import { t } from './i18n/index.js';
+import { API_URL } from '../config.js';
+import { loadAppFeatures, getAppFeatures } from '../services/features.js';
+import { authFormStyleText } from '../styles/auth-form-shared.js';
+import { t } from '../i18n/index.js';
 
 const loginExtras = css`
   .dev-banner {
