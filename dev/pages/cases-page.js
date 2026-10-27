@@ -4,6 +4,7 @@ import '../components/page-layout-template.js';
 import '../components/page-content-message.js';
 import '../components/file-list-row.js';
 import '../components/comments-panel.js';
+import '../components/app-dialog.js';
 import { friendlyCasesError } from '../services/cases.js';
 import { API_URL } from '../config.js';
 import { parseNodeIdsRepr } from '../services/slicerBridgeUtils.js';
@@ -13,6 +14,7 @@ import {
     listCollaborators, inviteCollaborator, updateCollaborators, lookupCaseUser,
     listComments, createComment,
     listCaseInvites, approveCaseInvite, rejectCaseInvite,
+    savePayloadSlicerWebScene,
 } from '../services/cases.js';
 import '../components/people-dialog.js';
 import '../components/list-filter-tools.js';
@@ -1058,6 +1060,21 @@ export class CasesPage extends LitElement {
                 font-size: 0.9rem;
                 line-height: 1.4;
             }
+
+            .save-indicator {
+                font-size: 0.85rem;
+                color: var(--color-text-secondary);
+                white-space: nowrap;
+            }
+
+            .viewer-error-message {
+                font-size: 0.85rem;
+                color: var(--color-status-error-fg, #8a1212);
+                white-space: nowrap;
+                max-width: 220px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
         `;
     }
 
@@ -1120,6 +1137,10 @@ export class CasesPage extends LitElement {
             pendingInviteCount: { type: Number },
             isSavingScene: { type: Boolean },
             hasUnsavedChanges: { type: Boolean },
+            _backgroundSave: { type: Object },
+            saveIndicatorMessage: { type: String },
+            _saveAsNewName: { type: String },
+            _mcsSaveDefaultName: { type: String },
             errorDialogTitle: { type: String },
             errorDialogMessage: { type: String },
         };
@@ -1156,6 +1177,15 @@ export class CasesPage extends LitElement {
         this._slicerWebDownloadPromise = null;
         this.isSavingScene = false;
         this.hasUnsavedChanges = false;
+        this._backgroundSave = null;
+        this.saveIndicatorMessage = '';
+        this._saveAsNewName = '';
+        this.saveIndicatorTimeout = null;
+        this.saveIndicatorActivityCleanup = null;
+        this._saveAsNewResolver = null;
+        this._mcsSaveDefaultName = '';
+        this._mcsSaveResolver = null;
+        this._lastSavedAttachmentId = null;
         this.errorDialogTitle = '';
         this.errorDialogMessage = '';
         this.iframeActivityCleanup = null;
@@ -2425,6 +2455,11 @@ export class CasesPage extends LitElement {
         this._viewerSessionToken = null;
         this._viewerSeatId = null;
         this.openingAttachmentId = '';
+        this.hasUnsavedChanges = false;
+        this.isSavingScene = false;
+        this.saveIndicatorMessage = '';
+        if (this._mcsSaveResolver) { this._mcsSaveResolver(null); this._mcsSaveResolver = null; }
+        this._mcsSaveDefaultName = '';
     }
 
     async handleOpenAttachment(caseRow, attachment, { simplified } = {}) {
@@ -2594,6 +2629,8 @@ export class CasesPage extends LitElement {
                 this._slicerWebPending = null;
                 this.viewerLoading = false;
                 this.viewerLoadingDetail = '';
+                this._attachSlicerWebSaveHandler(slicer, { blank: true });
+                this.attachIframeActivityTracking();
                 return;
             }
 
@@ -2733,8 +2770,281 @@ export class CasesPage extends LitElement {
         }
     }
 
-    _attachSlicerWebSaveHandler(_slicer, _opts = {}) {
-        // Save-to-Payload not yet implemented on this branch.
+    _attachSlicerWebSaveHandler(slicer, { blank = false } = {}) {
+        try {
+            const iframe = this.renderRoot?.querySelector('.viewer-iframe');
+            if (iframe?.contentWindow) {
+                iframe.contentWindow.prompt = () => this.currentFileName || 'scene.mrb';
+            }
+        } catch (_) {}
+
+        slicer.saveHandler = async (path) => {
+            if (!this.selectedCaseId || this.isSavingScene) return;
+            if (!blank && !this.currentAttachmentId) return;
+            const caseId = this.selectedCaseId;
+            this.isSavingScene = true;
+            try {
+                const [file] = await slicer.readFiles([path]);
+                if (blank && !this.currentAttachmentId) {
+                    // Prompt for a filename on the first save from blank mode since we don't
+                    // know what file (if any) the user loaded into the viewer themselves.
+                    const defaultName = this.currentFileName
+                        ? this.currentFileName.replace(/\.[^.]+$/, '')
+                        : '';
+                    const name = await this.promptSaveAsNewName(defaultName);
+                    if (!name) return; // user cancelled
+                    this._runBackgroundSave(file, {
+                        caseId,
+                        attachmentId: null,
+                        saveMode: 'saveAsNew',
+                        name,
+                        onNewAttachment: (attachment) => {
+                            if (!this.currentAttachmentId) {
+                                this.currentAttachmentId = attachment.id;
+                                this.currentFileName = attachment.filenameDownload || attachment.name || name;
+                            }
+                        }
+                    });
+                } else if (this._isMcsFileName(this.currentFileName)) {
+                    const mrbName = this.currentFileName.replace(/\.mcs$/i, '.mrb');
+                    const choice = await this.promptMcsSave(mrbName);
+                    if (!choice) return; // user cancelled
+                    const attachmentId = this.currentAttachmentId;
+                    this._runBackgroundSave(file, {
+                        caseId,
+                        attachmentId,
+                        saveMode: choice === 'overwrite' ? 'overwrite' : 'saveAsNew',
+                        name: mrbName,
+                        onNewAttachment: (attachment) => {
+                            this.currentAttachmentId = attachment.id;
+                            this.currentFileName = attachment.filenameDownload || attachment.name || mrbName;
+                        },
+                    });
+                } else {
+                    this._runBackgroundSave(file, { caseId, attachmentId: this.currentAttachmentId, saveMode: 'overwrite', name: this.currentFileName || undefined });
+                }
+            } catch (err) {
+                this.errorMessage = this.userFacingError(err, t('errors.saveSceneFailed'));
+            } finally {
+                this.isSavingScene = false;
+            }
+        };
+    }
+
+    async _writeSlicerWebScene() {
+        const iframe = this.renderRoot?.querySelector('.viewer-iframe');
+        const slicer = iframe?.contentWindow?.slicerWeb;
+        if (!slicer) throw new Error(t('errors.saveSceneFailed'));
+        const savePath = '/data/save/scene.mrb';
+        if (typeof slicer.bridge.callYielding !== 'function') {
+            console.warn('[SlicerWeb] callYielding not available; save may be incomplete');
+        }
+        await (slicer.bridge.callYielding ?? slicer.bridge.call).call(slicer.bridge, 'saveScene', [savePath]);
+        const [file] = await slicer.readFiles([savePath]);
+        if (!file || file.size < 1024) {
+            throw new Error(`saveScene produced an unexpectedly small file (${file?.size ?? 0} bytes) — the scene may not have been written yet`);
+        }
+        return file;
+    }
+
+    _runBackgroundSave(file, { caseId, attachmentId, saveMode, name, onNewAttachment, _attempt = 1 } = {}) {
+        const prev = this._backgroundSave;
+        if (prev?.abortCtrl && saveMode === 'overwrite' && prev.saveMode === 'overwrite' && prev.attachmentId === attachmentId) {
+            prev.abortCtrl.abort();
+        }
+        const abortCtrl = new AbortController();
+        this._backgroundSave = { file, caseId, attachmentId, saveMode, name, onNewAttachment, error: null, abortCtrl };
+        this.hasUnsavedChanges = false;
+        savePayloadSlicerWebScene(caseId, attachmentId, file, { saveMode, name, signal: abortCtrl.signal })
+            .then((result) => {
+                if (abortCtrl.signal.aborted) return;
+                this._backgroundSave = null;
+                if (result?.attachment) {
+                    const normalized = this.normalizePayloadAttachment(result.attachment);
+                    this.cases = this.cases.map((c) => {
+                        if (c.id !== caseId) return c;
+                        if (!Array.isArray(c.attachments)) return c;
+                        const attachments = saveMode === 'saveAsNew'
+                            ? [...c.attachments, normalized]
+                            : c.attachments.map((a) => a.id === attachmentId ? normalized : a);
+                        return { ...c, attachments };
+                    });
+                    if (typeof onNewAttachment === 'function') {
+                        onNewAttachment(normalized);
+                    }
+                }
+                const msg = saveMode === 'saveAsNew' ? t('files.savedAsNew') : t('files.saved');
+                if (this.showIframe) {
+                    this.showSaveIndicator(msg);
+                } else {
+                    this.showToast(msg);
+                }
+            })
+            .catch((err) => {
+                if (err?.name === 'AbortError') return;
+                if (_attempt < 2) {
+                    setTimeout(() => {
+                        if (this._backgroundSave && !this._backgroundSave.error) {
+                            this._runBackgroundSave(file, { caseId, attachmentId, saveMode, name, onNewAttachment, _attempt: _attempt + 1 });
+                        }
+                    }, 2000);
+                    return;
+                }
+                this._backgroundSave = {
+                    ...this._backgroundSave,
+                    error: this.userFacingError(err, t('errors.saveSceneFailed'))
+                };
+            });
+    }
+
+    _retryBackgroundSave() {
+        if (!this._backgroundSave) return;
+        const { file, caseId, attachmentId, saveMode, name } = this._backgroundSave;
+        this._runBackgroundSave(file, { caseId, attachmentId, saveMode, name, _attempt: 1 });
+    }
+
+    async saveCurrentScene(mode = 'overwrite', name) {
+        if (!this.selectedCaseId) return false;
+        const isBlankSlicerWeb = this.viewerKind === VIEWER_KINDS.SLICERWEB && !this.currentAttachmentId;
+        if (!this.currentAttachmentId && !isBlankSlicerWeb) return false;
+        if (this.isSavingScene) return false;
+
+        if (this.viewerKind === VIEWER_KINDS.SLICER_GUI) {
+            this.errorMessage = t('errors.saveSceneFailed');
+            return false;
+        }
+
+        this.isSavingScene = true;
+        try {
+            if (mode === 'overwrite' && this.currentAttachmentId && !this.hasUnsavedChanges && this._lastSavedAttachmentId === this.currentAttachmentId) {
+                this.isSavingScene = false;
+                this.showSaveIndicator(t('files.saved'));
+                return true;
+            }
+            const caseId = this.selectedCaseId;
+            const attachmentId = this.currentAttachmentId;
+            const file = await this._writeSlicerWebScene();
+            if (isBlankSlicerWeb) {
+                const defaultName = (this.currentFileName || name || '')
+                    .replace(/\.[^.]+$/, '');
+                const saveName = await this.promptSaveAsNewName(defaultName);
+                if (!saveName) { this.isSavingScene = false; return false; }
+                this._runBackgroundSave(file, {
+                    caseId,
+                    attachmentId: null,
+                    saveMode: 'saveAsNew',
+                    name: saveName,
+                    onNewAttachment: (attachment) => {
+                        if (!this.currentAttachmentId) {
+                            this.currentAttachmentId = attachment.id;
+                            this.currentFileName = attachment.filenameDownload || attachment.name || saveName;
+                        }
+                    }
+                });
+            } else if (mode === 'overwrite' && this._isMcsFileName(this.currentFileName)) {
+                const mrbName = this.currentFileName.replace(/\.mcs$/i, '.mrb');
+                const choice = await this.promptMcsSave(mrbName);
+                if (!choice) { return false; }
+                this._runBackgroundSave(file, {
+                    caseId,
+                    attachmentId,
+                    saveMode: choice === 'overwrite' ? 'overwrite' : 'saveAsNew',
+                    name: mrbName,
+                    onNewAttachment: (attachment) => {
+                        this.currentAttachmentId = attachment.id;
+                        this.currentFileName = attachment.filenameDownload || attachment.name || mrbName;
+                    },
+                });
+            } else {
+                const saveName = mode === 'overwrite' ? (this.currentFileName || name) : name;
+                this._runBackgroundSave(file, { caseId, attachmentId, saveMode: mode, name: saveName });
+            }
+            return true;
+        } catch (err) {
+            this.errorMessage = this.userFacingError(err, t('errors.saveSceneFailed'));
+            return false;
+        } finally {
+            this.isSavingScene = false;
+        }
+    }
+
+    async saveCurrentSceneAsNew() {
+        const defaultName = this.currentFileName
+            ? this.currentFileName.replace(/\.[^.]+$/, '')
+            : '';
+        const name = await this.promptSaveAsNewName(defaultName);
+        if (name === null) return;
+        return this.saveCurrentScene('saveAsNew', name);
+    }
+
+    promptSaveAsNewName(defaultName = '') {
+        this._saveAsNewName = defaultName;
+        this._saveAsNewResolver = null;
+        const dialog = this.renderRoot?.querySelector('#save-as-new-dialog');
+        dialog?.openDialog();
+        requestAnimationFrame(() => {
+            const input = dialog?.querySelector('#save-as-new-name');
+            if (input) { input.focus(); input.select(); }
+        });
+        return new Promise((resolve) => {
+            this._saveAsNewResolver = resolve;
+        });
+    }
+
+    finishSaveAsNew(confirmed) {
+        let name = confirmed ? (this._saveAsNewName || '').trim() : null;
+        if (name && !name.includes('.')) name = `${name}.mrb`;
+        this.renderRoot?.querySelector('#save-as-new-dialog')?.closeDialog();
+        const resolver = this._saveAsNewResolver;
+        this._saveAsNewResolver = null;
+        if (resolver) resolver(name);
+    }
+
+    _isMcsFileName(fileName) {
+        return typeof fileName === 'string' && fileName.toLowerCase().endsWith('.mcs');
+    }
+
+    promptMcsSave(mrbName) {
+        this._mcsSaveDefaultName = mrbName;
+        this._mcsSaveResolver = null;
+        this.renderRoot?.querySelector('#save-mcs-dialog')?.openDialog();
+        return new Promise((resolve) => {
+            this._mcsSaveResolver = resolve;
+        });
+    }
+
+    finishMcsSave(choice) {
+        this.renderRoot?.querySelector('#save-mcs-dialog')?.closeDialog();
+        const resolver = this._mcsSaveResolver;
+        this._mcsSaveResolver = null;
+        if (resolver) resolver(choice ?? null);
+    }
+
+    showSaveIndicator(message) {
+        this.saveIndicatorMessage = message;
+        if (this.saveIndicatorTimeout) {
+            clearTimeout(this.saveIndicatorTimeout);
+            this.saveIndicatorTimeout = null;
+        }
+        const scheduleHide = () => {
+            if (this.saveIndicatorTimeout) clearTimeout(this.saveIndicatorTimeout);
+            this.saveIndicatorTimeout = setTimeout(() => {
+                this.saveIndicatorMessage = '';
+                if (this.saveIndicatorActivityCleanup) {
+                    this.saveIndicatorActivityCleanup();
+                    this.saveIndicatorActivityCleanup = null;
+                }
+            }, 3000);
+        };
+        if (!this.saveIndicatorActivityCleanup) {
+            const onActivity = () => scheduleHide();
+            const events = ['pointerdown', 'keydown', 'wheel', 'touchstart'];
+            events.forEach((ev) => window.addEventListener(ev, onActivity, true));
+            this.saveIndicatorActivityCleanup = () => {
+                events.forEach((ev) => window.removeEventListener(ev, onActivity, true));
+            };
+        }
+        scheduleHide();
     }
 
     attachIframeActivityTracking() {
@@ -2746,7 +3056,10 @@ export class CasesPage extends LitElement {
             const iframe = this.renderRoot?.querySelector('.viewer-iframe');
             const iframeDoc = iframe?.contentWindow?.document;
             if (!iframeDoc) return;
-            const markDirty = () => { markViewerActivity(); };
+            const markDirty = () => {
+                this.hasUnsavedChanges = true;
+                markViewerActivity();
+            };
             const domEvents = ['pointerdown', 'input', 'change', 'wheel'];
             domEvents.forEach((ev) => iframeDoc.addEventListener(ev, markDirty, true));
             this.iframeActivityCleanup = () => {
@@ -3251,7 +3564,10 @@ export class CasesPage extends LitElement {
         const viewerLabel = viewerDisplayName(this.viewerKind, {
             simplified: this.viewerSimplified
         });
-        const viewerTitle = `${viewerLabel}: ${this.currentFileName || t('common.loading')}`;
+        const viewerTitle = this.currentFileName
+            ? `${viewerLabel}: ${this.currentFileName}`
+            : viewerLabel;
+        const isSlicerWeb = this.viewerKind === VIEWER_KINDS.SLICERWEB;
         return html`
             <div
                 class="iframe-overlay"
@@ -3263,6 +3579,30 @@ export class CasesPage extends LitElement {
                 <div class="iframe-header">
                     <div class="iframe-title" id="viewer-title">${viewerTitle}</div>
                     <div class="iframe-header-actions">
+                        ${this.saveIndicatorMessage ? html`
+                            <span class="save-indicator">${this.saveIndicatorMessage}</span>
+                        ` : ''}
+                        ${this._backgroundSave?.error ? html`
+                            <span class="viewer-error-message">${this._backgroundSave.error}</span>
+                        ` : ''}
+                        ${isSlicerWeb ? html`
+                            <button
+                                class="secondary-button"
+                                type="button"
+                                ?disabled=${this.viewerLoading || this.iframeUrl === 'about:blank' || this.isSavingScene || (!!this.currentAttachmentId && !this.hasUnsavedChanges)}
+                                @click=${() => this.saveCurrentScene('overwrite')}
+                            >
+                                ${this.isSavingScene ? t('common.saving') : t('files.saveScene')}
+                            </button>
+                            <button
+                                class="secondary-button"
+                                type="button"
+                                ?disabled=${this.viewerLoading || this.iframeUrl === 'about:blank' || this.isSavingScene}
+                                @click=${() => this.saveCurrentSceneAsNew()}
+                            >
+                                ${t('files.saveAsNew')}
+                            </button>
+                        ` : ''}
                         <button
                             class="primary-button"
                             type="button"
@@ -3294,6 +3634,53 @@ export class CasesPage extends LitElement {
                     ` : ''}
                 </div>
             </div>
+            <app-dialog
+                id="save-mcs-dialog"
+                title=${t('files.saveMcsTitle')}
+                .lightDismiss=${false}
+            >
+                <p style="margin:0 0 0.75rem">${t('files.saveMcsBody')}</p>
+                <p style="margin:0 0 0.25rem"><strong>${this._mcsSaveDefaultName}</strong></p>
+                <button slot="actions" class="secondary-button" type="button"
+                    @click=${() => this.finishMcsSave(null)}>
+                    ${t('common.cancel')}
+                </button>
+                <button slot="actions" class="secondary-button" type="button"
+                    @click=${() => this.finishMcsSave('saveAsNew')}>
+                    ${t('files.saveMcsPreserve')}
+                </button>
+                <button slot="actions" class="primary-button" type="button"
+                    @click=${() => this.finishMcsSave('overwrite')}>
+                    ${t('files.saveMcsReplace')}
+                </button>
+            </app-dialog>
+            <app-dialog
+                id="save-as-new-dialog"
+                title=${t('files.saveAsNewTitle')}
+                .lightDismiss=${false}
+            >
+                <div class="form-group">
+                    <label class="form-label" for="save-as-new-name">${t('files.saveAsNewLabel')}</label>
+                    <input
+                        id="save-as-new-name"
+                        type="text"
+                        class="form-input"
+                        autocomplete="off"
+                        .value=${this._saveAsNewName}
+                        @input=${(e) => { this._saveAsNewName = e.target.value; }}
+                        @keydown=${(e) => { if (e.key === 'Enter' && this._saveAsNewName.trim()) this.finishSaveAsNew(true); if (e.key === 'Escape') this.finishSaveAsNew(false); }}
+                    />
+                </div>
+                <button slot="actions" class="secondary-button" type="button"
+                    @click=${() => this.finishSaveAsNew(false)}>
+                    ${t('common.cancel')}
+                </button>
+                <button slot="actions" class="primary-button" type="button"
+                    ?disabled=${!this._saveAsNewName.trim()}
+                    @click=${() => this.finishSaveAsNew(true)}>
+                    ${t('common.save')}
+                </button>
+            </app-dialog>
         `;
     }
 

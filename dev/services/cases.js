@@ -355,3 +355,27 @@ export async function uploadCaseAttachment(caseId, file, { signal, onProgress } 
         onProgress,
     });
 }
+
+/**
+ * Save a SlicerWeb scene as a case attachment.
+ * Uploads the file, finds the new attachment record, and deletes the old one for overwrite mode.
+ * Returns { attachment } with the raw Payload attachment object.
+ */
+export async function savePayloadSlicerWebScene(caseId, attachmentId, file, { saveMode = 'overwrite', name, signal, onProgress } = {}) {
+    const uploadFile = name ? new File([file], name, { type: file.type }) : file;
+    await uploadCaseAttachment(caseId, uploadFile, { signal, onProgress });
+
+    const data = await listAttachments(caseId);
+    const sorted = [...(data.attachments || [])].sort((a, b) => {
+        const ta = Date.parse(a.createdAt || '') || 0;
+        const tb = Date.parse(b.createdAt || '') || 0;
+        return tb - ta;
+    });
+    const newAtt = sorted[0] || null;
+
+    if (saveMode === 'overwrite' && attachmentId && newAtt?.id !== attachmentId) {
+        await deleteAttachment(caseId, attachmentId).catch(() => {});
+    }
+
+    return { attachment: newAtt };
+}

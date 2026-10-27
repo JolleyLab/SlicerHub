@@ -42,6 +42,65 @@ function requirePayload(req, res, next) {
 export default function casesRoutes(app) {
     const auth = [authenticateToken, requirePayload];
 
+    // ── Full Slicer session management ─────────────────────────────────────
+    // Must be registered before /api/cases/:id to avoid the static segments
+    // being captured as the id parameter.
+
+    app.get('/api/cases/full-slicer-status', authenticateToken, asyncHandler(async (req, res) => {
+        const seatId = parseOptionalSeatId(req.query?.seatId) || 1;
+        const userId = String(req.user.id);
+        const status = readSlicerGuiBusyStatus(userId, seatId);
+        if (!status.busy) {
+            const loadResult = readLoadResultFile(userId, seatId);
+            return res.json({ ...status, loadResult: loadResult || null });
+        }
+        res.json(status);
+    }));
+
+    app.post('/api/cases/full-slicer-heartbeat', authenticateToken, asyncHandler(async (req, res) => {
+        const sessionToken = String(req.body?.sessionToken || '').trim();
+        if (!sessionToken) {
+            throw new ValidationError(msg('viewer.session_token_missing'), null, 'viewer.session_token_missing');
+        }
+
+        const userId = String(req.user.id);
+        const lease = touchSlicerGuiSessionHeartbeat({
+            userId,
+            sessionToken,
+            seatId: parseOptionalSeatId(req.body?.seatId),
+        });
+        if (!lease) {
+            return res.status(404).json({
+                error: { message: msg('viewer.session_ended') },
+            });
+        }
+
+        res.json({
+            success: true,
+            seatId: lease.metadata?.seatId ?? null,
+            leaseExpiresAt: new Date(lease.leaseExpiresAt).toISOString(),
+            sessionTtlSeconds: getSessionTtlSeconds(SESSION_KINDS.SLICER_GUI),
+        });
+    }));
+
+    app.post('/api/cases/full-slicer-stop', authenticateToken, asyncHandler(async (req, res) => {
+        const sessionToken = String(req.body?.sessionToken || '').trim();
+        if (!sessionToken) {
+            throw new ValidationError(msg('viewer.session_token_missing'), null, 'viewer.session_token_missing');
+        }
+
+        const mode = normalizeViewerReleaseMode(req.body?.mode, { supportsSoft: true });
+        const result = await releaseSlicerGuiSession({
+            userId: String(req.user.id),
+            sessionToken,
+            mode,
+        });
+
+        res.json({ success: true, ...result });
+    }));
+
+    // ── Cases CRUD ─────────────────────────────────────────────────────────
+
     /**
      * List cases. Admins see all; regular users see their own + cases they collaborate on.
      */
@@ -438,58 +497,4 @@ export default function casesRoutes(app) {
         });
     }));
 
-    // ── Full Slicer session management ─────────────────────────────────────
-
-    app.get('/api/cases/full-slicer-status', authenticateToken, asyncHandler(async (req, res) => {
-        const seatId = parseOptionalSeatId(req.query?.seatId) || 1;
-        const userId = String(req.user.id);
-        const status = readSlicerGuiBusyStatus(userId, seatId);
-        if (!status.busy) {
-            const loadResult = readLoadResultFile(userId, seatId);
-            return res.json({ ...status, loadResult: loadResult || null });
-        }
-        res.json(status);
-    }));
-
-    app.post('/api/cases/full-slicer-heartbeat', authenticateToken, asyncHandler(async (req, res) => {
-        const sessionToken = String(req.body?.sessionToken || '').trim();
-        if (!sessionToken) {
-            throw new ValidationError(msg('viewer.session_token_missing'), null, 'viewer.session_token_missing');
-        }
-
-        const userId = String(req.user.id);
-        const lease = touchSlicerGuiSessionHeartbeat({
-            userId,
-            sessionToken,
-            seatId: parseOptionalSeatId(req.body?.seatId),
-        });
-        if (!lease) {
-            return res.status(404).json({
-                error: { message: msg('viewer.session_ended') },
-            });
-        }
-
-        res.json({
-            success: true,
-            seatId: lease.metadata?.seatId ?? null,
-            leaseExpiresAt: new Date(lease.leaseExpiresAt).toISOString(),
-            sessionTtlSeconds: getSessionTtlSeconds(SESSION_KINDS.SLICER_GUI),
-        });
-    }));
-
-    app.post('/api/cases/full-slicer-stop', authenticateToken, asyncHandler(async (req, res) => {
-        const sessionToken = String(req.body?.sessionToken || '').trim();
-        if (!sessionToken) {
-            throw new ValidationError(msg('viewer.session_token_missing'), null, 'viewer.session_token_missing');
-        }
-
-        const mode = normalizeViewerReleaseMode(req.body?.mode, { supportsSoft: true });
-        const result = await releaseSlicerGuiSession({
-            userId: String(req.user.id),
-            sessionToken,
-            mode,
-        });
-
-        res.json({ success: true, ...result });
-    }));
 }
