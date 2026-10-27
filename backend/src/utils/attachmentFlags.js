@@ -5,6 +5,7 @@
 
 const SLICER_OPEN_EXTENSIONS = Object.freeze([
     '.mrb', '.mrml',
+    '.mcs', '.mxp',
     '.nrrd', '.nhdr',
     '.nii', '.nii.gz',
     '.mgz', '.mha',

@@ -35,6 +35,13 @@ function sessionEndpoints() {
             apiUrl: ''
         });
     }
+    if (sessionScope === VIEWER_SESSION_SCOPES.CASES) {
+        return getViewerSessionEndpoints({
+            kind: VIEWER_KINDS.SLICER_GUI,
+            sessionScope: VIEWER_SESSION_SCOPES.CASES,
+            apiUrl: ''
+        });
+    }
     if (sessionScope === VIEWER_SESSION_SCOPES.DIRECTUS) {
         return getViewerSessionEndpoints({
             kind: VIEWER_KINDS.SLICER_GUI,
@@ -221,7 +228,7 @@ async function reconnectSession() {
 }
 
 async function ensureViewerSession() {
-    if (shareToken || sessionScope === VIEWER_SESSION_SCOPES.DIRECTUS) {
+    if (shareToken || sessionScope === VIEWER_SESSION_SCOPES.CASES || sessionScope === VIEWER_SESSION_SCOPES.DIRECTUS) {
         if (sessionToken && await heartbeatSession(sessionToken)) {
             return true;
         }

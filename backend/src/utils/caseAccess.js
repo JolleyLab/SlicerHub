@@ -5,7 +5,7 @@
  *
  * A user's effective role on a case:
  *   1. Site-level admin (req.user.role === 'admin') → 'admin'
- *   2. Case owner (owner_id === req.user.id)        → 'admin'
+ *   2. Case owner (owner_id === requester Keycloak sub) → 'admin'
  *   3. Keycloak group membership                    → group role
  *   4. No match                                     → null (access denied)
  */
@@ -13,6 +13,7 @@
 import config from '../config/index.js';
 import { ForbiddenError } from './errors.js';
 import { getKeycloakSubForUser, getUserCaseRole, getUserCaseRoleMap } from '../services/keycloakAdmin.js';
+
 
 const ROLE_RANK = { admin: 3, collaborator: 2, read_only: 1 };
 
@@ -26,7 +27,8 @@ const ROLE_RANK = { admin: 3, collaborator: 2, read_only: 1 };
  */
 export async function getCaseRole(caseDoc, req) {
     if (req.user.role === 'admin') return 'admin';
-    if (caseDoc.owner_id === req.user.id) return 'admin';
+    const requesterSub = getKeycloakSubForUser(req.user.id);
+    if (requesterSub && caseDoc.owner_id === requesterSub) return 'admin';
 
     if (config.auth.provider === 'keycloak') {
         const keycloakSub = getKeycloakSubForUser(req.user.id);

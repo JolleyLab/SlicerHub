@@ -2,7 +2,8 @@
 FROM node:20
 
 # Install git + SSH client for SlicerWeb deploy-key updates
-RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client \
+RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client python3 python3-pip \
+    && pip3 install --break-system-packages h5py \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory inside the container

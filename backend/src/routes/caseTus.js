@@ -18,6 +18,7 @@ import path from 'path';
 import { Server as TusServer } from '@tus/server';
 import { FileStore } from '@tus/file-store';
 import { authenticateToken } from '../middleware/authMiddleware.js';
+import { getKeycloakSubForUser } from '../services/keycloakAdmin.js';
 
 // FileStore writes files flat under this directory as {uploadId}.
 // The storage key is caseFiles/{uploadId} — matches CASE_KEY_PREFIX in contract.js.
@@ -58,12 +59,16 @@ export function registerCaseTusRoute(app, payload) {
         async onUploadFinish(req, upload) {
             const expressReq = req.runtime?.node?.req ?? req;
             const caseId = expressReq.params?.caseId;
-            const userId = expressReq.user?.id;
+            const userId = getKeycloakSubForUser(expressReq.user?.id) ?? null;
             const meta   = upload.metadata ?? {};
 
             // Metadata values are already base64-decoded by @tus/utils — no extra decode needed.
             const originalFilename = meta.filename || upload.id;
             const mimeType = meta.filetype || 'application/octet-stream';
+
+            if (!userId) {
+                throw new Error('[TUS] uploader has no Keycloak identity — cannot create attachment record');
+            }
 
             // FileStore writes to CASE_FILES_DIR/{uploadId} — key is caseFiles/{uploadId}
             const storageKey = `caseFiles/${upload.id}`;

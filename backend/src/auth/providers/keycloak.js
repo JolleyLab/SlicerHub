@@ -99,6 +99,8 @@ async function resolveLocalUser(claims) {
         if (user.is_active === 0 || user.is_active === false) return null;
         User.syncRole(user.id, role);
         User.touchLastLogin(user.id);
+        // KC users manage their password via Keycloak — never force a local password change.
+        if (user.mustChangePassword) User.setMustChangePassword(user.id, false);
         return withName(User.findById(user.id));
     }
 
@@ -108,6 +110,8 @@ async function resolveLocalUser(claims) {
         linkIdentity(emailOwner.id, PROVIDER, externalId);
         User.syncRole(emailOwner.id, role);
         User.touchLastLogin(emailOwner.id);
+        // KC users manage their password via Keycloak — never force a local password change.
+        if (emailOwner.mustChangePassword) User.setMustChangePassword(emailOwner.id, false);
         return withName(User.findById(emailOwner.id));
     }
 

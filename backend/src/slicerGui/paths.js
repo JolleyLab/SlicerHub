@@ -209,10 +209,11 @@ export function readLoadResultFile(userId, seatId = 1) {
     try {
         const raw = fs.readFileSync(loadResultFilePath(userId, seatId), 'utf8');
         const parsed = JSON.parse(raw);
-        const fileId = Number(parsed?.fileId);
+        const fileId = parsed?.fileId;
+        const validFileId = fileId != null && fileId !== '' && fileId !== 0 && fileId !== false;
         return {
             success: parsed?.success === true,
-            fileId: Number.isInteger(fileId) && fileId > 0 ? fileId : null,
+            fileId: validFileId ? fileId : null,
             path: parsed?.path || null,
             error: parsed?.error || null,
             updatedAt: parsed?.updatedAt || null
@@ -223,12 +224,16 @@ export function readLoadResultFile(userId, seatId = 1) {
 }
 
 export function readLastLoadedFile(userId, seatId = 1) {
+    function isValidFileId(v) {
+        return v != null && v !== '' && v !== 0 && v !== false;
+    }
+
     let fromMarker = null;
     try {
         const raw = fs.readFileSync(lastLoadedFilePath(userId, seatId), 'utf8');
         const parsed = JSON.parse(raw);
-        const fileId = Number(parsed?.fileId);
-        if (Number.isInteger(fileId) && fileId > 0) {
+        const fileId = parsed?.fileId;
+        if (isValidFileId(fileId)) {
             fromMarker = {
                 fileId,
                 fileName: parsed.fileName || null,
@@ -246,8 +251,8 @@ export function readLastLoadedFile(userId, seatId = 1) {
     try {
         const raw = fs.readFileSync(sceneLoadedFilePath(userId, seatId), 'utf8');
         const parsed = JSON.parse(raw);
-        const fileId = Number(parsed?.fileId);
-        if (Number.isInteger(fileId) && fileId > 0 && parsed?.sceneLoaded === true) {
+        const fileId = parsed?.fileId;
+        if (isValidFileId(fileId) && parsed?.sceneLoaded === true) {
             fromScene = {
                 fileId,
                 fileName: parsed.fileName || null,
@@ -265,7 +270,7 @@ export function readLastLoadedFile(userId, seatId = 1) {
         if (
             !fromMarker.sceneLoaded
             && fromScene
-            && Number(fromScene.fileId) === fromMarker.fileId
+            && String(fromScene.fileId) === String(fromMarker.fileId)
         ) {
             fromMarker.sceneLoaded = true;
             if (!fromMarker.fileName && fromScene.fileName) {
@@ -277,7 +282,7 @@ export function readLastLoadedFile(userId, seatId = 1) {
         if (
             !fromMarker.sceneLoaded
             && loadResult?.success
-            && Number(loadResult.fileId) === fromMarker.fileId
+            && String(loadResult.fileId) === String(fromMarker.fileId)
         ) {
             fromMarker.sceneLoaded = true;
         }
@@ -311,7 +316,7 @@ export function writeLastLoadedFile(userId, {
 } = {}) {
     ensureSlicerGuiUserDir(userId, seatId);
     const payload = {
-        fileId: Number(fileId),
+        fileId,
         fileName,
         useSimplifiedViewer: useSimplifiedViewer === true,
         sceneLoaded: sceneLoaded === true,

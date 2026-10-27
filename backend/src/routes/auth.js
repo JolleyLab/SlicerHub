@@ -26,6 +26,7 @@ import {
     clearProviderTokens
 } from '../auth/identityStore.js';
 import { buildIdentityPayload } from '../auth/identityPayload.js';
+import { getKeycloakSubForUser } from '../services/keycloakAdmin.js';
 import {
     attachStoredDirectusTokensToSession,
     getDirectusAccessTokenForAppUser
@@ -413,7 +414,8 @@ export default function authRoutes(app) {
             identity: buildIdentityPayload(user.id),
             isOrgAdmin,
             isRegistrationReviewer,
-            directusUserId: directusLink?.external_id || null
+            directusUserId: directusLink?.external_id || null,
+            keycloakSub: getKeycloakSubForUser(user.id) || null,
         });
     }));
 

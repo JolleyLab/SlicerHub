@@ -22,6 +22,7 @@ import './auth/login-form.js';
 import './auth/registration-request-form.js';
 import './auth/complete-registration-form.js';
 import './auth/invite-accept-form.js';
+import './kc-invite-accept-form.js';
 import './auth/change-password-form.js';
 import './pages/admin-registrations-page.js';
 import './pages/admin-task-groups-page.js';
@@ -30,7 +31,7 @@ import './components/status-card.js';
 import './MyProjects/myProjectsEmptyState.js';
 import './MyProjects/projectReviewPage.js';
 import './pages/user-settings-page.js';
-import './pages/directus-cases-page.js';
+import './pages/cases-page.js';
 import './pages/home-page.js';
 import { buildSlicerGuiLoaderUrl, VIEWER_KINDS } from './utils/viewerLaunch.js';
 import {
@@ -77,12 +78,14 @@ export class SlicerApp extends LitElement {
       showLogin: { type: Boolean },
       currentView: { type: String },
       selectedProjectId: { type: Number },
-      shareToken: { type: String },
-      inviteToken: { type: String },
+      shareToken:    { type: String },
+      inviteToken:   { type: String },
+      kcInviteToken: { type: String },
       registerToken: { type: String },
       isOrgAdmin: { type: Boolean },
       isRegistrationReviewer: { type: Boolean },
-      directusUserId: { type: String },
+      directusUserId:         { type: String },
+      keycloakSub:            { type: String },
       shareLoading: { type: Boolean },
       shareError: { type: String },
       shareErrorStatus: { type: Number },
@@ -110,13 +113,15 @@ export class SlicerApp extends LitElement {
     this.isOrgAdmin = false;
     this.isRegistrationReviewer = false;
     this.directusUserId = null;
+    this.keycloakSub = null;
     this.user = null;
     this.showLogin = true; // Show login by default
     this.currentView = DEFAULT_APP_VIEW;
     this.selectedProjectId = null;
     this.inactivityTimeout = null;
-    this.shareToken = new URLSearchParams(window.location.search).get('share') || '';
-    this.inviteToken = new URLSearchParams(window.location.search).get('invite') || '';
+    this.shareToken    = new URLSearchParams(window.location.search).get('share')     || '';
+    this.inviteToken   = new URLSearchParams(window.location.search).get('invite')   || '';
+    this.kcInviteToken = new URLSearchParams(window.location.search).get('kc-invite') || '';
     this.registerToken = new URLSearchParams(window.location.search).get('register') || '';
     this.shareLoading = false;
     this.shareError = '';
@@ -147,14 +152,14 @@ export class SlicerApp extends LitElement {
     this._directusKeepaliveTimer = null;
     this._onPopState = () => this.handlePopState();
 
-    if (!this.shareToken && !this.inviteToken) {
+    if (!this.shareToken && !this.inviteToken && !this.kcInviteToken) {
       this.initializeAppView();
       this.checkExistingSession();
     }
 
     window.addEventListener('popstate', this._onPopState);
     this._onDirectusSessionExpired = () => {
-      if (!this._directusReconnectOpen && this.isAuthenticated) {
+      if (!this._directusReconnectOpen && this.isAuthenticated && this.directusUserId) {
         this._directusReconnectOpen = true;
         this._directusReconnectError = '';
         this.requestUpdate();
@@ -330,6 +335,7 @@ export class SlicerApp extends LitElement {
         this.isOrgAdmin = data.isOrgAdmin === true;
         this.isRegistrationReviewer = data.isRegistrationReviewer === true;
         this.directusUserId = data.directusUserId || null;
+        this.keycloakSub = data.keycloakSub || null;
         this.applyIdentityGate(data.identity);
         await hydrateUserPreferencesFromUser(this.user);
         this.startInactivityTimer();
@@ -359,6 +365,7 @@ export class SlicerApp extends LitElement {
       if (typeof data.isOrgAdmin === 'boolean') this.isOrgAdmin = data.isOrgAdmin;
       if (typeof data.isRegistrationReviewer === 'boolean') this.isRegistrationReviewer = data.isRegistrationReviewer;
       if (data.directusUserId) this.directusUserId = data.directusUserId;
+      if (data.keycloakSub) this.keycloakSub = data.keycloakSub;
     } catch (_) {
       // keep the login payload; the profile fills in on the next load
     }
@@ -425,6 +432,20 @@ export class SlicerApp extends LitElement {
     }
   }
 
+  handleKcInviteAccepted(e) {
+    const { caseId } = e.detail || {};
+    this.kcInviteToken = '';
+    const url = new URL(window.location.href);
+    url.searchParams.delete('kc-invite');
+    if (caseId) {
+      url.searchParams.set('view', 'cases');
+      url.searchParams.set('case', String(caseId));
+    }
+    history.replaceState(null, '', `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams}` : ''}`);
+    // Account is now active — go to login so the user can sign in
+    this.initializeAppView();
+  }
+
   handleInviteAccepted(e) {
     const { user, caseId } = e.detail || {};
     this.inviteToken = '';
@@ -470,7 +491,7 @@ export class SlicerApp extends LitElement {
     url.searchParams.set('case', String(caseId));
     history.pushState({ caseId: String(caseId) }, '', `${url.pathname}?${url.searchParams}`);
     this.updateComplete.then(() => {
-      const page = this.renderRoot?.querySelector('directus-cases-page');
+      const page = this.renderRoot?.querySelector('cases-page');
       if (!page) return;
       if (typeof page.openCase === 'function') {
         page.openCase(String(caseId));
@@ -566,7 +587,7 @@ export class SlicerApp extends LitElement {
         url.searchParams.set('case', caseId);
         history.pushState({ caseId }, '', `${url.pathname}?${url.searchParams}`);
         this.updateComplete.then(() => {
-          const page = this.renderRoot?.querySelector('directus-cases-page');
+          const page = this.renderRoot?.querySelector('cases-page');
           if (page && typeof page.openCase === 'function') {
             page.openCase(caseId);
           }
@@ -1105,6 +1126,17 @@ export class SlicerApp extends LitElement {
       `;
     }
 
+    if (this.kcInviteToken) {
+      return html`
+        <div class="auth-container">
+          <kc-invite-accept-form
+            .token=${this.kcInviteToken}
+            @kc-invite-accepted=${this.handleKcInviteAccepted}
+          ></kc-invite-accept-form>
+        </div>
+      `;
+    }
+
     // Show auth forms if not authenticated
     if (!this.isAuthenticated) {
       return html`
@@ -1215,16 +1247,17 @@ export class SlicerApp extends LitElement {
         ></admin-task-groups-page>
       ` : ''}
       ${this.currentView === APP_VIEWS.CASES ? html`
-        <directus-cases-page
+        <cases-page
           .username=${userDisplayName(this.user)}
           .avatarUrl=${this.user?.avatarUrl || ''}
           .currentUserId=${this.user?.id || null}
+          .currentKeycloakSub=${this.keycloakSub || null}
           .isOrgAdmin=${this.isOrgAdmin}
           .isRegistrationReviewer=${this.isRegistrationReviewer}
           @menu-selection-change=${this.handleProjectsMenuSelection}
           @settings-request=${this.openSettingsFlow}
           @logout-request=${this.handleLogout}
-        ></directus-cases-page>
+        ></cases-page>
       ` : ''}
 
       <upload-tray></upload-tray>

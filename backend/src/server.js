@@ -45,6 +45,37 @@ import casesRoutes from "./routes/cases.js";
 import caseCollaboratorsRoutes from "./routes/caseCollaborators.js";
 import { registerCaseTusRoute } from "./routes/caseTus.js";
 
+async function expireStaleInvites() {
+    const payload = getPayloadClient();
+    if (!payload) return;
+    try {
+        const stale = await payload.find({
+            collection: 'case-invites',
+            where: {
+                status:     { equals: 'pending_signup' },
+                expires_at: { less_than: new Date().toISOString() },
+            },
+            limit: 200,
+            depth: 0,
+        });
+        for (const inv of stale.docs) {
+            await payload.update({ collection: 'case-invites', id: inv.id, data: { status: 'expired' } });
+        }
+        if (stale.docs.length) {
+            console.log(`Expired ${stale.docs.length} stale case invite(s)`);
+        }
+    } catch (err) {
+        console.warn('Case invite expiry sweep failed:', err.message);
+    }
+}
+
+function startInviteExpiryWatchdog() {
+    const INTERVAL_MS = 60 * 60 * 1000; // hourly
+    expireStaleInvites();
+    setInterval(expireStaleInvites, INTERVAL_MS);
+    console.log('Case invite expiry watchdog started (1 h interval)');
+}
+
 function warnIfWeakDemoSecrets() {
     if (config.isProduction) return;
 
@@ -118,8 +149,10 @@ projectRoutes(app);
 projectGpuRoutes(app);
 
 // Payload Cases (Phase 2) — /api/cases
-casesRoutes(app);
+// caseCollaboratorsRoutes must come first: its /api/cases/lookup-user route
+// would otherwise be swallowed by the /api/cases/:id handler in casesRoutes.
 caseCollaboratorsRoutes(app);
+casesRoutes(app);
 
 // Directus PoC (headless case list behind app auth)
 directusRoutes(app);
@@ -171,6 +204,7 @@ app.listen(config.server.port, config.server.host, async () => {
     startBillingWatchdog();
     startPolicySyncScheduler();
     startViewerSessionWatchdog();
+    startInviteExpiryWatchdog();
     startStablePoller();
     startLatestPoller();
     try {

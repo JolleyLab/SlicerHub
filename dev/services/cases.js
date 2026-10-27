@@ -1,5 +1,94 @@
 import { API_URL } from '../config.js';
 import { tusUpload } from './tusUpload.js';
+import { t } from '../i18n/index.js';
+
+/**
+ * Map API errors to short user-facing copy.
+ */
+export function friendlyCasesError(raw, fallback = 'Something went wrong. Please try again.', status = 0, code = null) {
+    const text = String(raw || '').trim();
+    const lower = text.toLowerCase();
+
+    if (
+        /sign in once with your email and password|account connection expired|connect to your account/i.test(lower)
+    ) {
+        return text;
+    }
+
+    if (code === 'UPLOAD_NETWORK_ERROR') {
+        return t('errors.serverUnreachable');
+    }
+
+    if (
+        code === 'CASE_COLLABORATORS_UPDATE_FAILED'
+        || code === 'CASE_OWNER_JUNCTION_MISSING'
+        || code === 'CASE_COLLABORATOR_JUNCTION_NOT_FOUND'
+    ) {
+        return t('errors.peopleSaveFailed');
+    }
+
+    if (
+        /only case admins can|collaborators can invite|pending invite|already on this case|already has a pending/i.test(lower)
+        && text.length <= 160
+        && !/directus|collection|case_directus|grant |token|probe|INTERNAL_SERVER/i.test(lower)
+    ) {
+        return text;
+    }
+
+    if (status === 401 || /unauthorized|session expired|jwt expired/i.test(lower)) {
+        return t('errors.sessionExpired');
+    }
+    if (
+        status === 403
+        || /permission|forbidden|access fields|access collection|not allowed to|denied|directus:/i.test(lower)
+    ) {
+        return t('errors.noPermission');
+    }
+    if (/no (directus )?user found with that email/i.test(lower)) {
+        return t('errors.noAccountWithEmail');
+    }
+    if (status === 404 || /\bnot found\b/i.test(lower)) {
+        return t('errors.itemNotFound');
+    }
+    if (status === 413 || /file too large|payload too large|entity too large/i.test(lower)) {
+        return t('errors.fileTooLarge');
+    }
+    if (/network|failed to fetch|load failed|econnrefused|timed out|timeout/i.test(lower)) {
+        return t('errors.serverUnreachable');
+    }
+    if (/slicer-gui|container|docker|image built|vnc|seat/i.test(lower)) {
+        return t('errors.viewerStartFailed');
+    }
+    if (/sessionToken|session not found|session.*expired|heartbeat/i.test(lower)) {
+        return t('errors.viewerSessionEnded');
+    }
+    if (/multipart|file field is required/i.test(lower)) {
+        return t('errors.chooseFile');
+    }
+    if (/title.*(required|empty)|case title is required/i.test(lower)) {
+        return t('errors.titleRequired');
+    }
+    if (/browser preview/i.test(lower)) {
+        return t('errors.browserPreviewUnavailable');
+    }
+    if (/cannot be opened in full slicer|file type cannot/i.test(lower)) {
+        return t('errors.fileTypeNotSupported');
+    }
+    if (/couldn't update people|could not update people/i.test(lower)) {
+        return t('errors.peopleSaveFailed');
+    }
+    if (/directus|collection |queried in|invalid payload|unknown field|filter\[|case_directus|INTERNAL_SERVER/i.test(lower)) {
+        return fallback;
+    }
+
+    if (text && text.length <= 140 && !/[`{}[\]<>]|_\w+_|\.\w+\./.test(text)) {
+        return text;
+    }
+
+    return fallback;
+}
+
+export { friendlyCasesError as friendlyError };
 
 async function parseResponse(res) {
     const data = await res.json().catch(() => ({}));
@@ -167,6 +256,91 @@ export async function removeCollaborator(caseId, keycloakUserId) {
     if (res.status === 204) return { ok: true };
     return parseResponse(res);
 }
+
+/**
+ * List pending invites for a case.
+ * Returns { invites: [{ id, kind, status, inviteeEmail, proposedRole }] }
+ */
+export async function listCaseInvites(caseId) {
+    const res = await fetch(
+        `${API_URL}/api/cases/${encodeURIComponent(caseId)}/invites`,
+        { credentials: 'include', cache: 'no-store' }
+    );
+    return parseResponse(res);
+}
+
+/**
+ * Approve a pending invite (admin only).
+ * Returns { status, emailSent?, inviteUrl?, collaborator? }
+ */
+export async function approveCaseInvite(caseId, inviteId) {
+    const res = await fetch(
+        `${API_URL}/api/cases/${encodeURIComponent(caseId)}/invites/${encodeURIComponent(inviteId)}/approve`,
+        { method: 'POST', credentials: 'include' }
+    );
+    return parseResponse(res);
+}
+
+/**
+ * Reject a pending invite (admin only).
+ */
+export async function rejectCaseInvite(caseId, inviteId) {
+    const res = await fetch(
+        `${API_URL}/api/cases/${encodeURIComponent(caseId)}/invites/${encodeURIComponent(inviteId)}/reject`,
+        { method: 'POST', credentials: 'include' }
+    );
+    return parseResponse(res);
+}
+
+/**
+ * Preview a Keycloak case signup invite by token (no auth required).
+ * Returns { email, caseTitle, caseId, role, expiresAt }
+ */
+export async function previewKcInvite(token) {
+    const res = await fetch(
+        `${API_URL}/api/cases/invites/preview?token=${encodeURIComponent(token)}`
+    );
+    return parseResponse(res);
+}
+
+/**
+ * Redeem a Keycloak case signup invite: set name + password, enable account.
+ * Returns { status: 'accepted', email, caseId }
+ */
+export async function redeemKcInvite(token, { firstName, lastName, password } = {}) {
+    const res = await fetch(`${API_URL}/api/cases/invites/redeem`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, firstName, lastName, password }),
+    });
+    return parseResponse(res);
+}
+
+// ── Comments ───────────────────────────────────────────────────────────────
+
+export async function listComments(caseId) {
+    const res = await fetch(
+        `${API_URL}/api/cases/${encodeURIComponent(caseId)}/comments`,
+        { credentials: 'include', cache: 'no-store' }
+    );
+    return parseResponse(res);
+}
+
+export async function createComment(caseId, text) {
+    const res = await fetch(
+        `${API_URL}/api/cases/${encodeURIComponent(caseId)}/comments`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ text }),
+        }
+    );
+    return parseResponse(res);
+}
+
+export { approveCaseInvite as approveInvite, rejectCaseInvite as rejectInvite };
+export { listInvitesAwaitingMyApproval, listRecentActivity } from './directus.js';
 
 export async function uploadCaseAttachment(caseId, file, { signal, onProgress } = {}) {
     const endpoint = `${API_URL}/api/cases/${encodeURIComponent(caseId)}/files/tus`;

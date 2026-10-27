@@ -1,47 +1,24 @@
-import { LitElement, html } from 'lit-element';
-import { casesPageStyles } from './directus-cases-page.styles.js';
-import { buttonStyles } from '../styles/buttons.js';
-import { formStyles } from '../styles/forms.js';
-import { utilStyles } from '../styles/utils.js';
+import { LitElement, html, css } from 'lit-element';
 import { t } from '../i18n/index.js';
 import '../components/page-layout-template.js';
 import '../components/page-content-message.js';
-import '../components/app-dialog.js';
 import '../components/file-list-row.js';
 import '../components/comments-panel.js';
-import '../components/audit-log.js';
+import { friendlyCasesError } from '../services/cases.js';
+import { API_URL } from '../config.js';
+import { parseNodeIdsRepr } from '../services/slicerBridgeUtils.js';
 import {
-    listCases,
-    createCase,
-    updateCase,
-    postComment,
-    lookupUserByEmail,
-    updateCollaborators,
-    listInvites,
-    inviteUser,
-    approveInvite,
-    rejectInvite,
-    fetchCaseActivity,
-    friendlyError,
+    listCases, createCase, updateCase, listAttachments, deleteAttachment,
+    uploadCaseAttachment, openPayloadAttachmentFullSlicer, fetchPayloadAttachmentContent,
+    listCollaborators, inviteCollaborator, updateCollaborators, lookupCaseUser,
+    listComments, createComment,
+    listCaseInvites, approveCaseInvite, rejectCaseInvite,
 } from '../services/cases.js';
-import {
-    openAttachmentInViewer,
-    fetchAttachmentContent,
-    checkAttachmentDownload,
-    getAttachmentDownloadUrl,
-    deleteAttachment,
-    saveAttachmentScene,
-    saveSlicerWebScene,
-} from '../services/files.js';
-import { invalidateNotifications } from '../services/notifications.js';
 import '../components/people-dialog.js';
-import '../components/app-dialog.js';
 import '../components/list-filter-tools.js';
 import '../components/attachment-open-menu.js';
 import { uploadManager } from '../services/uploadManager.js';
-import { saveWithDirectusReconnect } from '../services/directusRetry.js';
 import { formatBytes } from '../utils/formatBytes.js';
-import { getCaseRole, canManageCollaborators, canInvite, canEditCase, isAttachmentOwner } from '../utils/casePermissions.js';
 import { deepActiveElement } from '../utils/focus.js';
 import {
     VIEWER_KINDS,
@@ -59,19 +36,12 @@ import { resolveSimplifiedViewerChoice } from '../utils/localSlicerViewerOptions
 import { isInviteEmailEnabled, isSlicerWebDevModeEnabled, loadAppFeatures } from '../services/features.js';
 import { sendViewerHeartbeat } from '../utils/viewerHeartbeat.js';
 import { stopViewerSession } from '../utils/viewerSessionLifecycle.js';
-import { classifySlicerLoadError } from '../services/slicerErrors.js';
-import { parseNodeIdsRepr } from '../services/slicerBridgeUtils.js';
 import {
     installViewerActivityListeners,
     markViewerActivity,
     resetViewerActivity
 } from '../utils/viewerActivity.js';
-
-const CASE_INVITE_ROLE_OPTIONS = Object.freeze([
-    Object.freeze({ value: '', label: t('roles.selectRole'), disabled: true }),
-    Object.freeze({ value: 'collaborator', label: t('roles.collaborator') }),
-    Object.freeze({ value: 'read_only', label: t('roles.readOnly') })
-]);
+import { classifySlicerLoadError } from '../services/slicerErrors.js';
 
 const LIST_SORT_OPTIONS = Object.freeze([
     Object.freeze({
@@ -130,15 +100,973 @@ function writeCaseCommentSeenMap(map) {
 /**
  * Cases UI: case cards landing, detail with attachments + comments + people.
  */
-export class DirectusCasesPage extends LitElement {
+export class CasesPage extends LitElement {
     static get styles() {
-        return [buttonStyles, formStyles, utilStyles, casesPageStyles];
+        return css`
+            :host {
+                display: block;
+                width: 100%;
+                min-width: 0;
+                box-sizing: border-box;
+            }
+
+            /* â”€â”€â”€ Base â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+            .status-note {
+                color: var(--color-text-secondary);
+                font-size: 0.9rem;
+                padding: 8px 0;
+            }
+
+            /* â”€â”€â”€ Landing: page header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+            .page-header-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 16px;
+                margin-bottom: 20px;
+                padding-bottom: 16px;
+                border-bottom: 1px solid var(--color-border);
+            }
+
+            .page-header-actions {
+                display: inline-flex;
+                align-items: center;
+                gap: 10px;
+                flex-shrink: 0;
+            }
+
+            .page-heading {
+                margin: 0;
+                font-size: 1.15rem;
+                font-weight: 650;
+                color: var(--color-text-primary);
+                letter-spacing: -0.01em;
+            }
+
+            .page-header-row .primary-button::before {
+                content: '+';
+                margin-right: 5px;
+                font-weight: 300;
+                font-size: 1.15em;
+                line-height: 1;
+            }
+
+            .page-header-row .primary-button.is-cancel::before {
+                content: none;
+            }
+
+            .cases-empty-filter {
+                margin: 0;
+                color: var(--color-text-secondary);
+                font-size: 0.9rem;
+            }
+
+            /* â”€â”€â”€ Landing: case grid â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+            .case-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+                gap: 10px;
+                width: 100%;
+                min-width: 0;
+            }
+
+            .case-card {
+                position: relative;
+                border: 1px solid var(--color-border);
+                border-left: 3px solid var(--color-primary);
+                border-radius: 8px;
+                background: var(--color-surface, var(--color-background));
+                padding: 14px 16px;
+                display: flex;
+                flex-direction: column;
+                gap: 5px;
+                cursor: pointer;
+                transition: box-shadow 0.14s ease, transform 0.14s ease, border-color 0.14s ease;
+                text-align: left;
+                font: inherit;
+                color: inherit;
+                width: 100%;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+                appearance: none;
+                -webkit-appearance: none;
+            }
+
+            .case-card.is-archived {
+                border-left-color: var(--color-text-secondary);
+                opacity: 0.7;
+            }
+
+            .case-card:hover {
+                transform: translateY(-1px);
+                box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+                border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+                border-left-color: var(--color-primary);
+            }
+
+            .case-card.is-archived:hover {
+                border-left-color: var(--color-text-secondary);
+                border-color: var(--color-border);
+            }
+
+            .case-card:focus-visible {
+                outline: 2px solid var(--color-primary);
+                outline-offset: 2px;
+                box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary) 18%, transparent);
+            }
+
+            .case-card-title-row {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 10px;
+            }
+
+            .case-card-title {
+                font-size: 0.925rem;
+                font-weight: 600;
+                color: var(--color-text-primary);
+                line-height: 1.3;
+                min-width: 0;
+            }
+
+            .case-card-new-badge {
+                flex-shrink: 0;
+                display: inline-flex;
+                align-items: center;
+                font-size: 0.68rem;
+                font-weight: 700;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+                padding: 2px 7px;
+                border-radius: 4px;
+                border: 1px solid color-mix(in srgb, var(--color-secondary) 45%, var(--color-border));
+                background: color-mix(in srgb, var(--color-secondary) 16%, transparent);
+                color: var(--color-primary);
+                line-height: 1.3;
+            }
+
+            :host-context([data-theme='dark']) .case-card-new-badge {
+                border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+                background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+                color: var(--color-text-primary);
+            }
+
+            .case-card-desc {
+                font-size: 0.85rem;
+                color: var(--color-text-secondary);
+                line-height: 1.45;
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+                margin: 0;
+            }
+
+            .case-card-meta-row {
+                display: flex;
+                align-items: center;
+                gap: 0;
+                margin-top: 6px;
+                flex-wrap: wrap;
+            }
+
+            .case-card-meta-item {
+                font-size: 0.78rem;
+                color: var(--color-text-secondary);
+            }
+
+            .case-card-meta-item + .case-card-meta-item::before {
+                content: 'Â·';
+                margin: 0 5px;
+                opacity: 0.45;
+            }
+
+            /* â”€â”€â”€ Status chip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+            .status-chip {
+                display: inline-flex;
+                align-items: center;
+                font-size: 0.7rem;
+                font-weight: 650;
+                letter-spacing: 0.05em;
+                text-transform: uppercase;
+                padding: 2px 7px;
+                border-radius: 4px;
+                border: 1px solid var(--color-border);
+                background: color-mix(in srgb, var(--color-border) 18%, transparent);
+                color: var(--color-text-secondary);
+            }
+
+            /* â”€â”€â”€ Detail: layout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+            .case-detail {
+                display: flex;
+                flex-direction: column;
+                gap: 18px;
+                width: 100%;
+                min-width: 0;
+                max-width: 100%;
+                box-sizing: border-box;
+            }
+
+            .case-detail-grid {
+                display: grid;
+                grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+                gap: 16px;
+                align-items: stretch;
+                width: 100%;
+                min-width: 0;
+                /* Shared pane height: both panels fill and scroll internally. */
+                height: min(560px, 60vh);
+                min-height: 380px;
+            }
+
+            .case-detail-grid .files-panel {
+                order: 1;
+                min-width: 0;
+                min-height: 0;
+                height: 100%;
+                max-height: 100%;
+            }
+
+            .case-detail-grid comments-panel {
+                --comments-panel-height: 100%;
+                --comments-panel-max-height: 100%;
+                min-height: 0;
+                height: 100%;
+                order: 2;
+                min-width: 0;
+            }
+
+            /* Stacked when content column is narrow (tablet / DevTools), set via ResizeObserver */
+            .case-detail[data-stack] .case-detail-grid {
+                grid-template-columns: 1fr;
+                align-items: start;
+                height: auto;
+                min-height: 0;
+            }
+
+            .case-detail[data-stack] .case-detail-grid .files-panel {
+                height: auto;
+                max-height: none;
+                min-height: 0;
+                width: 100%;
+            }
+
+            .case-detail[data-stack] .case-detail-grid comments-panel {
+                --comments-panel-height: auto;
+                --comments-panel-max-height: min(420px, 55vh);
+                height: auto;
+                min-height: 260px;
+                width: 100%;
+            }
+
+            @media (max-width: 1100px) {
+                .case-detail-grid {
+                    grid-template-columns: 1fr;
+                    align-items: start;
+                    height: auto;
+                    min-height: 0;
+                }
+
+                .case-detail-grid .files-panel {
+                    height: auto;
+                    max-height: none;
+                    min-height: 0;
+                    width: 100%;
+                }
+
+                .case-detail-grid comments-panel {
+                    --comments-panel-height: auto;
+                    --comments-panel-max-height: min(420px, 55vh);
+                    height: auto;
+                    min-height: 260px;
+                    width: 100%;
+                }
+            }
+
+            /* â”€â”€â”€ Detail: toolbar + header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+            .detail-toolbar {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                flex-wrap: wrap;
+            }
+
+            .back-link {
+                border: none;
+                background: transparent;
+                padding: 4px 0;
+                margin: 0;
+                font: inherit;
+                font-size: 0.875rem;
+                font-weight: 600;
+                color: var(--color-focus);
+                cursor: pointer;
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+            }
+
+            .back-link:hover,
+            .back-link:focus-visible {
+                color: var(--color-text-primary);
+            }
+
+            .back-link:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
+                border-radius: 4px;
+            }
+
+            .detail-toolbar-actions {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: wrap;
+            }
+
+            .detail-header {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                padding: 14px 16px 16px;
+                border: 1px solid var(--color-border);
+                border-radius: var(--radius-lg);
+                background: var(--color-panel, #fff);
+                box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+                border-left: 4px solid var(--color-primary);
+            }
+
+            .detail-title-row {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+
+            .detail-title {
+                margin: 0;
+                font-size: 1.4rem;
+                font-weight: 700;
+                color: var(--color-primary);
+                letter-spacing: -0.02em;
+                line-height: 1.25;
+            }
+
+            .detail-desc {
+                margin: 0;
+                font-size: 0.95rem;
+                color: var(--color-text-secondary);
+                line-height: 1.55;
+                max-width: 46rem;
+            }
+
+            .quiet-button {
+                border: 1px solid var(--color-border);
+                border-radius: 6px;
+                padding: 6px 12px;
+                font: inherit;
+                font-size: 0.8rem;
+                font-weight: 600;
+                background: var(--color-panel, #fff);
+                color: var(--color-text-primary);
+                cursor: pointer;
+            }
+
+            .quiet-button:hover:not(:disabled),
+            .quiet-button:focus-visible {
+                color: var(--color-on-secondary);
+                background: var(--color-secondary);
+                border-color: var(--color-secondary);
+            }
+
+            .quiet-button:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: var(--focus-ring-offset, 2px);
+            }
+
+            .quiet-button:disabled {
+                opacity: 0.55;
+                cursor: not-allowed;
+            }
+
+            .people-pending-badge {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-width: 1.25rem;
+                height: 1.25rem;
+                margin-left: 6px;
+                padding: 0 5px;
+                border-radius: 999px;
+                background: var(--color-primary);
+                color: var(--color-on-primary);
+                font-size: 0.7rem;
+                font-weight: 700;
+                line-height: 1;
+                vertical-align: middle;
+            }
+
+            /* â”€â”€â”€ Detail: files panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+            .files-panel {
+                border: 1px solid var(--color-border);
+                border-left: 4px solid var(--color-primary);
+                border-radius: var(--radius-lg);
+                background: var(--color-panel, #fff);
+                display: flex;
+                flex-direction: column;
+                min-height: 360px;
+                overflow: hidden;
+                box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+            }
+
+            .panel-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                min-height: 44px;
+                padding: 0 16px;
+                border-bottom: 1px solid var(--color-border);
+                background: var(--color-panel, #fff);
+                box-sizing: border-box;
+                flex-shrink: 0;
+            }
+
+            .panel-header-start {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                min-width: 0;
+            }
+
+            .panel-title {
+                margin: 0;
+                font-size: 0.72rem;
+                font-weight: 700;
+                letter-spacing: 0.07em;
+                text-transform: uppercase;
+                color: var(--color-text-secondary);
+            }
+
+            .panel-count {
+                font-size: 0.72rem;
+                font-weight: 650;
+                color: var(--color-text-secondary);
+                background: color-mix(in srgb, var(--color-border) 16%, transparent);
+                border: 1px solid var(--color-border);
+                border-radius: 999px;
+                padding: 2px 8px;
+                line-height: 1.3;
+            }
+
+            .files-body {
+                position: relative;
+                padding: 12px 16px;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                flex: 1;
+                min-height: 0;
+                overflow: hidden;
+                background: color-mix(in srgb, var(--color-background) 55%, var(--color-panel, #fff));
+            }
+
+            .file-list {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                flex: 1;
+                min-height: 0;
+                overflow-y: auto;
+            }
+
+            .files-panel file-list-row {
+                --file-row-accent: var(--color-primary);
+            }
+
+            .empty-note {
+                color: var(--color-text-secondary);
+                font-size: 0.875rem;
+                font-style: italic;
+            }
+
+            /* â”€â”€â”€ File upload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+            .upload-action-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                min-height: 56px;
+                margin: 0 -16px -12px;
+                padding: 10px 16px;
+                border-top: 1px solid var(--color-border);
+                background: var(--color-panel, #fff);
+                box-sizing: border-box;
+                flex-shrink: 0;
+            }
+
+            .upload-action-row .secondary-button {
+                min-height: 36px;
+            }
+
+            .upload-action-buttons {
+                display: flex;
+                gap: 8px;
+                flex-shrink: 0;
+            }
+
+            .upload-status {
+                color: var(--color-text-secondary);
+                font-size: 0.85rem;
+                flex: 1;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .upload-progress {
+                flex: 1;
+                min-width: 0;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }
+
+            .upload-progress progress {
+                width: 100%;
+                height: 8px;
+                accent-color: var(--color-focus, var(--color-primary));
+            }
+
+            .upload-error {
+                color: var(--color-status-error-fg, #8a1212);
+                font-size: 0.85rem;
+                flex: 1;
+            }
+
+            /* Download button: a spinner while the access check runs (still, if reduced motion is asked for) */
+            .download-spinner {
+                width: 14px;
+                height: 14px;
+                box-sizing: border-box;
+                border: 2px solid currentColor;
+                border-right-color: transparent;
+                border-radius: 50%;
+                animation: download-spin 0.8s linear infinite;
+            }
+
+            @keyframes download-spin {
+                to { transform: rotate(360deg); }
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                .download-spinner {
+                    animation: none;
+                    border-right-color: currentColor;
+                }
+            }
+
+            /* Read by screen readers only */
+            .visually-hidden {
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                margin: -1px;
+                padding: 0;
+                overflow: hidden;
+                clip: rect(0 0 0 0);
+                white-space: nowrap;
+                border: 0;
+            }
+
+            /* Drag-and-drop attach */
+            .files-body.drag-over {
+                outline: 2px dashed var(--color-focus, var(--color-primary));
+                outline-offset: -6px;
+            }
+
+            .drop-hint {
+                position: absolute;
+                inset: 0;
+                z-index: 1;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                /* text-primary on a lightly tinted panel keeps AA contrast in both themes */
+                background: color-mix(in srgb, var(--color-focus, var(--color-primary)) 14%, var(--color-panel, #fff));
+                color: var(--color-text-primary);
+                font-weight: 600;
+                pointer-events: none;
+            }
+
+            /* â”€â”€â”€ New Case form â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+            .new-case-form {
+                border: 1px solid var(--color-border);
+                border-radius: 8px;
+                background: var(--color-surface, var(--color-background));
+                padding: 18px 20px 16px;
+                display: flex;
+                flex-direction: column;
+                gap: 14px;
+            }
+
+            .form-group {
+                display: flex;
+                flex-direction: column;
+                gap: 5px;
+            }
+
+            .form-label {
+                font-size: 0.72rem;
+                font-weight: 650;
+                letter-spacing: 0.06em;
+                text-transform: uppercase;
+                color: var(--color-text-secondary);
+            }
+
+            .form-input,
+            .form-textarea {
+                border: 1px solid var(--color-border);
+                border-radius: 6px;
+                padding: 9px 12px;
+                font: inherit;
+                font-size: 0.925rem;
+                background: var(--color-background);
+                color: var(--color-text-primary);
+                width: 100%;
+                box-sizing: border-box;
+                transition: border-color 0.14s, box-shadow 0.14s;
+            }
+
+            .form-input:focus,
+            .form-textarea:focus {
+                outline: none;
+                border-color: var(--color-primary);
+                box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 16%, transparent);
+            }
+
+            .form-textarea {
+                resize: vertical;
+                min-height: 76px;
+            }
+
+            .form-error-msg {
+                color: #c62828;
+                font-size: 0.875rem;
+            }
+
+            .form-actions {
+                display: flex;
+                justify-content: flex-end;
+                align-items: center;
+                gap: 8px;
+                padding-top: 6px;
+                border-top: 1px solid var(--color-border);
+            }
+
+            .form-actions-spacer {
+                margin-right: auto;
+            }
+
+            /* â”€â”€â”€ Buttons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+            .primary-button,
+            .secondary-button {
+                border-radius: 6px;
+                padding: 8px 18px;
+                font: inherit;
+                font-size: 0.875rem;
+                font-weight: 600;
+                cursor: pointer;
+                transition: opacity 0.14s, box-shadow 0.14s, background 0.14s;
+                display: inline-flex;
+                align-items: center;
+                line-height: 1.2;
+                white-space: nowrap;
+            }
+
+            .primary-button {
+                background: var(--color-primary);
+                color: var(--color-on-primary);
+                border: 1px solid transparent;
+            }
+
+            .primary-button:hover:not(:disabled) {
+                opacity: 0.87;
+                box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 32%, transparent);
+            }
+
+            .secondary-button {
+                background: transparent;
+                color: var(--color-text-primary);
+                border: 1px solid var(--color-border);
+            }
+
+            .secondary-button:hover:not(:disabled) {
+                background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface, var(--color-background)));
+                border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+            }
+
+            .primary-button:focus-visible,
+            .secondary-button:focus-visible {
+                outline: 2px solid var(--color-primary);
+                outline-offset: 2px;
+            }
+
+            .primary-button:disabled,
+            .secondary-button:disabled {
+                opacity: 0.42;
+                cursor: not-allowed;
+            }
+
+            /* â”€â”€â”€ Dark mode overrides â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+
+            /* Cards: lift them above the page background using --color-panel */
+            :host-context([data-theme='dark']) .case-card {
+                background: var(--color-panel);
+                border-left-color: var(--color-accent);
+            }
+
+            :host-context([data-theme='dark']) .case-card.is-archived {
+                border-left-color: var(--color-text-secondary);
+                opacity: 0.55;
+            }
+
+            :host-context([data-theme='dark']) .case-card:hover {
+                background: color-mix(in srgb, var(--color-panel) 80%, var(--color-accent));
+                border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+                border-left-color: var(--color-accent);
+            }
+
+            /* Panels: lift above page background */
+            :host-context([data-theme='dark']) .files-panel,
+            :host-context([data-theme='dark']) .new-case-form,
+            :host-context([data-theme='dark']) .detail-header {
+                background: var(--color-panel);
+                border-color: var(--color-border);
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+            }
+
+            :host-context([data-theme='dark']) .detail-header {
+                border-left-color: var(--color-accent);
+            }
+
+            :host-context([data-theme='dark']) .detail-title {
+                color: var(--color-text-primary);
+            }
+
+            :host-context([data-theme='dark']) .panel-header {
+                background: var(--color-panel);
+                border-bottom-color: var(--color-border);
+            }
+
+            :host-context([data-theme='dark']) .files-panel {
+                border-left-color: var(--color-accent);
+            }
+
+            :host-context([data-theme='dark']) .panel-title,
+            :host-context([data-theme='dark']) .panel-count {
+                color: var(--color-text-secondary);
+            }
+
+            :host-context([data-theme='dark']) .panel-count {
+                background: color-mix(in srgb, var(--color-border) 40%, transparent);
+                border-color: var(--color-border);
+            }
+
+            :host-context([data-theme='dark']) .files-body {
+                background: var(--color-background);
+            }
+
+            :host-context([data-theme='dark']) .upload-action-row {
+                background: var(--color-panel);
+                border-top-color: var(--color-border);
+            }
+
+            :host-context([data-theme='dark']) .quiet-button {
+                color: var(--color-text-primary);
+                border-color: var(--color-border);
+                background: var(--color-panel);
+            }
+
+            :host-context([data-theme='dark']) .quiet-button:hover:not(:disabled),
+            :host-context([data-theme='dark']) .quiet-button:focus-visible {
+                color: var(--color-on-secondary);
+                background: var(--color-accent);
+                border-color: var(--color-accent);
+            }
+
+            /* Inputs: sunken below the panel surface for legibility */
+            :host-context([data-theme='dark']) .form-input,
+            :host-context([data-theme='dark']) .form-textarea {
+                background: var(--color-background);
+                border-color: color-mix(in srgb, var(--color-border) 140%, transparent);
+                color: var(--color-text-primary);
+            }
+
+            :host-context([data-theme='dark']) .form-input:focus,
+            :host-context([data-theme='dark']) .form-textarea:focus {
+                border-color: var(--color-accent);
+                box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent);
+            }
+
+            /* Primary button: use the brighter accent so it doesn't vanish */
+            :host-context([data-theme='dark']) .primary-button {
+                background: var(--color-secondary);
+                color: var(--color-on-primary);
+            }
+
+            :host-context([data-theme='dark']) .primary-button:hover:not(:disabled) {
+                opacity: 0.85;
+                box-shadow: 0 2px 10px color-mix(in srgb, var(--color-accent) 30%, transparent);
+            }
+
+            /* Secondary button: visible ghost on dark panel */
+            :host-context([data-theme='dark']) .secondary-button {
+                color: var(--color-text-primary);
+                border-color: var(--color-border);
+            }
+
+            :host-context([data-theme='dark']) .secondary-button:hover:not(:disabled) {
+                background: color-mix(in srgb, var(--color-accent) 10%, var(--color-panel));
+                border-color: color-mix(in srgb, var(--color-accent) 50%, var(--color-border));
+            }
+
+            /* Status chip */
+            :host-context([data-theme='dark']) .status-chip {
+                border-color: var(--color-border);
+                background: color-mix(in srgb, var(--color-border) 35%, transparent);
+                color: var(--color-text-secondary);
+            }
+
+            /* Detail header separator */
+            :host-context([data-theme='dark']) .detail-header {
+                border-bottom-color: var(--color-border);
+            }
+
+            /* Page header separator */
+            :host-context([data-theme='dark']) .page-header-row {
+                border-bottom-color: var(--color-border);
+            }
+
+            /* Upload row separator */
+            :host-context([data-theme='dark']) .upload-action-row {
+                border-top-color: var(--color-border);
+            }
+
+            /* Form actions separator */
+            :host-context([data-theme='dark']) .form-actions {
+                border-top-color: var(--color-border);
+            }
+
+            /* â”€â”€â”€ Viewer overlay (edge-to-edge; header is the only chrome) â”€â”€ */
+            .iframe-overlay {
+                position: fixed;
+                inset: 0;
+                z-index: 1000;
+                display: flex;
+                flex-direction: column;
+                gap: 0;
+                padding: 0;
+                box-sizing: border-box;
+                background: #090b14;
+                color: var(--color-text-primary);
+                font-family: var(--font-family-base);
+                font-feature-settings: var(--font-feature-defaults);
+            }
+
+            .iframe-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 16px;
+                flex-shrink: 0;
+                padding: 10px 14px;
+                border: none;
+                border-bottom: 1px solid var(--color-border);
+                border-radius: 0;
+                background: var(--color-surface, var(--color-background));
+                color: var(--color-text-primary);
+                box-shadow: none;
+            }
+
+            .iframe-title {
+                min-width: 0;
+                font-size: 0.925rem;
+                font-weight: 600;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                color: var(--color-text-primary);
+            }
+
+            .iframe-header-actions {
+                display: flex;
+                flex-shrink: 0;
+                gap: 10px;
+                align-items: center;
+            }
+
+            .iframe-container {
+                flex: 1;
+                display: flex;
+                position: relative;
+                min-height: 0;
+                overflow: hidden;
+                border: none;
+                border-radius: 0;
+                background: #090b14;
+            }
+
+            .viewer-iframe {
+                flex: 1;
+                width: 100%;
+                height: 100%;
+                border: 0;
+                background: #090b14;
+            }
+
+            .loading-overlay {
+                position: absolute;
+                inset: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: color-mix(in srgb, var(--color-background) 80%, transparent);
+                pointer-events: none;
+            }
+
+            .viewer-loading {
+                text-align: center;
+                padding: 16px;
+                color: var(--color-text-secondary);
+                font-size: 0.9rem;
+            }
+
+            .toast {
+                position: fixed;
+                right: 20px;
+                bottom: 20px;
+                z-index: 1200;
+                background: var(--color-success, #2e7d32);
+                color: #fff;
+                border-radius: var(--radius-md, 6px);
+                padding: 10px 16px;
+                box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
+                max-width: min(380px, calc(100vw - 40px));
+                font-weight: 500;
+                font-size: 0.9rem;
+                line-height: 1.4;
+            }
+        `;
     }
 
     static get properties() {
         return {
             username: { type: String },
             avatarUrl: { type: String },
+            currentUserId: { type: Number },
+            currentKeycloakSub: { type: String },
             isOrgAdmin: { type: Boolean },
             isRegistrationReviewer: { type: Boolean },
             loading: { type: Boolean },
@@ -154,29 +1082,10 @@ export class DirectusCasesPage extends LitElement {
             viewerLoading: { type: Boolean },
             viewerLoadingDetail: { type: String },
             toastMessage: { type: String },
-            errorDialogMessage: { type: String },
-            errorDialogTitle: { type: String },
             viewerSimplified: { type: Boolean },
             viewerKind: { type: String },
             viewerClosing: { type: Boolean },
             currentFileName: { type: String },
-            currentAttachmentId: { type: String },
-            hasUnsavedChanges: { type: Boolean },
-            isSavingScene: { type: Boolean },
-            _backgroundSave: { type: Object },
-            saveIndicatorMessage: { type: String },
-            _saveAsNewName: { type: String },
-            _conflictSaveName: { type: String },
-            _conflictContext: { type: Object },
-            _closePromptMenuOpen: { type: Boolean },
-            closePromptMode: { type: String },
-            // Audit view
-            _auditRows: { type: Array },
-            _auditLoading: { type: Boolean },
-            _auditError: { type: String },
-            _auditHasMore: { type: Boolean },
-            _auditOffset: { type: Number },
-            _toolbarMenuOpen: { type: Boolean },
             // New Case form
             showNewCaseForm: { type: Boolean },
             newCaseTitle: { type: String },
@@ -208,7 +1117,11 @@ export class DirectusCasesPage extends LitElement {
             caseSortOrder: { type: String },
             caseSearchQuery: { type: String },
             /** Unresolved invites for the open case (People button badge). */
-            pendingInviteCount: { type: Number }
+            pendingInviteCount: { type: Number },
+            isSavingScene: { type: Boolean },
+            hasUnsavedChanges: { type: Boolean },
+            errorDialogTitle: { type: String },
+            errorDialogMessage: { type: String },
         };
     }
 
@@ -216,6 +1129,8 @@ export class DirectusCasesPage extends LitElement {
         super();
         this.username = t('common.guest');
         this.avatarUrl = '';
+        this.currentUserId = null;
+        this.currentKeycloakSub = null;
         this.loading = false;
         this.errorMessage = '';
         this.cases = [];
@@ -225,33 +1140,11 @@ export class DirectusCasesPage extends LitElement {
         this.openingAttachmentId = '';
         this.postingComment = false;
         this.showIframe = false;
-        this.iframeUrl = '';
+        this.iframeUrl = 'about:blank';
         this.viewerLoading = false;
         this.viewerLoadingDetail = '';
         this.viewerSimplified = false;
         this.currentFileName = '';
-        this.currentAttachmentId = '';
-        this.hasUnsavedChanges = false;
-        this.isSavingScene = false;
-        this._lastSavedAttachmentId = null;
-        this.saveIndicatorMessage = '';
-        this.saveIndicatorTimeout = null;
-        this.saveIndicatorActivityCleanup = null;
-        this.iframeActivityCleanup = null;
-        this.closePromptMode = null;
-        this._closePromptResolver = null;
-        this._auditRows = [];
-        this._auditLoading = false;
-        this._auditError = null;
-        this._auditHasMore = false;
-        this._auditOffset = 0;
-        this._toolbarMenuOpen = false;
-        this._saveAsNewName = '';
-        this._saveAsNewResolver = null;
-        this._openedFileModifiedAt = null;
-        this._conflictContext = null;
-        this._conflictSaveName = '';
-        this._closePromptMenuOpen = false;
         this._viewerSessionToken = null;
         this._viewerSeatId = null;
         this.viewerKind = VIEWER_KINDS.SLICER_GUI;
@@ -260,9 +1153,14 @@ export class DirectusCasesPage extends LitElement {
         this._focusBeforeViewer = null;
         this._slicerWebRun = 0;
         this._slicerWebPending = null;
-        this.toastMessage = '';
-        this.errorDialogMessage = '';
+        this._slicerWebDownloadPromise = null;
+        this.isSavingScene = false;
+        this.hasUnsavedChanges = false;
         this.errorDialogTitle = '';
+        this.errorDialogMessage = '';
+        this.iframeActivityCleanup = null;
+        this.currentAttachmentId = '';
+        this.toastMessage = '';
         this._toastTimeout = null;
         this._heartbeatInterval = null;
         this._handleBeforeUnload = null;
@@ -308,7 +1206,7 @@ export class DirectusCasesPage extends LitElement {
         return this.cases.find((row) => row.id === this.selectedCaseId) || null;
     }
 
-    // ── URL / history helpers ──────────────────────────────────────────────
+    // â”€â”€ URL / history helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     _getCaseIdFromUrl() {
         return new URLSearchParams(location.search).get('case') || '';
     }
@@ -321,24 +1219,7 @@ export class DirectusCasesPage extends LitElement {
             url.searchParams.delete('case');
         }
         url.searchParams.delete('viewer');
-        // Only drop the 'history' sub-view; preserve 'view=cases' so the app-shell
-        // can restore the correct page when history.back() fires after closing the viewer.
-        if (url.searchParams.get('view') === 'history') {
-            url.searchParams.delete('view');
-        }
         return url.toString();
-    }
-
-    _buildAuditUrl(caseId) {
-        const url = new URL(location.href);
-        url.searchParams.set('case', caseId);
-        url.searchParams.set('view', 'history');
-        url.searchParams.delete('viewer');
-        return url.toString();
-    }
-
-    _getViewFromUrl() {
-        return new URLSearchParams(location.search).get('view') || '';
     }
 
     _buildViewerUrl() {
@@ -373,49 +1254,27 @@ export class DirectusCasesPage extends LitElement {
         const caseId = event.state?.caseId ?? this._getCaseIdFromUrl();
         this.selectedCaseId = caseId || '';
         this.errorMessage = '';
-
-        // If navigating to history view, load it; if navigating away, clear state.
-        const view = event.state?.view || new URLSearchParams(location.search).get('view') || '';
-        if (view === 'history' && caseId) {
-            if (!this._auditRows.length && !this._auditLoading) {
-                this._loadAuditLog(caseId);
-            }
-        } else {
-            this._auditRows = [];
-            this._auditOffset = 0;
-            this._auditHasMore = false;
-            this._auditError = null;
-        }
     }
 
     connectedCallback() {
         super.connectedCallback();
         installViewerActivityListeners();
 
-        // Restore case from URL; strip ?viewer — the container is gone after a reload
+        // Restore case from URL; strip ?viewer â€” the container is gone after a reload
         const initialCaseId = this._getCaseIdFromUrl();
         if (initialCaseId) this.selectedCaseId = initialCaseId;
-        const initialParams = new URLSearchParams(location.search);
-        if (initialParams.has('viewer') || initialParams.has('view')) {
+        if (new URLSearchParams(location.search).has('viewer')) {
             history.replaceState({ caseId: initialCaseId }, '', this._buildCaseUrl(initialCaseId));
         }
 
         this._popStateHandler = (e) => this._handlePopState(e);
         window.addEventListener('popstate', this._popStateHandler);
 
-        this._closeToolbarMenu = () => { this._toolbarMenuOpen = false; };
-        window.addEventListener('click', this._closeToolbarMenu);
-
-        this._handleBeforeUnload = (e) => {
-            // Warn if a scene is being saved in the background (file bytes only live in memory).
-            if (this._backgroundSave && !this._backgroundSave.error) {
-                e.preventDefault();
-                e.returnValue = '';
-            }
+        this._handleBeforeUnload = () => {
             if (!this.showIframe || !this._viewerSessionToken) return;
             const { stopUrl } = getViewerSessionEndpoints({
                 kind: VIEWER_KINDS.SLICER_GUI,
-                sessionScope: VIEWER_SESSION_SCOPES.DIRECTUS
+                sessionScope: VIEWER_SESSION_SCOPES.CASES
             });
             stopViewerSession({
                 stopUrl,
@@ -430,32 +1289,6 @@ export class DirectusCasesPage extends LitElement {
             });
         };
         window.addEventListener('beforeunload', this._handleBeforeUnload);
-
-        this._onSlicerViewerMessage = (event) => {
-            if (event?.origin && event.origin !== window.location.origin) return;
-            const { type, heading, detail, error: viewerError } = event?.data ?? {};
-            if (type === 'slicer-viewer-loading') {
-                if (this.viewerKind !== VIEWER_KINDS.SLICER_GUI || !this.viewerLoading) return;
-                this.viewerLoadingDetail = detail || heading || this.viewerLoadingDetail;
-            } else if (type === 'slicer-viewer-ready') {
-                if (this.viewerKind !== VIEWER_KINDS.SLICER_GUI) return;
-                if (this._slicerReadyFallback) {
-                    clearTimeout(this._slicerReadyFallback);
-                    this._slicerReadyFallback = null;
-                }
-                this.viewerLoading = false;
-                this.viewerLoadingDetail = '';
-            } else if (type === 'slicer-viewer-load-failed') {
-                if (this.viewerKind !== VIEWER_KINDS.SLICER_GUI) return;
-                this._viewerPushedState = false;
-                this._doCloseViewer();
-                this._replaceUrlWithCase();
-                this.showErrorDialog(this.viewerLoadError(viewerError));
-            } else if (type === 'slicer-viewer-disconnected') {
-                this.showToast(t('common.networkError'));
-            }
-        };
-        window.addEventListener('message', this._onSlicerViewerMessage);
 
         this._onUploadChange = () => this.syncUploadState();
         this._onUploadAttached = (event) => this.handleAttachmentUploaded(event.detail);
@@ -497,28 +1330,8 @@ export class DirectusCasesPage extends LitElement {
         }, 6000);
     }
 
-    viewerLoadError(rawError) {
-        return classifySlicerLoadError(rawError);
-    }
-
-    showErrorDialog({ title, message }) {
-        this.errorDialogTitle = title || '';
-        this.errorDialogMessage = message || '';
-        queueMicrotask(() => {
-            this.renderRoot?.querySelector('#viewer-error-dialog')?.openDialog();
-        });
-    }
-
     disconnectedCallback() {
         if (this._toastTimeout) clearTimeout(this._toastTimeout);
-        if (this._slicerReadyFallback) {
-            clearTimeout(this._slicerReadyFallback);
-            this._slicerReadyFallback = null;
-        }
-        if (this._onSlicerViewerMessage) {
-            window.removeEventListener('message', this._onSlicerViewerMessage);
-            this._onSlicerViewerMessage = null;
-        }
         uploadManager.removeEventListener('change', this._onUploadChange);
         uploadManager.removeEventListener('attached', this._onUploadAttached);
         window.removeEventListener('beforeunload', this._handleBeforeUnload);
@@ -526,10 +1339,6 @@ export class DirectusCasesPage extends LitElement {
         if (this._popStateHandler) {
             window.removeEventListener('popstate', this._popStateHandler);
             this._popStateHandler = null;
-        }
-        if (this._closeToolbarMenu) {
-            window.removeEventListener('click', this._closeToolbarMenu);
-            this._closeToolbarMenu = null;
         }
         this.closeListFilterMenus();
         this.teardownDetailLayoutObserver();
@@ -594,7 +1403,7 @@ export class DirectusCasesPage extends LitElement {
     }
 
     userFacingError(err, fallback) {
-        return friendlyError(err?.message, fallback, err?.status, err?.code);
+        return friendlyCasesError(err?.message, fallback, err?.status, err?.code);
     }
 
     async loadCases() {
@@ -610,6 +1419,9 @@ export class DirectusCasesPage extends LitElement {
             } else if (keepSelected) {
                 const openRow = this.cases.find((row) => row.id === keepSelected);
                 if (openRow) this.markCaseCommentsSeen(openRow);
+                this.loadCaseAttachments(keepSelected);
+                this.loadCaseComments(keepSelected);
+                this.loadCaseCollaborators(keepSelected);
             }
         } catch (err) {
             this.cases = [];
@@ -626,7 +1438,10 @@ export class DirectusCasesPage extends LitElement {
         const caseRow = this.cases.find((row) => row.id === caseId);
         if (caseRow) this.markCaseCommentsSeen(caseRow);
         history.pushState({ caseId }, '', this._buildCaseUrl(caseId));
-        this.refreshPendingInviteCount(caseId);
+        this.refreshPendingInviteCount();
+        this.loadCaseAttachments(caseId);
+        this.loadCaseComments(caseId);
+        this.loadCaseCollaborators(caseId);
     }
 
     /**
@@ -648,20 +1463,8 @@ export class DirectusCasesPage extends LitElement {
         }
     }
 
-    async refreshPendingInviteCount(caseId = this.selectedCaseId) {
-        const id = String(caseId || '').trim();
-        if (!id) {
-            this.pendingInviteCount = 0;
-            return;
-        }
-        try {
-            const invites = await listInvites(id);
-            this.pendingInviteCount = Array.isArray(invites)
-                ? invites.filter((inv) => inv && inv.status !== 'expired').length
-                : 0;
-        } catch {
-            this.pendingInviteCount = 0;
-        }
+    refreshPendingInviteCount() {
+        this.pendingInviteCount = 0;
     }
 
     caseLastModifiedAt(caseRow) {
@@ -724,8 +1527,8 @@ export class DirectusCasesPage extends LitElement {
     countNewCaseComments(caseRow) {
         const seenAt = this.getCaseCommentSeenAt(caseRow?.id);
         if (seenAt == null) return 0;
-        const myId = this.currentUserId
-            ? String(this.currentUserId).toLowerCase()
+        const myId = this.currentKeycloakSub
+            ? String(this.currentKeycloakSub).toLowerCase()
             : '';
         let count = 0;
         for (const comment of caseRow?.comments || []) {
@@ -749,35 +1552,94 @@ export class DirectusCasesPage extends LitElement {
         history.pushState({}, '', this._buildCaseUrl(''));
     }
 
-    get currentUserId() {
-        return this.sessionMeta?.directusViewer?.id
-            || this.sessionMeta?.directusUserId
-            || null;
+    canManageCollaborators(caseRow) {
+        const role = this.myCaseRole(caseRow);
+        return role === 'admin';
+    }
+
+    /** Owner/admin/collaborator can invite; read_only cannot. */
+    canInviteCollaborators(caseRow) {
+        const role = this.myCaseRole(caseRow);
+        return role === 'admin' || role === 'collaborator';
     }
 
     myCaseRole(caseRow) {
-        return getCaseRole(caseRow, this.currentUserId);
-    }
-
-    canManageCollaborators(caseRow) {
-        return canManageCollaborators(this.myCaseRole(caseRow));
-    }
-
-    canInviteCollaborators(caseRow) {
-        return canInvite(this.myCaseRole(caseRow));
+        if (!caseRow) return null;
+        if (caseRow.myRole) return caseRow.myRole;
+        if (this.currentKeycloakSub && caseRow.owner_id === this.currentKeycloakSub) return 'admin';
+        if (this.isOrgAdmin) return 'admin';
+        return null;
     }
 
     canEditCaseContent(caseRow) {
-        return canEditCase(this.myCaseRole(caseRow));
+        const role = this.myCaseRole(caseRow);
+        return role === 'admin' || role === 'collaborator';
     }
 
     isMyAttachment(attachment) {
-        return isAttachmentOwner(attachment, this.currentUserId);
+        if (!attachment || !this.currentKeycloakSub) return false;
+        return attachment.uploadedBy === this.currentKeycloakSub;
     }
 
     /** Any case member (including read_only) may comment. */
     canCommentOnCase(caseRow) {
         return Boolean(this.myCaseRole(caseRow));
+    }
+
+    normalizePayloadAttachment(att) {
+        return {
+            id: att.id,
+            name: att.original_filename,
+            filenameDownload: att.original_filename,
+            filesize: att.size_bytes ?? null,
+            mimeType: att.mime_type || 'application/octet-stream',
+            modifiedAt: att.updatedAt || att.createdAt || null,
+            uploadedBy: att.uploaded_by ?? null,
+            isMrb:              att.isMrb              ?? false,
+            canOpenInSlicer:    att.canOpenInSlicer    ?? false,
+            canPreviewInBrowser: att.canPreviewInBrowser ?? false,
+            _source: 'payload',
+        };
+    }
+
+    async loadCaseAttachments(caseId) {
+        try {
+            const data = await listAttachments(caseId);
+            const normalized = (data.attachments || []).map((a) => this.normalizePayloadAttachment(a));
+            this.cases = this.cases.map((row) =>
+                row.id === caseId ? { ...row, attachments: normalized } : row
+            );
+        } catch {
+            // non-fatal; files panel shows empty
+        }
+    }
+
+    async loadCaseCollaborators(caseId) {
+        try {
+            const data = await listCollaborators(caseId);
+            this.cases = this.cases.map((row) =>
+                row.id === caseId ? { ...row, keycloakCollaborators: data.collaborators || [] } : row
+            );
+        } catch {
+            // non-fatal; mention picker shows empty
+        }
+    }
+
+    async loadCaseComments(caseId) {
+        try {
+            const data = await listComments(caseId);
+            const comments = (data.comments || []).map((c) => ({
+                id:        c.id,
+                body:      c.body,
+                createdAt: c.createdAt,
+                author:    c.author,
+            }));
+            this.cases = this.cases.map((row) =>
+                row.id === caseId ? { ...row, comments } : row
+            );
+        } catch {
+            // non-fatal; comment panel shows empty
+        }
     }
 
     casePeopleCount(caseRow) {
@@ -786,31 +1648,28 @@ export class DirectusCasesPage extends LitElement {
 
     buildPeopleMembers(caseRow) {
         const members = [];
-        const ownerId = caseRow?.createdBy?.id ? String(caseRow.createdBy.id) : null;
-        if (caseRow?.createdBy) {
+        if (caseRow?.owner_id != null) {
+            const ownerInfo = caseRow._ownerInfo || {};
             members.push({
-                id: caseRow.createdBy.id,
-                email: caseRow.createdBy.email || '',
-                username: caseRow.createdBy.username || '',
-                firstName: caseRow.createdBy.firstName || '',
-                lastName: caseRow.createdBy.lastName || '',
-                avatarUrl: caseRow.createdBy.avatarUrl || null,
+                id: String(caseRow.owner_id),
+                email: ownerInfo.email || '',
+                username: ownerInfo.email || '',
+                firstName: ownerInfo.firstName || '',
+                lastName: ownerInfo.lastName || '',
                 role: 'admin',
-                locked: true
+                locked: true,
             });
         }
-        for (const entry of caseRow?.collaborators || []) {
+        for (const entry of caseRow?.keycloakCollaborators || []) {
             if (!entry?.id) continue;
-            if (ownerId && String(entry.id) === ownerId) continue;
             members.push({
                 id: entry.id,
                 email: entry.email || '',
-                username: entry.username || '',
+                username: entry.email || '',
                 firstName: entry.firstName || '',
                 lastName: entry.lastName || '',
-                avatarUrl: entry.avatarUrl || null,
                 role: entry.role || 'collaborator',
-                locked: false
+                locked: false,
             });
         }
         return members;
@@ -824,20 +1683,52 @@ export class DirectusCasesPage extends LitElement {
         const canManage = this.canManageCollaborators(caseRow);
         dialog.canInvite = canInvite;
         dialog.canManage = canManage;
-        dialog.roleOptions = canManage ? null : CASE_INVITE_ROLE_OPTIONS;
-        dialog.lookupFn = lookupUserByEmail;
-        dialog.inviteFn = ({ email, role }) => inviteUser(caseRow.id, { email, role });
-        dialog.currentUserId = this.currentUserId || '';
         dialog.saving = this.savingCollaborators;
         dialog.error = '';
+
+        dialog.roleOptions = null;
+        dialog.currentUserId = this.currentKeycloakSub || '';
+        dialog.lookupFn = async (email) => {
+            const data = await lookupCaseUser(email);
+            return data.user;
+        };
+        dialog.inviteFn = async ({ email, role }) => {
+            const data = await inviteCollaborator(caseRow.id, { email, role });
+            if (data.status === 'added') {
+                try {
+                    const fresh = await listCollaborators(caseRow.id);
+                    this.cases = this.cases.map((row) =>
+                        row.id === caseRow.id
+                            ? { ...row, keycloakCollaborators: fresh.collaborators }
+                            : row
+                    );
+                } catch { /* non-fatal */ }
+            }
+            return {
+                status:    data.status,
+                emailSent: data.emailSent,
+                inviteUrl: data.inviteUrl,
+                collaborator: data.collaborator,
+            };
+        };
+        let collaborators = caseRow.keycloakCollaborators || [];
+        try {
+            const fresh = await listCollaborators(caseRow.id);
+            collaborators = fresh.collaborators || [];
+            this.cases = this.cases.map((row) =>
+                row.id === caseRow.id
+                    ? { ...row, keycloakCollaborators: collaborators }
+                    : row
+            );
+        } catch { /* use cached */ }
+        const enrichedRow = { ...caseRow, keycloakCollaborators: collaborators };
         let pendingInvites = [];
         try {
-            pendingInvites = await listInvites(caseRow.id);
-        } catch {
-            pendingInvites = [];
-        }
-        await dialog.open(this.buildPeopleMembers(caseRow), { pendingInvites });
-        this.pendingInviteCount = pendingInvites.filter((inv) => inv && inv.status !== 'expired').length;
+            const inv = await listCaseInvites(caseRow.id);
+            pendingInvites = inv.invites || [];
+        } catch { /* non-fatal */ }
+        await dialog.open(this.buildPeopleMembers(enrichedRow), { pendingInvites });
+        this.pendingInviteCount = pendingInvites.length;
     }
 
     closePeopleDialog() {
@@ -846,52 +1737,36 @@ export class DirectusCasesPage extends LitElement {
 
     async handlePeopleInvited(event) {
         const caseRow = this.selectedCase;
-        const detail = event.detail || {};
         if (!caseRow?.id) return;
-        if (detail.status === 'added' && Array.isArray(detail.collaborators)) {
-            this.cases = this.cases.map((row) => (
-                row.id === caseRow.id ? { ...row, collaborators: detail.collaborators } : row
-            ));
-        }
         const dialog = this.renderRoot?.querySelector('#case-people-dialog');
-        if (dialog && detail.inviteUrl) {
-            dialog.lastInviteUrl = detail.inviteUrl;
-        }
-        if (dialog && caseRow) {
-            let pendingInvites = [];
-            try {
-                pendingInvites = await listInvites(caseRow.id);
-            } catch {
-                pendingInvites = [];
-            }
+
+        try {
+            const fresh = await listCollaborators(caseRow.id);
+            this.cases = this.cases.map((row) =>
+                row.id === caseRow.id
+                    ? { ...row, keycloakCollaborators: fresh.collaborators }
+                    : row
+            );
             const next = this.cases.find((r) => r.id === caseRow.id) || caseRow;
-            dialog.members = dialog.sortMembers(this.buildPeopleMembers(next));
-            dialog.pendingInvites = pendingInvites;
-            this.pendingInviteCount = pendingInvites.filter((inv) => inv && inv.status !== 'expired').length;
-        }
-        invalidateNotifications();
+            if (dialog) dialog.members = dialog.sortMembers(this.buildPeopleMembers(next));
+        } catch { /* non-fatal */ }
+        try {
+            const inv = await listCaseInvites(caseRow.id);
+            const pendingInvites = inv.invites || [];
+            if (dialog) dialog.pendingInvites = pendingInvites;
+            this.pendingInviteCount = pendingInvites.length;
+        } catch { /* non-fatal */ }
     }
 
     async handlePeopleApproveInvite(event) {
         const caseRow = this.selectedCase;
         const inviteId = event.detail?.inviteId;
-        const kind = event.detail?.kind;
         if (!caseRow?.id || !inviteId || this.savingCollaborators) return;
         this.savingCollaborators = true;
+
         try {
-            const data = await approveInvite(caseRow.id, inviteId, { kind });
-            if (Array.isArray(data.collaborators)) {
-                this.cases = this.cases.map((row) => (
-                    row.id === caseRow.id ? { ...row, collaborators: data.collaborators } : row
-                ));
-            }
-            await this.handlePeopleInvited({
-                detail: {
-                    status: data.status || 'approved',
-                    inviteUrl: data.inviteUrl || null,
-                    collaborators: data.collaborators
-                }
-            });
+            const data = await approveCaseInvite(caseRow.id, inviteId);
+            await this.handlePeopleInvited({ detail: { status: data.status || 'approved', inviteUrl: data.inviteUrl || null } });
             const dialog = this.renderRoot?.querySelector('#case-people-dialog');
             if (dialog && data.inviteUrl) {
                 dialog.lookupMessage = (data.emailSent && isInviteEmailEnabled())
@@ -900,7 +1775,7 @@ export class DirectusCasesPage extends LitElement {
             }
         } catch (err) {
             const dialog = this.renderRoot?.querySelector('#case-people-dialog');
-            if (dialog) dialog.error = this.userFacingError(err, "Couldn't approve that invite.");
+            if (dialog) dialog.error = this.userFacingError(err, t('cases.approveInviteFailed'));
         } finally {
             this.savingCollaborators = false;
         }
@@ -909,15 +1784,15 @@ export class DirectusCasesPage extends LitElement {
     async handlePeopleRejectInvite(event) {
         const caseRow = this.selectedCase;
         const inviteId = event.detail?.inviteId;
-        const kind = event.detail?.kind;
         if (!caseRow?.id || !inviteId || this.savingCollaborators) return;
         this.savingCollaborators = true;
+
         try {
-            await rejectInvite(caseRow.id, inviteId, { kind });
+            await rejectCaseInvite(caseRow.id, inviteId);
             await this.handlePeopleInvited({ detail: { status: 'rejected' } });
         } catch (err) {
             const dialog = this.renderRoot?.querySelector('#case-people-dialog');
-            if (dialog) dialog.error = this.userFacingError(err, "Couldn't reject that invite.");
+            if (dialog) dialog.error = this.userFacingError(err, t('cases.rejectInviteFailed'));
         } finally {
             this.savingCollaborators = false;
         }
@@ -929,12 +1804,6 @@ export class DirectusCasesPage extends LitElement {
         if (!this.canManageCollaborators(caseRow)) return;
 
         const members = Array.isArray(event.detail?.members) ? event.detail.members : [];
-        const collaborators = members
-            .map((entry) => ({
-                userId: entry?.userId,
-                role: entry?.role || 'collaborator'
-            }))
-            .filter((entry) => entry.userId);
 
         this.savingCollaborators = true;
         const dialog = this.renderRoot?.querySelector('#case-people-dialog');
@@ -943,10 +1812,13 @@ export class DirectusCasesPage extends LitElement {
             dialog.error = '';
         }
         try {
+            const collaborators = members
+                .map((entry) => ({ id: entry?.userId, role: entry?.role || 'collaborator' }))
+                .filter((entry) => entry.id);
             const data = await updateCollaborators(caseRow.id, collaborators);
             const next = Array.isArray(data.collaborators) ? data.collaborators : [];
             this.cases = this.cases.map((row) => (
-                row.id === caseRow.id ? { ...row, collaborators: next } : row
+                row.id === caseRow.id ? { ...row, keycloakCollaborators: next } : row
             ));
             this.closePeopleDialog();
         } catch (err) {
@@ -970,8 +1842,14 @@ export class DirectusCasesPage extends LitElement {
         this.postingComment = true;
         this.errorMessage = '';
         try {
-            const data = await postComment(caseRow.id, text);
-            const created = data.comment;
+            const data = await createComment(caseRow.id, text);
+            const c = data.comment;
+            const created = c ? {
+                id:        c.id,
+                body:      c.body,
+                createdAt: c.createdAt,
+                author:    c.author,
+            } : null;
             panel?.clearDraft?.();
             this.cases = this.cases.map((row) => {
                 if (row.id !== caseRow.id) return row;
@@ -988,7 +1866,7 @@ export class DirectusCasesPage extends LitElement {
         }
     }
 
-    // ── New Case form ──────────────────────────────────────────────────────
+    // â”€â”€ New Case form â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     openNewCaseForm() {
         this.showNewCaseForm = true;
         this.newCaseTitle = '';
@@ -1039,7 +1917,7 @@ export class DirectusCasesPage extends LitElement {
     }
 
     mergeCaseUpdate(caseRow, updated = {}) {
-        // updateCase remaps with empty nested collections — keep local arrays.
+        // updateCase remaps with empty nested collections â€” keep local arrays.
         const next = { ...caseRow, ...updated };
         next.attachments = Array.isArray(caseRow.attachments) ? caseRow.attachments : [];
         next.comments = Array.isArray(caseRow.comments) ? caseRow.comments : [];
@@ -1068,7 +1946,7 @@ export class DirectusCasesPage extends LitElement {
         }
     }
 
-    // ── Inline case edit ───────────────────────────────────────────────────
+    // â”€â”€ Inline case edit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     startEditCase(caseRow) {
         if (!this.canEditCaseContent(caseRow)) return;
         this.editingCase = true;
@@ -1113,7 +1991,7 @@ export class DirectusCasesPage extends LitElement {
         }
     }
 
-    // ── Attachment download ────────────────────────────────────────────────
+    // â”€â”€ Attachment download â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async handleDownloadAttachment(caseRow, attachment) {
         if (!attachment?.id || this.downloadingAttachmentIds.has(attachment.id)) return;
         if (!this.canEditCaseContent(caseRow)) return;
@@ -1123,16 +2001,18 @@ export class DirectusCasesPage extends LitElement {
         this.downloadStatusText = t('cases.downloadStarting', { name });
         this.uploadError = '';
         try {
-            // A quick access check (it does not wait for the file), so a refusal is a message and not a
-            // saved error page. Then the browser takes over and shows the download's progress itself.
-            await checkAttachmentDownload(caseRow.id, attachment.id);
-            if (!this.isConnected) return; // user left the page during the check
+            const url = `${API_URL}/api/cases/${encodeURIComponent(caseRow.id)}/attachments/${encodeURIComponent(attachment.id)}`;
+            const res = await fetch(url, { credentials: 'include' });
+            if (!res.ok) throw new Error(`Download failed (${res.status})`);
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
             const link = document.createElement('a');
-            link.href = getAttachmentDownloadUrl(caseRow.id, attachment.id);
+            link.href = blobUrl;
             link.download = name;
             document.body.appendChild(link);
             link.click();
             link.remove();
+            URL.revokeObjectURL(blobUrl);
             this.downloadStatusText = t('cases.downloadStarted', { name });
         } catch (err) {
             this.downloadStatusText = '';
@@ -1150,7 +2030,7 @@ export class DirectusCasesPage extends LitElement {
         this.downloadingAttachmentIds = next;
     }
 
-    // ── Attachment delete ──────────────────────────────────────────────────
+    // â”€â”€ Attachment delete â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async handleDeleteAttachment(caseRow, attachment) {
         if (!attachment?.id || this.deletingAttachmentId) return;
         if (!this.isMyAttachment(attachment) && this.myCaseRole(caseRow) !== 'admin') return;
@@ -1174,7 +2054,7 @@ export class DirectusCasesPage extends LitElement {
         }
     }
 
-    // ── File upload ────────────────────────────────────────────────────────
+    // â”€â”€ File upload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     triggerFileUpload() {
         this.shadowRoot?.querySelector('#attach-file-input')?.click();
     }
@@ -1195,13 +2075,37 @@ export class DirectusCasesPage extends LitElement {
         if (!files.length || !caseRow?.id) return;
         if (!this.canEditCaseContent(caseRow)) return;
         this.uploadError = '';
-        uploadManager.enqueue({ caseId: caseRow.id, caseTitle: caseRow.title || '', files });
+        this.uploadFilesPayload(caseRow, files);
+    }
+
+    async uploadFilesPayload(caseRow, files) {
+        // Upload files one at a time, reporting inline progress.
+        // The server creates the attachment record in onUploadFinish, so there's no separate attach step.
+        for (const file of files) {
+            if (this.uploadError) break;
+            this.uploadingFile = true;
+            this.uploadProgress = 0;
+            this.uploadStatusText = t('cases.uploadingFile', { name: file.name });
+            try {
+                await uploadCaseAttachment(caseRow.id, file, {
+                    onProgress: (sent, total) => {
+                        this.uploadProgress = total > 0 ? sent / total : 0;
+                    },
+                });
+            } catch (err) {
+                this.uploadError = this.userFacingError(err, 'Upload failed. Please try again.');
+            }
+        }
+        this.uploadingFile = false;
+        this.uploadProgress = 0;
+        this.uploadStatusText = '';
+        if (!this.uploadError) await this.loadCaseAttachments(caseRow.id);
     }
 
     /** Keyboard focus follows the viewer overlay: into it when it opens, back to where the user was when it closes. */
     syncViewerFocus() {
         if (this.showIframe) {
-            this.shadowRoot?.querySelector('.iframe-header-actions button:not([disabled])')?.focus();
+            this.shadowRoot?.querySelector('.iframe-header .primary-button')?.focus();
             return;
         }
         const previous = this._focusBeforeViewer;
@@ -1213,20 +2117,8 @@ export class DirectusCasesPage extends LitElement {
         });
     }
 
-    /** Mirror the manager's state for the selected case into the inline progress row. */
     syncUploadState() {
-        const summary = uploadManager.summary(this.selectedCaseId);
-        this.uploadingFile = summary.count > 0;
-        this.uploadProgress = summary.progress;
-        if (summary.count === 0) {
-            this.uploadStatusText = '';
-        } else if (summary.awaitingDetails && summary.progress >= 1) {
-            this.uploadStatusText = t('cases.uploadNeedsDetails');
-        } else if (summary.count === 1) {
-            this.uploadStatusText = t('cases.uploadingFile', { name: summary.names[0] });
-        } else {
-            this.uploadStatusText = t('cases.uploadingNFiles', { count: summary.count });
-        }
+        // uploadFilesPayload manages progress directly; nothing to sync here
     }
 
     /** A background upload finished: show the new attachment without reloading the list. */
@@ -1239,7 +2131,7 @@ export class DirectusCasesPage extends LitElement {
         });
     }
 
-    // ── Drag-and-drop attach ───────────────────────────────────────────────
+    // â”€â”€ Drag-and-drop attach â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     isFileDrag(event) {
         return Array.from(event.dataTransfer?.types || []).includes('Files');
     }
@@ -1292,7 +2184,7 @@ export class DirectusCasesPage extends LitElement {
         this.stopHeartbeat();
         const { heartbeatUrl } = getViewerSessionEndpoints({
             kind: VIEWER_KINDS.SLICER_GUI,
-            sessionScope: VIEWER_SESSION_SCOPES.DIRECTUS
+            sessionScope: VIEWER_SESSION_SCOPES.CASES
         });
         const ping = () => {
             sendViewerHeartbeat({
@@ -1329,7 +2221,7 @@ export class DirectusCasesPage extends LitElement {
     _releaseViewerSession(sessionToken, seatId) {
         const { stopUrl } = getViewerSessionEndpoints({
             kind: VIEWER_KINDS.SLICER_GUI,
-            sessionScope: VIEWER_SESSION_SCOPES.DIRECTUS
+            sessionScope: VIEWER_SESSION_SCOPES.CASES
         });
         return stopViewerSession({
             stopUrl,
@@ -1345,31 +2237,7 @@ export class DirectusCasesPage extends LitElement {
 
     // Public: called by the Close button. Full Slicer uses history.back() so the browser back button
     // and the button are indistinguishable to the user; SlicerWeb closes directly (see below).
-    async closeViewer() {
-        if (
-            (this.viewerKind === VIEWER_KINDS.SLICER_GUI || this.viewerKind === VIEWER_KINDS.SLICERWEB)
-            && this.hasUnsavedChanges
-            && !this._backgroundSave
-            && this.iframeUrl && this.iframeUrl !== 'about:blank'
-        ) {
-            const choice = await this.promptCloseChoice('unsaved');
-            if (choice === 'save') {
-                const saved = await this.saveCurrentScene('overwrite');
-                if (!saved) {
-                    const failedChoice = await this.promptCloseChoice('save-failed');
-                    if (failedChoice !== 'close-anyway') return;
-                }
-            } else if (choice === 'save-as-new') {
-                const defaultName = this.currentFileName ? this.currentFileName.replace(/\.[^.]+$/, '') : '';
-                const name = await this.promptSaveAsNewName(defaultName);
-                if (name === null) return; // user cancelled the name dialog — stay open
-                await this.saveCurrentScene('saveAsNew', name);
-            } else if (choice !== 'discard') {
-                // 'keep-editing' or any other non-discard choice — stay open
-                return;
-            }
-            // 'discard' falls through to close
-        }
+    closeViewer() {
         if (this.viewerKind === VIEWER_KINDS.SLICERWEB) {
             // SlicerWeb's own frame navigation adds shared history entries, so history.back()
             // may only step the iframe. Close directly and fix the URL in place.
@@ -1385,7 +2253,7 @@ export class DirectusCasesPage extends LitElement {
             }, 0));
         } else if (this._viewerPushedState) {
             this._viewerPushedState = false;
-            history.back(); // popstate fires → _handlePopState → _doCloseViewer
+            history.back(); // popstate fires â†’ _handlePopState â†’ _doCloseViewer
         } else {
             this._doCloseViewer();
         }
@@ -1544,36 +2412,13 @@ export class DirectusCasesPage extends LitElement {
 
     clearViewerUiState() {
         this.showIframe = false;
-        this.iframeUrl = '';
+        this.iframeUrl = 'about:blank';
         this.viewerLoading = false;
         this.viewerLoadingDetail = '';
         this.viewerSimplified = false;
         this.viewerKind = VIEWER_KINDS.SLICER_GUI;
         this.viewerClosing = false;
         this.currentFileName = '';
-        this.currentAttachmentId = '';
-        this.hasUnsavedChanges = false;
-        this.isSavingScene = false;
-        this._lastSavedAttachmentId = null;
-        this._openedFileModifiedAt = null;
-        this._conflictContext = null;
-        this.saveIndicatorMessage = '';
-        if (this.saveIndicatorTimeout) {
-            clearTimeout(this.saveIndicatorTimeout);
-            this.saveIndicatorTimeout = null;
-        }
-        if (this.saveIndicatorActivityCleanup) {
-            this.saveIndicatorActivityCleanup();
-            this.saveIndicatorActivityCleanup = null;
-        }
-        if (this.iframeActivityCleanup) {
-            this.iframeActivityCleanup();
-            this.iframeActivityCleanup = null;
-        }
-        if (this._slicerReadyFallback) {
-            clearTimeout(this._slicerReadyFallback);
-            this._slicerReadyFallback = null;
-        }
         this._slicerWebRun += 1; // cancels any in-flight SlicerWeb load
         this._viewerOpenId += 1; // orphans any in-flight open request
         this._slicerWebPending = null;
@@ -1591,10 +2436,7 @@ export class DirectusCasesPage extends LitElement {
         }
         if (!attachment?.canOpenInSlicer) return;
 
-        const useSimplified = resolveSimplifiedViewerChoice(
-            simplified,
-            this.accountDefaultViewer() === 'simplified'
-        );
+        const useSimplified = resolveSimplifiedViewerChoice(simplified);
         const viewerLabel = viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified: useSimplified });
 
         this._focusBeforeViewer = deepActiveElement();
@@ -1617,7 +2459,7 @@ export class DirectusCasesPage extends LitElement {
 
         try {
             this.stopHeartbeat();
-            const data = await openAttachmentInViewer(caseRow.id, attachment.id, {
+            const data = await openPayloadAttachmentFullSlicer(caseRow.id, attachment.id, {
                 useSimplifiedViewer: useSimplified
             });
             if (isSuperseded()) {
@@ -1641,7 +2483,7 @@ export class DirectusCasesPage extends LitElement {
                 vncPath: data.vncPath || data.slicerGuiUrl || '',
                 sessionToken: this._viewerSessionToken,
                 seatId: this._viewerSeatId,
-                sessionScope: VIEWER_SESSION_SCOPES.DIRECTUS,
+                sessionScope: VIEWER_SESSION_SCOPES.CASES,
                 simplified: this.viewerSimplified,
                 embed: true,
                 quick: false
@@ -1650,8 +2492,6 @@ export class DirectusCasesPage extends LitElement {
             this.startHeartbeat();
             this.viewerLoading = true;
             this.viewerLoadingDetail = t('cases.openingViewerReady', { viewer: viewerLabel });
-            this.currentAttachmentId = attachment.id;
-            this.hasUnsavedChanges = false;
             this.openingAttachmentId = '';
 
             this._pushViewerHistory(caseRow.id);
@@ -1668,37 +2508,6 @@ export class DirectusCasesPage extends LitElement {
         return this.handleOpenAttachment(caseRow, attachment, { simplified: viewer === 'simplified' });
     }
 
-    async handleOpenBlankSlicerWeb(caseRow) {
-        if (this.viewerLoading || this.openingAttachmentId) return;
-
-        this._viewerOpenId += 1;
-        this._focusBeforeViewer = deepActiveElement();
-        this.errorMessage = '';
-        this.currentFileName = '';
-        this.currentAttachmentId = '';
-        this.viewerKind = VIEWER_KINDS.SLICERWEB;
-        this.viewerSimplified = false;
-        this.viewerLoading = true;
-        this.showIframe = true;
-        this.selectedCaseId = caseRow.id;
-        this.hasUnsavedChanges = false;
-
-        const channel = (isSlicerWebDevModeEnabled() && getCachedUserPreferences().slicerWebChannel === 'latest')
-            ? 'latest' : 'stable';
-
-        this.viewerLoadingDetail = t('cases.openingSlicerWeb');
-        this._slicerWebRun += 1;
-        this._slicerWebPending = { blank: true };
-
-        const statusData = await fetch('/api/slicerweb/status', { credentials: 'include' })
-            .then((r) => r.ok ? r.json() : null)
-            .catch(() => null);
-        const sha = statusData?.[channel] ?? null;
-        this.iframeUrl = buildSlicerWebUrl({ channel, sha });
-
-        this._pushViewerHistory(caseRow.id);
-    }
-
     async handleOpenSlicerWeb(caseRow, attachment) {
         if (this.openingAttachmentId || !attachment?.canOpenInSlicer) return;
 
@@ -1706,8 +2515,6 @@ export class DirectusCasesPage extends LitElement {
         this._focusBeforeViewer = deepActiveElement();
         this.errorMessage = '';
         this.currentFileName = attachmentFileName(attachment);
-        this.currentAttachmentId = attachment.id;
-        this._openedFileModifiedAt = attachment.modifiedAt || null;
         this.viewerKind = VIEWER_KINDS.SLICERWEB;
         this.viewerSimplified = false;
         this.viewerLoading = true;
@@ -1726,7 +2533,7 @@ export class DirectusCasesPage extends LitElement {
         this.showIframe = true;
         this._slicerWebRun += 1;
         // Download while the runtime starts; both are awaited in loadPendingIntoSlicerWeb.
-        const download = fetchAttachmentContent(caseRow.id, attachment.id);
+        const download = fetchPayloadAttachmentContent(caseRow.id, attachment.id);
         download.catch(() => {}); // surfaced when awaited
         this._slicerWebPending = { download, fileName: this.currentFileName };
 
@@ -1739,6 +2546,18 @@ export class DirectusCasesPage extends LitElement {
         this.iframeUrl = buildSlicerWebUrl({ channel, sha });
 
         this._pushViewerHistory(caseRow.id);
+
+        // If the iframe is already loaded and the bridge is ready, kick off loading
+        // immediately — the @load event won't fire again since the URL hasn't changed.
+        const iframe = this.renderRoot?.querySelector('.viewer-iframe');
+        if (iframe) {
+            try {
+                const bridge = iframe.contentWindow?.slicerWeb;
+                if (bridge?.store?.status === 'ready') {
+                    this.loadPendingIntoSlicerWeb(iframe);
+                }
+            } catch (_) {}
+        }
     }
 
     /**
@@ -1769,23 +2588,18 @@ export class DirectusCasesPage extends LitElement {
                 slicer = readyBridge();
             }
 
-            // Blank mode: Slicer Web is ready with no file to load.
+            // Blank mode: SlicerWeb is ready with no file to load.
             if (pending.blank) {
                 if (cancelled()) return;
                 this._slicerWebPending = null;
                 this.viewerLoading = false;
                 this.viewerLoadingDetail = '';
-                this.hasUnsavedChanges = false;
-                this._attachSlicerWebSaveHandler(slicer, { blank: true });
-                // Track interactions so the close button can offer to save if the user
-                // loads or creates something in the blank viewer.
-                this.attachIframeActivityTracking();
                 return;
             }
 
             // Patch rawCall to queue behind any active JSPI call. Autosave fires sync
             // rawCall on a 1s interval; calling sync Python while JSPI is active crashes
-            // Pyodide fatally. Must be applied here (after bridge is ready), not at iframe load.
+            // Pyodide fatally. Must be applied after bridge is ready, not at iframe load.
             try {
                 const rawBridge = slicer.bridge;
                 if (rawBridge?.rawCall && !rawBridge._rawCallPatched) {
@@ -1823,66 +2637,43 @@ export class DirectusCasesPage extends LitElement {
             }
             if (cancelled()) return;
 
-
             const cw = frame.contentWindow;
-
-            // For Mimics files (.mcs/.mxp) we fold closeScene + load into a single
-            // callYielding to avoid back-to-back JSPI calls, which can corrupt the
-            // response buffer in Pyodide/Emscripten when one JSPI hasn't fully settled
-            // before the next one starts.
-            const isMimicsFile = /\.(mcs|mxp)$/i.test(pending.fileName);
-
-            if (!isMimicsFile) {
-                await slicer.bridge.callYielding('closeScene', []);
-                if (cancelled()) return;
-            }
 
             const writtenPaths = await cw.slicerWeb.writeFiles([new File([blob], pending.fileName)]);
             if (cancelled()) return;
 
             const filePaths = Array.isArray(writtenPaths) ? writtenPaths : [writtenPaths];
+            // loadFiles returns [] for MRB (unknown node types) and MCS/MXP (zero confidence
+            // in WASM). Use evalPython for these; everything else goes through loadFiles.
+            const needsPython = /\.(mrb|mcs|mxp)$/i.test(pending.fileName);
             let loadResult;
             try {
-                if (isMimicsFile) {
-                    // .mcs/.mxp files come in two formats:
-                    //   1. ZIP bundle containing scene.mrml — rename to .mrb and load as SceneFile
-                    //   2. SQLite database (original Mimics format) — load as MimicsProject directly
-                    // In WASM, LegacyScriptedFileReader.supportedNameFilters is absent, so
-                    // canLoadFileConfidence() returns 0.0 for both; bypass loadFiles() and
-                    // call the correct loader directly.
-                    // Scene clear is done inside this evalPython (no separate closeScene call).
-                    const safePath = filePaths[0].replace(/'/g, "\\'");
+                if (needsPython) {
+                    const safePath = filePaths[0].replace(/\\/g, '/').replace(/'/g, "\\'");
                     await slicer.bridge.callYielding('evalPython', [[
-                        'import os, zipfile, slicer, vtk',
+                        'import slicer, os, vtk',
                         'slicer.mrmlScene.Clear(False)',
-                        '_sw_ids = []',
                         '_sw_exc = None',
+                        `_sw_path = '${safePath}'`,
                         'try:',
-                        `    _sw_path = "${safePath}"`,
-                        '    _sw_has_mrml = False',
-                        '    try:',
-                        '        with zipfile.ZipFile(_sw_path) as _z:',
-                        '            _sw_has_mrml = any(n.lower().endswith(".mrml") for n in _z.namelist())',
-                        '    except Exception:',
-                        '        pass',
-                        '    _sw_nodes = vtk.vtkCollection()',
-                        '    _sw_msgs = slicer.vtkMRMLMessageCollection()',
-                        '    if _sw_has_mrml:',
-                        '        _sw_mrb = os.path.splitext(_sw_path)[0] + ".mrb"',
-                        '        os.rename(_sw_path, _sw_mrb)',
-                        '        slicer.app.coreIOManager().loadNodes("SceneFile", {"fileName": _sw_mrb, "clear": False}, _sw_nodes, _sw_msgs)',
+                        '    if os.path.splitext(_sw_path)[1].lower() in (".mrb", ".mrml"):',
+                        '        slicer.util.loadScene(_sw_path)',
                         '    else:',
+                        '        _sw_nodes = vtk.vtkCollection()',
+                        '        _sw_msgs = slicer.vtkMRMLMessageCollection()',
                         '        slicer.app.coreIOManager().loadNodes("MimicsProject", {"fileName": _sw_path}, _sw_nodes, _sw_msgs)',
-                        '    _sw_ids = [_sw_nodes.GetItemAsObject(i).GetID() for i in range(_sw_nodes.GetNumberOfItems())]',
                         'except Exception as _e:',
-                        '    import traceback; _sw_exc = traceback.format_exc()',
+                        '    _sw_exc = str(_e)',
+                        '_sw_ids = [n.GetID() for i in range(slicer.mrmlScene.GetNumberOfNodes()) for n in [slicer.mrmlScene.GetNthNode(i)] if n]',
                     ].join('\n'), 'exec']);
                     const idsRepr = await slicer.bridge.call('evalPython', ['_sw_ids', 'eval']);
                     const excRepr = await slicer.bridge.call('evalPython', ['_sw_exc', 'eval']);
-                    if (excRepr !== 'None') console.error('[SW-load] Mimics load exc:', excRepr);
+                    if (excRepr !== 'None') console.warn('[SW-load] warning (non-fatal):', excRepr);
                     loadResult = parseNodeIdsRepr(idsRepr);
                 } else {
-                    loadResult = await slicer.bridge.callYielding('loadFiles', [filePaths, {}]);
+                    await slicer.bridge.callYielding('closeScene', []);
+                    if (cancelled()) return;
+                    loadResult = await slicer.bridge.callYielding('loadFiles', [filePaths]);
                 }
             } catch (loadErr) {
                 console.error('[SW-load] load threw:', loadErr);
@@ -1890,14 +2681,12 @@ export class DirectusCasesPage extends LitElement {
             }
             if (cancelled()) return;
 
-            // alert() fires for warnings and errors alike; only treat it as a failure if
-            // nothing loaded.
             cw._slicerAlertMessage = null;
             if (!Array.isArray(loadResult) || loadResult.length === 0) {
                 throw new Error(t('errors.slicerLoadFailed'));
             }
 
-            // Fit all views to the loaded data.
+
             await new Promise((r) => setTimeout(r, 500));
             if (!cancelled()) {
                 try {
@@ -1909,13 +2698,14 @@ export class DirectusCasesPage extends LitElement {
                     }
                 }
             }
+
             this._slicerWebPending = null;
             this.viewerLoading = false;
             this.viewerLoadingDetail = '';
-            this.hasUnsavedChanges = false;
             this._attachSlicerWebSaveHandler(slicer);
             this.attachIframeActivityTracking();
         } catch (err) {
+            console.error('[SW] caught error:', err);
             if (cancelled()) return;
             const rawErr = err?.message || String(err || '');
             const errorInfo = rawErr
@@ -1928,34 +2718,23 @@ export class DirectusCasesPage extends LitElement {
         }
     }
 
-    handleViewerIframeLoad(event) {
-        if (this.viewerKind === VIEWER_KINDS.SLICERWEB) {
-            try {
-                const cw = event?.target?.contentWindow;
-                if (cw) {
-                    // Suppress the "restore session?" confirm so the viewer always starts empty.
-                    cw.confirm = () => false;
-                    // Capture alert() so Python-side load messages can be read back.
-                    cw._slicerAlertMessage = null;
-                    cw.alert = (msg) => { cw._slicerAlertMessage = String(msg ?? ''); };
-                }
-            } catch (_) {}
-            this.loadPendingIntoSlicerWeb(event?.target);
-            return;
+    viewerLoadError(rawError) {
+        return classifySlicerLoadError(rawError);
+    }
+
+    showErrorDialog({ title, message }) {
+        this.errorDialogTitle = title || '';
+        this.errorDialogMessage = message || '';
+        const dialog = this.renderRoot?.querySelector('#viewer-error-dialog');
+        if (dialog) {
+            queueMicrotask(() => dialog.openDialog?.());
+        } else {
+            this.errorMessage = [title, message].filter(Boolean).join(': ');
         }
-        // SLICER_GUI: keep viewerLoading=true so the overlay continues showing loader progress.
-        // slicer-viewer-ready will clear it. Set a 2-minute safety fallback in case the message
-        // never arrives (container crash, cross-origin loader, etc.).
-        if (this._slicerReadyFallback) clearTimeout(this._slicerReadyFallback);
-        this._slicerReadyFallback = setTimeout(() => {
-            this._slicerReadyFallback = null;
-            if (this.viewerKind === VIEWER_KINDS.SLICER_GUI && this.viewerLoading) {
-                this.viewerLoading = false;
-                this.viewerLoadingDetail = '';
-            }
-        }, 2 * 60 * 1000);
-        markViewerActivity();
-        this.attachIframeActivityTracking();
+    }
+
+    _attachSlicerWebSaveHandler(_slicer, _opts = {}) {
+        // Save-to-Payload not yet implemented on this branch.
     }
 
     attachIframeActivityTracking() {
@@ -1967,391 +2746,61 @@ export class DirectusCasesPage extends LitElement {
             const iframe = this.renderRoot?.querySelector('.viewer-iframe');
             const iframeDoc = iframe?.contentWindow?.document;
             if (!iframeDoc) return;
-            const markDirty = () => {
-                this.hasUnsavedChanges = true;
-                markViewerActivity();
-            };
+            const markDirty = () => { markViewerActivity(); };
             const domEvents = ['pointerdown', 'input', 'change', 'wheel'];
             domEvents.forEach((ev) => iframeDoc.addEventListener(ev, markDirty, true));
-
-            // Subscribe to Slicer Web's own scene-changed bridge event so that
-            // programmatic scene modifications (automation, Python scripts) also
-            // set the dirty flag. on() returns a cleanup function.
-            const slicerWeb = iframe.contentWindow?.slicerWeb;
-            const bridgeEvents = slicerWeb?.bridge?.events ?? slicerWeb?.events;
-            const removeBridgeListener = bridgeEvents?.on?.('scene-changed', markDirty) ?? null;
-
             this.iframeActivityCleanup = () => {
                 domEvents.forEach((ev) => iframeDoc.removeEventListener(ev, markDirty, true));
-                removeBridgeListener?.();
             };
-        } catch (_) {
-            // Cross-origin iframes will throw; best-effort only.
-        }
-    }
-
-    async _loadAuditLog(caseId, { append = false } = {}) {
-        if (this._auditLoading) return;
-        const offset = append ? this._auditOffset : 0;
-        this._auditLoading = true;
-        this._auditError = null;
-        try {
-            const result = await fetchCaseActivity(caseId, { limit: 50, offset });
-            const rows = Array.isArray(result?.activity) ? result.activity : [];
-            this._auditRows = append ? [...this._auditRows, ...rows] : rows;
-            this._auditOffset = offset + rows.length;
-            this._auditHasMore = rows.length === 50;
-        } catch (err) {
-            this._auditError = this.userFacingError?.(err, t('audit.caseHistory')) ?? err.message;
-        } finally {
-            this._auditLoading = false;
-        }
-    }
-
-    _openAuditView(caseId) {
-        history.pushState({ caseId, view: 'history' }, '', this._buildAuditUrl(caseId));
-        this._auditRows = [];
-        this._auditOffset = 0;
-        this._loadAuditLog(caseId);
-    }
-
-    _closeAuditView() {
-        history.pushState({ caseId: this.selectedCaseId }, '', this._buildCaseUrl(this.selectedCaseId));
-        this._auditRows = [];
-        this._auditOffset = 0;
-        this._auditHasMore = false;
-        this._auditError = null;
-    }
-
-    _attachSlicerWebSaveHandler(slicer, { blank = false } = {}) {
-        // Override prompt so the built-in Slicer save button doesn't show a filename dialog.
-        // SlicerWeb calls prompt() to ask for a filename before invoking saveHandler; returning
-        // the current filename here lets the save proceed silently to our handler.
-        try {
-            const iframe = this.renderRoot?.querySelector('.viewer-iframe');
-            if (iframe?.contentWindow) {
-                iframe.contentWindow.prompt = () => this.currentFileName || 'scene.mrb';
-            }
         } catch (_) {}
+    }
 
-        slicer.saveHandler = async (path) => {
-            if (!this.selectedCaseId || this.isSavingScene) return;
-            if (!blank && !this.currentAttachmentId) return;
-            const caseId = this.selectedCaseId;
-            this.isSavingScene = true;
+    async handleOpenBlankSlicerWeb(caseRow) {
+        if (this.viewerLoading || this.openingAttachmentId) return;
+
+        this._viewerOpenId += 1;
+        this._focusBeforeViewer = deepActiveElement();
+        this.errorMessage = '';
+        this.currentFileName = '';
+        this.currentAttachmentId = '';
+        this.viewerKind = VIEWER_KINDS.SLICERWEB;
+        this.viewerSimplified = false;
+        this.viewerLoading = true;
+        this.showIframe = true;
+        this.selectedCaseId = caseRow.id;
+
+        const channel = (isSlicerWebDevModeEnabled() && getCachedUserPreferences().slicerWebChannel === 'latest')
+            ? 'latest' : 'stable';
+
+        this.viewerLoadingDetail = t('cases.openingSlicerWeb');
+        this._slicerWebRun += 1;
+        this._slicerWebPending = { blank: true };
+
+        const statusData = await fetch('/api/slicerweb/status', { credentials: 'include' })
+            .then((r) => r.ok ? r.json() : null)
+            .catch(() => null);
+        const sha = statusData?.[channel] ?? null;
+        this.iframeUrl = buildSlicerWebUrl({ channel, sha });
+
+        this._pushViewerHistory(caseRow.id);
+    }
+
+    handleViewerIframeLoad(event) {
+        if (this.viewerKind === VIEWER_KINDS.SLICERWEB) {
             try {
-                const [file] = await slicer.readFiles([path]);
-                this.isSavingScene = false;
-                if (blank && !this.currentAttachmentId) {
-                    // First save from blank mode — create a new attachment, then switch to overwrite.
-                    const name = this.currentFileName || 'scene.mrb';
-                    this._runBackgroundSave(file, {
-                        caseId,
-                        attachmentId: null,
-                        saveMode: 'saveAsNew',
-                        name,
-                        onNewAttachment: (attachment) => {
-                            if (!this.currentAttachmentId) {
-                                this.currentAttachmentId = attachment.id;
-                                this.currentFileName = attachment.filenameDownload || attachment.name || name;
-                            }
-                        }
-                    });
-                } else {
-                    this._runBackgroundSave(file, { caseId, attachmentId: this.currentAttachmentId, saveMode: 'overwrite' });
+                const cw = event?.target?.contentWindow;
+                if (cw) {
+                    cw.confirm = () => false;
+                    cw._slicerAlertMessage = null;
+                    cw.alert = (msg) => { cw._slicerAlertMessage = String(msg ?? ''); };
                 }
-            } catch (err) {
-                this.errorMessage = this.userFacingError(err, t('errors.saveSceneFailed'));
-            } finally {
-                this.isSavingScene = false;
-            }
-        };
-    }
-
-    /** Phase 1: trigger WASM scene serialization and copy bytes into JS. Returns the File. */
-    async _writeSlicerWebScene() {
-        const iframe = this.renderRoot?.querySelector('.viewer-iframe');
-        const slicer = iframe?.contentWindow?.slicerWeb;
-        if (!slicer) throw new Error(t('errors.saveSceneFailed'));
-        const savePath = '/data/save/scene.mrb';
-        // callYielding is required for IO — it yields control until Slicer finishes writing.
-        // call() may return before the file is flushed, producing a truncated bundle.
-        if (typeof slicer.bridge.callYielding !== 'function') {
-            console.warn('[SlicerWeb] callYielding not available; save may be incomplete');
+            } catch (_) {}
+            this.loadPendingIntoSlicerWeb(event?.target);
+            return;
         }
-        await (slicer.bridge.callYielding ?? slicer.bridge.call).call(slicer.bridge, 'saveScene', [savePath]);
-        const [file] = await slicer.readFiles([savePath]);
-        if (!file || file.size < 1024) {
-            throw new Error(`saveScene produced an unexpectedly small file (${file?.size ?? 0} bytes) — the scene may not have been written yet`);
-        }
-        return file;
-    }
-
-    /** Phase 2: upload the serialized file in the background. Safe to call after closing the viewer. */
-    _runBackgroundSave(file, { caseId, attachmentId, saveMode, name, onNewAttachment, _attempt = 1 } = {}) {
-        // Abort an in-flight overwrite for the same attachment — the newer data supersedes it.
-        // SaveAsNew is independent (creates a new attachment) so let both run concurrently.
-        const prev = this._backgroundSave;
-        if (prev?.abortCtrl && saveMode === 'overwrite' && prev.saveMode === 'overwrite' && prev.attachmentId === attachmentId) {
-            prev.abortCtrl.abort();
-        }
-        const abortCtrl = new AbortController();
-        // Keep file + params so the error banner can offer a retry.
-        this._backgroundSave = { file, caseId, attachmentId, saveMode, name, onNewAttachment, error: null, abortCtrl };
-        this.hasUnsavedChanges = false;
-        const conflictCheck = saveMode === 'overwrite' ? this._openedFileModifiedAt : null;
-        saveWithDirectusReconnect(() => saveSlicerWebScene(caseId, attachmentId, file, { saveMode, name, conflictCheck, signal: abortCtrl.signal }))
-            .then((result) => {
-                if (abortCtrl.signal.aborted) return; // superseded — a newer save already owns _backgroundSave
-                this._backgroundSave = null;
-                if (result?.attachment) {
-                    this.cases = this.cases.map((c) => {
-                        if (c.id !== caseId) return c;
-                        if (!Array.isArray(c.attachments)) return c;
-                        const attachments = saveMode === 'saveAsNew'
-                            ? [...c.attachments, result.attachment]
-                            : c.attachments.map((a) => a.id === attachmentId ? result.attachment : a);
-                        return { ...c, attachments };
-                    });
-                }
-                if (saveMode === 'overwrite') {
-                    this._lastSavedAttachmentId = attachmentId;
-                    if (result?.attachment?.modifiedAt) this._openedFileModifiedAt = result.attachment.modifiedAt;
-                }
-                if (saveMode === 'saveAsNew' && result?.attachment && typeof onNewAttachment === 'function') {
-                    onNewAttachment(result.attachment);
-                }
-                const msg = saveMode === 'saveAsNew' ? t('files.savedAsNew') : t('files.saved');
-                if (this.showIframe) {
-                    this.showSaveIndicator(msg);
-                } else {
-                    this.showToast(msg);
-                }
-            })
-            .catch((err) => {
-                if (err?.name === 'AbortError') return; // superseded by a newer save — discard silently
-                if (err?.code === 'EDIT_CONFLICT') {
-                    this._backgroundSave = null;
-                    this._showEditConflictDialog(file, caseId, attachmentId, onNewAttachment);
-                    return;
-                }
-                // Session errors mean the user explicitly cancelled reconnect — don't auto-retry,
-                // as that would immediately re-open the reconnect dialog.
-                const isSessionError = err.code === 'DIRECTUS_SESSION_EXPIRED' || err.code === 'DIRECTUS_SESSION_REQUIRED';
-                if (_attempt < 2 && !isSessionError) {
-                    setTimeout(() => {
-                        if (this._backgroundSave && !this._backgroundSave.error) {
-                            this._runBackgroundSave(file, { caseId, attachmentId, saveMode, name, onNewAttachment, _attempt: _attempt + 1 });
-                        }
-                    }, 2000);
-                    return;
-                }
-                this._backgroundSave = {
-                    ...this._backgroundSave,
-                    error: this.userFacingError(err, t('errors.saveSceneFailed'))
-                };
-            });
-    }
-
-    _retryBackgroundSave() {
-        if (!this._backgroundSave) return;
-        const { file, caseId, attachmentId, saveMode, name } = this._backgroundSave;
-        // Reset attempt counter so the manual retry also gets one silent auto-retry.
-        this._runBackgroundSave(file, { caseId, attachmentId, saveMode, name, _attempt: 1 });
-    }
-
-    async saveCurrentScene(mode = 'overwrite', name) {
-        if (!this.selectedCaseId) return false;
-        // Blank Slicer Web has no attachment yet — allow through so the first save can create one.
-        const isBlankSlicerWeb = this.viewerKind === VIEWER_KINDS.SLICERWEB && !this.currentAttachmentId;
-        if (!this.currentAttachmentId && !isBlankSlicerWeb) return false;
-        if (this.isSavingScene) return false;
-        this.isSavingScene = true;
-        try {
-            if (this.viewerKind === VIEWER_KINDS.SLICERWEB) {
-                // Skip if nothing has changed since the last successful save.
-                if (mode === 'overwrite' && !this.hasUnsavedChanges && this._lastSavedAttachmentId === this.currentAttachmentId) {
-                    this.isSavingScene = false;
-                    this.showSaveIndicator(t('files.saved'));
-                    return true;
-                }
-                // Phase 1: WASM serialization (requires the viewer iframe).
-                const caseId = this.selectedCaseId;
-                const attachmentId = this.currentAttachmentId;
-                const file = await this._writeSlicerWebScene();
-                // Phase 2: upload runs in the background; viewer is unblocked immediately.
-                this.isSavingScene = false;
-                if (isBlankSlicerWeb) {
-                    // First save in blank mode — create a new attachment and store its id for future saves.
-                    const saveName = this.currentFileName || name || 'scene.mrb';
-                    this._runBackgroundSave(file, {
-                        caseId,
-                        attachmentId: null,
-                        saveMode: 'saveAsNew',
-                        name: saveName,
-                        onNewAttachment: (attachment) => {
-                            if (!this.currentAttachmentId) {
-                                this.currentAttachmentId = attachment.id;
-                                this.currentFileName = attachment.filenameDownload || attachment.name || saveName;
-                            }
-                        }
-                    });
-                } else {
-                    this._runBackgroundSave(file, { caseId, attachmentId, saveMode: mode, name });
-                }
-                return true;
-            }
-
-            // SLICER_GUI: flush pending UI edits before saving via trame.
-            try {
-                const iframe = this.renderRoot?.querySelector('.viewer-iframe');
-                iframe?.contentWindow?.focus?.();
-                const active = iframe?.contentWindow?.document?.activeElement;
-                if (active && typeof active.blur === 'function') active.blur();
-            } catch (_) { /* cross-origin, best effort */ }
-            await new Promise((r) => setTimeout(r, 350));
-            const result = await saveWithDirectusReconnect(() =>
-                saveAttachmentScene(
-                    this.selectedCaseId,
-                    this.currentAttachmentId,
-                    { saveMode: mode }
-                )
-            );
-
-            if (result?.attachment) {
-                this.cases = this.cases.map((c) => {
-                    if (c.id !== this.selectedCaseId) return c;
-                    if (!Array.isArray(c.attachments)) return c;
-                    const attachments = mode === 'saveAsNew'
-                        ? [...c.attachments, result.attachment]
-                        : c.attachments.map((a) => a.id === this.currentAttachmentId ? result.attachment : a);
-                    return { ...c, attachments };
-                });
-            }
-
-            this.hasUnsavedChanges = false;
-            this.showSaveIndicator(mode === 'saveAsNew' ? t('files.savedAsNew') : t('files.saved'));
-            return true;
-        } catch (err) {
-            this.errorMessage = this.userFacingError(err, t('errors.saveSceneFailed'));
-            return false;
-        } finally {
-            this.isSavingScene = false;
-        }
-    }
-
-    async saveCurrentSceneAsNew() {
-        const defaultName = this.currentFileName
-            ? this.currentFileName.replace(/\.[^.]+$/, '')
-            : '';
-        const name = await this.promptSaveAsNewName(defaultName);
-        if (name === null) return;
-        return this.saveCurrentScene('saveAsNew', name);
-    }
-
-    promptSaveAsNewName(defaultName = '') {
-        this._saveAsNewName = defaultName;
-        this._saveAsNewResolver = null;
-        const dialog = this.renderRoot?.querySelector('#save-as-new-dialog');
-        dialog?.openDialog();
-        // Focus and select the input after the dialog is visible.
-        requestAnimationFrame(() => {
-            const input = dialog?.querySelector('#save-as-new-name');
-            if (input) { input.focus(); input.select(); }
-        });
-        return new Promise((resolve) => {
-            this._saveAsNewResolver = resolve;
-        });
-    }
-
-    finishSaveAsNew(confirmed) {
-        const name = confirmed ? (this._saveAsNewName || '').trim() : null;
-        this.renderRoot?.querySelector('#save-as-new-dialog')?.closeDialog();
-        const resolver = this._saveAsNewResolver;
-        this._saveAsNewResolver = null;
-        if (resolver) resolver(name);
-    }
-
-    showSaveIndicator(message) {
-        this.saveIndicatorMessage = message;
-        if (this.saveIndicatorTimeout) {
-            clearTimeout(this.saveIndicatorTimeout);
-            this.saveIndicatorTimeout = null;
-        }
-        const scheduleHide = () => {
-            if (this.saveIndicatorTimeout) clearTimeout(this.saveIndicatorTimeout);
-            this.saveIndicatorTimeout = setTimeout(() => {
-                this.saveIndicatorMessage = '';
-                if (this.saveIndicatorActivityCleanup) {
-                    this.saveIndicatorActivityCleanup();
-                    this.saveIndicatorActivityCleanup = null;
-                }
-            }, 3000);
-        };
-        if (!this.saveIndicatorActivityCleanup) {
-            const onActivity = () => scheduleHide();
-            const events = ['pointerdown', 'keydown', 'wheel', 'touchstart'];
-            events.forEach((ev) => window.addEventListener(ev, onActivity, true));
-            this.saveIndicatorActivityCleanup = () => {
-                events.forEach((ev) => window.removeEventListener(ev, onActivity, true));
-            };
-        }
-        scheduleHide();
-    }
-
-    promptCloseChoice(mode) {
-        return new Promise((resolve) => {
-            this._closePromptResolver = resolve;
-            this.closePromptMode = mode;
-            this._closePromptMenuOpen = false;
-            this.updateComplete.then(() => {
-                this.renderRoot?.querySelector('#viewer-close-prompt')?.openDialog();
-            });
-        });
-    }
-
-    finishClosePrompt(choice) {
-        this.renderRoot?.querySelector('#viewer-close-prompt')?.closeDialog();
-        this.closePromptMode = null;
-        this._closePromptMenuOpen = false;
-        const resolver = this._closePromptResolver;
-        this._closePromptResolver = null;
-        resolver?.(choice);
-    }
-
-    _showEditConflictDialog(file, caseId, attachmentId, onNewAttachment) {
-        const defaultName = this.currentFileName
-            ? this.currentFileName.replace(/\.[^.]+$/, '')
-            : '';
-        this._conflictSaveName = defaultName;
-        this._conflictContext = { file, caseId, attachmentId, onNewAttachment };
-        this.updateComplete.then(() => {
-            this.renderRoot?.querySelector('#edit-conflict-dialog')?.openDialog();
-            requestAnimationFrame(() => {
-                const input = this.renderRoot?.querySelector('#conflict-save-as-name');
-                if (input) { input.focus(); input.select(); }
-            });
-        });
-    }
-
-    _resolveConflict(choice) {
-        const ctx = this._conflictContext;
-        this._conflictContext = null;
-        this.renderRoot?.querySelector('#edit-conflict-dialog')?.closeDialog();
-        if (choice === 'save' && ctx) {
-            const name = (this._conflictSaveName || '').trim() || this.currentFileName || 'scene.mrb';
-            this._runBackgroundSave(ctx.file, {
-                caseId: ctx.caseId,
-                attachmentId: ctx.attachmentId,
-                saveMode: 'saveAsNew',
-                name,
-                onNewAttachment: ctx.onNewAttachment
-            });
-        } else if (choice === 'keep-editing') {
-            // Restore unsaved state so the close dialog warns them if they try to leave.
-            this.hasUnsavedChanges = true;
-        }
-        // 'discard' — changes already lost, nothing to do
+        this.viewerLoading = false;
+        this.viewerLoadingDetail = '';
+        markViewerActivity();
     }
 
     renderLanding() {
@@ -2462,7 +2911,7 @@ export class DirectusCasesPage extends LitElement {
                 ` : ''}
 
                 ${!this.loading && this.cases.length > 0 && filteredCases.length === 0 && !this.showNewCaseForm ? html`
-                    <p slot="content" class="cases-empty-filter">No cases match “${this.caseSearchQuery.trim()}”.</p>
+                    <p slot="content" class="cases-empty-filter">No cases match â€œ${this.caseSearchQuery.trim()}â€.</p>
                 ` : ''}
 
                 ${!this.loading && filteredCases.length > 0 ? html`
@@ -2539,11 +2988,6 @@ export class DirectusCasesPage extends LitElement {
                         <button class="back-link" type="button" @click=${() => this.backToCaseList()}>
                             ${t('cases.backToList')}
                         </button>
-                        ${this._getViewFromUrl() === 'history' ? html`
-                            <button class="back-link" type="button" @click=${() => this._closeAuditView()}>
-                                ${caseRow.title || t('cases.untitledCase')}
-                            </button>
-                        ` : ''}
                         <div class="detail-toolbar-actions">
                             <button
                                 class="quiet-button"
@@ -2563,37 +3007,8 @@ export class DirectusCasesPage extends LitElement {
                                     @click=${() => this.startEditCase(caseRow)}
                                 >${t('cases.editDetails')}</button>
                             ` : ''}
-                            <div class="toolbar-more-menu">
-                                <button
-                                    class="quiet-button toolbar-more-btn"
-                                    type="button"
-                                    aria-label=${t('common.moreOptions')}
-                                    @click=${(e) => { e.stopPropagation(); this._toolbarMenuOpen = !this._toolbarMenuOpen; }}
-                                >⋯</button>
-                                ${this._toolbarMenuOpen ? html`
-                                    <div class="toolbar-more-dropdown" @click=${(e) => e.stopPropagation()}>
-                                        <button
-                                            class="toolbar-more-item"
-                                            type="button"
-                                            @click=${() => { this._toolbarMenuOpen = false; this._openAuditView(caseRow.id); }}
-                                        >${t('audit.viewHistory')}</button>
-                                    </div>
-                                ` : ''}
-                            </div>
                         </div>
                     </div>
-
-                    ${this._getViewFromUrl() === 'history' ? html`
-                        <div class="audit-view-container">
-                            <audit-log
-                                .rows=${this._auditRows}
-                                .loading=${this._auditLoading}
-                                .error=${this._auditError || ''}
-                                .hasMore=${this._auditHasMore}
-                                @load-more=${() => this._loadAuditLog(caseRow.id, { append: true })}
-                            ></audit-log>
-                        </div>
-                    ` : html`
 
                     ${this.editingCase ? html`
                         <form class="new-case-form" @submit=${(e) => { e.preventDefault(); this.saveEditCase(caseRow); }} novalidate>
@@ -2698,21 +3113,17 @@ export class DirectusCasesPage extends LitElement {
                                 ${allAttachments.length === 0 ? html`
                                     <div class="empty-note">${t('cases.noFiles')}</div>
                                 ` : attachments.length === 0 ? html`
-                                    <div class="empty-note">No attachments match “${this.attachmentSearchQuery.trim()}”.</div>
+                                    <div class="empty-note">No attachments match â€œ${this.attachmentSearchQuery.trim()}â€.</div>
                                 ` : html`
                                     <div class="file-list">
-                                        ${attachments.map((attachment) => {
-                                            const isSavingThisFile = this._backgroundSave?.saveMode === 'overwrite'
-                                                && this._backgroundSave?.attachmentId === attachment.id;
-                                            return html`
+                                        ${attachments.map((attachment) => html`
                                             <file-list-row
                                                 .fileName=${this.attachmentTitle(attachment)}
                                                 .metaLine=${this.attachmentMetaLine(attachment)}
                                                 .nameButtonDisabled=${!this.attachmentCanActivate(attachment)
                                                     || !!this.openingAttachmentId
-                                                    || this.viewerLoading
-                                                    || isSavingThisFile}
-                                                .nameButtonTitle=${isSavingThisFile ? t('cases.fileSavingTitle') : this.attachmentOpenTitle(attachment)}
+                                                    || this.viewerLoading}
+                                                .nameButtonTitle=${this.attachmentOpenTitle(attachment)}
                                                 @name-click=${() => this.handleOpenViewer(caseRow, attachment, this.accountDefaultViewer())}
                                             >
                                                 ${attachment?.canOpenInSlicer ? html`
@@ -2720,15 +3131,9 @@ export class DirectusCasesPage extends LitElement {
                                                         slot="title-trailing"
                                                         .fileName=${this.attachmentTitle(attachment)}
                                                         .defaultViewer=${this.accountDefaultViewer()}
-                                                        ?disabled=${!!this.openingAttachmentId || this.viewerLoading || isSavingThisFile}
+                                                        ?disabled=${!!this.openingAttachmentId || this.viewerLoading}
                                                         @open-viewer=${(e) => this.handleOpenViewer(caseRow, attachment, e.detail?.viewer)}
                                                     ></attachment-open-menu>
-                                                ` : ''}
-                                                ${isSavingThisFile ? html`
-                                                    <span slot="actions" class="attachment-saving-badge" aria-live="polite">
-                                                        <span class="download-spinner" aria-hidden="true"></span>
-                                                        ${t('common.saving')}
-                                                    </span>
                                                 ` : ''}
                                                 ${canEdit ? html`
                                                     <button
@@ -2766,7 +3171,7 @@ export class DirectusCasesPage extends LitElement {
                                                     </button>
                                                 ` : ''}
                                             </file-list-row>
-                                        `;})}
+                                        `)}
                                     </div>
                                 `}
 
@@ -2796,7 +3201,7 @@ export class DirectusCasesPage extends LitElement {
                                         ` : this.uploadError ? html`
                                             <span class="upload-error">${this.uploadError}</span>
                                         ` : html`<span></span>`}
-                                        <div style="display:flex;gap:8px;flex-shrink:0">
+                                        <div class="upload-action-buttons">
                                             <button
                                                 class="secondary-button"
                                                 type="button"
@@ -2821,9 +3226,12 @@ export class DirectusCasesPage extends LitElement {
 
                         <comments-panel
                             .comments=${comments}
-                            .collaborators=${(caseRow.collaborators || [])
-                                .filter((c) => c.id && c.username)
-                                .map((c) => ({ id: c.id, name: c.username }))}
+                            .collaborators=${(caseRow.keycloakCollaborators || [])
+                                .filter((c) => c.id)
+                                .map((c) => ({
+                                    id:   c.id,
+                                    name: [c.firstName, c.lastName].filter(Boolean).join(' ') || c.email || c.id,
+                                }))}
                             emptyMessage=${this.sessionMeta?.comments?.loaded === false
                                 ? t('cases.commentsLoadFailed')
                                 : t('cases.noComments')}
@@ -2833,7 +3241,6 @@ export class DirectusCasesPage extends LitElement {
                             @post-comment=${(e) => this.handlePostComment(e, caseRow)}
                         ></comments-panel>
                     </div>
-                `}
                 </div>
             </page-layout-template>
         `;
@@ -2844,9 +3251,7 @@ export class DirectusCasesPage extends LitElement {
         const viewerLabel = viewerDisplayName(this.viewerKind, {
             simplified: this.viewerSimplified
         });
-        const viewerTitle = this.currentFileName
-            ? `${viewerLabel}: ${this.currentFileName}`
-            : viewerLabel;
+        const viewerTitle = `${viewerLabel}: ${this.currentFileName || t('common.loading')}`;
         return html`
             <div
                 class="iframe-overlay"
@@ -2858,30 +3263,6 @@ export class DirectusCasesPage extends LitElement {
                 <div class="iframe-header">
                     <div class="iframe-title" id="viewer-title">${viewerTitle}</div>
                     <div class="iframe-header-actions">
-                        ${this.saveIndicatorMessage ? html`
-                            <span class="save-indicator">${this.saveIndicatorMessage}</span>
-                        ` : ''}
-                        ${this.errorMessage ? html`
-                            <span class="viewer-error-message">${this.errorMessage}</span>
-                        ` : ''}
-                        ${(this.viewerKind === VIEWER_KINDS.SLICER_GUI || this.viewerKind === VIEWER_KINDS.SLICERWEB) ? html`
-                            <button
-                                class="secondary-button"
-                                type="button"
-                                ?disabled=${this.viewerLoading || this.iframeUrl === 'about:blank' || this.isSavingScene || !this.hasUnsavedChanges}
-                                @click=${() => this.saveCurrentScene('overwrite')}
-                            >
-                                ${this.isSavingScene ? t('common.saving') : t('files.saveScene')}
-                            </button>
-                            <button
-                                class="secondary-button"
-                                type="button"
-                                ?disabled=${this.viewerLoading || this.iframeUrl === 'about:blank' || this.isSavingScene}
-                                @click=${() => this.saveCurrentSceneAsNew()}
-                            >
-                                ${t('files.saveAsNew')}
-                            </button>
-                        ` : ''}
                         <button
                             class="primary-button"
                             type="button"
@@ -2891,125 +3272,6 @@ export class DirectusCasesPage extends LitElement {
                         </button>
                     </div>
                 </div>
-                <app-dialog
-                    id="save-as-new-dialog"
-                    title=${t('files.saveAsNewTitle')}
-                    .lightDismiss=${false}
-                >
-                    <div class="form-group">
-                        <label class="form-label" for="save-as-new-name">${t('files.saveAsNewLabel')}</label>
-                        <input
-                            id="save-as-new-name"
-                            type="text"
-                            class="form-input"
-                            autocomplete="off"
-                            .value=${this._saveAsNewName}
-                            @input=${(e) => { this._saveAsNewName = e.target.value; }}
-                            @keydown=${(e) => { if (e.key === 'Enter' && this._saveAsNewName.trim()) this.finishSaveAsNew(true); if (e.key === 'Escape') this.finishSaveAsNew(false); }}
-                        />
-                    </div>
-                    <button slot="actions" class="secondary-button" type="button"
-                        @click=${() => this.finishSaveAsNew(false)}>
-                        ${t('common.cancel')}
-                    </button>
-                    <button slot="actions" class="primary-button" type="button"
-                        ?disabled=${!this._saveAsNewName.trim()}
-                        @click=${() => this.finishSaveAsNew(true)}>
-                        ${t('common.save')}
-                    </button>
-                </app-dialog>
-                ${this.closePromptMode ? html`
-                    <app-dialog
-                        id="viewer-close-prompt"
-                        title=${this.closePromptMode === 'save-failed' ? 'Save failed' : 'Unsaved changes'}
-                        .showDefaultCloseButton=${false}
-                    >
-                        <p>${this.closePromptMode === 'save-failed'
-                            ? 'Your changes could not be saved. Close anyway?'
-                            : 'Save your changes before closing?'
-                        }</p>
-                        ${this.closePromptMode === 'unsaved' ? html`
-                            <button slot="actions" class="secondary-button" type="button"
-                                @click=${() => this.finishClosePrompt('keep-editing')}>
-                                ${t('files.continueEditing')}
-                            </button>
-                            <button slot="actions" class="secondary-button" type="button"
-                                @click=${() => this.finishClosePrompt('discard')}>
-                                ${t('files.discardAndClose')}
-                            </button>
-                            <div slot="actions" class="split-button">
-                                <button class="primary-button split-button__main" type="button"
-                                    @click=${() => this.finishClosePrompt('save')}>
-                                    ${t('common.save')}
-                                </button>
-                                <button class="primary-button split-button__arrow" type="button"
-                                    aria-label="More save options"
-                                    aria-expanded=${this._closePromptMenuOpen}
-                                    @click=${(e) => { e.stopPropagation(); this._closePromptMenuOpen = !this._closePromptMenuOpen; }}>
-                                    ▾
-                                </button>
-                                ${this._closePromptMenuOpen ? html`
-                                    <div style="position:fixed;inset:0;z-index:199"
-                                        @click=${() => { this._closePromptMenuOpen = false; }}></div>
-                                    <div class="split-button__menu">
-                                        <button class="toolbar-more-item" type="button"
-                                            @click=${() => this.finishClosePrompt('save')}>
-                                            ${t('common.save')}
-                                        </button>
-                                        <button class="toolbar-more-item" type="button"
-                                            @click=${() => this.finishClosePrompt('save-as-new')}>
-                                            ${t('files.saveAsNew')}
-                                        </button>
-                                    </div>
-                                ` : ''}
-                            </div>
-                        ` : html`
-                            <button slot="actions" class="secondary-button" type="button"
-                                @click=${() => this.finishClosePrompt('keep-open')}>
-                                ${t('files.keepOpen')}
-                            </button>
-                            <button slot="actions" class="primary-button" type="button"
-                                @click=${() => this.finishClosePrompt('close-anyway')}>
-                                ${t('files.closeAnyway')}
-                            </button>
-                        `}
-                    </app-dialog>
-                ` : ''}
-                ${this._conflictContext ? html`
-                    <app-dialog
-                        id="edit-conflict-dialog"
-                        title=${t('errors.editConflictTitle')}
-                        .lightDismiss=${false}
-                        .showDefaultCloseButton=${false}
-                    >
-                        <p>${t('errors.editConflictMessage')}</p>
-                        <div class="form-group">
-                            <label class="form-label" for="conflict-save-as-name">${t('files.saveAsNewLabel')}</label>
-                            <input
-                                id="conflict-save-as-name"
-                                type="text"
-                                class="form-input"
-                                autocomplete="off"
-                                .value=${this._conflictSaveName}
-                                @input=${(e) => { this._conflictSaveName = e.target.value; }}
-                                @keydown=${(e) => { if (e.key === 'Enter' && this._conflictSaveName.trim()) this._resolveConflict('save'); if (e.key === 'Escape') this._resolveConflict('keep-editing'); }}
-                            />
-                        </div>
-                        <button slot="actions" class="secondary-button" type="button"
-                            @click=${() => this._resolveConflict('keep-editing')}>
-                            ${t('files.continueEditing')}
-                        </button>
-                        <button slot="actions" class="secondary-button" type="button"
-                            @click=${() => this._resolveConflict('discard')}>
-                            ${t('files.discardConflictChanges')}
-                        </button>
-                        <button slot="actions" class="primary-button" type="button"
-                            ?disabled=${!this._conflictSaveName.trim()}
-                            @click=${() => this._resolveConflict('save')}>
-                            ${t('files.saveConflictAsNew')}
-                        </button>
-                    </app-dialog>
-                ` : ''}
                 <div class="iframe-container">
                     ${this.iframeUrl !== 'about:blank' ? html`
                         <iframe
@@ -3017,7 +3279,6 @@ export class DirectusCasesPage extends LitElement {
                             title=${viewerTitle}
                             src="${this.iframeUrl}"
                             allow="clipboard-read; clipboard-write; cross-origin-isolated"
-                            sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-pointer-lock allow-storage-access-by-user-activation"
                             allowfullscreen
                             frameborder="0"
                             referrerpolicy="origin"
@@ -3027,7 +3288,6 @@ export class DirectusCasesPage extends LitElement {
                     ${this.viewerLoading ? html`
                         <div class="loading-overlay">
                             <div class="viewer-loading" role="status">
-                                <div class="viewer-loading-spinner" aria-hidden="true"></div>
                                 <p>${this.viewerLoadingDetail || t('cases.loadingViewer')}</p>
                             </div>
                         </div>
@@ -3042,31 +3302,7 @@ export class DirectusCasesPage extends LitElement {
         return html`
             ${detail ? this.renderCaseDetail(detail) : this.renderLanding()}
             ${this.renderViewerOverlay()}
-            ${this._backgroundSave ? html`
-                <div class="background-save-banner" role="status" aria-live="polite">
-                    ${this._backgroundSave.error ? html`
-                        <span class="background-save-spinner background-save-spinner--error" aria-hidden="true"></span>
-                        <span class="background-save-error">${this._backgroundSave.error}</span>
-                        <button class="secondary-button" type="button" style="padding:2px 10px;font-size:0.8rem"
-                            @click=${() => this._retryBackgroundSave()}>${t('common.tryAgain')}</button>
-                        <button class="link-button" type="button"
-                            @click=${() => { this._backgroundSave = null; }}>${t('common.dismiss')}</button>
-                    ` : html`
-                        <span class="background-save-spinner" aria-hidden="true"></span>
-                        <span>${t('files.savingBackground')}</span>
-                    `}
-                </div>
-            ` : ''}
             ${this.toastMessage ? html`<div class="toast" role="status">${this.toastMessage}</div>` : ''}
-            <app-dialog id="viewer-error-dialog" title=${this.errorDialogTitle}>
-                <p>${this.errorDialogMessage}</p>
-                <button
-                    slot="actions"
-                    class="primary-button"
-                    type="button"
-                    @click=${() => this.renderRoot?.querySelector('#viewer-error-dialog')?.closeDialog()}
-                >${t('common.okay')}</button>
-            </app-dialog>
             <people-dialog
                 id="case-people-dialog"
                 title=${t('cases.peopleDialog')}
@@ -3080,4 +3316,4 @@ export class DirectusCasesPage extends LitElement {
     }
 }
 
-customElements.define('directus-cases-page', DirectusCasesPage);
+customElements.define('cases-page', CasesPage);

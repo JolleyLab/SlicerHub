@@ -166,6 +166,67 @@ export function getKeycloakSubForUser(sqliteUserId) {
 }
 
 // ---------------------------------------------------------------------------
+// User management
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a new Keycloak user. The account is disabled until they redeem their invite
+ * and set a password. Returns { id, email, firstName, lastName }.
+ * If the email already exists, returns the existing user.
+ */
+export async function createKeycloakUser({ email, firstName = '', lastName = '' }) {
+    const token = await getAdminToken();
+    const res = await fetch(`${adminBase()}/users`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            email,
+            firstName,
+            lastName,
+            username: email,
+            enabled: false,
+            emailVerified: false,
+        }),
+    });
+
+    if (res.status === 409) {
+        const existing = await findUserByEmail(email);
+        if (existing) return existing;
+        throw new AppError('User already exists but could not be retrieved', 409);
+    }
+    if (!res.ok && res.status !== 201) {
+        const text = await res.text().catch(() => '');
+        throw new AppError(`Keycloak create user failed (${res.status}): ${text}`, 502);
+    }
+
+    // Keycloak returns Location: .../users/{id}
+    const location = res.headers.get('location') || '';
+    const id = location.split('/').pop();
+    return { id, email, firstName, lastName, username: email };
+}
+
+/**
+ * Set a user's password. Use temporary=false for a permanent password set during invite redeem.
+ */
+export async function setKeycloakUserPassword(keycloakUserId, password, { temporary = false } = {}) {
+    await keycloakPut(`/users/${encodeURIComponent(keycloakUserId)}/reset-password`, {
+        type: 'password',
+        value: password,
+        temporary,
+    });
+}
+
+/**
+ * Enable a Keycloak user and optionally update their profile fields.
+ */
+export async function enableKeycloakUser(keycloakUserId, { firstName, lastName } = {}) {
+    const updates = { enabled: true, emailVerified: true };
+    if (firstName !== undefined) updates.firstName = firstName;
+    if (lastName  !== undefined) updates.lastName  = lastName;
+    await keycloakPut(`/users/${encodeURIComponent(keycloakUserId)}`, updates);
+}
+
+// ---------------------------------------------------------------------------
 // Group management
 // ---------------------------------------------------------------------------
 

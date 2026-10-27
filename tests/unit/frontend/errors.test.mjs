@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { friendlyCasesError } from '../../../dev/services/directus.js';
+import { friendlyCasesError } from '../../../dev/services/cases.js';
 import { TusError, UPLOAD_NETWORK_ERROR } from '../../../dev/services/tusUpload.js';
 import { t } from '../../../dev/i18n/index.js';
 

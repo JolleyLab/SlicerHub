@@ -15,7 +15,7 @@ async function parseJson(response) {
  * Map API errors to short user-facing copy.
  * Never show Directus ACL / collection / field jargon.
  */
-export function friendlyCasesError(raw, fallback = 'Something went wrong. Please try again.', status = 0, code = null) {
+function friendlyCasesError(raw, fallback = 'Something went wrong. Please try again.', status = 0, code = null) {
     const text = String(raw || '').trim();
     const lower = text.toLowerCase();
 

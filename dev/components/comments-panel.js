@@ -163,6 +163,16 @@ export class CommentsPanel extends LitElement {
                 color: var(--color-text-secondary);
             }
 
+            .mention-chip {
+                display: inline;
+                color: var(--color-primary, #2c3878);
+                font-weight: 600;
+            }
+
+            :host-context([data-theme='dark']) .mention-chip {
+                color: var(--color-accent, #7fa8d4);
+            }
+
             :host-context([data-theme='dark']) .comment-compose {
                 background: var(--color-panel);
                 border-top-color: var(--color-border);
@@ -426,8 +436,8 @@ export class CommentsPanel extends LitElement {
     authorInitials(name) {
         const parts = String(name || '?').trim().split(/\s+/).filter(Boolean);
         if (parts.length === 0) return '?';
-        if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-        return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase();
+        if (parts.length === 1) return parts[0][0].toUpperCase();
+        return `${parts[0][0] || ''}${parts[parts.length - 1][0] || ''}`.toUpperCase();
     }
 
     authorTone(name) {
@@ -554,6 +564,23 @@ export class CommentsPanel extends LitElement {
         }
     }
 
+    /** Resolve @uuid tokens in body text to @Name chips using the collaborators list. */
+    renderBody(text) {
+        const idToName = new Map((this.collaborators || []).map(c => [c.id, c.name]));
+        // UUID pattern: 8-4-4-4-12 hex groups
+        const parts = String(text || '').split(/(@[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+        return parts.map((part) => {
+            if (part.startsWith('@')) {
+                const id = part.slice(1);
+                const name = idToName.get(id);
+                return name
+                    ? html`<span class="mention-chip">@${name}</span>`
+                    : part; // unknown uuid — render as-is
+            }
+            return part;
+        });
+    }
+
     renderComment(comment) {
         const name = this.authorName(comment);
         return html`
@@ -568,7 +595,7 @@ export class CommentsPanel extends LitElement {
                         <span class="comment-author">${name}</span>
                         <span class="comment-date">${this.formatCommentDate(comment.createdAt)}</span>
                     </div>
-                    <p class="comment-body">${comment.body || ''}</p>
+                    <p class="comment-body">${this.renderBody(comment.body)}</p>
                 </div>
             </div>
         `;

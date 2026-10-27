@@ -2,15 +2,23 @@ import path from 'path';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { getPayloadClient } from '../payload/index.js';
-import { ValidationError, NotFoundError } from '../utils/errors.js';
+import { ValidationError, NotFoundError, ForbiddenError } from '../utils/errors.js';
 import storage from '../storage/index.js';
 import { attachmentOpenFlags } from '../utils/attachmentFlags.js';
 import { assertCaseAccess, buildCaseRoleMap } from '../utils/caseAccess.js';
-import { stageCachedFileForSlicerGui } from '../slicerGui/stageFile.js';
-import { buildSlicerGuiViewerPath } from '../slicerGui/paths.js';
-import { ensureSlicerGuiSession } from '../slicerGui/sessionManager.js';
+import { getKeycloakSubForUser, getKeycloakUser } from '../services/keycloakAdmin.js';
+import { stageCachedFileForSlicerGui, readSlicerGuiBusyStatus } from '../slicerGui/stageFile.js';
+import { buildSlicerGuiViewerPath, writeLastLoadedFile, readLoadResultFile } from '../slicerGui/paths.js';
+import {
+    ensureSlicerGuiSession,
+    touchSlicerGuiSessionHeartbeat,
+    releaseSlicerGuiSession,
+} from '../slicerGui/sessionManager.js';
+import { patchSessionMetadata } from '../sessions/leaseRegistry.js';
 import { getSessionTtlSeconds, getWarmIdleTtlSeconds } from '../sessions/index.js';
+import { normalizeViewerReleaseMode } from '../sessions/config.js';
 import { SESSION_KINDS } from '../sessions/kinds.js';
+import { msg } from '../i18n/index.js';
 import { buildViewerFrontendUrl } from '../utils/viewerUrl.js';
 import { resolveUseSimplifiedViewer } from '../slicerGui/viewerPreferences.js';
 
@@ -43,21 +51,24 @@ export default function casesRoutes(app) {
         const page  = Math.max(Number(req.query.page)  || 1,  1);
 
         // Build Keycloak case role map once — efficient single Admin API call
+        const keycloakSub = getKeycloakSubForUser(req.user.id);
         const roleMap = req.user.role === 'admin' ? {} : await buildCaseRoleMap(req);
         const collaboratorCaseIds = Object.keys(roleMap).map(Number);
 
         let where;
         if (req.user.role === 'admin') {
             where = {};
+        } else if (!keycloakSub) {
+            where = { id: { equals: -1 } }; // no Keycloak identity → no owned cases visible
         } else if (collaboratorCaseIds.length > 0) {
             where = {
                 or: [
-                    { owner_id: { equals: req.user.id } },
+                    { owner_id: { equals: keycloakSub } },
                     { id: { in: collaboratorCaseIds } },
                 ],
             };
         } else {
-            where = { owner_id: { equals: req.user.id } };
+            where = { owner_id: { equals: keycloakSub } };
         }
 
         const result = await payload.find({
@@ -73,7 +84,7 @@ export default function casesRoutes(app) {
             ...doc,
             myRole: req.user.role === 'admin'
                 ? 'admin'
-                : doc.owner_id === req.user.id
+                : doc.owner_id === keycloakSub
                     ? 'admin'
                     : (roleMap[String(doc.id)] ?? null),
         }));
@@ -112,13 +123,16 @@ export default function casesRoutes(app) {
         if (!title) throw new ValidationError('Title is required');
 
         const payload = getPayloadClient();
+        const ownerSub = getKeycloakSubForUser(req.user.id);
+        if (!ownerSub) throw new ForbiddenError('A Keycloak identity is required to create cases');
+
         const newCase = await payload.create({
             collection: 'cases',
             data: {
                 title,
                 description: String(req.body?.description || '').trim() || undefined,
                 status:      req.body?.status || 'active',
-                owner_id:    req.user.id,
+                owner_id:    ownerSub,
             },
         });
 
@@ -247,12 +261,98 @@ export default function casesRoutes(app) {
         res.status(204).end();
     }));
 
+    // ── Comment endpoints ───────────────────────────────────────────────────
+
+    /**
+     * List comments for a case. Any collaborator can read.
+     * Author display names are resolved from Keycloak at read time.
+     */
+    app.get('/api/cases/:id/comments', ...auth, asyncHandler(async (req, res) => {
+        const payload = getPayloadClient();
+        const doc = await payload.findByID({ collection: 'cases', id: req.params.id });
+        if (!doc) throw new NotFoundError('Case not found');
+        await assertCaseAccess(doc, req, 'read_only');
+
+        const result = await payload.find({
+            collection: 'case-comments',
+            where: { case: { equals: req.params.id } },
+            sort: 'createdAt',
+            limit: 500,
+        });
+
+        // Resolve unique author names from Keycloak (skip sqlite: bridge IDs)
+        const uniqueSubs = [...new Set(
+            result.docs
+                .map(c => c.author_id)
+                .filter(id => id && !id.startsWith('sqlite:'))
+        )];
+        const nameMap = {};
+        await Promise.all(uniqueSubs.map(async (sub) => {
+            const user = await getKeycloakUser(sub);
+            if (user) {
+                nameMap[sub] = [user.firstName, user.lastName].filter(Boolean).join(' ')
+                    || user.username
+                    || user.email
+                    || null;
+            }
+        }));
+
+        const comments = result.docs.map(c => ({
+            ...c,
+            author: nameMap[c.author_id] ? { name: nameMap[c.author_id] } : undefined,
+        }));
+
+        res.set('Cache-Control', 'no-store');
+        res.json({ comments });
+    }));
+
+    /**
+     * Post a comment on a case. Any collaborator may comment.
+     * Body: { text: string }
+     */
+    app.post('/api/cases/:id/comments', ...auth, asyncHandler(async (req, res) => {
+        const payload = getPayloadClient();
+        const doc = await payload.findByID({ collection: 'cases', id: req.params.id });
+        if (!doc) throw new NotFoundError('Case not found');
+        await assertCaseAccess(doc, req, 'read_only');
+
+        const body = String(req.body?.text || req.body?.comment || '').trim();
+        if (!body) throw new ValidationError('Comment text is required');
+        if (body.length > 5000) throw new ValidationError('Comment is too long (max 5000 characters)');
+
+        const authorId = getKeycloakSubForUser(req.user.id);
+        if (!authorId) throw new ForbiddenError('A Keycloak identity is required to comment on cases');
+
+        const comment = await payload.create({
+            collection: 'case-comments',
+            data: {
+                case:      parseInt(req.params.id, 10),
+                body,
+                author_id: authorId,
+            },
+        });
+
+        // Resolve author name so the frontend can display it immediately
+        const kcUser = await getKeycloakUser(authorId);
+        const authorName = kcUser
+            ? ([kcUser.firstName, kcUser.lastName].filter(Boolean).join(' ') || kcUser.username || kcUser.email || null)
+            : null;
+
+        res.status(201).json({
+            comment: {
+                ...comment,
+                author: authorName ? { name: authorName } : undefined,
+            },
+        });
+    }));
+
     /**
      * Stage a Payload attachment into a local Full Slicer seat and return viewer URL.
      * Mirrors /api/directus/cases/:caseId/attachments/:attachmentId/open-local-full-slicer
      * but reads the file from local FileStore (caseFiles/{uploadId}) instead of Directus.
      */
     app.post('/api/cases/:id/attachments/:attachmentId/open-local-full-slicer', ...auth, asyncHandler(async (req, res) => {
+        console.log(`[cases] open-local-full-slicer caseId=${req.params.id} attachmentId=${req.params.attachmentId} userId=${req.user?.id}`);
         const payload = getPayloadClient();
 
         const caseDoc = await payload.findByID({ collection: 'cases', id: req.params.id });
@@ -299,6 +399,18 @@ export default function casesRoutes(app) {
             useSimplifiedViewer,
             seatId: session.seatId,
         });
+        patchSessionMetadata(SESSION_KINDS.SLICER_GUI, session.sessionKey, {
+            lastLoadedFileId: stagedKey,
+            lastLoadedFileName: staged.fileName,
+            sceneLoaded: false,
+        });
+        writeLastLoadedFile(launcherUserId, {
+            fileId: stagedKey,
+            fileName: staged.fileName,
+            useSimplifiedViewer,
+            sceneLoaded: false,
+            seatId: session.seatId,
+        });
 
         const viewerPath = buildSlicerGuiViewerPath(launcherUserId, session.seatId);
         const frontendUrl = buildViewerFrontendUrl(req, launcherUserId, null, null);
@@ -324,5 +436,60 @@ export default function casesRoutes(app) {
             sessionTtlSeconds: getSessionTtlSeconds(SESSION_KINDS.SLICER_GUI),
             warmIdleSeconds: getWarmIdleTtlSeconds(SESSION_KINDS.SLICER_GUI),
         });
+    }));
+
+    // ── Full Slicer session management ─────────────────────────────────────
+
+    app.get('/api/cases/full-slicer-status', authenticateToken, asyncHandler(async (req, res) => {
+        const seatId = parseOptionalSeatId(req.query?.seatId) || 1;
+        const userId = String(req.user.id);
+        const status = readSlicerGuiBusyStatus(userId, seatId);
+        if (!status.busy) {
+            const loadResult = readLoadResultFile(userId, seatId);
+            return res.json({ ...status, loadResult: loadResult || null });
+        }
+        res.json(status);
+    }));
+
+    app.post('/api/cases/full-slicer-heartbeat', authenticateToken, asyncHandler(async (req, res) => {
+        const sessionToken = String(req.body?.sessionToken || '').trim();
+        if (!sessionToken) {
+            throw new ValidationError(msg('viewer.session_token_missing'), null, 'viewer.session_token_missing');
+        }
+
+        const userId = String(req.user.id);
+        const lease = touchSlicerGuiSessionHeartbeat({
+            userId,
+            sessionToken,
+            seatId: parseOptionalSeatId(req.body?.seatId),
+        });
+        if (!lease) {
+            return res.status(404).json({
+                error: { message: msg('viewer.session_ended') },
+            });
+        }
+
+        res.json({
+            success: true,
+            seatId: lease.metadata?.seatId ?? null,
+            leaseExpiresAt: new Date(lease.leaseExpiresAt).toISOString(),
+            sessionTtlSeconds: getSessionTtlSeconds(SESSION_KINDS.SLICER_GUI),
+        });
+    }));
+
+    app.post('/api/cases/full-slicer-stop', authenticateToken, asyncHandler(async (req, res) => {
+        const sessionToken = String(req.body?.sessionToken || '').trim();
+        if (!sessionToken) {
+            throw new ValidationError(msg('viewer.session_token_missing'), null, 'viewer.session_token_missing');
+        }
+
+        const mode = normalizeViewerReleaseMode(req.body?.mode, { supportsSoft: true });
+        const result = await releaseSlicerGuiSession({
+            userId: String(req.user.id),
+            sessionToken,
+            mode,
+        });
+
+        res.json({ success: true, ...result });
     }));
 }
