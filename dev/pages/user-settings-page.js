@@ -37,6 +37,7 @@ export class UserSettingsPage extends LitElement {
             errorMessage: { type: String },
             firstName: { type: String },
             lastName: { type: String },
+            preferredName: { type: String },
             profileLinked: { type: Boolean },
             profileLoading: { type: Boolean },
             profileSaving: { type: Boolean },
@@ -57,6 +58,7 @@ export class UserSettingsPage extends LitElement {
         this.saveStatusMessage = '';
         this.firstName = '';
         this.lastName = '';
+        this.preferredName = '';
         this.profileLinked = false;
         this.profileLoading = true;
         this.profileSaving = false;
@@ -65,6 +67,7 @@ export class UserSettingsPage extends LitElement {
         this._activeTab = 'account';
         this._savedFirstName = '';
         this._savedLastName = '';
+        this._savedPreferredName = '';
         this._prefsDirty = false;
         this._savedClearTimer = null;
         this._onBeforeUnload = (event) => this.handleBeforeUnload(event);
@@ -103,22 +106,27 @@ export class UserSettingsPage extends LitElement {
         if (!user) return;
         if (user.firstName != null) this.firstName = String(user.firstName || '');
         if (user.lastName != null) this.lastName = String(user.lastName || '');
+        if (user.preferredName != null) this.preferredName = String(user.preferredName || '');
         this._savedFirstName = this.firstName;
         this._savedLastName = this.lastName;
+        this._savedPreferredName = this.preferredName;
     }
 
-    setSavedProfileBaseline(firstName, lastName) {
+    setSavedProfileBaseline(firstName, lastName, preferredName = '') {
         this._savedFirstName = String(firstName || '').trim();
         this._savedLastName = String(lastName || '').trim();
+        this._savedPreferredName = String(preferredName || '').trim();
         this.firstName = this._savedFirstName;
         this.lastName = this._savedLastName;
+        this.preferredName = this._savedPreferredName;
     }
 
     isProfileDirty() {
         if (!this.profileLinked) return false;
         const first = String(this.firstName || '').trim();
         const last = String(this.lastName || '').trim();
-        return first !== this._savedFirstName || last !== this._savedLastName;
+        const preferred = String(this.preferredName || '').trim();
+        return first !== this._savedFirstName || last !== this._savedLastName || preferred !== this._savedPreferredName;
     }
 
     /**
@@ -153,9 +161,9 @@ export class UserSettingsPage extends LitElement {
             if (!res.ok) {
                 throw new Error(data.error?.message || data.message || t('settings.profileFailed'));
             }
-            this.profileLinked = Boolean(data.identity?.directusLinked);
+            this.profileLinked = Boolean(data.identity?.keycloakLinked);
             const u = data.user || {};
-            this.setSavedProfileBaseline(u.firstName || '', u.lastName || '');
+            this.setSavedProfileBaseline(u.firstName || '', u.lastName || '', u.preferredName || '');
         } catch (err) {
             this.profileLinked = false;
             console.warn('Settings profile load skipped:', err.message || err);
@@ -260,6 +268,7 @@ export class UserSettingsPage extends LitElement {
 
         const firstName = String(this.firstName || '').trim();
         const lastName = String(this.lastName || '').trim();
+        const preferredName = String(this.preferredName || '').trim().slice(0, 80);
         if (!firstName || !lastName) {
             this.saveState = 'error';
             this.saveStatusMessage = t('auth.changePassword.nameRequired');
@@ -272,7 +281,7 @@ export class UserSettingsPage extends LitElement {
                 method: 'PUT',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ firstName, lastName })
+                body: JSON.stringify({ firstName, lastName, preferredName })
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
@@ -281,7 +290,8 @@ export class UserSettingsPage extends LitElement {
             }
             this.setSavedProfileBaseline(
                 data.user?.firstName || firstName,
-                data.user?.lastName || lastName
+                data.user?.lastName || lastName,
+                data.user?.preferredName ?? preferredName
             );
             this.dispatchEvent(new CustomEvent('profile-updated', {
                 detail: { user: data.user },
@@ -456,6 +466,18 @@ export class UserSettingsPage extends LitElement {
                                                 ?disabled=${this.profileSaving}
                                                 @input=${(e) => this.onProfileFieldInput('lastName', e.target.value)} />
                                         </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="settings-preferredName">
+                                            ${t('settings.preferredName')}
+                                            <span class="field-hint-icon" title=${t('settings.preferredNameHint')} aria-label=${t('settings.preferredNameHint')}>ⓘ</span>
+                                        </label>
+                                        <input id="settings-preferredName" type="text" autocomplete="nickname"
+                                            maxlength="80"
+                                            placeholder="e.g. Dr. Jane Smith"
+                                            .value=${this.preferredName}
+                                            ?disabled=${this.profileSaving}
+                                            @input=${(e) => this.onProfileFieldInput('preferredName', e.target.value)} />
                                     </div>
                                 </div>
                             </section>

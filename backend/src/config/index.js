@@ -1,3 +1,4 @@
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -237,6 +238,11 @@ const config = {
         const hasPatCreds = Boolean((process.env.SLICERWEB_GITHUB_TOKEN || '').trim());
         const deployKeyPath = (process.env.SLICERWEB_DEPLOY_KEY_PATH || '').trim();
         const hasDeployKey = Boolean(deployKeyPath);
+        const devModeEnabled = process.env.ENABLE_SLICERWEB_DEV_MODE === 'true';
+        const stableDir = (process.env.SLICERWEB_STABLE_DIR || '/app/data/slicerweb-stable').trim();
+        const latestDir = (process.env.SLICERWEB_LATEST_DIR || '/app/data/slicerweb-latest').trim();
+        // In dev mode, treat pre-fetched local dirs as sufficient — no GitHub credentials needed.
+        const hasLocalDirs = devModeEnabled && fs.existsSync(latestDir);
         return {
             // GitHub App credentials (preferred — org-owned, short-lived tokens)
             app: {
@@ -248,12 +254,12 @@ const config = {
             githubToken: (process.env.SLICERWEB_GITHUB_TOKEN || '').trim(),
             /** Path to the SSH deploy key (inside container). Set SLICERWEB_DEPLOY_KEY_PATH in .env. */
             deployKeyPath,
-            /** True if any GitHub credentials are configured. */
-            hasCredentials: hasAppCreds || hasPatCreds || hasDeployKey,
+            /** True if any GitHub credentials are configured (or local dirs pre-fetched in dev mode). */
+            hasCredentials: hasAppCreds || hasPatCreds || hasDeployKey || hasLocalDirs,
             owner: match?.[1] || '',
             repo: match?.[2] || '',
-            stableDir: (process.env.SLICERWEB_STABLE_DIR || '/app/data/slicerweb-stable').trim(),
-            latestDir: (process.env.SLICERWEB_LATEST_DIR || '/app/data/slicerweb-latest').trim(),
+            stableDir,
+            latestDir,
             /** How often to check the stable channel for updates (default 4 hours). 0 = disabled. */
             stableCheckIntervalMs: (() => {
                 const h = Number(process.env.SLICERWEB_STABLE_CHECK_HOURS ?? 4);
@@ -265,7 +271,7 @@ const config = {
                 return Number.isFinite(m) && m > 0 ? m * 60 * 1000 : 0;
             })(),
             /** Allow users to opt into the latest channel from Settings. */
-            devModeEnabled: process.env.ENABLE_SLICERWEB_DEV_MODE === 'true',
+            devModeEnabled,
             /** Shared secret for GitHub push webhook signature verification. */
             webhookSecret: (process.env.SLICERWEB_WEBHOOK_SECRET || '').trim()
         };

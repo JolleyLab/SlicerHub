@@ -34,6 +34,8 @@ function roleLabel(role) {
 }
 
 function personFullName(person) {
+    if (person?.displayName) return String(person.displayName).trim();
+    if (person?.preferredName) return String(person.preferredName).trim();
     const first = String(person?.firstName || person?.first_name || '').trim();
     const last = String(person?.lastName || person?.last_name || '').trim();
     return `${first} ${last}`.trim();
@@ -342,6 +344,8 @@ export class PeopleDialog extends LitElement {
                 username: user.username || user.email || user.id,
                 firstName: user.firstName || user.first_name || '',
                 lastName: user.lastName || user.last_name || '',
+                preferredName: user.preferredName || '',
+                displayName: user.displayName || '',
                 role: this.inviteRole,
                 locked: false
             }

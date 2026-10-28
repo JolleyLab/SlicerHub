@@ -24,7 +24,10 @@ export function generateToken(user) {
     const payload = {
         userId: user.id,
         username: user.username,
-        role: user.role
+        role: user.role,
+        ...(user.keycloakSub  ? { keycloakSub:  user.keycloakSub  } : {}),
+        ...(user.firstName    ? { firstName:    user.firstName    } : {}),
+        ...(user.lastName     ? { lastName:     user.lastName     } : {}),
     };
 
     const token = jwt.sign(payload, JWT_SECRET, {
@@ -85,7 +88,10 @@ export function authenticateToken(req, res, next) {
             id: decoded.userId,
             username: decoded.username,
             role: decoded.role,
-            jti: decoded.jti
+            jti: decoded.jti,
+            keycloakSub: decoded.keycloakSub || null,
+            firstName: decoded.firstName || null,
+            lastName: decoded.lastName || null,
         };
 
         next();

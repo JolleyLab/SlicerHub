@@ -26,7 +26,7 @@ import {
     clearProviderTokens
 } from '../auth/identityStore.js';
 import { buildIdentityPayload } from '../auth/identityPayload.js';
-import { getKeycloakSubForUser } from '../services/keycloakAdmin.js';
+import { getKeycloakSubForUser, getKeycloakUser, updateKeycloakUserProfile } from '../services/keycloakAdmin.js';
 import {
     attachStoredDirectusTokensToSession,
     getDirectusAccessTokenForAppUser
@@ -48,11 +48,21 @@ import heicConvert from 'heic-convert';
 import { uploadDirectusAvatar, updateDirectusUser, findDirectusUserById, sendDirectusAsset, isDirectusConfigured, fetchDirectusCurrentUser as fetchDirectusViewer, directusFetch } from '../services/directus.js';
 import { isOrgAdminByRole } from '../auth/orgAdminUtils.js';
 import { isUserInCapabilityGroup, CAPABILITIES } from '../services/groupCapabilities.js';
+import { getPreferencesByKcSub, updatePreferencesByKcSub, hasCustomPreferences } from '../services/payloadPreferences.js';
+import storage from '../storage/index.js';
 
 const avatarUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 5 * 1024 * 1024 }
 });
+
+const AVATAR_MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
+
+async function findKcAvatarKey(kcSub) {
+    const prefix = storage.avatarKeyForSub(kcSub, '').replace(/\.$/, '');
+    const keys = await storage.listByPrefix(prefix);
+    return keys.length > 0 ? keys[0] : null;
+}
 
 
 function noteLoginFailure(req, res, { provider, identity, detail }) {
@@ -91,6 +101,7 @@ function loginIdentity(req) {
 function publicUser(user) {
     const firstName = String(user?.firstName || user?.first_name || '').trim() || null;
     const lastName = String(user?.lastName || user?.last_name || '').trim() || null;
+    const preferredName = String(user?.preferredName || '').trim() || null;
     const email = String(user?.email || '').trim() || null;
     const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
     return {
@@ -99,7 +110,8 @@ function publicUser(user) {
         email,
         firstName,
         lastName,
-        displayName: fullName || email || String(user?.username || '').trim() || 'Guest',
+        preferredName,
+        displayName: preferredName || fullName || email || String(user?.username || '').trim() || 'Guest',
         role: user.role,
         mustChangePassword: Boolean(user.mustChangePassword),
         preferences: user.preferences,
@@ -175,11 +187,14 @@ export default function authRoutes(app) {
                 req
             });
 
+            const isKc = config.auth.provider === 'keycloak';
             res.json({
                 message: 'Login successful',
                 user: publicUser(result.user),
                 provider: result.provider,
-                identity: buildIdentityPayload(result.user.id)
+                identity: isKc
+                    ? { keycloakLinked: true, directusLinked: false, directusLinkRequired: false }
+                    : buildIdentityPayload(result.user.id)
             });
         })
     );
@@ -252,8 +267,9 @@ export default function authRoutes(app) {
         requireAllowedWebOrigin,
         authenticateToken,
         asyncHandler(async (req, res) => {
-            const firstName = String(req.body?.firstName || req.body?.first_name || '').trim();
-            const lastName  = String(req.body?.lastName  || req.body?.last_name  || '').trim();
+            const firstName     = String(req.body?.firstName    || req.body?.first_name    || '').trim();
+            const lastName      = String(req.body?.lastName     || req.body?.last_name     || '').trim();
+            const preferredName = String(req.body?.preferredName ?? '').trim().slice(0, 80);
             if (!firstName) throw new ValidationError(msg('auth.first_name_required'), null, 'auth.first_name_required');
             if (!lastName)  throw new ValidationError(msg('auth.last_name_required'),  null, 'auth.last_name_required');
 
@@ -266,33 +282,12 @@ export default function authRoutes(app) {
                     throw new ValidationError('No Keycloak identity linked to this account.', null, null);
                 }
 
-                // Update Keycloak user
-                const { url, realm, adminUser, adminPassword } = config.keycloak;
-                const tokenRes = await fetch(`${url}/realms/master/protocol/openid-connect/token`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: new URLSearchParams({ grant_type: 'password', client_id: 'admin-cli', username: adminUser, password: adminPassword })
-                });
-                if (!tokenRes.ok) throw new AppError('Keycloak admin token failed', 502);
-                const { access_token } = await tokenRes.json();
-
-                const patchRes = await fetch(
-                    `${url}/admin/realms/${encodeURIComponent(realm)}/users/${encodeURIComponent(kcLink.external_id)}`,
-                    {
-                        method: 'PUT',
-                        headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ firstName, lastName })
-                    }
-                );
-                if (!patchRes.ok) {
-                    const t = await patchRes.text().catch(() => '');
-                    throw new AppError(`Keycloak profile update failed (${patchRes.status}): ${t}`, 502);
-                }
+                await updateKeycloakUserProfile(kcLink.external_id, { firstName, lastName, preferredName });
 
                 // Re-issue the session JWT so the updated name is in req.user immediately
                 // without requiring the user to log out and back in.
                 const { user: updatedUser } = issueAppSession(req, res, { ...user, firstName, lastName });
-                return res.json({ user: publicUser(updatedUser) });
+                return res.json({ user: publicUser({ ...updatedUser, preferredName: preferredName || null }) });
             }
 
             // Directus path (unchanged)
@@ -321,22 +316,64 @@ export default function authRoutes(app) {
      * Get current user info
      */
     app.get('/api/auth/me', authenticateToken, asyncHandler(async (req, res) => {
-        const user = User.findById(req.user.id);
+        const isKeycloak = config.auth.provider === 'keycloak';
+        const kcSub = req.user.keycloakSub
+            || (isKeycloak ? getKeycloakSubForUser(req.user.id) : null);
 
+        if (isKeycloak) {
+            // Keycloak path: identity from JWT, preferences from Payload, roles from JWT.
+            const [preferences, hasPrefs, avatarKey, kcProfile] = await Promise.all([
+                getPreferencesByKcSub(kcSub),
+                hasCustomPreferences(kcSub),
+                findKcAvatarKey(kcSub),
+                kcSub ? getKeycloakUser(kcSub).catch(() => null) : null,
+            ]);
+            const isOrgAdmin = req.user.role === 'admin' || req.user.role === 'org-admin';
+            const isRegistrationReviewer = isOrgAdmin;
+            const avatarUrl = avatarKey ? `/api/auth/avatar?v=${Date.now()}` : null;
+            const preferredName = kcProfile?.preferredName || null;
+            const firstName = req.user.firstName || null;
+            const lastName  = req.user.lastName  || null;
+            const fullName  = [firstName, lastName].filter(Boolean).join(' ').trim();
+
+            res.json({
+                user: {
+                    id: req.user.id,
+                    username: req.user.username,
+                    email: req.user.email || null,
+                    firstName,
+                    lastName,
+                    preferredName,
+                    displayName: preferredName || fullName || req.user.username || 'Guest',
+                    role: req.user.role,
+                    avatarUrl,
+                    preferences,
+                    hasCustomPreferences: hasPrefs,
+                },
+                identity: {
+                    keycloakLinked: true,
+                    directusLinked: false,
+                    directusLinkRequired: false,
+                },
+                isOrgAdmin,
+                isRegistrationReviewer,
+                directusUserId: null,
+                keycloakSub: kcSub,
+            });
+            return;
+        }
+
+        // Local-auth / Directus path (legacy — stays until those providers are removed)
+        const user = User.findById(req.user.id);
         if (!user) {
             throw new NotFoundError(msg('user.not_found'), null, 'user.not_found');
         }
 
         const directusLink = findDirectusLinkForUser(user.id);
-        // Keycloak: firstName/lastName live in Keycloak and are carried in the session JWT.
-        let profile = config.auth.provider === 'keycloak'
-            ? { ...user, firstName: req.user.firstName || null, lastName: req.user.lastName || null }
-            : { ...user };
+        let profile = { ...user };
         let isOrgAdmin = false;
         if (directusLink?.external_id) {
             try {
-                // Prefer service-token read of the linked user — clinician /users/me
-                // often omits first_name/last_name under field ACL.
                 let firstName = null;
                 let lastName = null;
                 let email = profile.email;
@@ -367,9 +404,7 @@ export default function authRoutes(app) {
                         }
                         isOrgAdmin = isOrgAdminByRole(currentUser);
                     }
-                } catch (_) {
-                    // keep service-token result above
-                }
+                } catch (_) { /* keep service-token result */ }
 
                 profile = { ...profile, email, firstName, lastName, avatarUrl };
             } catch (err) {
@@ -377,7 +412,6 @@ export default function authRoutes(app) {
             }
         }
 
-        // Group membership is the single source of truth for reviewer access.
         let isRegistrationReviewer = false;
         if (directusLink?.external_id) {
             try {
@@ -385,12 +419,9 @@ export default function authRoutes(app) {
                     directusLink.external_id,
                     CAPABILITIES.APPROVE_REGISTRATIONS
                 );
-            } catch (_) {
-                // non-fatal — leave as false
-            }
+            } catch (_) { /* non-fatal */ }
         }
 
-        // Read notifyRegistrationApproval from Directus — opt-out, default true.
         let notifyRegistrationApproval = true;
         if (directusLink?.external_id) {
             try {
@@ -400,9 +431,7 @@ export default function authRoutes(app) {
                 if (prefPayload?.data?.notify_registration_approval === false) {
                     notifyRegistrationApproval = false;
                 }
-            } catch (_) {
-                // field may not exist in Directus yet — default to true
-            }
+            } catch (_) { /* default to true */ }
         }
 
         const baseUser = publicUser(profile);
@@ -415,58 +444,54 @@ export default function authRoutes(app) {
             isOrgAdmin,
             isRegistrationReviewer,
             directusUserId: directusLink?.external_id || null,
-            keycloakSub: getKeycloakSubForUser(user.id) || null,
+            keycloakSub: null,
         });
     }));
 
     /**
      * Update current user preferences (theme, local viewer options).
+     * Keycloak users: stored in Payload user-preferences collection.
+     * Local-auth users: stored in SQLite (legacy path, until SQLite is removed).
      */
     app.put('/api/auth/preferences', authenticateToken, asyncHandler(async (req, res) => {
-        const before = User.getPreferences(req.user.id);
-        if (!before) {
-            throw new NotFoundError(msg('user.not_found'), null, 'user.not_found');
-        }
+        const kcSub = req.user.keycloakSub
+            || (config.auth.provider === 'keycloak' ? getKeycloakSubForUser(req.user.id) : null);
 
         const patch = {};
-        if (req.body?.theme !== undefined) {
-            patch.theme = req.body.theme;
-        }
-        if (req.body?.useFullSlicer !== undefined) {
-            patch.useFullSlicer = req.body.useFullSlicer === true;
-        }
-        if (req.body?.useSimplifiedViewer !== undefined) {
-            patch.useSimplifiedViewer = req.body.useSimplifiedViewer === true;
-        }
-        if (req.body?.homeLayout !== undefined) {
-            patch.homeLayout = req.body.homeLayout;
-        }
-        if (req.body?.slicerWebChannel !== undefined) {
-            patch.slicerWebChannel = req.body.slicerWebChannel === 'latest' ? 'latest' : 'stable';
-        }
-        // notifyRegistrationApproval lives on the Directus user
-        if (req.body?.notifyRegistrationApproval !== undefined) {
-            const link = findDirectusLinkForUser(req.user.id);
-            if (link?.external_id) {
-                directusFetch(`/users/${encodeURIComponent(link.external_id)}`, {
-                    method: 'PATCH',
-                    body: { notify_registration_approval: req.body.notifyRegistrationApproval === true }
-                }).catch(err => console.warn('Directus notify pref save failed:', err?.message));
+        if (req.body?.theme !== undefined) patch.theme = req.body.theme;
+        if (req.body?.useFullSlicer !== undefined) patch.useFullSlicer = req.body.useFullSlicer === true;
+        if (req.body?.useSimplifiedViewer !== undefined) patch.useSimplifiedViewer = req.body.useSimplifiedViewer === true;
+        if (req.body?.homeLayout !== undefined) patch.homeLayout = req.body.homeLayout;
+        if (req.body?.slicerWebChannel !== undefined) patch.slicerWebChannel = req.body.slicerWebChannel === 'latest' ? 'latest' : 'stable';
+        if (req.body?.notifyRegistrationApproval !== undefined) patch.notifyRegistrationApproval = req.body.notifyRegistrationApproval === true;
+
+        let preferences;
+        if (kcSub) {
+            const { viewerModeChanged } = await import('../gpu/userPreferences.js');
+            const before = await getPreferencesByKcSub(kcSub);
+            preferences = await updatePreferencesByKcSub(kcSub, patch);
+            if (viewerModeChanged(before, preferences)) {
+                try {
+                    const { stopSlicerGuiSession } = await import('../slicerGui/sessionManager.js');
+                    await stopSlicerGuiSession({ userId: String(req.user.id) });
+                } catch (err) {
+                    console.warn('Full Slicer recycle after preference change:', err.message);
+                }
             }
-        }
-
-        const preferences = User.updatePreferences(req.user.id, patch);
-        if (!preferences) {
-            throw new NotFoundError(msg('user.not_found'), null, 'user.not_found');
-        }
-
-        const { viewerModeChanged } = await import('../gpu/userPreferences.js');
-        if (viewerModeChanged(before, preferences)) {
-            try {
-                const { stopSlicerGuiSession } = await import('../slicerGui/sessionManager.js');
-                await stopSlicerGuiSession({ userId: String(req.user.id) });
-            } catch (err) {
-                console.warn('Full Slicer recycle after preference change:', err.message);
+        } else {
+            // Local-auth fallback — SQLite path (goes away when SQLite is removed)
+            const before = User.getPreferences(req.user.id);
+            if (!before) throw new NotFoundError(msg('user.not_found'), null, 'user.not_found');
+            preferences = User.updatePreferences(req.user.id, patch);
+            if (!preferences) throw new NotFoundError(msg('user.not_found'), null, 'user.not_found');
+            const { viewerModeChanged } = await import('../gpu/userPreferences.js');
+            if (viewerModeChanged(before, preferences)) {
+                try {
+                    const { stopSlicerGuiSession } = await import('../slicerGui/sessionManager.js');
+                    await stopSlicerGuiSession({ userId: String(req.user.id) });
+                } catch (err) {
+                    console.warn('Full Slicer recycle after preference change:', err.message);
+                }
             }
         }
 
@@ -545,7 +570,7 @@ export default function authRoutes(app) {
         res.json({ ok: true });
     }));
 
-    /** Upload or replace the current user's Directus avatar. */
+    /** Upload or replace the current user's avatar. KC users: stored on disk. Local-auth: Directus. */
     app.post('/api/auth/avatar', authenticateToken, avatarUpload.single('avatar'), asyncHandler(async (req, res) => {
         if (!req.file) throw new ValidationError(msg('avatar.required'), null, 'avatar.required');
         let { buffer, mimetype, originalname } = req.file;
@@ -556,6 +581,14 @@ export default function authRoutes(app) {
             mimetype = 'image/jpeg';
             originalname = originalname.replace(/\.(heic|heif)$/i, '.jpg');
         }
+        if (req.user.keycloakSub) {
+            const finalExt = (originalname || '').split('.').pop().toLowerCase() || 'jpg';
+            const existingKey = await findKcAvatarKey(req.user.keycloakSub);
+            if (existingKey) await storage.delete(existingKey);
+            const key = storage.avatarKeyForSub(req.user.keycloakSub, finalExt);
+            await storage.write({ key, buffer, contentType: AVATAR_MIME[finalExt] || 'application/octet-stream' });
+            return res.json({ ok: true, avatarUrl: `/api/auth/avatar?v=${Date.now()}` });
+        }
         const link = findDirectusLinkForUser(req.user.id);
         if (!link?.external_id) throw new NotFoundError(msg('directus.not_linked'), null, 'directus.not_linked');
         const accessToken = await getDirectusAccessTokenForAppUser(req.user, { res });
@@ -564,8 +597,18 @@ export default function authRoutes(app) {
         res.json({ ok: true, avatarUrl: `/api/auth/avatar?v=${Date.now()}` });
     }));
 
-    /** Proxy the current user's Directus avatar image. */
+    /** Serve the current user's avatar. KC users: via storage backend. Local-auth: proxied from Directus. */
     app.get('/api/auth/avatar', authenticateToken, asyncHandler(async (req, res) => {
+        if (req.user.keycloakSub) {
+            const key = await findKcAvatarKey(req.user.keycloakSub);
+            if (!key) return res.status(404).end();
+            const presigned = await storage.getPresignedReadUrl(key, 300);
+            if (presigned) return res.redirect(302, presigned);
+            const ext = key.split('.').pop().toLowerCase();
+            res.setHeader('Content-Type', AVATAR_MIME[ext] || 'application/octet-stream');
+            res.setHeader('Cache-Control', 'public, max-age=300');
+            return (await storage.openReadStream(key)).pipe(res);
+        }
         const link = findDirectusLinkForUser(req.user.id);
         if (!link?.external_id) return res.status(404).end();
         const directusUser = await findDirectusUserById(link.external_id);
@@ -574,8 +617,13 @@ export default function authRoutes(app) {
         await sendDirectusAsset(res, directusUser.avatar, accessToken);
     }));
 
-    /** Remove the current user's avatar. */
+    /** Remove the current user's avatar. KC users: via storage backend. Local-auth: Directus. */
     app.delete('/api/auth/avatar', authenticateToken, asyncHandler(async (req, res) => {
+        if (req.user.keycloakSub) {
+            const key = await findKcAvatarKey(req.user.keycloakSub);
+            if (key) await storage.delete(key);
+            return res.json({ ok: true });
+        }
         const link = findDirectusLinkForUser(req.user.id);
         if (!link?.external_id) throw new NotFoundError(msg('directus.not_linked'), null, 'directus.not_linked');
         await updateDirectusUser(link.external_id, { avatar: null });

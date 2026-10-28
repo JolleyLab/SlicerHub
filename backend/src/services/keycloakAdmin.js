@@ -119,7 +119,7 @@ async function keycloakDelete(path) {
 
 /**
  * Find a Keycloak user by exact email address.
- * Returns { id, email, firstName, lastName, username } or null.
+ * Returns { id, email, firstName, lastName, username, preferredName, displayName } or null.
  */
 export async function findUserByEmail(email) {
     const results = await keycloakGet(
@@ -127,33 +127,62 @@ export async function findUserByEmail(email) {
     );
     const user = results?.find(u => u.email?.toLowerCase() === email.toLowerCase());
     if (!user) return null;
+    const preferredName = user.attributes?.preferredName?.[0] || '';
+    const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
     return {
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName || '',
-        lastName:  user.lastName  || '',
-        username:  user.username  || '',
+        id:           user.id,
+        email:        user.email,
+        firstName:    user.firstName || '',
+        lastName:     user.lastName  || '',
+        username:     user.username  || '',
+        preferredName,
+        displayName:  preferredName || fullName || user.email || '',
     };
 }
 
 /**
  * Get a Keycloak user by their Keycloak ID.
- * Returns { id, email, firstName, lastName, username } or null.
+ * Returns { id, email, firstName, lastName, username, preferredName } or null.
  */
 export async function getKeycloakUser(keycloakUserId) {
     try {
         const user = await keycloakGet(`/users/${encodeURIComponent(keycloakUserId)}`);
         if (!user) return null;
         return {
-            id: user.id,
-            email: user.email,
-            firstName: user.firstName || '',
-            lastName:  user.lastName  || '',
-            username:  user.username  || '',
+            id:            user.id,
+            email:         user.email,
+            firstName:     user.firstName || '',
+            lastName:      user.lastName  || '',
+            username:      user.username  || '',
+            preferredName: user.attributes?.preferredName?.[0] || '',
         };
     } catch {
         return null;
     }
+}
+
+/**
+ * Update a Keycloak user's profile fields.
+ * Merges attributes so other custom attributes are not wiped.
+ */
+export async function updateKeycloakUserProfile(keycloakUserId, { firstName, lastName, preferredName } = {}) {
+    const current = await keycloakGet(`/users/${encodeURIComponent(keycloakUserId)}`);
+    const attributes = { ...(current?.attributes ?? {}) };
+
+    if (preferredName !== undefined) {
+        const trimmed = String(preferredName || '').trim();
+        if (trimmed) {
+            attributes.preferredName = [trimmed];
+        } else {
+            delete attributes.preferredName;
+        }
+    }
+
+    const update = { attributes };
+    if (firstName !== undefined) update.firstName = String(firstName || '').trim();
+    if (lastName  !== undefined) update.lastName  = String(lastName  || '').trim();
+
+    await keycloakPut(`/users/${encodeURIComponent(keycloakUserId)}`, update);
 }
 
 /**
@@ -346,20 +375,27 @@ export async function getUserCaseRoleMap(keycloakUserId) {
 
 /**
  * List all collaborators on a case (from all three role groups).
- * Returns [{ id, email, firstName, lastName, role }].
+ * Returns [{ id, email, firstName, lastName, preferredName, displayName, role }].
  */
 export async function listCaseCollaborators(caseId) {
     const results = [];
     for (const role of CASE_ROLES) {
         const group = await findCaseGroup(caseId, role);
         if (!group) continue;
-        const members = await keycloakGet(`/groups/${encodeURIComponent(group.id)}/members`);
+        // briefRepresentation=false fetches full user objects including attributes
+        const members = await keycloakGet(
+            `/groups/${encodeURIComponent(group.id)}/members?briefRepresentation=false`
+        );
         for (const m of members ?? []) {
+            const preferredName = m.attributes?.preferredName?.[0] || '';
+            const fullName = [m.firstName, m.lastName].filter(Boolean).join(' ');
             results.push({
-                id:        m.id,
-                email:     m.email     || '',
-                firstName: m.firstName || '',
-                lastName:  m.lastName  || '',
+                id:           m.id,
+                email:        m.email     || '',
+                firstName:    m.firstName || '',
+                lastName:     m.lastName  || '',
+                preferredName,
+                displayName:  preferredName || fullName || m.email || '',
                 role,
             });
         }

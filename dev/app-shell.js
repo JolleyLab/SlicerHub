@@ -53,14 +53,13 @@ import {
 
 function userDisplayName(user) {
   if (!user) return t('common.guest');
+  const display = String(user.displayName || '').trim();
+  if (display) return display;
   const first = String(user.firstName || user.first_name || '').trim();
   const last = String(user.lastName || user.last_name || '').trim();
   const full = `${first} ${last}`.trim();
   if (full) return full;
-  const display = String(user.displayName || '').trim();
-  if (display && !display.includes('@')) return display;
   if (user.email) return String(user.email).trim();
-  if (display) return display;
   if (user.username) return String(user.username).trim();
   return t('common.guest');
 }

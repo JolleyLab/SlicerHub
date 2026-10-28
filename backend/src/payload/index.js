@@ -18,7 +18,7 @@ export async function initPayload() {
 
     try {
         _payload = await getPayload({ config })
-        console.log('Payload: initialized — Cases collection ready')
+        console.log('Payload: initialized — Cases + UserPreferences collections ready')
     } catch (err) {
         console.warn('Payload: init failed —', err.message)
         console.warn('Payload: Cases will not be available. Is payload-db running? (docker compose --profile payload up -d)')

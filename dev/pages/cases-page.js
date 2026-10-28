@@ -1686,6 +1686,7 @@ export class CasesPage extends LitElement {
                 username: ownerInfo.email || '',
                 firstName: ownerInfo.firstName || '',
                 lastName: ownerInfo.lastName || '',
+                displayName: ownerInfo.displayName || [ownerInfo.firstName, ownerInfo.lastName].filter(Boolean).join(' ') || ownerInfo.email || '',
                 role: 'admin',
                 locked: true,
             });
@@ -1698,6 +1699,7 @@ export class CasesPage extends LitElement {
                 username: entry.email || '',
                 firstName: entry.firstName || '',
                 lastName: entry.lastName || '',
+                displayName: entry.displayName || [entry.firstName, entry.lastName].filter(Boolean).join(' ') || entry.email || '',
                 role: entry.role || 'collaborator',
                 locked: false,
             });
@@ -3543,7 +3545,7 @@ export class CasesPage extends LitElement {
                                 .filter((c) => c.id)
                                 .map((c) => ({
                                     id:   c.id,
-                                    name: [c.firstName, c.lastName].filter(Boolean).join(' ') || c.email || c.id,
+                                    name: c.displayName || [c.firstName, c.lastName].filter(Boolean).join(' ') || c.email || c.id,
                                 }))}
                             emptyMessage=${this.sessionMeta?.comments?.loaded === false
                                 ? t('cases.commentsLoadFailed')

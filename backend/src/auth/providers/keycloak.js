@@ -87,7 +87,7 @@ async function resolveLocalUser(claims) {
     // so the app session JWT carries them without any DB write.
     const firstName = String(claims?.given_name  || '').trim() || null;
     const lastName  = String(claims?.family_name || '').trim() || null;
-    const withName  = u => (u ? { ...u, firstName, lastName } : u);
+    const withName  = u => (u ? { ...u, firstName, lastName, keycloakSub: externalId } : u);
 
     // Fast path: known link exists
     const existingLink = findLink(PROVIDER, externalId);

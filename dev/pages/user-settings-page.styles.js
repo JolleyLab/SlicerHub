@@ -302,6 +302,16 @@ export const userSettingsStyles = css`
         accent-color: var(--color-primary);
     }
 
+    .field-hint-icon {
+        display: inline-block;
+        margin-left: 4px;
+        font-size: 0.8rem;
+        color: var(--color-text-secondary);
+        cursor: help;
+        vertical-align: middle;
+        line-height: 1;
+    }
+
     .small-button {
         display: inline-flex;
         align-items: center;
@@ -329,5 +339,16 @@ export const userSettingsStyles = css`
     .small-button:disabled {
         opacity: 0.6;
         cursor: not-allowed;
+    }
+
+    :host-context([data-theme='dark']) .small-button {
+        background: var(--color-panel, var(--color-surface, #2a2a2a));
+        border-color: var(--color-border);
+        color: var(--color-text-primary);
+    }
+
+    :host-context([data-theme='dark']) .small-button:hover {
+        background: color-mix(in srgb, var(--color-accent) 10%, var(--color-panel));
+        border-color: color-mix(in srgb, var(--color-accent) 50%, var(--color-border));
     }
 `;

@@ -127,6 +127,30 @@ export const CaseInvites = {
     ],
 };
 
+export const UserPreferences = {
+    slug: 'user-preferences',
+    admin: { useAsTitle: 'keycloak_sub' },
+    fields: [
+        { name: 'keycloak_sub', type: 'text', required: true, index: true, unique: true, label: 'Keycloak sub (user ID)' },
+        {
+            name: 'theme',
+            type: 'select',
+            options: [{ label: 'Light', value: 'light' }, { label: 'Dark', value: 'dark' }],
+            defaultValue: 'light',
+        },
+        { name: 'use_full_slicer',          type: 'checkbox', defaultValue: false },
+        { name: 'use_simplified_viewer',    type: 'checkbox', defaultValue: false },
+        { name: 'home_layout',              type: 'json' },
+        {
+            name: 'slicer_web_channel',
+            type: 'select',
+            options: [{ label: 'Stable', value: 'stable' }, { label: 'Latest (dev)', value: 'latest' }],
+            defaultValue: 'stable',
+        },
+        { name: 'notify_registration_approval', type: 'checkbox', defaultValue: true },
+    ],
+};
+
 export const Attachments = {
     slug: 'attachments',
     admin: { useAsTitle: 'original_filename' },

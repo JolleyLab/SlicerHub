@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { createReadStream } from 'fs';
-import { OBJECT_KEY_PREFIX, CASE_KEY_PREFIX, ALLOWED_KEY_ROOTS } from './contract.js';
+import { OBJECT_KEY_PREFIX, CASE_KEY_PREFIX, AVATAR_KEY_PREFIX, ALLOWED_KEY_ROOTS } from './contract.js';
 
 class LocalStorage {
     get backend() {
@@ -24,6 +24,11 @@ class LocalStorage {
 
     relativeDbPathForCase(caseId, fileName) {
         return `${CASE_KEY_PREFIX}/${String(caseId)}/${path.basename(fileName)}`;
+    }
+
+    avatarKeyForSub(kcSub, ext) {
+        const safe = kcSub.replace(/[^a-zA-Z0-9_-]/g, '_');
+        return `${AVATAR_KEY_PREFIX}/${safe}.${ext}`;
     }
 
     normalizeKey(filePath) {
@@ -92,6 +97,20 @@ class LocalStorage {
         if (fs.existsSync(resolved)) {
             fs.unlinkSync(resolved);
         }
+    }
+
+    /**
+     * Returns all keys whose path starts with the given prefix.
+     * An object store implements this with a prefix list/query; local disk walks the directory.
+     */
+    async listByPrefix(prefix) {
+        const normalized = this.normalizeKey(prefix);
+        const dir = path.dirname(normalized);
+        const base = path.basename(normalized);
+        if (!fs.existsSync(dir)) return [];
+        return fs.readdirSync(dir)
+            .filter(f => f.startsWith(base))
+            .map(f => `${dir}/${f}`);
     }
 }
 

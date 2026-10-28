@@ -137,6 +137,20 @@ export async function hydrateUserPreferencesFromUser(user) {
                 console.warn('Could not migrate local preferences to account:', err.message);
             }
         }
+
+        // Seed OS theme for users who have never saved preferences (first login).
+        if (user?.hasCustomPreferences === false) {
+            const osTheme = resolvePreferredThemeForNewAccount();
+            if (osTheme !== preferences.theme) {
+                try {
+                    preferences = await saveUserPreferences({ ...preferences, theme: osTheme });
+                    clearLegacyLocalViewerOptions();
+                    return preferences;
+                } catch (err) {
+                    console.warn('Could not seed OS theme for new account:', err.message);
+                }
+            }
+        }
     }
 
     clearLegacyLocalViewerOptions();

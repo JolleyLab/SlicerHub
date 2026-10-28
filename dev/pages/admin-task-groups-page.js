@@ -517,7 +517,7 @@ export class AdminTaskGroupsPage extends LitElement {
                         <li class="member-row">
                             <person-chip
                                 .avatarUrl=${m.avatarUrl || ''}
-                                .name=${[m.firstName, m.lastName].filter(Boolean).join(' ')}
+                                .name=${m.displayName || [m.firstName, m.lastName].filter(Boolean).join(' ')}
                                 .secondaryLine=${m.email || ''}
                             ></person-chip>
                             ${canManage ? html`
@@ -531,8 +531,8 @@ export class AdminTaskGroupsPage extends LitElement {
                                     </label>
                                 </div>
                                 <button class="danger-button" type="button"
-                                    title="Remove ${m.firstName} ${m.lastName}"
-                                    aria-label="Remove ${m.firstName} ${m.lastName}"
+                                    title="Remove ${m.displayName || `${m.firstName} ${m.lastName}`}"
+                                    aria-label="Remove ${m.displayName || `${m.firstName} ${m.lastName}`}"
                                     @click=${() => this._removeMember(m.id)}>
                                     <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
                                         <path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
