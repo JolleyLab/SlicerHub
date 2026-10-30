@@ -183,6 +183,8 @@ export default {
         category: {
             collaboration: 'Collaboration',
             mention: 'Mention',
+            comment: 'Comment',
+            attachment: 'File upload',
             task: 'Task'
         },
         card: {
@@ -199,6 +201,8 @@ export default {
             inviteSentTitle: '{actor} invited {invitee} to {case}',
             inviteApprovedTitle: "{actor} approved {invitee}'s invite to {case}",
             mentionTitle: 'You were mentioned',
+            commentTitle: '{actor} commented on {case}',
+            attachmentTitle: '{actor} uploaded a file to {case}',
             you: 'You',
             someone: 'Someone'
         },
@@ -298,7 +302,15 @@ avatarUpload: 'Upload photo',
         slicerWebChannel: 'SlicerWeb Version',
         slicerWebChannelHint: 'Choose which version of the in-browser viewer to use when opening cases.',
         slicerWebLatestLabel: 'Use preview version (updates automatically, may be less stable)',
-        slicerWebLatestWarning: 'The preview version may occasionally differ from the standard release. New versions install automatically in the background.'
+        slicerWebLatestWarning: 'The preview version may occasionally differ from the standard release. New versions install automatically in the background.',
+        activityFeed: 'Recent Activity',
+        activityFeedHint: 'Choose which types of updates appear in Recent Activity on the Home page.',
+        activityCategory: {
+            collaboration: 'Collaboration (invites)',
+            mention: 'Mentions (when tagged in a comment)',
+            comment: 'Comments on your cases',
+            attachment: 'File uploads on your cases',
+        }
     },
     notifications: {
         title: 'Notifications',
@@ -313,7 +325,10 @@ avatarUpload: 'Upload photo',
         unreadBell: 'Notifications, unread items',
         pendingRegistration: 'New registration request',
         pendingRegistrations: '{count} pending registration requests',
-        pendingRegistrationsBody: 'Click to review and approve or reject.'
+        pendingRegistrationsBody: 'Click to review and approve or reject.',
+        pendingCaseInvite: '1 case invite pending approval',
+        pendingCaseInvites: '{count} case invites pending approval',
+        pendingCaseInvitesBody: 'Click to go to Cases and approve or reject.'
     },
     share: {
         unableOpen: 'Unable to open shared file',
@@ -740,13 +755,6 @@ avatarUpload: 'Upload photo',
     dialog: {
         closeAria: 'Close dialog'
     },
-    directusReconnect: {
-        title: 'Reconnect to Cases',
-        hint: 'Your connection to Cases expired. Enter your password to reconnect without signing out.',
-        passwordLabel: 'Password',
-        submit: 'Reconnect',
-        cancel: 'Cancel'
-    },
     errors: {
         sessionExpired: 'Your session expired. Please sign in again.',
         noPermission: "You don't have access to do that. Contact your administrator if you need help.",
@@ -795,7 +803,7 @@ avatarUpload: 'Upload photo',
         registrationFailed: 'Failed to submit registration request. Please try again.',
         createAccountFailed: 'Failed to create account. The link may have expired.'
     },
-    taskGroups: {
+    groups: {
         title: 'My Groups',
         myGroupsEmpty: 'You haven\'t been added to any groups yet.',
         myGroupsMember: 'Member',
@@ -821,14 +829,18 @@ avatarUpload: 'Upload photo',
         save: 'Save changes',
         saving: 'Saving…',
         deleteGroup: 'Delete group',
-        noGroups: 'No task groups yet. Create one to get started.',
+        noGroups: 'No groups yet. Create one to get started.',
         selectGroup: 'Select a group to manage it.',
         saved: 'Saved.',
         cancel: 'Cancel',
         tasks: 'Tasks',
         reviewAction: 'Review',
         noTasks: 'No tasks assigned to this group.',
-        not_manager: 'You do not have permission to manage this group.'
+        not_manager: 'You do not have permission to manage this group.',
+        lastMember: 'Cannot remove the last member of a capability group.',
+        cannotDeleteCapabilityGroup: 'Cannot delete a capability group that still has members. Remove all members first.',
+        rolesTab: 'Roles',
+        teamsTab: 'Teams',
     },
     registration: {
         title: 'Request Access',
@@ -850,5 +862,32 @@ avatarUpload: 'Upload photo',
         completeTitle: 'Complete your registration',
         completeSubcopy: 'Welcome, {name}! Choose a password to activate your account.',
         completeSubmit: 'Create account'
+    },
+    passwordReset: {
+        activationTitle:       'Activate your account',
+        activationSubcopy:     'Welcome, {name}! Set a password to get started.',
+        resetTitle:            'Reset your password',
+        resetSubcopy:          'Enter a new password for {email}.',
+        requestTitle:          'Forgot your password?',
+        requestSubcopy:        'Enter your email and we\'ll send you a link to set a new password.',
+        requestTitleActivate:  'Activate your account',
+        requestSubcopyActivate:'Enter your email and we\'ll send you an activation link.',
+        emailLabel:            'Email address',
+        emailPlaceholder:      'you@example.com',
+        sendLink:              'Send link',
+        sending:               'Sending…',
+        sentTitle:             'Check your email',
+        sentBody:              'If an account exists for {email}, we\'ve sent a link. It expires in 2 hours.',
+        passwordLabel:         'New password',
+        confirmLabel:          'Confirm new password',
+        submit:                'Set password',
+        submitting:            'Setting password…',
+        successTitle:          'Password set',
+        successBody:           'You\'re now signed in.',
+        backToLogin:           'Back to sign in',
+        tryAgain:              'Try again',
+        forgotPassword:        'Forgot password?',
+        needActivation:        'Account not yet activated.',
+        activateLink:          'Activate your account',
     }
 };

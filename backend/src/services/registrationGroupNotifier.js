@@ -12,7 +12,6 @@
 import config from '../config/index.js';
 import { getCapabilityGroupMembers, CAPABILITIES } from './groupCapabilities.js';
 import { sendRegistrationPendingReviewEmail } from './mail.js';
-import User from '../models/User.js';
 
 const THROTTLE = {
     new_request: { ms: 60 * 60 * 1000,      lastAt: 0 }, // 1 hour
@@ -39,12 +38,7 @@ async function _notify(reason) {
         return { sent: false, reason: 'members_fetch_failed' };
     }
 
-    // Filter out members with no email or who have opted out of email notifications.
-    const recipients = members.filter(m => {
-        if (!m.email) return false;
-        const localUser = User.findByEmail(m.email);
-        return localUser?.preferences?.notifyRegistrationApproval !== false;
-    });
+    const recipients = members.filter(m => m.email && m.notifyRegistrationApproval !== false);
     if (!recipients.length) {
         return { sent: false, reason: 'no_members' };
     }

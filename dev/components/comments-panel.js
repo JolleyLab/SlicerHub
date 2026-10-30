@@ -334,6 +334,14 @@ export class CommentsPanel extends LitElement {
                 font-weight: 700;
                 color: #f5f6fb;
                 background: #2c3878;
+                overflow: hidden;
+            }
+
+            .mention-avatar img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                border-radius: 50%;
             }
 
             :host-context([data-theme='light']) .mention-avatar {
@@ -391,7 +399,8 @@ export class CommentsPanel extends LitElement {
             /** null = not in a mention; string = active @query */
             _mentionQuery: { type: String },
             /** keyboard-selected index in the dropdown */
-            _mentionIndex: { type: Number }
+            _mentionIndex: { type: Number },
+            _failedAvatars: { type: Object, state: true }
         };
     }
 
@@ -400,6 +409,7 @@ export class CommentsPanel extends LitElement {
         initializeTheme();
         this.comments = [];
         this.collaborators = [];
+        this._failedAvatars = new Set();
         this.title = t('comments.title');
         this.emptyMessage = t('comments.empty');
         this.placeholder = t('comments.placeholder');
@@ -585,9 +595,11 @@ export class CommentsPanel extends LitElement {
         const name = this.authorName(comment);
         return html`
             <div class="comment-row">
-                <div class="avatar ${comment.author?.avatarUrl ? '' : this.authorTone(name)}" aria-hidden="true">
-                    ${comment.author?.avatarUrl
-                        ? html`<img src=${comment.author.avatarUrl} alt="">`
+                <div class="avatar ${comment.author?.avatarUrl && !this._failedAvatars.has(comment.author_id) ? '' : this.authorTone(name)}" aria-hidden="true">
+                    ${comment.author?.avatarUrl && !this._failedAvatars.has(comment.author_id)
+                        ? html`<img src=${comment.author.avatarUrl} alt="" @error=${() => {
+                            this._failedAvatars = new Set([...this._failedAvatars, comment.author_id]);
+                          }}>`
                         : this.authorInitials(name)}
                 </div>
                 <div class="bubble">
@@ -618,8 +630,10 @@ export class CommentsPanel extends LitElement {
                             aria-selected=${i === this._mentionIndex ? 'true' : 'false'}
                             @mousedown=${(e) => { e.preventDefault(); this._insertMention(c); }}
                         >
-                            <span class="mention-avatar" aria-hidden="true">
-                                ${this.authorInitials(c.name)}
+                            <span class="mention-avatar ${c.avatarUrl ? '' : this.authorTone(c.name)}" aria-hidden="true">
+                                ${c.avatarUrl
+                                    ? html`<img src=${c.avatarUrl} alt="" @error=${(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = ''; }}><span style="display:none">${this.authorInitials(c.name)}</span>`
+                                    : this.authorInitials(c.name)}
                             </span>
                             ${c.name}
                         </button>

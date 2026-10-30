@@ -6,7 +6,10 @@ import { ValidationError, NotFoundError, ForbiddenError } from '../utils/errors.
 import storage from '../storage/index.js';
 import { attachmentOpenFlags } from '../utils/attachmentFlags.js';
 import { assertCaseAccess, buildCaseRoleMap } from '../utils/caseAccess.js';
-import { getKeycloakSubForUser, getKeycloakUser } from '../services/keycloakAdmin.js';
+import { getKeycloakSubForUser, getKeycloakUser, kcDisplayName } from '../services/keycloakAdmin.js';
+import { listRecentActivityKC } from '../services/recentActivity.js';
+import { findLink } from '../auth/identityStore.js';
+import { createNotification } from '../services/notifications.js';
 import { stageCachedFileForSlicerGui, readSlicerGuiBusyStatus } from '../slicerGui/stageFile.js';
 import { buildSlicerGuiViewerPath, writeLastLoadedFile, readLoadResultFile } from '../slicerGui/paths.js';
 import {
@@ -110,7 +113,7 @@ export default function casesRoutes(app) {
         const page  = Math.max(Number(req.query.page)  || 1,  1);
 
         // Build Keycloak case role map once — efficient single Admin API call
-        const keycloakSub = getKeycloakSubForUser(req.user.id);
+        const keycloakSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
         const roleMap = req.user.role === 'admin' ? {} : await buildCaseRoleMap(req);
         const collaboratorCaseIds = Object.keys(roleMap).map(Number);
 
@@ -161,6 +164,22 @@ export default function casesRoutes(app) {
     }));
 
     /**
+     * Recent invite activity (INVITE_SENT) on cases the current user owns or collaborates on.
+     * Keycloak path: no requireDirectusLink needed.
+     */
+    app.get('/api/cases/activity/recent', ...auth, asyncHandler(async (req, res) => {
+        const payload = getPayloadClient();
+        const kcSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
+        if (!kcSub) {
+            return res.json({ events: [] });
+        }
+        const limit = Math.min(Number(req.query.limit) || 20, 100);
+        const events = await listRecentActivityKC({ kcSub, limit, payload });
+        res.set('Cache-Control', 'no-store');
+        res.json({ events });
+    }));
+
+    /**
      * Get a single case by ID. Any collaborator can read.
      */
     app.get('/api/cases/:id', ...auth, asyncHandler(async (req, res) => {
@@ -182,7 +201,7 @@ export default function casesRoutes(app) {
         if (!title) throw new ValidationError('Title is required');
 
         const payload = getPayloadClient();
-        const ownerSub = getKeycloakSubForUser(req.user.id);
+        const ownerSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
         if (!ownerSub) throw new ForbiddenError('A Keycloak identity is required to create cases');
 
         const newCase = await payload.create({
@@ -348,18 +367,17 @@ export default function casesRoutes(app) {
         const nameMap = {};
         await Promise.all(uniqueSubs.map(async (sub) => {
             const user = await getKeycloakUser(sub);
-            if (user) {
-                nameMap[sub] = [user.firstName, user.lastName].filter(Boolean).join(' ')
-                    || user.username
-                    || user.email
-                    || null;
-            }
+            if (user) nameMap[sub] = kcDisplayName(user) || null;
         }));
 
-        const comments = result.docs.map(c => ({
-            ...c,
-            author: nameMap[c.author_id] ? { name: nameMap[c.author_id] } : undefined,
-        }));
+        const comments = result.docs.map(c => {
+            const isKcSub = c.author_id && !c.author_id.startsWith('sqlite:');
+            const name = nameMap[c.author_id] || null;
+            const author = (isKcSub || name)
+                ? { name, avatarUrl: isKcSub ? `/api/users/${encodeURIComponent(c.author_id)}/avatar` : null }
+                : undefined;
+            return { ...c, author };
+        });
 
         res.set('Cache-Control', 'no-store');
         res.json({ comments });
@@ -379,7 +397,7 @@ export default function casesRoutes(app) {
         if (!body) throw new ValidationError('Comment text is required');
         if (body.length > 5000) throw new ValidationError('Comment is too long (max 5000 characters)');
 
-        const authorId = getKeycloakSubForUser(req.user.id);
+        const authorId = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
         if (!authorId) throw new ForbiddenError('A Keycloak identity is required to comment on cases');
 
         const comment = await payload.create({
@@ -393,14 +411,55 @@ export default function casesRoutes(app) {
 
         // Resolve author name so the frontend can display it immediately
         const kcUser = await getKeycloakUser(authorId);
-        const authorName = kcUser
-            ? ([kcUser.firstName, kcUser.lastName].filter(Boolean).join(' ') || kcUser.username || kcUser.email || null)
-            : null;
+        const authorName = kcUser ? (kcDisplayName(kcUser) || null) : null;
+
+        // Fire mention notifications for any @<kc-sub-uuid> patterns in the comment body
+        const mentionRe = /(?:^|[^/\w])@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi;
+        const mentionedSubs = new Set();
+        let m;
+        while ((m = mentionRe.exec(body)) !== null) mentionedSubs.add(m[1].toLowerCase());
+        if (mentionedSubs.size > 0) {
+            const caseTitle = doc.title || 'a case';
+
+            // Resolve @uuid → @DisplayName in the notification body so recipients see names
+            const uuidNameMap = new Map();
+            for (const sub of mentionedSubs) {
+                try {
+                    const kcUser = await getKeycloakUser(sub);
+                    if (kcUser) {
+                        const name = kcDisplayName(kcUser, sub);
+                        uuidNameMap.set(sub, name);
+                    }
+                } catch { /* keep uuid on lookup failure */ }
+            }
+            let resolvedBody = body;
+            for (const [uuid, name] of uuidNameMap) {
+                resolvedBody = resolvedBody.replace(new RegExp(`@${uuid}`, 'gi'), `@${name}`);
+            }
+            const notifBody = resolvedBody.slice(0, 200);
+
+            for (const sub of mentionedSubs) {
+                if (sub === authorId) continue; // don't notify yourself
+                try {
+                    const link = findLink('keycloak', sub);
+                    if (!link) continue;
+                    createNotification({
+                        userId: link.user_id,
+                        type: 'mention',
+                        title: `${authorName || 'Someone'} mentioned you in "${caseTitle}"`,
+                        body: notifBody,
+                        caseId: String(req.params.id),
+                    });
+                } catch (err) {
+                    console.warn('[cases] mention notification skipped:', err.message);
+                }
+            }
+        }
 
         res.status(201).json({
             comment: {
                 ...comment,
-                author: authorName ? { name: authorName } : undefined,
+                author: authorName ? { name: authorName, avatarUrl: `/api/users/${encodeURIComponent(authorId)}/avatar` } : undefined,
             },
         });
     }));

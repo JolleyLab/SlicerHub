@@ -2,12 +2,11 @@ import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
 import {
-    listNotifications,
     markNotificationRead,
     markAllNotificationsRead,
     dismissNotification
 } from '../services/notifications.js';
-import { getPendingRegistrationsCount } from '../services/registrations.js';
+import { notificationStore } from '../services/notificationStore.js';
 
 /**
  * Global notification bell for the product inbox (any notification type).
@@ -368,7 +367,8 @@ export class NotificationBell extends LitElement {
             unreadCount: { type: Number },
             error: { type: String },
             isRegistrationReviewer: { type: Boolean },
-            _pendingRegCount: { type: Number }
+            _pendingRegCount: { type: Number },
+            _pendingInviteCount: { type: Number }
         };
     }
 
@@ -382,30 +382,35 @@ export class NotificationBell extends LitElement {
         this.error = '';
         this.isRegistrationReviewer = false;
         this._pendingRegCount = 0;
-        this._pollTimer = null;
+        this._pendingInviteCount = 0;
+        this._unsub = null;
         this._onDocPointer = (e) => this.handleDocPointer(e);
-        this._onInvalidate = () => this.refresh({ quiet: true });
     }
 
     connectedCallback() {
         super.connectedCallback();
-        this.refresh({ quiet: true });
-        this._pollTimer = setInterval(() => this.refresh({ quiet: true }), 60000);
+        this._unsub = notificationStore.subscribe((state) => this._onStoreUpdate(state));
         document.addEventListener('pointerdown', this._onDocPointer, true);
-        window.addEventListener('notifications-invalidate', this._onInvalidate);
     }
 
     updated(changedProps) {
-        if (changedProps.has('isRegistrationReviewer') && this.isRegistrationReviewer) {
-            this.refresh({ quiet: true });
+        if (changedProps.has('isRegistrationReviewer')) {
+            notificationStore.setRegistrationReviewer(this.isRegistrationReviewer);
         }
     }
 
     disconnectedCallback() {
-        if (this._pollTimer) clearInterval(this._pollTimer);
+        if (this._unsub) this._unsub();
         document.removeEventListener('pointerdown', this._onDocPointer, true);
-        window.removeEventListener('notifications-invalidate', this._onInvalidate);
         super.disconnectedCallback();
+    }
+
+    _onStoreUpdate({ notifications, unreadCount, pendingRegCount, pendingInviteCount, loading }) {
+        this.notifications = notifications;
+        this.unreadCount = unreadCount;
+        this._pendingRegCount = pendingRegCount;
+        this._pendingInviteCount = pendingInviteCount;
+        this.loading = loading;
     }
 
     handleDocPointer(event) {
@@ -414,39 +419,28 @@ export class NotificationBell extends LitElement {
         if (!path.includes(this)) this.open = false;
     }
 
-    async refresh({ quiet = false } = {}) {
-        if (!quiet) this.loading = true;
-        try {
-            const [data, pendingCount] = await Promise.all([
-                listNotifications(),
-                this.isRegistrationReviewer ? getPendingRegistrationsCount() : Promise.resolve(0)
-            ]);
-            this.notifications = Array.isArray(data.notifications) ? data.notifications : [];
-            this.unreadCount = Number(data.unreadCount) || 0;
-            this._pendingRegCount = pendingCount;
-            this.error = '';
-        } catch (err) {
-            if (!quiet) {
-                this.error = err?.message || t('notifications.loadFailed');
-            }
-        } finally {
-            this.loading = false;
-        }
-    }
-
     async toggleOpen() {
         this.open = !this.open;
-        if (this.open) await this.refresh();
+        if (this.open) await notificationStore.refresh();
     }
 
     hasUnread() {
-        return this.unreadCount > 0 || this._pendingRegCount > 0;
+        return this.unreadCount > 0 || this._pendingRegCount > 0 || this._pendingInviteCount > 0;
     }
 
     _firePendingRegistrations() {
         this.open = false;
         this.dispatchEvent(new CustomEvent('menu-selection-change', {
             detail: { selectedKey: 'admin-registrations' },
+            bubbles: true,
+            composed: true
+        }));
+    }
+
+    _fireCases() {
+        this.open = false;
+        this.dispatchEvent(new CustomEvent('menu-selection-change', {
+            detail: { selectedKey: 'cases' },
             bubbles: true,
             composed: true
         }));
@@ -469,7 +463,8 @@ export class NotificationBell extends LitElement {
         if (!this.unreadCount) return;
         try {
             await markAllNotificationsRead();
-            await this.refresh();
+            await notificationStore.refresh({ quiet: true });
+            this.error = '';
         } catch (err) {
             this.error = err?.message || t('notifications.markAllFailed');
         }
@@ -479,12 +474,7 @@ export class NotificationBell extends LitElement {
         try {
             if (!notification.read_at) {
                 await markNotificationRead(notification.id);
-                this.unreadCount = Math.max(0, this.unreadCount - 1);
-                this.notifications = this.notifications.map((n) => (
-                    n.id === notification.id
-                        ? { ...n, read_at: n.read_at || new Date().toISOString() }
-                        : n
-                ));
+                notificationStore.refresh({ quiet: true });
             }
         } catch {
             // still allow navigation
@@ -507,14 +497,8 @@ export class NotificationBell extends LitElement {
         event.preventDefault();
         event.stopPropagation();
         try {
-            const data = await dismissNotification(notification.id);
-            const wasUnread = !notification.read_at;
-            this.notifications = this.notifications.filter((n) => n.id !== notification.id);
-            if (typeof data?.unreadCount === 'number') {
-                this.unreadCount = data.unreadCount;
-            } else if (wasUnread) {
-                this.unreadCount = Math.max(0, this.unreadCount - 1);
-            }
+            await dismissNotification(notification.id);
+            await notificationStore.refresh({ quiet: true });
             this.error = '';
         } catch (err) {
             this.error = err?.message || t('notifications.dismissFailed');
@@ -567,9 +551,26 @@ export class NotificationBell extends LitElement {
                             </li>
                         </ul>
                     ` : ''}
+                    ${this._pendingInviteCount > 0 ? html`
+                        <ul class="list">
+                            <li class="item-row">
+                                <button
+                                    type="button"
+                                    class="item unread"
+                                    @click=${() => this._fireCases()}
+                                >
+                                    <span class="item-title">${this._pendingInviteCount === 1
+                                        ? t('notifications.pendingCaseInvite')
+                                        : t('notifications.pendingCaseInvites', { count: this._pendingInviteCount })
+                                    }</span>
+                                    <span class="item-body">${t('notifications.pendingCaseInvitesBody')}</span>
+                                </button>
+                            </li>
+                        </ul>
+                    ` : ''}
                     ${this.loading && !this.notifications.length
                         ? html`<p class="empty">${t('common.loading')}</p>`
-                        : (!this.notifications.length && !this._pendingRegCount
+                        : (!this.notifications.length && !this._pendingRegCount && !this._pendingInviteCount
                             ? html`<p class="empty">${t('notifications.empty')}</p>`
                             : this.notifications.length > 0 ? html`
                                 <ul class="list">

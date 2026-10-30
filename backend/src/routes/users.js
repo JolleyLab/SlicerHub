@@ -7,6 +7,9 @@ import { ValidationError, NotFoundError, ForbiddenError } from '../utils/errors.
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { stopSlicerGuiSession } from '../slicerGui/sessionManager.js';
 import { msg } from '../i18n/index.js';
+import storage from '../storage/index.js';
+
+const AVATAR_MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
 
 const LOADTEST_EMAIL_SUFFIX = '@loadtest.local';
 
@@ -40,6 +43,25 @@ export default function userRoutes(app) {
                 email: user.email
             }
         });
+    }));
+
+    /**
+     * Serve another user's avatar by Keycloak sub. Requires authentication.
+     * Returns 404 if the sub is invalid or no avatar has been uploaded.
+     */
+    app.get('/api/users/:sub/avatar', authenticateToken, asyncHandler(async (req, res) => {
+        const sub = req.params.sub;
+        if (!sub || sub.length > 128) return res.status(404).end();
+        const prefix = storage.avatarKeyForSub(sub, '').replace(/\.$/, '');
+        const keys = await storage.listByPrefix(prefix);
+        const key = keys.length > 0 ? keys[0] : null;
+        if (!key) return res.status(404).end();
+        const presigned = await storage.getPresignedReadUrl(key, 300);
+        if (presigned) return res.redirect(302, presigned);
+        const ext = key.split('.').pop().toLowerCase();
+        res.setHeader('Content-Type', AVATAR_MIME[ext] || 'application/octet-stream');
+        res.setHeader('Cache-Control', 'public, max-age=300');
+        return (await storage.openReadStream(key)).pipe(res);
     }));
 
     /**

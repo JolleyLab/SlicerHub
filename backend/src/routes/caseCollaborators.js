@@ -22,6 +22,9 @@ import {
     enableKeycloakUser,
     getKeycloakSubForUser,
     getUserCaseRole,
+    getKeycloakUser,
+    getUserCaseRoleMap,
+    kcDisplayName,
 } from '../services/keycloakAdmin.js';
 import { sendCaseSignupInviteEmail } from '../services/mail.js';
 import config from '../config/index.js';
@@ -179,6 +182,91 @@ export default function caseCollaboratorsRoutes(app) {
     }));
 
     /**
+     * Count pending invites across all cases for the current user.
+     * Org-admins and site-admins see all pending_approval invites.
+     * Everyone else gets 0 (case-level admin scoping is a future enhancement).
+     */
+    app.get('/api/cases/invites/pending-count', ...auth, asyncHandler(async (req, res) => {
+        const isAdmin = req.user?.role === 'admin' || req.user?.role === 'org-admin';
+        if (!isAdmin) {
+            res.set('Cache-Control', 'no-store');
+            return res.json({ count: 0 });
+        }
+        const payload = getPayloadClient();
+        const result = await payload.find({
+            collection: 'case-invites',
+            where: { status: { equals: 'pending_approval' } },
+            limit: 0,
+        });
+        res.set('Cache-Control', 'no-store');
+        res.json({ count: result.totalDocs });
+    }));
+
+    /**
+     * All pending_approval invites across cases where the current user is an admin.
+     * Keycloak path: replaces /api/directus/invites/pending-approval for KC users.
+     */
+    app.get('/api/cases/invites/pending-approval', ...auth, asyncHandler(async (req, res) => {
+        const payload = getPayloadClient();
+        const kcSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
+        if (!kcSub) return res.json({ invites: [] });
+
+        const roleMap = await getUserCaseRoleMap(kcSub);
+        const adminCaseIds = Object.entries(roleMap)
+            .filter(([, role]) => role === 'admin')
+            .map(([id]) => String(id));
+
+        const ownedResult = await payload.find({
+            collection: 'cases',
+            where: { owner_id: { equals: kcSub } },
+            limit: 200,
+            depth: 0,
+        });
+        const allAdminIds = [...new Set([...adminCaseIds, ...ownedResult.docs.map(d => String(d.id))])];
+        if (!allAdminIds.length) return res.json({ invites: [] });
+
+        const result = await payload.find({
+            collection: 'case-invites',
+            where: {
+                and: [
+                    { case: { in: allAdminIds } },
+                    { status: { equals: 'pending_approval' } },
+                ],
+            },
+            sort: '-createdAt',
+            limit: 100,
+            depth: 1,
+        });
+
+        // Resolve display names for inviters and (if KC user) invitees
+        const subs = [...new Set([
+            ...result.docs.map(d => d.inviter_id),
+            ...result.docs.map(d => d.keycloak_user_id),
+        ].filter(Boolean))];
+        const nameMap = {};
+        await Promise.all(subs.map(async (sub) => {
+            const user = await getKeycloakUser(sub);
+            if (user) nameMap[sub] = kcDisplayName(user) || null;
+        }));
+
+        const invites = result.docs.map(doc => ({
+            id: String(doc.id),
+            kind: doc.kind,
+            status: doc.status,
+            caseId: String(doc.case?.id ?? doc.case),
+            caseTitle: doc.case?.title ?? null,
+            inviteeEmail: doc.invitee_email,
+            inviteeName: (doc.keycloak_user_id && nameMap[doc.keycloak_user_id]) || doc.invitee_email,
+            inviterName: (doc.inviter_id && nameMap[doc.inviter_id]) || null,
+            proposedRole: doc.role,
+            createdAt: doc.createdAt,
+        }));
+
+        res.set('Cache-Control', 'no-store');
+        res.json({ invites });
+    }));
+
+    /**
      * List all collaborators on a case.
      * Readable by any collaborator (including read_only).
      */
@@ -189,10 +277,23 @@ export default function caseCollaboratorsRoutes(app) {
 
         await assertCaseAccess(doc, req, 'read_only');
 
-        const collaborators = await listCaseCollaborators(req.params.id);
+        const [collaborators, ownerKc] = await Promise.all([
+            listCaseCollaborators(req.params.id),
+            doc.owner_id ? getKeycloakUser(doc.owner_id).catch(() => null) : Promise.resolve(null),
+        ]);
+
+        const owner = ownerKc ? {
+            id:          doc.owner_id,
+            email:       ownerKc.email       || '',
+            firstName:   ownerKc.firstName   || '',
+            lastName:    ownerKc.lastName    || '',
+            preferredName: ownerKc.preferredName || '',
+            displayName: ownerKc.displayName || '',
+            avatarUrl:   `/api/users/${encodeURIComponent(doc.owner_id)}/avatar`,
+        } : null;
 
         res.set('Cache-Control', 'no-store');
-        res.json({ collaborators });
+        res.json({ collaborators, owner });
     }));
 
     /**
@@ -203,28 +304,26 @@ export default function caseCollaboratorsRoutes(app) {
         const payload = getPayloadClient();
         const doc = await payload.findByID({ collection: 'cases', id: req.params.id });
         if (!doc) throw new NotFoundError('Case not found');
-        await assertCaseAccess(doc, req, 'read_only');
+        const myRole = await assertCaseAccess(doc, req, 'read_only');
+        const effectiveAdmin = myRole === 'admin';
 
-        const actorSub  = getKeycloakSubForUser(req.user.id);
-        const isAdmin   = req.user.role === 'admin' || (actorSub && doc.owner_id === actorSub);
-        const caseId    = parseInt(req.params.id, 10);
-
-        // Non-admins: also check Keycloak group membership for admin role
-        let effectiveAdmin = isAdmin;
-        if (!effectiveAdmin && actorSub) {
-            effectiveAdmin = (await getUserCaseRole(actorSub, caseId)) === 'admin';
-        }
+        const actorSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
+        const caseId   = parseInt(req.params.id, 10);
 
         const where = {
-            case: { equals: caseId },
-            or: [
-                { status: { equals: 'pending_approval' } },
-                { status: { equals: 'pending_signup' } },
+            and: [
+                { case: { equals: caseId } },
+                {
+                    or: [
+                        { status: { equals: 'pending_approval' } },
+                        { status: { equals: 'pending_signup' } },
+                    ],
+                },
+                ...((!effectiveAdmin && actorSub)
+                    ? [{ inviter_id: { equals: actorSub } }]
+                    : []),
             ],
         };
-        if (!effectiveAdmin && actorSub) {
-            where.inviter_id = { equals: actorSub };
-        }
 
         const result = await payload.find({
             collection: 'case-invites',
@@ -268,7 +367,7 @@ export default function caseCollaboratorsRoutes(app) {
             throw new ValidationError(`Role must be one of: ${CASE_ROLES.join(', ')}`);
         }
 
-        const actorSub   = getKeycloakSubForUser(req.user.id);
+        const actorSub   = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
         const caseId     = parseInt(req.params.id, 10);
         const sysAdmin   = req.user.role === 'admin';
         const caseOwner  = actorSub && doc.owner_id === actorSub;
@@ -276,6 +375,9 @@ export default function caseCollaboratorsRoutes(app) {
             ? await getUserCaseRole(actorSub, caseId)
             : null;
         const actorIsAdmin = sysAdmin || caseOwner || kcRole === 'admin';
+
+        // Collaborators cannot propose admin access — silently cap to collaborator.
+        const effectiveRole = (!actorIsAdmin && role === 'admin') ? 'collaborator' : role;
 
         const user = await findUserByEmail(email);
 
@@ -312,7 +414,7 @@ export default function caseCollaboratorsRoutes(app) {
                     invitee_email: email,
                     inviter_id:    actorSub || null,
                     case:          caseId,
-                    role,
+                    role:          effectiveRole,
                     keycloak_user_id: user?.id || null,
                 },
             });

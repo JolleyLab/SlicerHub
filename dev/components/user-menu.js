@@ -2,8 +2,6 @@ import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
 
-import { canAccessAccountSettings } from '../utils/directusLinkGate.js';
-
 export class UserMenu extends LitElement {
     static get styles() {
         return css`
@@ -163,12 +161,13 @@ export class UserMenu extends LitElement {
 
     static get properties() {
         return {
-            username:   { type: String },
+            username:    { type: String },
             /** Preferred label: "First Last" or email (Directus-era accounts). */
             displayName: { type: String },
-            avatarUrl:  { type: String },
-            open:       { type: Boolean },
-            isOrgAdmin: { type: Boolean }
+            avatarUrl:   { type: String },
+            open:        { type: Boolean },
+            isOrgAdmin:  { type: Boolean },
+            _imgError:   { type: Boolean, state: true },
         };
     }
 
@@ -180,6 +179,26 @@ export class UserMenu extends LitElement {
         this.avatarUrl = '';
         this.open = false;
         this.isOrgAdmin = false;
+        this._imgError = false;
+        this._onDocPointer = (e) => {
+            if (!this.open) return;
+            const path = e.composedPath?.() || [];
+            if (!path.includes(this)) this.open = false;
+        };
+    }
+
+    updated(changed) {
+        if (changed.has('avatarUrl')) this._imgError = false;
+    }
+
+    connectedCallback() {
+        super.connectedCallback();
+        document.addEventListener('pointerdown', this._onDocPointer, true);
+    }
+
+    disconnectedCallback() {
+        document.removeEventListener('pointerdown', this._onDocPointer, true);
+        super.disconnectedCallback();
     }
 
     #getDisplayLabel() {
@@ -230,18 +249,16 @@ export class UserMenu extends LitElement {
         const label = this.#getDisplayLabel();
         const nameIsLong = label.length > 35;
         return html`
-            <button class="user-menu-button ${this.avatarUrl ? 'has-avatar' : ''}" @click=${this.toggleMenu} aria-label=${label}>
-                ${this.avatarUrl
-                    ? html`<img class="avatar-img" src=${this.avatarUrl} alt="" aria-hidden="true">`
+            <button class="user-menu-button ${this.avatarUrl && !this._imgError ? 'has-avatar' : ''}" @click=${this.toggleMenu} aria-label=${label}>
+                ${this.avatarUrl && !this._imgError
+                    ? html`<img class="avatar-img" src=${this.avatarUrl} alt="" aria-hidden="true" @error=${() => { this._imgError = true; }}>`
                     : this.#getUNFirstLetter()}
             </button>
             ${this.open ? html`
                 <div class="menu">
                     <div class="menu-title ${nameIsLong ? 'is-long' : ''}">${t('nav.signedInAs')} <strong>${label}</strong></div>
                     <hr>
-                    ${canAccessAccountSettings() ? html`
                     <button class="menu-item" @click=${this.requestSettings}>${t('nav.settings')}</button>
-                    ` : ''}
                     ${this.isOrgAdmin ? html`
                     <button class="menu-item" @click=${this.requestPendingRegistrations}>${t('nav.pendingRegistrations')}</button>
                     ` : ''}

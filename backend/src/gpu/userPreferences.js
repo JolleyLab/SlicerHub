@@ -8,12 +8,23 @@ import {
 } from './localSlicerViewerOptions.js';
 import { normalizeHomeLayout } from '../utils/homeLayout.js';
 
+export const ALL_ACTIVITY_CATEGORIES = Object.freeze(['collaboration', 'mention', 'comment', 'attachment']);
+
+/** null = all categories shown (default); array = only those categories */
+export function normalizeActivityFilters(input) {
+    if (!Array.isArray(input)) return null;
+    const valid = input.filter(c => ALL_ACTIVITY_CATEGORIES.includes(c));
+    if (valid.length === 0 || valid.length >= ALL_ACTIVITY_CATEGORIES.length) return null;
+    return valid;
+}
+
 export const DEFAULT_USER_PREFERENCES = Object.freeze({
     theme: 'light',
     ...DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS,
     homeLayout: normalizeHomeLayout(null),
     slicerWebChannel: 'stable',
     notifyRegistrationApproval: true,
+    activityFilters: ['comment'],
 });
 
 export function normalizeUserPreferences(input = {}) {
@@ -27,6 +38,7 @@ export function normalizeUserPreferences(input = {}) {
         homeLayout: normalizeHomeLayout(input?.homeLayout),
         slicerWebChannel,
         notifyRegistrationApproval: input?.notifyRegistrationApproval !== false,
+        activityFilters: normalizeActivityFilters(input?.activityFilters),
     };
 }
 

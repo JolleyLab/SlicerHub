@@ -17,7 +17,8 @@ import directusTusRoutes from "./routes/directusTus.js";
 import directusVersionRoutes from "./routes/directusVersions.js";
 import directusCaseActivityRoutes from "./routes/directusCaseActivity.js";
 import registrationRequestRoutes from "./routes/registrationRequests.js";
-import taskGroupRoutes from "./routes/taskGroups.js";
+import groupRoutes from "./routes/groups.js";
+import passwordResetRoutes from "./routes/passwordReset.js";
 import featuresRoutes from "./routes/features.js";
 import slicerWebRoutes from "./routes/slicerWeb.js";
 import announcementRoutes from "./routes/announcement.js";
@@ -27,7 +28,6 @@ import { startPruneScheduler } from "./jobs/pruneVersions.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { isDirectusConfigured } from "./services/directus.js";
 import { startBillingWatchdog } from "./gpu/billingWatchdog.js";
-import { startPolicySyncScheduler } from "./services/directusPolicySync.js";
 import {
     startViewerSessionWatchdog,
     pruneExpiredViewerSessions,
@@ -41,6 +41,8 @@ import { repairGpuCredentialsFromSeed } from "./gpu/repairCredentials.js";
 import ProjectGpu from "./models/ProjectGpu.js";
 import { restoreGpuViewerProxies } from "./gpu/gpuViewerProxy.js";
 import { initPayload, getPayloadClient } from "./payload/index.js";
+import { getUsersWithRealmRole } from "./services/keycloakAdmin.js";
+import { addGroupMember } from "./services/groupStore.js";
 import casesRoutes from "./routes/cases.js";
 import caseCollaboratorsRoutes from "./routes/caseCollaborators.js";
 import { registerCaseTusRoute } from "./routes/caseTus.js";
@@ -66,6 +68,78 @@ async function expireStaleInvites() {
         }
     } catch (err) {
         console.warn('Case invite expiry sweep failed:', err.message);
+    }
+}
+
+async function seedRegistrationReviewersGroup() {
+    const payload = getPayloadClient();
+    if (!payload) return;
+    try {
+        // Ensure the group exists
+        let groupId;
+        let justCreated = false;
+        const existing = await payload.find({
+            collection: 'groups',
+            where: { name: { equals: 'Registration Reviewers' } },
+            limit: 1,
+            depth: 0,
+        });
+        if (existing.totalDocs === 0) {
+            const created = await payload.create({
+                collection: 'groups',
+                data: {
+                    name: 'Registration Reviewers',
+                    description: 'Members of this group can approve new user registration requests.',
+                    can_approve_registrations: true,
+                },
+            });
+            groupId = String(created.id);
+            justCreated = true;
+            console.log('Seeded "Registration Reviewers" group');
+        } else {
+            groupId = String(existing.docs[0].id);
+        }
+
+        // Seed members if the group was just created OR has no members yet
+        // (handles the case where KC was unavailable on first run).
+        // Once members exist, manual removals are respected.
+        const memberCheck = await payload.find({
+            collection: 'group-members',
+            where: { group_id: { equals: groupId } },
+            limit: 1,
+            depth: 0,
+        });
+        if (!justCreated && memberCheck.totalDocs > 0) return;
+
+        const [orgAdmins, admins] = await Promise.all([
+            getUsersWithRealmRole('app-org-admin'),
+            getUsersWithRealmRole('app-admin'),
+        ]);
+        console.log(`[seed] app-org-admin users: ${orgAdmins.map(u => u.email).join(', ') || '(none)'}`);
+        console.log(`[seed] app-admin users: ${admins.map(u => u.email).join(', ') || '(none)'}`);
+        const adminSubs = [...new Map(
+            [...orgAdmins, ...admins].filter(u => u.id).map(u => [u.id, u])
+        ).values()].map(u => u.id);
+
+        if (!adminSubs.length) {
+            console.warn('Registration Reviewers: no org-admins found in Keycloak — group left empty');
+            return;
+        }
+
+        let added = 0;
+        for (const kcSub of adminSubs) {
+            try {
+                await addGroupMember(groupId, kcSub, { canManageGroup: false });
+                added++;
+            } catch (err) {
+                if (err.code !== 'ALREADY_MEMBER') {
+                    console.warn(`[seed] addGroupMember(${kcSub}) failed:`, err?.message);
+                }
+            }
+        }
+        if (added) console.log(`Added ${added} org-admin(s) to "Registration Reviewers"`);
+    } catch (err) {
+        console.warn('Registration Reviewers group seed failed:', err.message);
     }
 }
 
@@ -132,7 +206,8 @@ app.use(cors({
 authRoutes(app);
 adminProvisionRoutes(app);
 registrationRequestRoutes(app);
-taskGroupRoutes(app);
+groupRoutes(app);
+passwordResetRoutes(app);
 
 featuresRoutes(app);
 slicerWebRoutes(app);
@@ -202,9 +277,9 @@ app.listen(config.server.port, config.server.host, async () => {
         console.warn('GPU credential repair on startup failed:', err.message);
     }
     startBillingWatchdog();
-    startPolicySyncScheduler();
     startViewerSessionWatchdog();
     startInviteExpiryWatchdog();
+    seedRegistrationReviewersGroup();
     startStablePoller();
     startLatestPoller();
     try {

@@ -148,6 +148,67 @@ export const UserPreferences = {
             defaultValue: 'stable',
         },
         { name: 'notify_registration_approval', type: 'checkbox', defaultValue: true },
+        { name: 'activity_filters', type: 'json' },
+    ],
+};
+
+export const RegistrationRequests = {
+    slug: 'registration-requests',
+    admin: { useAsTitle: 'email' },
+    fields: [
+        { name: 'email',         type: 'email', required: true, index: true },
+        { name: 'first_name',    type: 'text' },
+        { name: 'last_name',     type: 'text' },
+        { name: 'affiliation',   type: 'text' },
+        { name: 'intended_use',  type: 'textarea' },
+        {
+            name: 'status',
+            type: 'select',
+            options: [
+                { label: 'Pending',   value: 'pending' },
+                { label: 'Approved',  value: 'approved' },
+                { label: 'Rejected',  value: 'rejected' },
+                { label: 'Completed', value: 'completed' },
+            ],
+            defaultValue: 'pending',
+            required: true,
+        },
+        { name: 'is_org_admin',                type: 'checkbox', defaultValue: false },
+        { name: 'completion_token_hash',       type: 'text', index: true },
+        { name: 'completion_token_expires_at', type: 'date' },
+        { name: 'reviewed_by',                 type: 'text' },
+        { name: 'reviewed_at',                 type: 'date' },
+    ],
+};
+
+export const Groups = {
+    slug: 'groups',
+    admin: { useAsTitle: 'name' },
+    fields: [
+        { name: 'name', type: 'text', required: true },
+        { name: 'description', type: 'textarea' },
+        { name: 'can_approve_registrations', type: 'checkbox', defaultValue: false },
+    ],
+};
+
+export const GroupMembers = {
+    slug: 'group-members',
+    fields: [
+        {
+            name: 'group_id',
+            type: 'text',
+            label: 'Group ID',
+            required: true,
+            index: true,
+        },
+        {
+            name: 'kc_sub',
+            type: 'text',
+            label: 'Member (Keycloak sub)',
+            required: true,
+            index: true,
+        },
+        { name: 'can_manage_group', type: 'checkbox', defaultValue: false },
     ],
 };
 
@@ -187,5 +248,25 @@ export const Attachments = {
             label: 'Uploaded by (Keycloak sub)',
             required: true,
         },
+    ],
+};
+
+export const PasswordResetTokens = {
+    slug: 'password-reset-tokens',
+    admin: { useAsTitle: 'email' },
+    fields: [
+        { name: 'email',      type: 'email', required: true, index: true },
+        { name: 'token_hash', type: 'text',  required: true, index: true, unique: true },
+        {
+            name: 'kind',
+            type: 'select',
+            options: [
+                { label: 'Account activation (new/migrated user)', value: 'activation' },
+                { label: 'Password reset (forgot password)',        value: 'reset' },
+            ],
+            required: true,
+        },
+        { name: 'expires_at', type: 'date', required: true },
+        { name: 'used_at',    type: 'date' },
     ],
 };

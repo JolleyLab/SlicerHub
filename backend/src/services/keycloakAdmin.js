@@ -118,6 +118,17 @@ async function keycloakDelete(path) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Derive a human-readable display name from a KC user object (or any object with
+ * { preferredName?, firstName?, lastName?, username?, email? }).
+ * Priority: preferredName → full name → username → email → fallback.
+ */
+export function kcDisplayName(user, fallback = '') {
+    if (!user) return fallback;
+    const full = [user.firstName, user.lastName].filter(Boolean).join(' ');
+    return user.preferredName || full || user.username || user.email || fallback;
+}
+
+/**
  * Find a Keycloak user by exact email address.
  * Returns { id, email, firstName, lastName, username, preferredName, displayName } or null.
  */
@@ -127,28 +138,26 @@ export async function findUserByEmail(email) {
     );
     const user = results?.find(u => u.email?.toLowerCase() === email.toLowerCase());
     if (!user) return null;
-    const preferredName = user.attributes?.preferredName?.[0] || '';
-    const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
-    return {
+    const shaped = {
         id:           user.id,
         email:        user.email,
         firstName:    user.firstName || '',
         lastName:     user.lastName  || '',
         username:     user.username  || '',
-        preferredName,
-        displayName:  preferredName || fullName || user.email || '',
+        preferredName: user.attributes?.preferredName?.[0] || '',
     };
+    return { ...shaped, displayName: kcDisplayName(shaped) };
 }
 
 /**
  * Get a Keycloak user by their Keycloak ID.
- * Returns { id, email, firstName, lastName, username, preferredName } or null.
+ * Returns { id, email, firstName, lastName, username, preferredName, displayName } or null.
  */
 export async function getKeycloakUser(keycloakUserId) {
     try {
         const user = await keycloakGet(`/users/${encodeURIComponent(keycloakUserId)}`);
         if (!user) return null;
-        return {
+        const shaped = {
             id:            user.id,
             email:         user.email,
             firstName:     user.firstName || '',
@@ -156,6 +165,7 @@ export async function getKeycloakUser(keycloakUserId) {
             username:      user.username  || '',
             preferredName: user.attributes?.preferredName?.[0] || '',
         };
+        return { ...shaped, displayName: kcDisplayName(shaped) };
     } catch {
         return null;
     }
@@ -253,6 +263,55 @@ export async function enableKeycloakUser(keycloakUserId, { firstName, lastName }
     if (firstName !== undefined) updates.firstName = firstName;
     if (lastName  !== undefined) updates.lastName  = lastName;
     await keycloakPut(`/users/${encodeURIComponent(keycloakUserId)}`, updates);
+}
+
+// ---------------------------------------------------------------------------
+// Realm role management
+// ---------------------------------------------------------------------------
+
+/**
+ * List all users assigned a given realm role.
+ * Returns [{ id, email, firstName, lastName, username, preferredName, displayName }].
+ */
+export async function getUsersWithRealmRole(roleName) {
+    try {
+        const users = await keycloakGet(
+            `/roles/${encodeURIComponent(roleName)}/users?max=500`
+        );
+        console.log(`[keycloakAdmin] getUsersWithRealmRole(${roleName}): ${Array.isArray(users) ? users.length : 0} user(s)`);
+        return (Array.isArray(users) ? users : []).map(u => {
+            const shaped = {
+                id:            u.id,
+                email:         u.email        || '',
+                firstName:     u.firstName    || '',
+                lastName:      u.lastName     || '',
+                username:      u.username     || '',
+                preferredName: u.attributes?.preferredName?.[0] || '',
+            };
+            return { ...shaped, displayName: kcDisplayName(shaped) };
+        });
+    } catch (err) {
+        console.warn(`[keycloakAdmin] getUsersWithRealmRole(${roleName}) failed:`, err?.message);
+        return [];
+    }
+}
+
+/**
+ * Assign a realm-level role to a Keycloak user by role name (e.g. 'app-org-admin').
+ * No-ops if the role does not exist (misconfigured realm) rather than throwing,
+ * so account creation still succeeds.
+ */
+export async function assignRealmRole(keycloakUserId, roleName) {
+    let role;
+    try {
+        role = await keycloakGet(`/roles/${encodeURIComponent(roleName)}`);
+    } catch {
+        console.warn(`[keycloakAdmin] Realm role '${roleName}' not found — skipping assignment`);
+        return;
+    }
+    await keycloakPost(`/users/${encodeURIComponent(keycloakUserId)}/role-mappings/realm`, [
+        { id: role.id, name: role.name }
+    ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -387,15 +446,18 @@ export async function listCaseCollaborators(caseId) {
             `/groups/${encodeURIComponent(group.id)}/members?briefRepresentation=false`
         );
         for (const m of members ?? []) {
-            const preferredName = m.attributes?.preferredName?.[0] || '';
-            const fullName = [m.firstName, m.lastName].filter(Boolean).join(' ');
-            results.push({
+            const shaped = {
                 id:           m.id,
                 email:        m.email     || '',
                 firstName:    m.firstName || '',
                 lastName:     m.lastName  || '',
-                preferredName,
-                displayName:  preferredName || fullName || m.email || '',
+                username:     m.username  || '',
+                preferredName: m.attributes?.preferredName?.[0] || '',
+            };
+            results.push({
+                ...shaped,
+                displayName: kcDisplayName(shaped),
+                avatarUrl:   `/api/users/${encodeURIComponent(m.id)}/avatar`,
                 role,
             });
         }

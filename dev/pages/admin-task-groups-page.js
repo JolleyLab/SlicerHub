@@ -31,7 +31,7 @@ export class AdminTaskGroupsPage extends LitElement {
             avatarUrl: { type: String },
             isOrgAdmin: { type: Boolean },
             isRegistrationReviewer: { type: Boolean },
-            currentDirectusUserId: { type: String },
+            currentKcSub: { type: String },
             _unifiedList: { type: Array },
             _selectedGroup: { type: Object },
             _activeTab: { type: String },
@@ -64,7 +64,7 @@ export class AdminTaskGroupsPage extends LitElement {
         this.avatarUrl = '';
         this.isOrgAdmin = false;
         this.isRegistrationReviewer = false;
-        this.currentDirectusUserId = '';
+        this.currentKcSub = '';
         this._unifiedList = [];
         this._selectedGroup = null;
         this._activeTab = 'tasks';
@@ -522,10 +522,10 @@ export class AdminTaskGroupsPage extends LitElement {
                             ></person-chip>
                             ${canManage ? html`
                                 <div class="member-perms">
-                                    <label class="perm-row" title=${m.directusUserId === this.currentDirectusUserId ? t('taskGroups.cannotRemoveOwnManage') : ''}>
+                                    <label class="perm-row" title=${m.kcSub === this.currentKcSub ? t('taskGroups.cannotRemoveOwnManage') : ''}>
                                         <input type="checkbox"
                                             .checked=${m.canManageGroup}
-                                            ?disabled=${m.directusUserId === this.currentDirectusUserId}
+                                            ?disabled=${m.kcSub === this.currentKcSub}
                                             @change=${e => this._updateMemberPermission(m.id, 'canManageGroup', e.target.checked)} />
                                         ${t('taskGroups.canManageGroup')}
                                     </label>

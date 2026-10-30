@@ -1,9 +1,8 @@
+// TODO: delete this file — all callers removed from app-shell and user-menu.
 /**
  * Gate controlling access to account settings.
  * Originally tied to whether a Directus identity link existed; under Keycloak
  * the gate is never required so canAccessAccountSettings() always returns true.
- *
- * TODO: remove this file (and its callers) once the Directus provider is retired.
  */
 
 let gate = {

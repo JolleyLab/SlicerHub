@@ -26,16 +26,13 @@ const ROLE_RANK = { admin: 3, collaborator: 2, read_only: 1 };
  * @returns {Promise<'admin'|'collaborator'|'read_only'|null>}
  */
 export async function getCaseRole(caseDoc, req) {
-    if (req.user.role === 'admin') return 'admin';
-    const requesterSub = getKeycloakSubForUser(req.user.id);
+    if (req.user.role === 'admin' || req.user.role === 'org-admin') return 'admin';
+    const requesterSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
     if (requesterSub && caseDoc.owner_id === requesterSub) return 'admin';
 
-    if (config.auth.provider === 'keycloak') {
-        const keycloakSub = getKeycloakSubForUser(req.user.id);
-        if (keycloakSub) {
-            const role = await getUserCaseRole(keycloakSub, String(caseDoc.id));
-            if (role) return role;
-        }
+    if (config.auth.provider === 'keycloak' && requesterSub) {
+        const role = await getUserCaseRole(requesterSub, String(caseDoc.id));
+        if (role) return role;
     }
 
     return null;
@@ -66,7 +63,7 @@ export async function assertCaseAccess(caseDoc, req, minRole = 'read_only') {
  */
 export async function buildCaseRoleMap(req) {
     if (config.auth.provider !== 'keycloak') return {};
-    const keycloakSub = getKeycloakSubForUser(req.user.id);
+    const keycloakSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
     if (!keycloakSub) return {};
     try {
         return await getUserCaseRoleMap(keycloakSub);

@@ -1,3 +1,4 @@
+// TODO: delete this file — reconnect dialog removed, no callers remain.
 /**
  * Wraps a Directus save operation so that if the session has expired, the app shows the
  * reconnect dialog and retries automatically on success. The in-memory data is never lost —

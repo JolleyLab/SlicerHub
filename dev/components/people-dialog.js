@@ -6,6 +6,7 @@ import { t } from '../i18n/index.js';
 import { isInviteEmailEnabled } from '../services/features.js';
 import { normalizeMember } from '../utils/memberNormalize.js';
 import { roleOrder } from '../utils/casePermissions.js';
+import { roleLabel } from '../utils/activityItems.js';
 import './app-dialog.js';
 import './app-button.js';
 import './badge-pill.js';
@@ -26,12 +27,6 @@ function inviteKind(invite) {
     return 'existing';
 }
 
-function roleLabel(role) {
-    const key = String(role || '').toLowerCase();
-    if (key === 'admin') return t('roles.admin');
-    if (key === 'read_only' || key === 'observer') return t('roles.readOnly');
-    return t('roles.collaborator');
-}
 
 function personFullName(person) {
     if (person?.displayName) return String(person.displayName).trim();

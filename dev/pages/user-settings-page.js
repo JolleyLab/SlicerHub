@@ -10,7 +10,9 @@ import '../components/home-layout-settings.js';
 import '../components/page-content-message.js';
 import {
     getCachedUserPreferences,
-    saveUserPreferences
+    saveUserPreferences,
+    ALL_ACTIVITY_CATEGORIES,
+    normalizeActivityFilters,
 } from '../utils/userPreferences.js';
 import { isSlicerWebDevModeEnabled } from '../services/features.js';
 
@@ -32,6 +34,7 @@ export class UserSettingsPage extends LitElement {
             useSimplifiedViewer: { type: Boolean },
             slicerWebChannel: { type: String },
             notifyRegistrationApproval: { type: Boolean },
+            activityFilters: { type: Array },
             saveState: { type: String },
             saveStatusMessage: { type: String },
             errorMessage: { type: String },
@@ -78,6 +81,7 @@ export class UserSettingsPage extends LitElement {
         this.useSimplifiedViewer = prefs.useSimplifiedViewer;
         this.slicerWebChannel = prefs.slicerWebChannel ?? 'stable';
         this.notifyRegistrationApproval = prefs.notifyRegistrationApproval !== false;
+        this.activityFilters = prefs.activityFilters ?? null;
     }
 
     connectedCallback() {
@@ -197,6 +201,7 @@ export class UserSettingsPage extends LitElement {
             this.useSimplifiedViewer = next.useSimplifiedViewer;
             this.slicerWebChannel = next.slicerWebChannel ?? 'stable';
             this.notifyRegistrationApproval = next.notifyRegistrationApproval !== false;
+            this.activityFilters = next.activityFilters ?? null;
             this._prefsDirty = false;
         } catch (error) {
             this.saveState = 'error';
@@ -220,7 +225,8 @@ export class UserSettingsPage extends LitElement {
                 useSimplifiedViewer: this.useSimplifiedViewer,
                 homeLayout: this.homeLayout,
                 slicerWebChannel: this.slicerWebChannel,
-                notifyRegistrationApproval: this.notifyRegistrationApproval
+                notifyRegistrationApproval: this.notifyRegistrationApproval,
+                activityFilters: this.activityFilters,
             }));
             await Promise.all(saves);
             if (this.saveState !== 'error') {
@@ -248,6 +254,20 @@ export class UserSettingsPage extends LitElement {
     handleHomeLayoutChange(event) {
         this.homeLayout = event?.detail?.layout;
         this._prefsDirty = true;
+    }
+
+    handleActivityFilterChange(category, checked) {
+        const current = Array.isArray(this.activityFilters)
+            ? new Set(this.activityFilters)
+            : new Set(ALL_ACTIVITY_CATEGORIES);
+        if (checked) current.add(category); else current.delete(category);
+        this.activityFilters = normalizeActivityFilters([...current]);
+        this._prefsDirty = true;
+    }
+
+    isActivityCategoryEnabled(category) {
+        if (!Array.isArray(this.activityFilters)) return true;
+        return this.activityFilters.includes(category);
     }
 
     handleViewerOptionsChange(event) {
@@ -531,6 +551,19 @@ export class UserSettingsPage extends LitElement {
                                 .layout=${this.homeLayout}
                                 @layout-change=${(e) => this.handleHomeLayoutChange(e)}
                             ></home-layout-settings>
+                        </section>
+
+                        <section class="settings-section">
+                            <h2 class="section-title">${t('settings.activityFeed')}</h2>
+                            <p class="section-description">${t('settings.activityFeedHint')}</p>
+                            ${ALL_ACTIVITY_CATEGORIES.map(cat => html`
+                                <label class="checkbox-row">
+                                    <input type="checkbox"
+                                        .checked=${this.isActivityCategoryEnabled(cat)}
+                                        @change=${(e) => this.handleActivityFilterChange(cat, e.target.checked)} />
+                                    <span>${t(`settings.activityCategory.${cat}`)}</span>
+                                </label>
+                            `)}
                         </section>
                     ` : ''}
 

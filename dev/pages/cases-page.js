@@ -1493,8 +1493,15 @@ export class CasesPage extends LitElement {
         }
     }
 
-    refreshPendingInviteCount() {
-        this.pendingInviteCount = 0;
+    async refreshPendingInviteCount() {
+        const caseRow = this.selectedCase;
+        if (!caseRow?.id) { this.pendingInviteCount = 0; return; }
+        try {
+            const inv = await listCaseInvites(caseRow.id);
+            this.pendingInviteCount = (inv.invites || []).length;
+        } catch {
+            this.pendingInviteCount = 0;
+        }
     }
 
     caseLastModifiedAt(caseRow) {
@@ -1647,8 +1654,12 @@ export class CasesPage extends LitElement {
     async loadCaseCollaborators(caseId) {
         try {
             const data = await listCollaborators(caseId);
+            const collaborators = data.collaborators || [];
+            const owner = data.owner;
+            const ownerAlreadyListed = owner && collaborators.some((c) => c.id === owner.id);
+            const all = (owner && !ownerAlreadyListed) ? [owner, ...collaborators] : collaborators;
             this.cases = this.cases.map((row) =>
-                row.id === caseId ? { ...row, keycloakCollaborators: data.collaborators || [] } : row
+                row.id === caseId ? { ...row, keycloakCollaborators: all } : row
             );
         } catch {
             // non-fatal; mention picker shows empty
@@ -1662,6 +1673,7 @@ export class CasesPage extends LitElement {
                 id:        c.id,
                 body:      c.body,
                 createdAt: c.createdAt,
+                author_id: c.author_id,
                 author:    c.author,
             }));
             this.cases = this.cases.map((row) =>
@@ -1687,6 +1699,7 @@ export class CasesPage extends LitElement {
                 firstName: ownerInfo.firstName || '',
                 lastName: ownerInfo.lastName || '',
                 displayName: ownerInfo.displayName || [ownerInfo.firstName, ownerInfo.lastName].filter(Boolean).join(' ') || ownerInfo.email || '',
+                avatarUrl: ownerInfo.avatarUrl || `/api/users/${encodeURIComponent(caseRow.owner_id)}/avatar`,
                 role: 'admin',
                 locked: true,
             });
@@ -1700,6 +1713,7 @@ export class CasesPage extends LitElement {
                 firstName: entry.firstName || '',
                 lastName: entry.lastName || '',
                 displayName: entry.displayName || [entry.firstName, entry.lastName].filter(Boolean).join(' ') || entry.email || '',
+                avatarUrl: entry.avatarUrl || `/api/users/${encodeURIComponent(entry.id)}/avatar`,
                 role: entry.role || 'collaborator',
                 locked: false,
             });
@@ -1718,7 +1732,14 @@ export class CasesPage extends LitElement {
         dialog.saving = this.savingCollaborators;
         dialog.error = '';
 
-        dialog.roleOptions = null;
+        const myRole = this.myCaseRole(caseRow);
+        dialog.roleOptions = (myRole === 'admin')
+            ? null  // admins get all options (default)
+            : [
+                { value: '',             label: t('roles.selectRole'), disabled: true },
+                { value: 'collaborator', label: t('roles.collaborator') },
+                { value: 'read_only',    label: t('roles.readOnly') },
+            ];
         dialog.currentUserId = this.currentKeycloakSub || '';
         dialog.lookupFn = async (email) => {
             const data = await lookupCaseUser(email);
@@ -1744,16 +1765,18 @@ export class CasesPage extends LitElement {
             };
         };
         let collaborators = caseRow.keycloakCollaborators || [];
+        let ownerInfo = caseRow._ownerInfo || null;
         try {
             const fresh = await listCollaborators(caseRow.id);
             collaborators = fresh.collaborators || [];
+            if (fresh.owner) ownerInfo = fresh.owner;
             this.cases = this.cases.map((row) =>
                 row.id === caseRow.id
-                    ? { ...row, keycloakCollaborators: collaborators }
+                    ? { ...row, keycloakCollaborators: collaborators, _ownerInfo: ownerInfo }
                     : row
             );
         } catch { /* use cached */ }
-        const enrichedRow = { ...caseRow, keycloakCollaborators: collaborators };
+        const enrichedRow = { ...caseRow, keycloakCollaborators: collaborators, _ownerInfo: ownerInfo };
         let pendingInvites = [];
         try {
             const inv = await listCaseInvites(caseRow.id);
@@ -1787,6 +1810,7 @@ export class CasesPage extends LitElement {
             const pendingInvites = inv.invites || [];
             if (dialog) dialog.pendingInvites = pendingInvites;
             this.pendingInviteCount = pendingInvites.length;
+            window.dispatchEvent(new CustomEvent('notifications-invalidate'));
         } catch { /* non-fatal */ }
     }
 
@@ -1880,6 +1904,7 @@ export class CasesPage extends LitElement {
                 id:        c.id,
                 body:      c.body,
                 createdAt: c.createdAt,
+                author_id: c.author_id,
                 author:    c.author,
             } : null;
             panel?.clearDraft?.();
@@ -3544,8 +3569,9 @@ export class CasesPage extends LitElement {
                             .collaborators=${(caseRow.keycloakCollaborators || [])
                                 .filter((c) => c.id)
                                 .map((c) => ({
-                                    id:   c.id,
-                                    name: c.displayName || [c.firstName, c.lastName].filter(Boolean).join(' ') || c.email || c.id,
+                                    id:        c.id,
+                                    name:      c.displayName || [c.firstName, c.lastName].filter(Boolean).join(' ') || c.email || c.id,
+                                    avatarUrl: c.avatarUrl || null,
                                 }))}
                             emptyMessage=${this.sessionMeta?.comments?.loaded === false
                                 ? t('cases.commentsLoadFailed')

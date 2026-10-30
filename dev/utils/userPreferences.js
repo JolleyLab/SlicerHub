@@ -7,12 +7,23 @@ import {
 } from './localSlicerViewerOptions.js';
 import { DEFAULT_HOME_LAYOUT, normalizeHomeLayout } from './homeLayout.js';
 
+export const ALL_ACTIVITY_CATEGORIES = Object.freeze(['collaboration', 'mention', 'comment', 'attachment']);
+
+/** null = all shown; array = only those categories */
+export function normalizeActivityFilters(input) {
+    if (!Array.isArray(input)) return null;
+    const valid = input.filter(c => ALL_ACTIVITY_CATEGORIES.includes(c));
+    if (valid.length === 0 || valid.length >= ALL_ACTIVITY_CATEGORIES.length) return null;
+    return valid;
+}
+
 export const DEFAULT_USER_PREFERENCES = Object.freeze({
     theme: 'light',
     ...DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS,
     homeLayout: DEFAULT_HOME_LAYOUT,
     slicerWebChannel: 'stable',
-    notifyRegistrationApproval: true
+    notifyRegistrationApproval: true,
+    activityFilters: ['comment'],
 });
 
 const THEME_CACHE_KEY = 'ui-theme';
@@ -32,7 +43,8 @@ export function normalizeUserPreferences(input = {}) {
         useSimplifiedViewer: viewer.useSimplifiedViewer,
         homeLayout: normalizeHomeLayout(input?.homeLayout),
         slicerWebChannel,
-        notifyRegistrationApproval: input?.notifyRegistrationApproval !== false
+        notifyRegistrationApproval: input?.notifyRegistrationApproval !== false,
+        activityFilters: normalizeActivityFilters(input?.activityFilters),
     };
 }
 

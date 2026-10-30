@@ -17,8 +17,18 @@ export class PersonChip extends LitElement {
         return {
             avatarUrl:     { type: String },
             name:          { type: String },
-            secondaryLine: { type: String }
+            secondaryLine: { type: String },
+            _imgError:     { type: Boolean, state: true }
         };
+    }
+
+    constructor() {
+        super();
+        this._imgError = false;
+    }
+
+    updated(changed) {
+        if (changed.has('avatarUrl')) this._imgError = false;
     }
 
     static get styles() {
@@ -73,8 +83,8 @@ export class PersonChip extends LitElement {
     render() {
         return html`
             <div class="avatar" aria-hidden="true">
-                ${this.avatarUrl
-                    ? html`<img src=${this.avatarUrl} alt="">`
+                ${this.avatarUrl && !this._imgError
+                    ? html`<img src=${this.avatarUrl} alt="" @error=${() => { this._imgError = true; }}>`
                     : this._initial()}
             </div>
             <div class="identity">

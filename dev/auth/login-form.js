@@ -58,6 +58,7 @@ export class LoginForm extends LitElement {
         this.loading = false;
         this.error = '';
         this.success = '';
+        this._accountDisabled = false;
         this.identityLabel = t('auth.login.identityDefault');
         this.identityPlaceholder = t('auth.login.identityDefault');
         this.identityInputType = 'text';
@@ -172,6 +173,10 @@ export class LoginForm extends LitElement {
                 this.error = typeof errMsg === 'string'
                     ? errMsg
                     : t('auth.login.cooldownGeneric');
+            } else if (errCode === 'ACCOUNT_DISABLED' || /disabled|not.*enabled|account.*inactive/i.test(String(errMsg))) {
+                // Migrated account — steer to activation flow
+                this._accountDisabled = true;
+                this.error = t('passwordReset.needActivation');
             } else {
                 this.error = typeof errMsg === 'string' ? errMsg : t('auth.login.failed');
             }
@@ -273,6 +278,20 @@ export class LoginForm extends LitElement {
           ` : ''}
         </form>
 
+        ${!this.otpRequired ? html`
+        <div class="switch-link">
+          <a @click=${(e) => { e.preventDefault(); this.dispatchEvent(new CustomEvent('show-password-reset', { detail: { mode: 'reset' }, bubbles: true, composed: true })); }}>
+            ${t('passwordReset.forgotPassword')}
+          </a>
+        </div>
+        ` : ''}
+        ${!this.otpRequired && this._accountDisabled ? html`
+        <div class="switch-link">
+          <a @click=${(e) => { e.preventDefault(); this.dispatchEvent(new CustomEvent('show-activate', { detail: { email: this.identity }, bubbles: true, composed: true })); }}>
+            ${t('passwordReset.activateLink')}
+          </a>
+        </div>
+        ` : ''}
         ${!this.otpRequired && this.registrationEnabled ? html`
         <div class="switch-link">
           ${t('auth.login.noAccount')} <a @click=${this.handleRegisterClick}>${t('auth.login.registerHere')}</a>

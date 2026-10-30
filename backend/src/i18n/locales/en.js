@@ -251,13 +251,23 @@ export default {
         provision_users_required: 'users array is required (e.g. [{ email }])',
         provision_batch_limit: 'Batch size limited to 200 users'
     },
-    taskGroups: {
+    groups: {
         name_required: 'Group name is required',
-        not_found: 'Task group not found',
+        not_found: 'Group not found',
         user_not_found: 'No user found with that email address',
         user_id_required: 'A user ID or email address is required',
         already_member: 'That user is already a member of this group',
-        cannotRemoveOwnManage: 'You cannot remove your own manage permission'
+        cannotRemoveOwnManage: 'You cannot remove your own manage permission',
+        lastMember: 'Cannot remove the last member of a capability group.',
+        cannotDeleteCapabilityGroup: 'Cannot delete a capability group that still has members. Remove all members first.',
+    },
+    passwordReset: {
+        rateLimited:       'Too many requests. Please wait 15 minutes and try again.',
+        tokenRequired:     'Reset token is required',
+        tokenInvalid:      'This link is invalid or has expired',
+        tokenExpired:      'This link has expired. Please request a new one.',
+        tokenAlreadyUsed:  'This link has already been used. Please request a new one.',
+        userNotFound:      'No account found for that email address',
     },
     registration: {
         rate_limit: 'Too many registration requests. Please wait and try again.',

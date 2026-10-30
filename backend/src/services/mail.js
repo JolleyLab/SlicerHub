@@ -205,6 +205,66 @@ export async function sendRegistrationPendingReviewEmail({ to, firstName, review
     return sendMail({ to, subject, text: lines.join('\n'), html });
 }
 
+/**
+ * Account activation email — for migrated/provisioned users setting a password for the first time.
+ */
+export async function sendAccountActivationEmail({ to, firstName, activationUrl, expiresAt } = {}) {
+    const name = String(firstName || '').trim() || 'there';
+    const expiry = expiresAt
+        ? new Date(expiresAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+        : null;
+    const subject = 'Activate your SlicerHub account';
+    const lines = [
+        `Hi ${name},`,
+        '',
+        'Your SlicerHub account has been created. Click the link below to set your password and get started:',
+        String(activationUrl || ''),
+        ''
+    ];
+    if (expiry) { lines.push(`This link expires on ${expiry}.`, ''); }
+    lines.push('If you were not expecting this, you can ignore this email.');
+
+    const html = `
+      <p>Hi ${escapeHtml(name)},</p>
+      <p>Your <strong>SlicerHub</strong> account has been created. Click the link below to set your password and get started:</p>
+      <p><a href="${escapeAttr(activationUrl)}">Activate my account</a></p>
+      ${expiry ? `<p>This link expires on ${escapeHtml(expiry)}.</p>` : ''}
+      <p style="color:#666;font-size:13px;">If you were not expecting this, you can ignore this email.</p>
+    `.trim();
+
+    return sendMail({ to, subject, text: lines.join('\n'), html });
+}
+
+/**
+ * Password reset email — for existing users who forgot their password.
+ */
+export async function sendPasswordResetEmail({ to, firstName, resetUrl, expiresAt } = {}) {
+    const name = String(firstName || '').trim() || 'there';
+    const expiry = expiresAt
+        ? new Date(expiresAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+        : null;
+    const subject = 'Reset your SlicerHub password';
+    const lines = [
+        `Hi ${name},`,
+        '',
+        'We received a request to reset your SlicerHub password. Click the link below:',
+        String(resetUrl || ''),
+        ''
+    ];
+    if (expiry) { lines.push(`This link expires on ${expiry}.`, ''); }
+    lines.push('If you did not request a password reset, you can ignore this email — your password will not change.');
+
+    const html = `
+      <p>Hi ${escapeHtml(name)},</p>
+      <p>We received a request to reset your <strong>SlicerHub</strong> password.</p>
+      <p><a href="${escapeAttr(resetUrl)}">Reset my password</a></p>
+      ${expiry ? `<p>This link expires on ${escapeHtml(expiry)}.</p>` : ''}
+      <p style="color:#666;font-size:13px;">If you did not request a password reset, you can ignore this email — your password will not change.</p>
+    `.trim();
+
+    return sendMail({ to, subject, text: lines.join('\n'), html });
+}
+
 function escapeHtml(value) {
     return String(value || '')
         .replace(/&/g, '&amp;')

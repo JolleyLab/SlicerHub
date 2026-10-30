@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { toRegistrationRequestDTO as mapRequest, REG_STATUS } from '../../../backend/src/services/registrationRequestStore.js';
 
 test('REG_STATUS has correct values', () => {
-    assert.equal(REG_STATUS.PENDING, 'pending');
-    assert.equal(REG_STATUS.APPROVED, 'approved');
-    assert.equal(REG_STATUS.REJECTED, 'rejected');
+    assert.equal(REG_STATUS.PENDING,   'pending');
+    assert.equal(REG_STATUS.APPROVED,  'approved');
+    assert.equal(REG_STATUS.REJECTED,  'rejected');
+    assert.equal(REG_STATUS.COMPLETED, 'completed');
 });
 
 test('REG_STATUS is frozen', () => {
@@ -30,7 +31,7 @@ test('mapRequest maps all standard fields', () => {
         intended_use: 'Clinical research',
         status: 'pending',
         is_org_admin: false,
-        date_created: '2026-01-15T10:00:00Z'
+        createdAt: '2026-01-15T10:00:00Z'
     };
     const result = mapRequest(row);
     assert.equal(result.id, 'abc-123');
@@ -80,39 +81,15 @@ test('mapRequest sets createdAt to null when absent', () => {
     assert.equal(result.createdAt, null);
 });
 
-test('mapRequest sets decidedAt from date_updated', () => {
-    const result = mapRequest({ id: '1', email: 'a@b.com', date_updated: '2026-03-01T12:00:00Z' });
+test('mapRequest sets decidedAt from reviewed_at', () => {
+    const result = mapRequest({ id: '1', email: 'a@b.com', reviewed_at: '2026-03-01T12:00:00Z' });
     assert.equal(result.decidedAt, '2026-03-01T12:00:00Z');
 });
 
-test('mapRequest sets decidedAt to null when date_updated is absent', () => {
+test('mapRequest sets decidedAt to null when reviewed_at is absent', () => {
     assert.equal(mapRequest({ id: '1', email: 'a@b.com' }).decidedAt, null);
 });
 
-test('mapRequest builds reviewerName from user_updated first and last name', () => {
-    const result = mapRequest({
-        id: '1', email: 'a@b.com',
-        user_updated: { first_name: 'Alice', last_name: 'Smith' }
-    });
-    assert.equal(result.reviewerName, 'Alice Smith');
-});
-
-test('mapRequest reviewerName with only first name omits trailing space', () => {
-    const result = mapRequest({
-        id: '1', email: 'a@b.com',
-        user_updated: { first_name: 'Alice', last_name: '' }
-    });
-    assert.equal(result.reviewerName, 'Alice');
-});
-
-test('mapRequest sets reviewerName to null when user_updated is absent', () => {
+test('mapRequest sets reviewerName to null (resolved separately from Keycloak)', () => {
     assert.equal(mapRequest({ id: '1', email: 'a@b.com' }).reviewerName, null);
-});
-
-test('mapRequest sets reviewerName to null when user_updated names are both empty', () => {
-    const result = mapRequest({
-        id: '1', email: 'a@b.com',
-        user_updated: { first_name: '', last_name: '' }
-    });
-    assert.equal(result.reviewerName, null);
 });

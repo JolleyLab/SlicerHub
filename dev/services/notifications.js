@@ -78,6 +78,13 @@ export async function listMentionNotifications() {
     return all.filter((n) => n.type === 'mention');
 }
 
+/** Unread mention notifications only — used for the To Do section. */
+export async function listUnreadMentions() {
+    const data = await listNotifications({ unreadOnly: true });
+    const all = Array.isArray(data.notifications) ? data.notifications : [];
+    return all.filter((n) => n.type === 'mention');
+}
+
 /** Tell any open notification-bell to refetch. */
 export function invalidateNotifications() {
     window.dispatchEvent(new CustomEvent('notifications-invalidate'));

@@ -313,6 +313,8 @@ export const homePageStyles = css`
         display: flex;
         flex-direction: column;
         gap: 10px;
+        max-height: 480px;
+        overflow-y: auto;
     }
 
     .card {

@@ -10,9 +10,9 @@ import {
     approveInvite,
     rejectInvite,
 } from '../services/cases.js';
-import { getPendingRegistrationsCount } from '../services/registrations.js';
-import { invalidateNotifications, listMentionNotifications } from '../services/notifications.js';
-import { eventToActivity, mentionToActivity } from '../utils/activityItems.js';
+import { invalidateNotifications, listMentionNotifications, markNotificationRead } from '../services/notifications.js';
+import { notificationStore } from '../services/notificationStore.js';
+import { eventToActivity, mentionToActivity, commentToActivity, attachmentToActivity, roleLabel } from '../utils/activityItems.js';
 import { condensedTime, fullTime } from '../utils/condensedTime.js';
 import { ICON_CASES, ICON_TODO, ICON_ACTIVITY, ICON_GEAR } from '../utils/homeIcons.js';
 import { visibleColumns, normalizeHomeLayout } from '../utils/homeLayout.js';
@@ -47,10 +47,22 @@ const ICON_TASK = html`
         <path fill="currentColor" d="M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2zm-8.2 13.4l-3.9-3.9 1.4-1.4 2.5 2.5 5.6-5.6 1.4 1.4-7 7z"></path>
     </svg>`;
 
+const ICON_COMMENT = html`
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M20 2H4a2 2 0 00-2 2v18l4-4h14a2 2 0 002-2V4a2 2 0 00-2-2zm-2 10H6V10h12v2zm0-3H6V7h12v2z"></path>
+    </svg>`;
+
+const ICON_ATTACHMENT = html`
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M16.5 6v11.5a4 4 0 01-8 0V5a2.5 2.5 0 015 0v10.5a1 1 0 01-2 0V6H10v9.5a2.5 2.5 0 005 0V5a4 4 0 00-8 0v12.5a5.5 5.5 0 0011 0V6h-1.5z"></path>
+    </svg>`;
+
 /** Categories of item, in the order their filter chips appear. */
 const CATEGORIES = [
     { category: 'collaboration', labelKey: 'home.category.collaboration', icon: ICON_PEOPLE },
     { category: 'mention', labelKey: 'home.category.mention', icon: ICON_MENTION },
+    { category: 'comment', labelKey: 'home.category.comment', icon: ICON_COMMENT },
+    { category: 'attachment', labelKey: 'home.category.attachment', icon: ICON_ATTACHMENT },
     { category: 'task', labelKey: 'home.category.task', icon: ICON_TASK }
 ];
 
@@ -58,6 +70,7 @@ const CATEGORIES = [
 function inviteToTodo(invite) {
     return {
         id: `invite:${invite.kind}:${invite.id}`,
+        kind: 'invite',
         category: 'collaboration',
         title: t('home.todo.inviteTitle', {
             actor: invite.inviterName || t('home.activity.someone'),
@@ -68,6 +81,22 @@ function inviteToTodo(invite) {
         at: invite.createdAt,
         actionRequired: true,
         invite
+    };
+}
+
+/** An unread @mention, as an actionable card in To do. */
+function mentionToTodo(notification) {
+    return {
+        id: `mention:${notification.id}`,
+        kind: 'mention',
+        notificationId: notification.id,
+        category: 'mention',
+        title: notification.title || t('home.activity.mentionTitle'),
+        detail: notification.body || null,
+        at: notification.created_at,
+        caseId: notification.case_id || notification.caseId || null,
+        caseTitle: notification.caseTitle || null,
+        actionRequired: false
     };
 }
 
@@ -108,49 +137,80 @@ export class HomePage extends LitElement {
         this.todo = [];
         this.activity = [];
         this.recentCases = [];
-        this.panelFilters = {};
+        const savedFilters = getCachedUserPreferences().activityFilters;
+        this.panelFilters = { 'home-activity': Array.isArray(savedFilters) ? new Set(savedFilters) : new Set() };
         this._filterMenuOpen = {};
         this._onDocClick = (e) => this._handleDocClick(e);
         this.homeLayout = normalizeHomeLayout(getCachedUserPreferences().homeLayout);
         this._onPreferencesChanged = () => {
-            this.homeLayout = normalizeHomeLayout(getCachedUserPreferences().homeLayout);
+            const prefs = getCachedUserPreferences();
+            this.homeLayout = normalizeHomeLayout(prefs.homeLayout);
+            // null = all shown (empty Set); array = only those categories
+            const activitySet = Array.isArray(prefs.activityFilters) ? new Set(prefs.activityFilters) : new Set();
+            this.panelFilters = { ...this.panelFilters, 'home-activity': activitySet };
         };
         this.busyUpdates = {};
         this.updateStatus = '';
         this.updateStatusIsError = false;
-        this._onNotificationsInvalidate = () => this.loadInviteData();
-        this._onDirectusSessionRestored = () => {
-            this.loadRecentCases();
-            this.loadInviteData();
+        this._unsub = null;
+        this._onVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                this.loadPendingInvites();
+                this.loadRecentActivity();
+            }
         };
     }
 
     connectedCallback() {
         super.connectedCallback();
-        // The Cases shortcut depends on server feature flags, which may still be loading.
+        this._unsub = notificationStore.subscribe((state) => this._onStoreUpdate(state));
         loadAppFeatures().then(() => {
             this.requestUpdate();
             this.loadInviteData();
             this.loadRecentCases();
         });
-        window.addEventListener('notifications-invalidate', this._onNotificationsInvalidate);
         window.addEventListener('user-preferences-changed', this._onPreferencesChanged);
-        window.addEventListener('directus-session-restored', this._onDirectusSessionRestored);
         document.addEventListener('click', this._onDocClick, true);
+        document.addEventListener('visibilitychange', this._onVisibilityChange);
         this._onPreferencesChanged();
     }
 
     disconnectedCallback() {
-        window.removeEventListener('notifications-invalidate', this._onNotificationsInvalidate);
+        if (this._unsub) this._unsub();
         window.removeEventListener('user-preferences-changed', this._onPreferencesChanged);
-        window.removeEventListener('directus-session-restored', this._onDirectusSessionRestored);
         document.removeEventListener('click', this._onDocClick, true);
+        document.removeEventListener('visibilitychange', this._onVisibilityChange);
         super.disconnectedCallback();
     }
 
-    /** Everything on Home that comes from invites: what needs a decision, and what has happened. */
+    /** Everything on Home that is not covered by the notification store: invites and activity. */
     loadInviteData() {
         return Promise.all([this.loadPendingInvites(), this.loadRecentActivity()]);
+    }
+
+    /** Sync mention todos and registration item from the shared notification store. */
+    _onStoreUpdate({ notifications, pendingRegCount }) {
+        const unreadMentions = notifications
+            .filter((n) => n.type === 'mention' && !n.read_at)
+            .map(mentionToTodo);
+
+        const regItems = (this.isRegistrationReviewer && pendingRegCount > 0) ? [{
+            id: 'pending-registrations',
+            kind: 'registration',
+            category: 'task',
+            title: pendingRegCount === 1
+                ? t('home.todo.pendingRegistration')
+                : t('home.todo.pendingRegistrations', { count: pendingRegCount }),
+            detail: t('home.todo.pendingRegistrationsDetail'),
+            actionRequired: true,
+            at: new Date().toISOString()
+        }] : [];
+
+        this.todo = [
+            ...this.todo.filter((item) => item.kind !== 'mention' && item.kind !== 'registration'),
+            ...unreadMentions,
+            ...regItems
+        ];
     }
 
     async loadRecentActivity() {
@@ -160,7 +220,11 @@ export class HomePage extends LitElement {
                 listMentionNotifications()
             ]);
             this.activity = [
-                ...events.map(eventToActivity),
+                ...events.map((e) => {
+                    if (e.type === 'comment_posted') return commentToActivity(e);
+                    if (e.type === 'attachment_uploaded') return attachmentToActivity(e);
+                    return eventToActivity(e);
+                }),
                 ...mentions.map(mentionToActivity)
             ];
         } catch (err) {
@@ -180,36 +244,24 @@ export class HomePage extends LitElement {
         }
     }
 
-    async loadPendingRegistrationRequests() {
-        if (!this.isRegistrationReviewer) {
-            this.todo = this.todo.filter((item) => item.kind !== 'registration');
-            return;
-        }
+    async dismissMention(item) {
+        if (this.busyUpdates[item.id]) return;
+        this.busyUpdates = { ...this.busyUpdates, [item.id]: true };
         try {
-            const count = await getPendingRegistrationsCount();
-            const regItem = count > 0 ? [{
-                id: 'pending-registrations',
-                kind: 'registration',
-                category: 'task',
-                title: count === 1
-                    ? t('home.todo.pendingRegistration')
-                    : t('home.todo.pendingRegistrations', { count }),
-                detail: t('home.todo.pendingRegistrationsDetail'),
-                actionRequired: true,
-                at: new Date().toISOString()
-            }] : [];
-            this.todo = [
-                ...regItem,
-                ...this.todo.filter((item) => item.kind !== 'registration')
-            ];
+            await markNotificationRead(item.notificationId);
+            this.todo = this.todo.filter((entry) => entry.id !== item.id); // optimistic removal
+            notificationStore.refresh({ quiet: true });
         } catch (err) {
-            console.warn('Could not load pending registrations:', err.message);
+            console.warn('Could not dismiss mention:', err.message);
+        } finally {
+            const { [item.id]: _done, ...rest } = this.busyUpdates;
+            this.busyUpdates = rest;
         }
     }
 
     updated(changedProps) {
-        if (changedProps.has('isOrgAdmin') || changedProps.has('isRegistrationReviewer')) {
-            this.loadPendingRegistrationRequests();
+        if (changedProps.has('isRegistrationReviewer')) {
+            notificationStore.setRegistrationReviewer(this.isRegistrationReviewer);
         }
     }
 
@@ -401,6 +453,34 @@ export class HomePage extends LitElement {
                 ${item.detail ? html`<p class="card-detail">${item.detail}</p>` : ''}
             </div>
         `;
+
+        if (item.kind === 'mention') {
+            const busy = this.busyUpdates[item.id] === true;
+            return html`
+                <li class="card cat-${item.category}">
+                    ${cardInner}
+                    <span class="update-actions">
+                        ${item.caseId ? html`
+                            <button
+                                type="button"
+                                class="small-button is-primary"
+                                aria-disabled=${busy ? 'true' : 'false'}
+                                aria-label=${t('home.card.openCaseAria', { case: item.caseTitle || t('home.invite.untitledCase') })}
+                                @click=${() => { this.openCase(item); this.dismissMention(item); }}
+                            >${t('home.card.openCase')}</button>
+                        ` : html`
+                            <button
+                                type="button"
+                                class="small-button"
+                                aria-disabled=${busy ? 'true' : 'false'}
+                                aria-label=${t('notifications.dismissAria')}
+                                @click=${() => this.dismissMention(item)}
+                            >${t('notifications.dismiss')}</button>
+                        `}
+                    </span>
+                </li>
+            `;
+        }
 
         if (item.kind === 'registration') {
             return html`

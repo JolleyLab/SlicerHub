@@ -174,12 +174,13 @@ async function main() {
     docker compose up -d backend
     docker compose logs -f backend
 
-  Watch for: "Payload: initialized — Cases + UserPreferences collections ready"
+  Watch for: "Payload: initialized — Cases, UserPreferences, TaskGroups collections ready"
 
-  New collections in this version:
-    user-preferences  — per-user UI preferences (theme, viewer mode, SlicerWeb
-                        channel). Keyed by Keycloak sub. Auto-migrated by Payload
-                        on first backend start — no manual step needed.
+  Collections (all auto-migrated by Payload on first backend start):
+    user-preferences      — per-user UI preferences (theme, viewer mode, SlicerWeb
+                            channel). Keyed by Keycloak sub.
+    task-groups           — task groups with canApproveRegistrations capability flag.
+    task-group-members    — group membership keyed by Keycloak sub.
 
   To enable the SlicerWeb developer channel (latest build) in the UI,
   add to .env (after credentials are configured):

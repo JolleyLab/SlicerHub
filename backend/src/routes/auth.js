@@ -188,9 +188,26 @@ export default function authRoutes(app) {
             });
 
             const isKc = config.auth.provider === 'keycloak';
+            let userPayload = publicUser(result.user);
+            if (isKc) {
+                // issueAppSession strips keycloakSub from the returned user object,
+                // so look it up from the identity store using the local user id.
+                const kcSub = result.user.keycloakSub || getKeycloakSubForUser(result.user.id);
+                if (kcSub) {
+                    try {
+                        const [prefs, hasPrefs] = await Promise.all([
+                            getPreferencesByKcSub(kcSub),
+                            hasCustomPreferences(kcSub),
+                        ]);
+                        userPayload = { ...userPayload, preferences: prefs, hasCustomPreferences: hasPrefs };
+                    } catch (err) {
+                        console.warn('[login] Could not load preferences:', err.message);
+                    }
+                }
+            }
             res.json({
                 message: 'Login successful',
-                user: publicUser(result.user),
+                user: userPayload,
                 provider: result.provider,
                 identity: isKc
                     ? { keycloakLinked: true, directusLinked: false, directusLinkRequired: false }
@@ -329,7 +346,9 @@ export default function authRoutes(app) {
                 kcSub ? getKeycloakUser(kcSub).catch(() => null) : null,
             ]);
             const isOrgAdmin = req.user.role === 'admin' || req.user.role === 'org-admin';
-            const isRegistrationReviewer = isOrgAdmin;
+            const isRegistrationReviewer = kcSub
+                ? await isUserInCapabilityGroup(kcSub, CAPABILITIES.APPROVE_REGISTRATIONS).catch(() => false)
+                : false;
             const avatarUrl = avatarKey ? `/api/auth/avatar?v=${Date.now()}` : null;
             const preferredName = kcProfile?.preferredName || null;
             const firstName = req.user.firstName || null;
@@ -464,6 +483,7 @@ export default function authRoutes(app) {
         if (req.body?.homeLayout !== undefined) patch.homeLayout = req.body.homeLayout;
         if (req.body?.slicerWebChannel !== undefined) patch.slicerWebChannel = req.body.slicerWebChannel === 'latest' ? 'latest' : 'stable';
         if (req.body?.notifyRegistrationApproval !== undefined) patch.notifyRegistrationApproval = req.body.notifyRegistrationApproval === true;
+        if (req.body?.activityFilters !== undefined) patch.activityFilters = req.body.activityFilters;
 
         let preferences;
         if (kcSub) {

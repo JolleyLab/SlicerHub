@@ -12,7 +12,7 @@ const ROLE_LABEL_KEYS = {
     read_only: 'roles.readOnly'
 };
 
-function roleLabel(role) {
+export function roleLabel(role) {
     const key = ROLE_LABEL_KEYS[role];
     return key ? t(key) : String(role || '');
 }
@@ -46,5 +46,37 @@ export function mentionToActivity(notification) {
         at: notification.created_at,
         caseId: notification.case_id || notification.caseId || null,
         caseTitle: notification.caseTitle || null
+    };
+}
+
+/** COMMENT_POSTED event → activity card shape. */
+export function commentToActivity(event) {
+    return {
+        id: event.id,
+        category: 'comment',
+        title: t('home.activity.commentTitle', {
+            actor: event.actorName || t('home.activity.someone'),
+            case: event.caseTitle || t('home.invite.untitledCase')
+        }),
+        detail: event.commentBody || null,
+        at: event.at,
+        caseId: event.caseId,
+        caseTitle: event.caseTitle
+    };
+}
+
+/** ATTACHMENT_UPLOADED event → activity card shape. */
+export function attachmentToActivity(event) {
+    return {
+        id: event.id,
+        category: 'attachment',
+        title: t('home.activity.attachmentTitle', {
+            actor: event.actorIsMe ? t('home.activity.you') : (event.actorName || t('home.activity.someone')),
+            case: event.caseTitle || t('home.invite.untitledCase')
+        }),
+        detail: event.fileName || null,
+        at: event.at,
+        caseId: event.caseId,
+        caseTitle: event.caseTitle
     };
 }
