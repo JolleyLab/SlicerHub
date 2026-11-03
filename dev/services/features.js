@@ -12,7 +12,6 @@ const DEFAULT_AUTH = Object.freeze({
 let featuresPromise = null;
 let featuresLoaded = false;
 let features = Object.freeze({
-    projectCaseMigrate: false,
     inviteEmail: false,
     slicerWebDevMode: false,
     auth: DEFAULT_AUTH
@@ -24,11 +23,6 @@ export function getAppFeatures() {
 
 export function areAppFeaturesLoaded() {
     return featuresLoaded;
-}
-
-/** CUTOVER (project-case-migrate) */
-export function isProjectCaseMigrateEnabled() {
-    return features.projectCaseMigrate === true;
 }
 
 /** Case signup invite emails via SMTP (copy-link always available). */
@@ -70,7 +64,6 @@ export function loadAppFeatures() {
             };
 
             features = Object.freeze({
-                projectCaseMigrate: data?.projectCaseMigrate === true,
                 inviteEmail: data?.inviteEmail === true,
                 slicerWebDevMode: data?.slicerWebDevMode === true,
                 myFiles: data?.myFiles === true,

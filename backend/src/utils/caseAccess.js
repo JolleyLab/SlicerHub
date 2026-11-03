@@ -13,13 +13,24 @@
 import config from '../config/index.js';
 import { ForbiddenError } from './errors.js';
 import { getKeycloakSubForUser, getUserCaseRole, getUserCaseRoleMap } from '../services/keycloakAdmin.js';
+import { getCaseRoleFromGroups, getCaseRoleMapFromGroups } from '../services/caseGroupAccess.js';
 
 
 const ROLE_RANK = { admin: 3, collaborator: 2, read_only: 1 };
 
+function higherRole(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    return (ROLE_RANK[b] ?? 0) > (ROLE_RANK[a] ?? 0) ? b : a;
+}
+
 /**
  * Returns the requesting user's effective role on a case,
  * or null if they have no access.
+ *
+ * Role sources (highest wins when more than one applies): direct Keycloak
+ * group membership (case:{id}:{role}), and membership in a SlicerHub group
+ * that has been added as a case collaborator.
  *
  * @param {object} caseDoc   Payload case document
  * @param {object} req       Express request (req.user must be populated)
@@ -30,12 +41,16 @@ export async function getCaseRole(caseDoc, req) {
     const requesterSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
     if (requesterSub && caseDoc.owner_id === requesterSub) return 'admin';
 
-    if (config.auth.provider === 'keycloak' && requesterSub) {
-        const role = await getUserCaseRole(requesterSub, String(caseDoc.id));
-        if (role) return role;
-    }
+    if (!requesterSub) return null;
 
-    return null;
+    const [kcRole, groupRole] = await Promise.all([
+        config.auth.provider === 'keycloak'
+            ? getUserCaseRole(requesterSub, String(caseDoc.id))
+            : Promise.resolve(null),
+        getCaseRoleFromGroups(requesterSub, String(caseDoc.id)),
+    ]);
+
+    return higherRole(kcRole, groupRole);
 }
 
 /**
@@ -62,12 +77,19 @@ export async function assertCaseAccess(caseDoc, req, minRole = 'read_only') {
  * Returns {} if Keycloak is not configured or user has no Keycloak link.
  */
 export async function buildCaseRoleMap(req) {
-    if (config.auth.provider !== 'keycloak') return {};
     const keycloakSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
     if (!keycloakSub) return {};
-    try {
-        return await getUserCaseRoleMap(keycloakSub);
-    } catch {
-        return {};
+
+    const [kcMap, groupMap] = await Promise.all([
+        config.auth.provider === 'keycloak'
+            ? getUserCaseRoleMap(keycloakSub).catch(() => ({}))
+            : Promise.resolve({}),
+        getCaseRoleMapFromGroups(keycloakSub).catch(() => ({})),
+    ]);
+
+    const merged = { ...kcMap };
+    for (const [caseId, role] of Object.entries(groupMap)) {
+        merged[caseId] = higherRole(merged[caseId], role);
     }
+    return merged;
 }

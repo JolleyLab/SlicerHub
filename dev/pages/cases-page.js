@@ -11,7 +11,7 @@ import { parseNodeIdsRepr } from '../services/slicerBridgeUtils.js';
 import {
     listCases, createCase, updateCase, listAttachments, deleteAttachment,
     uploadCaseAttachment, openPayloadAttachmentFullSlicer, fetchPayloadAttachmentContent,
-    listCollaborators, inviteCollaborator, updateCollaborators, lookupCaseUser,
+    listCollaborators, inviteCollaborator, proposeGroupCollaborator, updateCollaborators, lookupCaseUser,
     listComments, createComment,
     listCaseInvites, approveCaseInvite, rejectCaseInvite,
     savePayloadSlicerWebScene,
@@ -36,6 +36,7 @@ import {
 import { getCachedLocalSlicerViewerOptions, getCachedUserPreferences } from '../utils/userPreferences.js';
 import { resolveSimplifiedViewerChoice } from '../utils/localSlicerViewerOptions.js';
 import { isInviteEmailEnabled, isSlicerWebDevModeEnabled, loadAppFeatures } from '../services/features.js';
+import { getMyGroups } from '../services/groups.js';
 import { sendViewerHeartbeat } from '../utils/viewerHeartbeat.js';
 import { stopViewerSession } from '../utils/viewerSessionLifecycle.js';
 import {
@@ -1706,6 +1707,18 @@ export class CasesPage extends LitElement {
         }
         for (const entry of caseRow?.keycloakCollaborators || []) {
             if (!entry?.id) continue;
+            if (entry.type === 'group') {
+                members.push({
+                    id: entry.id,
+                    type: 'group',
+                    displayName: entry.displayName || '',
+                    memberCount: entry.memberCount ?? null,
+                    groupMembers: entry.members || [],
+                    role: entry.role || 'collaborator',
+                    locked: false,
+                });
+                continue;
+            }
             members.push({
                 id: entry.id,
                 email: entry.email || '',
@@ -1731,6 +1744,17 @@ export class CasesPage extends LitElement {
         dialog.canManage = canManage;
         dialog.saving = this.savingCollaborators;
         dialog.error = '';
+
+        dialog.availableGroups = [];
+        if (canInvite) {
+            try {
+                const memberships = await getMyGroups();
+                dialog.availableGroups = (memberships || []).map((m) => ({
+                    id: m.group.id,
+                    name: m.group.name,
+                }));
+            } catch { /* non-fatal; group picker just stays empty */ }
+        }
 
         const myRole = this.myCaseRole(caseRow);
         dialog.roleOptions = (myRole === 'admin')
@@ -1763,6 +1787,20 @@ export class CasesPage extends LitElement {
                 inviteUrl: data.inviteUrl,
                 collaborator: data.collaborator,
             };
+        };
+        dialog.groupInviteFn = async ({ groupId, role }) => {
+            const data = await proposeGroupCollaborator(caseRow.id, { groupId, role });
+            if (data.status === 'added') {
+                try {
+                    const fresh = await listCollaborators(caseRow.id);
+                    this.cases = this.cases.map((row) =>
+                        row.id === caseRow.id
+                            ? { ...row, keycloakCollaborators: fresh.collaborators }
+                            : row
+                    );
+                } catch { /* non-fatal */ }
+            }
+            return { status: data.status, group: data.group };
         };
         let collaborators = caseRow.keycloakCollaborators || [];
         let ownerInfo = caseRow._ownerInfo || null;
@@ -3567,7 +3605,7 @@ export class CasesPage extends LitElement {
                         <comments-panel
                             .comments=${comments}
                             .collaborators=${(caseRow.keycloakCollaborators || [])
-                                .filter((c) => c.id)
+                                .filter((c) => c.id && c.type !== 'group')
                                 .map((c) => ({
                                     id:        c.id,
                                     name:      c.displayName || [c.firstName, c.lastName].filter(Boolean).join(' ') || c.email || c.id,

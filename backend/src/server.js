@@ -7,15 +7,10 @@ import config from "./config/index.js";
 
 import containerRoutes from "./routes/containers.js";
 import authRoutes from "./routes/auth.js";
-import adminProvisionRoutes from "./routes/adminProvision.js";
 import fileRoutes from "./routes/files.js";
 import userRoutes from "./routes/users.js";
 import projectRoutes from "./routes/projects.js";
 import projectGpuRoutes from "./routes/projectGpu.js";
-import directusRoutes from "./routes/directus.js";
-import directusTusRoutes from "./routes/directusTus.js";
-import directusVersionRoutes from "./routes/directusVersions.js";
-import directusCaseActivityRoutes from "./routes/directusCaseActivity.js";
 import registrationRequestRoutes from "./routes/registrationRequests.js";
 import groupRoutes from "./routes/groups.js";
 import passwordResetRoutes from "./routes/passwordReset.js";
@@ -23,10 +18,7 @@ import featuresRoutes from "./routes/features.js";
 import slicerWebRoutes from "./routes/slicerWeb.js";
 import announcementRoutes from "./routes/announcement.js";
 import { startStablePoller, startLatestPoller } from "./services/slicerWebUpdater.js";
-import { ensureVersionsCollection } from "./services/attachmentVersions.js";
-import { startPruneScheduler } from "./jobs/pruneVersions.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
-import { isDirectusConfigured } from "./services/directus.js";
 import { startBillingWatchdog } from "./gpu/billingWatchdog.js";
 import {
     startViewerSessionWatchdog,
@@ -204,7 +196,6 @@ app.use(cors({
 
 // Register authentication routes
 authRoutes(app);
-adminProvisionRoutes(app);
 registrationRequestRoutes(app);
 groupRoutes(app);
 passwordResetRoutes(app);
@@ -229,12 +220,6 @@ projectGpuRoutes(app);
 caseCollaboratorsRoutes(app);
 casesRoutes(app);
 
-// Directus PoC (headless case list behind app auth)
-directusRoutes(app);
-directusTusRoutes(app);
-directusVersionRoutes(app);
-directusCaseActivityRoutes(app);
-
 // Register container routes
 containerRoutes(app);
 
@@ -252,19 +237,6 @@ app.use(errorHandler);     // Handles all other errors
 app.listen(config.server.port, config.server.host, async () => {
     console.log(`Backend listening on ${config.server.host}:${config.server.port}`);
     console.log(`Environment: ${config.env}`);
-    if (config.directus.casesEnabled && isDirectusConfigured()) {
-        console.log('Directus Cases: enabled (BFF /api/directus/*)');
-        ensureVersionsCollection().catch((err) =>
-            console.warn('Version collection bootstrap failed:', err.message)
-        );
-    } else if (isDirectusConfigured()) {
-        console.log('Directus Cases: disabled (set ENABLE_DIRECTUS_CASES=true to expose)');
-    } else {
-        console.log('Directus PoC: not configured (set DIRECTUS_URL + DIRECTUS_TOKEN)');
-    }
-    if (config.directus.casesEnabled && config.versioning.retentionEnabled) {
-        startPruneScheduler();
-    }
     warnIfWeakDemoSecrets();
     warnIfGpuCredentialsKeyMissing();
     warnIfAuthTokenKeyMissing();

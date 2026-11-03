@@ -163,9 +163,6 @@ export default {
         min_one_admin: 'Project must include at least one admin',
         collaborator_edit_file_title: 'Only project admins or collaborators can edit file titles',
         file_not_in_project: 'File not found in this project',
-        migrate_to_case_disabled: 'Project → Case migration is not enabled on this server',
-        migrate_admin_only: 'Only project admins can migrate a project to a Case',
-        already_migrated_to_case: 'This project was already migrated to a Case',
         not_found: 'Project not found'
     },
     file: {

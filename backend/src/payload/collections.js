@@ -79,12 +79,14 @@ export const CaseInvites = {
     admin: { useAsTitle: 'invitee_email' },
     fields: [
         {
-            // 'signup' = email not yet in Keycloak; 'existing' = already has a KC account
+            // 'signup' = email not yet in Keycloak; 'existing' = already has a KC account;
+            // 'group' = proposing a SlicerHub group as a collaborator (no email involved)
             name: 'kind',
             type: 'select',
             options: [
                 { label: 'Signup (new account)',   value: 'signup' },
                 { label: 'Existing (KC account)',  value: 'existing' },
+                { label: 'Group',                  value: 'group' },
             ],
             required: true,
         },
@@ -101,7 +103,7 @@ export const CaseInvites = {
             required: true,
             defaultValue: 'pending_approval',
         },
-        { name: 'invitee_email',    type: 'email', required: true },
+        { name: 'invitee_email',    type: 'email' },  // required for signup/existing kinds; unused for group kind
         { name: 'inviter_id',       type: 'text' },  // Keycloak sub of whoever submitted the invite
         {
             name: 'case',
@@ -124,6 +126,39 @@ export const CaseInvites = {
         { name: 'keycloak_user_id', type: 'text' },  // set once KC user exists
         { name: 'token_hash',       type: 'text', index: true },  // for signup invite links
         { name: 'expires_at',       type: 'date' },
+        { name: 'group_id',        type: 'text', index: true },  // SlicerHub group ID, kind: 'group' only
+    ],
+};
+
+export const CaseGroupAccess = {
+    slug: 'case-group-access',
+    admin: { useAsTitle: 'group_id' },
+    fields: [
+        {
+            name: 'case',
+            type: 'relationship',
+            relationTo: 'cases',
+            required: true,
+            index: true,
+        },
+        {
+            name: 'group_id',
+            type: 'text',
+            label: 'Group ID',
+            required: true,
+            index: true,
+        },
+        {
+            name: 'role',
+            type: 'select',
+            options: [
+                { label: 'Admin',        value: 'admin' },
+                { label: 'Collaborator', value: 'collaborator' },
+                { label: 'Read Only',    value: 'read_only' },
+            ],
+            required: true,
+            defaultValue: 'collaborator',
+        },
     ],
 };
 

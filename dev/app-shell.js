@@ -35,6 +35,7 @@ import {
 } from './utils/viewerActivity.js';
 import {
   hydrateUserPreferencesFromUser,
+  fetchUserPreferences,
   clearCachedUserPreferences
 } from './utils/userPreferences.js';
 import { watchSystemColorScheme } from './components/theme.js';
@@ -360,6 +361,11 @@ export class SlicerApp extends LitElement {
     hydrateUserPreferencesFromUser(user);
     this.startInactivityTimer();
     this.refreshUserProfile();
+    // Re-fetch preferences in case Payload wasn't ready when the login response was built
+    // (startup race: login returns defaults, /api/auth/me returns the real saved theme).
+    if (!user?.hasCustomPreferences) {
+      fetchUserPreferences().catch(() => {});
+    }
   }
 
   handleRegisterSuccess(e) {

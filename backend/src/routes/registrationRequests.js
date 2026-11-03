@@ -15,9 +15,6 @@
 
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { requireRole } from '../auth/requireRole.js';
-import { requireDirectusLink } from '../auth/requireDirectusLink.js';
-import { requireDirectusUserToken } from '../auth/directusUserSession.js';
-import { requireGroupCapability } from '../auth/requireGroupCapability.js';
 import { requireKcGroupCapability } from '../auth/requireKcGroupCapability.js';
 import { CAPABILITIES } from '../services/groupCapabilities.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
@@ -42,19 +39,13 @@ import {
     enableKeycloakUser,
     assignRealmRole,
 } from '../services/keycloakAdmin.js';
-import { findDirectusUserByEmail } from '../services/directus.js';
 import { loginWithProvider } from '../auth/index.js';
 import { ValidationError, NotFoundError, ConflictError } from '../utils/errors.js';
 import { msg } from '../i18n/index.js';
 import { sendRegistrationApprovalEmail, sendRegistrationReceivedEmail, isMailConfigured } from '../services/mail.js';
 import { notifyNewRequest } from '../services/registrationGroupNotifier.js';
 
-const isKeycloak = config.auth?.provider === 'keycloak';
-
-// Keycloak: capability group membership. Directus: link + token + capability group.
-const requireRegistrationAccess = isKeycloak
-    ? [requireKcGroupCapability(CAPABILITIES.APPROVE_REGISTRATIONS)]
-    : [requireDirectusLink, requireDirectusUserToken, requireGroupCapability(CAPABILITIES.APPROVE_REGISTRATIONS)];
+const requireRegistrationAccess = [requireKcGroupCapability(CAPABILITIES.APPROVE_REGISTRATIONS)];
 
 const submitRateLimit = createRateLimiter({
     windowMs: 60 * 60 * 1000,
@@ -83,10 +74,7 @@ export default function registrationRequestRoutes(app) {
 
             const normalized = String(email).trim().toLowerCase();
 
-            // Check for an existing account in the active identity provider
-            const existingUser = isKeycloak
-                ? await findUserByEmail(normalized)
-                : await findDirectusUserByEmail(normalized);
+            const existingUser = await findUserByEmail(normalized);
             if (existingUser) {
                 throw new ConflictError(msg('registration.email_already_registered'), 'EMAIL_ALREADY_REGISTERED', 'registration.email_already_registered');
             }
@@ -142,11 +130,7 @@ export default function registrationRequestRoutes(app) {
             const request = await findByToken(token);
             if (!request) throw new NotFoundError(msg('registration.token_invalid'), null, 'registration.token_invalid');
 
-            if (isKeycloak) {
-                await _completeWithKeycloak(req, res, request, { password, firstName, lastName, theme });
-            } else {
-                await _completeWithDirectus(req, res, request, { password, firstName, lastName, theme });
-            }
+            await _completeWithKeycloak(req, res, request, { password, firstName, lastName, theme });
         })
     );
 
@@ -184,21 +168,13 @@ export default function registrationRequestRoutes(app) {
                 throw new ValidationError(msg('registration.not_pending'), null, 'registration.not_pending');
             }
 
-            const callerIsOrgAdmin = isKeycloak
-                ? (req.user?.role === 'admin' || req.user?.role === 'org-admin')
-                : (req.directusProfile?.adminAccess || req.directusProfile?.roleName === 'OrgAdmin');
-
+            const callerIsOrgAdmin = req.user?.role === 'admin' || req.user?.role === 'org-admin';
             const asAdmin = callerIsOrgAdmin && req.body?.asAdmin === true;
-
-            if (!isKeycloak && asAdmin && !config.directus?.orgAdminRoleId) {
-                throw new ValidationError('DIRECTUS_ORG_ADMIN_ROLE_ID is not configured', null, 'registration.org_admin_role_not_configured');
-            }
-
-            const reviewerSub = isKeycloak ? (req.user?.keycloakSub || null) : null;
+            const reviewerSub = req.user?.keycloakSub || null;
             const { token, completionUrl, expiresAt } = await approveRequest(
                 request.id,
                 asAdmin,
-                isKeycloak ? reviewerSub : req.directusAccessToken
+                reviewerSub
             );
 
             await sendRegistrationApprovalEmail({
@@ -227,16 +203,12 @@ export default function registrationRequestRoutes(app) {
                 throw new ValidationError(msg('registration.not_pending'), null, 'registration.not_pending');
             }
 
-            const reviewerSub = isKeycloak ? (req.user?.keycloakSub || null) : null;
-            await rejectRequest(request.id, isKeycloak ? reviewerSub : req.directusAccessToken);
+            const reviewerSub = req.user?.keycloakSub || null;
+            await rejectRequest(request.id, reviewerSub);
             res.json({ status: 'rejected' });
         })
     );
 }
-
-// ---------------------------------------------------------------------------
-// Completion helpers (one per identity provider)
-// ---------------------------------------------------------------------------
 
 async function _completeWithKeycloak(req, res, request, { password, firstName, lastName, theme }) {
     const email = request.email;
@@ -272,92 +244,3 @@ async function _completeWithKeycloak(req, res, request, { password, firstName, l
     res.json({ status: 'completed', user: result.user });
 }
 
-async function _completeWithDirectus(req, res, request, { password, firstName, lastName, theme }) {
-    // Lazy import so the Directus path only loads when actually used
-    const { default: User } = await import('../models/User.js');
-    const { createDirectusUser, findDirectusUserByEmail } = await import('../services/directus.js');
-    const { linkIdentity, findLink, findDirectusLinkForUser } = await import('../auth/identityStore.js');
-    const { issueAppSession } = await import('../auth/session.js');
-    const { setDirectusLinkCookie } = await import('../auth/directusLinkCookie.js');
-    const { storeProviderTokens } = await import('../auth/identityStore.js');
-
-    const PROVIDER = 'directus';
-    const email = request.email;
-
-    if (!config.directus?.defaultRoleId) {
-        throw new ValidationError(msg('case.signup_invite_directus_misconfigured'), null, 'case.signup_invite_directus_misconfigured');
-    }
-
-    const existing = await findDirectusUserByEmail(email);
-    if (existing) throw new ConflictError(msg('case.signup_email_exists'), null, 'case.signup_email_exists');
-
-    const roleId = (request.isOrgAdmin && config.directus?.orgAdminRoleId)
-        ? config.directus.orgAdminRoleId
-        : config.directus.defaultRoleId;
-
-    const directusUser = await createDirectusUser({
-        email,
-        password: String(password),
-        roleId,
-        firstName: String(firstName || request.firstName || '').trim(),
-        lastName:  String(lastName  || request.lastName  || '').trim()
-    });
-    const directusUserId = String(directusUser.id);
-
-    let localUser = User.findByEmail(email);
-    if (localUser) {
-        const other = findDirectusLinkForUser(localUser.id);
-        if (other && String(other.external_id) !== directusUserId) {
-            throw new ConflictError(msg('auth.email_linked_elsewhere'), null, 'auth.email_linked_elsewhere');
-        }
-    } else {
-        localUser = await User.createExternalShadow({ email });
-    }
-    if (!findLink(PROVIDER, directusUserId)) {
-        linkIdentity(localUser.id, PROVIDER, directusUserId);
-    }
-
-    if (theme === 'dark' || theme === 'light') {
-        User.updatePreferences(localUser.id, { theme });
-    }
-
-    await markCompleted(request.id);
-
-    const loginRes = await fetch(
-        `${(config.directus.url || '').replace(/\/+$/, '')}/auth/login`,
-        {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({ email, password: String(password) })
-        }
-    );
-    const loginBody = loginRes.ok ? await loginRes.json() : null;
-    const loginData = loginBody?.data || loginBody;
-    const externalTokens = loginData?.access_token ? {
-        accessToken:  loginData.access_token,
-        refreshToken: loginData.refresh_token || null,
-        expires:      loginData.expires,
-        expiresAt:    loginData.expires
-            ? new Date(Date.now() + Number(loginData.expires)).toISOString()
-            : null
-    } : null;
-
-    const { user: sessionUser, sessionPayload } = issueAppSession(req, res, {
-        ...localUser,
-        firstName: directusUser.first_name || '',
-        lastName:  directusUser.last_name  || ''
-    });
-
-    if (config.auth?.storeProviderTokens && externalTokens && sessionPayload?.jti) {
-        storeProviderTokens(sessionPayload.jti, localUser.id, PROVIDER, externalTokens);
-        setDirectusLinkCookie(res, {
-            userId:       localUser.id,
-            accessToken:  externalTokens.accessToken,
-            refreshToken: externalTokens.refreshToken,
-            expiresAt:    externalTokens.expiresAt,
-            expires:      externalTokens.expires
-        });
-    }
-
-    res.json({ status: 'completed', user: sessionUser });
-}

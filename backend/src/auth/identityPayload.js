@@ -1,14 +1,7 @@
-import { findDirectusLinkForUser } from './identityStore.js';
-import { isDirectusLinkRequired } from './requireDirectusLink.js';
-
-/**
- * Identity payload for /me and login — FE uses this to gate Settings etc.
- */
-export function buildIdentityPayload(userId) {
-    const link = userId != null ? findDirectusLinkForUser(userId) : null;
+export function buildIdentityPayload(_userId) {
     return {
-        directusLinked: Boolean(link),
-        directusUserId: link?.external_id || null,
-        directusLinkRequired: isDirectusLinkRequired()
+        directusLinked:       false,
+        directusUserId:       null,
+        directusLinkRequired: false
     };
 }

@@ -229,6 +229,24 @@ export async function inviteCollaborator(caseId, { email, role = 'collaborator' 
 }
 
 /**
+ * Propose a SlicerHub group as a case collaborator.
+ * Admins are linked immediately; collaborators are queued for admin approval.
+ * Returns { status: 'added'|'pending_approval', group: { id, name } }
+ */
+export async function proposeGroupCollaborator(caseId, { groupId, role = 'collaborator' } = {}) {
+    const res = await fetch(
+        `${API_URL}/api/cases/${encodeURIComponent(caseId)}/group-invites`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ groupId, role }),
+        }
+    );
+    return parseResponse(res);
+}
+
+/**
  * Bulk-replace collaborators on a case (People dialog Save).
  * collaborators: [{ id: keycloakUserId, role }]
  */

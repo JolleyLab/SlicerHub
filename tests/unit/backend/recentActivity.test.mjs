@@ -1,109 +1,199 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import os from 'node:os';
-import path from 'node:path';
-import fs from 'node:fs';
+import { mock } from 'node:test';
 
-// Importing the service pulls in the app config; keep any database it opens in a scratch file.
-const scratchDb = path.join(os.tmpdir(), `recent-activity-test-${process.pid}.db`);
-process.env.DB_PATH = scratchDb;
-process.env.DB_SEED_PATH = `${scratchDb}.no-seed`;
-test.after(() => fs.rmSync(scratchDb, { force: true }));
+// recentActivity.js calls getUserCaseRoleMap/getKeycloakUser/kcDisplayName from keycloakAdmin.js,
+// which talk to a real Keycloak server. Replace them with controllable fakes before import.
+let roleMap = {};
+let users = {}; // kcSub -> { firstName, lastName, username, email } | undefined
+let getKeycloakUserCalls = [];
 
-const { listRecentActivity, ACTIVITY_TYPES } = await import('../../../backend/src/services/recentActivity.js');
-const { mapInvite } = await import('../../../backend/src/services/caseInviteStore.js');
-
-const ME = 'user-me';
-const invite = (over) => ({
-    id: '1', kind: 'existing', status: 'pending_approval', caseId: 'c1', caseTitle: 'Cardiac CT',
-    inviteeEmail: 'a@x.org', proposedRole: 'collaborator',
-    inviterDirectusUserId: 'user-other', inviterName: 'M. Ortiz',
-    resolvedByDirectusUserId: null, resolvedByName: null,
-    createdAt: '2026-09-25T10:00:00.000Z', resolvedAt: null, ...over
-});
-const run = (invites, extra = {}) => listRecentActivity({
-    userId: ME,
-    listCaseIds: async () => ['c1'],
-    listInvites: async () => invites,
-    ...extra
+mock.module('../../../backend/src/services/keycloakAdmin.js', {
+    namedExports: {
+        getUserCaseRoleMap: async () => roleMap,
+        getKeycloakUser: async (sub) => {
+            getKeycloakUserCalls.push(sub);
+            return users[sub] || null;
+        },
+        kcDisplayName: (user) => {
+            if (!user) return '';
+            const full = [user.firstName, user.lastName].filter(Boolean).join(' ');
+            return full || user.username || user.email || '';
+        }
+    }
 });
 
-test('a sent invite is one event, with who sent it', async () => {
-    const [event] = await run([invite({})]);
-    assert.equal(event.type, ACTIVITY_TYPES.INVITE_SENT);
-    assert.equal(event.actorName, 'M. Ortiz');
-    assert.equal(event.actorIsMe, false);
-    assert.equal(event.caseTitle, 'Cardiac CT');
-    assert.equal(event.at, '2026-09-25T10:00:00.000Z');
+const { listRecentActivityKC, ACTIVITY_TYPES } = await import('../../../backend/src/services/recentActivity.js');
+
+const ME = 'kc-me';
+
+test.beforeEach(() => {
+    roleMap = {};
+    users = {};
+    getKeycloakUserCalls = [];
 });
 
-test('an approved invite is a sent event and an approved event, the second by the approver', async () => {
-    const events = await run([invite({
-        status: 'approved', resolvedAt: '2026-09-25T11:00:00.000Z',
-        resolvedByDirectusUserId: ME, resolvedByName: 'Rachel'
-    })]);
-    assert.deepEqual(events.map((e) => e.type), [ACTIVITY_TYPES.INVITE_APPROVED, ACTIVITY_TYPES.INVITE_SENT], 'newest first');
-    assert.equal(events[0].actorIsMe, true);
+/** A fake Payload client. Each key is a collection name; docs() returns {docs}. */
+function fakePayload(byCollection) {
+    const calls = [];
+    return {
+        calls,
+        find: async ({ collection, where, sort, limit, depth }) => {
+            calls.push({ collection, where, sort, limit, depth });
+            const docs = byCollection[collection];
+            if (!docs) throw new Error(`unexpected collection ${collection}`);
+            return { docs };
+        }
+    };
+}
+
+test('no kcSub or no payload client short-circuits to an empty list', async () => {
+    assert.deepEqual(await listRecentActivityKC({ kcSub: '', payload: fakePayload({ cases: [] }) }), []);
+    assert.deepEqual(await listRecentActivityKC({ kcSub: ME, payload: null }), []);
 });
 
-test('an admin who added someone directly gets one event, not a sent and an approved', async () => {
-    const events = await run([invite({
-        status: 'approved', inviterDirectusUserId: 'admin-1', inviterName: 'Ada',
-        resolvedByDirectusUserId: 'admin-1', resolvedByName: 'Ada', resolvedAt: '2026-09-25T10:00:00.000Z'
-    })]);
-    assert.deepEqual(events.map((e) => e.type), [ACTIVITY_TYPES.INVITE_SENT]);
+test('a user with no KC case roles and no owned cases gets no activity, and only "cases" is queried', async () => {
+    const payload = fakePayload({ cases: [] });
+    const events = await listRecentActivityKC({ kcSub: ME, payload });
+    assert.deepEqual(events, []);
+    assert.deepEqual(payload.calls.map((c) => c.collection), ['cases']);
 });
 
-test('rejected and still-pending invites add only their sent event', async () => {
-    const events = await run([
-        invite({ id: '1', status: 'rejected', resolvedAt: '2026-09-25T11:00:00.000Z' }),
-        invite({ id: '2', createdAt: '2026-09-24T10:00:00.000Z' })
-    ]);
-    assert.deepEqual(events.map((e) => e.type), ['invite_sent', 'invite_sent']);
+test('only admin and collaborator KC roles contribute case ids; read_only does not', async () => {
+    roleMap = { 'case-1': 'admin', 'case-2': 'collaborator', 'case-3': 'read_only' };
+    const payload = fakePayload({
+        cases: [],
+        'case-invites': [],
+        'case-comments': [],
+        attachments: []
+    });
+    await listRecentActivityKC({ kcSub: ME, payload });
+    const inviteCall = payload.calls.find((c) => c.collection === 'case-invites');
+    assert.deepEqual([...inviteCall.where.case.in].sort(), ['case-1', 'case-2']);
 });
 
-test('the user is recognised as the sender of their own invites', async () => {
-    const [event] = await run([invite({ inviterDirectusUserId: ME })]);
+test('case ids from KC roles and from Payload ownership are merged and de-duplicated', async () => {
+    roleMap = { 'case-1': 'admin' };
+    const payload = fakePayload({
+        cases: [{ id: 'case-1' }, { id: 'case-2' }],
+        'case-invites': [],
+        'case-comments': [],
+        attachments: []
+    });
+    await listRecentActivityKC({ kcSub: ME, payload });
+    const inviteCall = payload.calls.find((c) => c.collection === 'case-invites');
+    assert.deepEqual([...inviteCall.where.case.in].sort(), ['case-1', 'case-2']);
+});
+
+test('a sent invite is one event; an invite missing createdAt contributes nothing', async () => {
+    roleMap = { c1: 'admin' };
+    users['inviter-1'] = { firstName: 'Mara', lastName: 'Ortiz' };
+    const payload = fakePayload({
+        cases: [],
+        'case-invites': [
+            {
+                id: 'i1', case: { id: 'c1', title: 'Cardiac CT' }, invitee_email: 'a@x.org',
+                role: 'collaborator', inviter_id: 'inviter-1', createdAt: '2026-09-25T10:00:00.000Z'
+            },
+            { id: 'i2', case: 'c1', invitee_email: 'b@x.org', role: 'read_only', inviter_id: 'inviter-1' }
+        ],
+        'case-comments': [],
+        attachments: []
+    });
+    const events = await listRecentActivityKC({ kcSub: ME, payload });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, ACTIVITY_TYPES.INVITE_SENT);
+    assert.equal(events[0].caseId, 'c1');
+    assert.equal(events[0].caseTitle, 'Cardiac CT');
+    assert.equal(events[0].actorName, 'Mara Ortiz');
+    assert.equal(events[0].actorIsMe, false);
+    assert.equal(events[0].proposedRole, 'collaborator');
+});
+
+test('the inviter is recognised as the current user without a KC lookup', async () => {
+    roleMap = { c1: 'admin' };
+    const payload = fakePayload({
+        cases: [],
+        'case-invites': [{ id: 'i1', case: 'c1', invitee_email: 'a@x.org', role: 'admin', inviter_id: ME, createdAt: '2026-09-25T10:00:00.000Z' }],
+        'case-comments': [],
+        attachments: []
+    });
+    const [event] = await listRecentActivityKC({ kcSub: ME, payload });
     assert.equal(event.actorIsMe, true);
 });
 
-test('events are newest first across invites and are capped', async () => {
-    const invites = Array.from({ length: 30 }, (_, i) => invite({ id: String(i), createdAt: `2026-09-${String(i + 1).padStart(2, '0')}T10:00:00.000Z` }));
-    const events = await run(invites, { limit: 5 });
-    assert.equal(events.length, 5);
-    assert.equal(events[0].id, 'invite_sent:29');
+test('comments skip the viewer\'s own and are truncated to 200 characters', async () => {
+    roleMap = { c1: 'admin' };
+    users['author-1'] = { username: 'drsmith' };
+    const longBody = 'x'.repeat(250);
+    const payload = fakePayload({
+        cases: [],
+        'case-invites': [],
+        'case-comments': [
+            { id: 'c-mine', case: 'c1', author_id: ME, createdAt: '2026-09-25T09:00:00.000Z', body: 'hi' },
+            { id: 'c-theirs', case: { id: 'c1', title: 'CT' }, author_id: 'author-1', createdAt: '2026-09-25T10:00:00.000Z', body: longBody },
+            { id: 'c-no-date', case: 'c1', author_id: 'author-1', body: 'no date' }
+        ],
+        attachments: []
+    });
+    const events = await listRecentActivityKC({ kcSub: ME, payload });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, ACTIVITY_TYPES.COMMENT_POSTED);
+    assert.equal(events[0].actorName, 'drsmith');
+    assert.equal(events[0].commentBody.length, 200);
 });
 
-test('only cases where the user is admin or collaborator are asked for', async () => {
-    let asked;
-    await run([], {
-        listCaseIds: async (userId, roles) => { asked = { userId, roles }; return ['c1']; }
+test('attachment uploads map actorIsMe and the file name', async () => {
+    roleMap = { c1: 'admin' };
+    const payload = fakePayload({
+        cases: [],
+        'case-invites': [],
+        'case-comments': [],
+        attachments: [
+            { id: 'a1', case: { id: 'c1', title: 'CT' }, uploaded_by: ME, createdAt: '2026-09-25T10:00:00.000Z', original_filename: 'scan.dcm' },
+            { id: 'a2', case: 'c1', uploaded_by: 'someone-else', createdAt: '2026-09-25T09:00:00.000Z', original_filename: 'report.pdf' }
+        ]
     });
-    assert.deepEqual(asked, { userId: ME, roles: ['admin', 'collaborator'] });
+    const events = await listRecentActivityKC({ kcSub: ME, payload });
+    assert.deepEqual(events.map((e) => e.fileName), ['scan.dcm', 'report.pdf']);
+    assert.deepEqual(events.map((e) => e.actorIsMe), [true, false]);
 });
 
-test('a user with no cases has no activity, and the invite lookup gets no case ids', async () => {
-    let askedFor = null;
-    const events = await listRecentActivity({
-        userId: ME,
-        listCaseIds: async () => [],
-        listInvites: async (ids) => { askedFor = ids; return []; }
+test('a name already resolved from invites is not looked up again for comments or attachments', async () => {
+    roleMap = { c1: 'admin' };
+    users['person-1'] = { firstName: 'Ada', lastName: 'Lovelace' };
+    const payload = fakePayload({
+        cases: [],
+        'case-invites': [{ id: 'i1', case: 'c1', invitee_email: 'a@x.org', role: 'admin', inviter_id: 'person-1', createdAt: '2026-09-25T08:00:00.000Z' }],
+        'case-comments': [{ id: 'c1', case: 'c1', author_id: 'person-1', createdAt: '2026-09-25T09:00:00.000Z', body: 'hi' }],
+        attachments: [{ id: 'a1', case: 'c1', uploaded_by: 'person-1', createdAt: '2026-09-25T10:00:00.000Z', original_filename: 'f.txt' }]
     });
-    assert.deepEqual(events, []);
-    assert.deepEqual(askedFor, []);
+    const events = await listRecentActivityKC({ kcSub: ME, payload });
+    assert.equal(getKeycloakUserCalls.filter((s) => s === 'person-1').length, 1);
+    assert.ok(events.every((e) => e.actorName === 'Ada Lovelace'));
 });
 
-test('an invite carries the names of who sent and who resolved it when Directus expands them', () => {
-    const mapped = mapInvite({
-        id: 'i', kind: 'existing', status: 'approved', case: { id: 'c1', title: 'T' }, invitee_email: 'a@x.org', proposed_role: 'collaborator',
-        inviter: { id: 'u1', first_name: 'Mara', last_name: 'Ortiz', email: 'm@x.org' },
-        resolved_by: { id: 'u2', first_name: null, last_name: null, email: 'admin@x.org' }
+test('events across all three sources are merged newest-first and capped at the limit', async () => {
+    roleMap = { c1: 'admin' };
+    const payload = fakePayload({
+        cases: [],
+        'case-invites': [{ id: 'i1', case: 'c1', invitee_email: 'a@x.org', role: 'admin', inviter_id: 'x', createdAt: '2026-09-25T08:00:00.000Z' }],
+        'case-comments': [{ id: 'c1', case: 'c1', author_id: 'x', createdAt: '2026-09-25T10:00:00.000Z', body: 'newest' }],
+        attachments: [{ id: 'a1', case: 'c1', uploaded_by: 'x', createdAt: '2026-09-25T09:00:00.000Z', original_filename: 'f.txt' }]
     });
-    assert.deepEqual(
-        [mapped.inviterDirectusUserId, mapped.inviterName, mapped.resolvedByDirectusUserId, mapped.resolvedByName],
-        ['u1', 'Mara Ortiz', 'u2', 'admin@x.org']
-    );
-    const idOnly = mapInvite({ id: 'i', kind: 'existing', status: 'pending_approval', case: 'c1', invitee_email: 'a@x.org', proposed_role: 'collaborator', inviter: 'u1' });
-    assert.equal(idOnly.inviterName, null);
-    assert.equal(idOnly.inviterDirectusUserId, 'u1');
+    const events = await listRecentActivityKC({ kcSub: ME, payload, limit: 2 });
+    assert.equal(events.length, 2);
+    assert.deepEqual(events.map((e) => e.type), [ACTIVITY_TYPES.COMMENT_POSTED, ACTIVITY_TYPES.ATTACHMENT_UPLOADED]);
+});
+
+test('an unknown KC user resolves to a null actor name rather than throwing', async () => {
+    roleMap = { c1: 'admin' };
+    const payload = fakePayload({
+        cases: [],
+        'case-invites': [{ id: 'i1', case: 'c1', invitee_email: 'a@x.org', role: 'admin', inviter_id: 'ghost', createdAt: '2026-09-25T08:00:00.000Z' }],
+        'case-comments': [],
+        attachments: []
+    });
+    const [event] = await listRecentActivityKC({ kcSub: ME, payload });
+    assert.equal(event.actorName, null);
 });

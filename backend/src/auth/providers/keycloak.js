@@ -9,10 +9,7 @@
  * network call on every request.
  */
 
-import User from '../../models/User.js';
 import { AppError } from '../../utils/errors.js';
-import { findLink, linkIdentity } from '../identityStore.js';
-import { msg } from '../../i18n/index.js';
 
 const PROVIDER = 'keycloak';
 
@@ -65,61 +62,22 @@ function pickRole(roles) {
     return 'user';
 }
 
-// ---------------------------------------------------------------------------
-// Local user resolution
-// ---------------------------------------------------------------------------
-
-async function resolveLocalUser(claims) {
+function resolveLocalUser(claims) {
     const externalId = String(claims?.sub || '').trim();
-    if (!externalId) {
-        throw new AppError('Keycloak token missing sub claim', 502);
-    }
+    if (!externalId) throw new AppError('Keycloak token missing sub claim', 502);
 
     const email = String(claims?.email || '').trim().toLowerCase();
-    if (!email) {
-        throw new AppError('Keycloak token missing email claim', 502);
-    }
+    if (!email) throw new AppError('Keycloak token missing email claim', 502);
 
-    const role     = pickRole(claims?.roles);
-    const username = buildUsername(claims, email);
-
-    // First/last name live in Keycloak, not SQLite. Merge into the returned user object
-    // so the app session JWT carries them without any DB write.
-    const firstName = String(claims?.given_name  || '').trim() || null;
-    const lastName  = String(claims?.family_name || '').trim() || null;
-    const withName  = u => (u ? { ...u, firstName, lastName, keycloakSub: externalId } : u);
-
-    // Fast path: known link exists
-    const existingLink = findLink(PROVIDER, externalId);
-    if (existingLink) {
-        const user = User.findById(existingLink.user_id);
-        if (!user) {
-            throw new AppError(msg('auth.account_link_broken'), 502, 'ACCOUNT_LINK_BROKEN');
-        }
-        if (user.is_active === 0 || user.is_active === false) return null;
-        User.syncRole(user.id, role);
-        User.touchLastLogin(user.id);
-        // KC users manage their password via Keycloak — never force a local password change.
-        if (user.mustChangePassword) User.setMustChangePassword(user.id, false);
-        return withName(User.findById(user.id));
-    }
-
-    // Email match: link an existing product user to this Keycloak identity
-    const emailOwner = User.findByEmail(email);
-    if (emailOwner) {
-        linkIdentity(emailOwner.id, PROVIDER, externalId);
-        User.syncRole(emailOwner.id, role);
-        User.touchLastLogin(emailOwner.id);
-        // KC users manage their password via Keycloak — never force a local password change.
-        if (emailOwner.mustChangePassword) User.setMustChangePassword(emailOwner.id, false);
-        return withName(User.findById(emailOwner.id));
-    }
-
-    // New identity: create a shadow user
-    const user = await User.createExternalShadow({ email, username });
-    linkIdentity(user.id, PROVIDER, externalId);
-    User.syncRole(user.id, role);
-    return withName(User.findById(user.id));
+    return {
+        id:          externalId,
+        email,
+        role:        pickRole(claims?.roles),
+        username:    buildUsername(claims, email),
+        firstName:   String(claims?.given_name  || '').trim() || null,
+        lastName:    String(claims?.family_name || '').trim() || null,
+        keycloakSub: externalId,
+    };
 }
 
 function buildUsername(claims, email) {
@@ -188,7 +146,7 @@ export const keycloakProvider = {
             throw new AppError('Keycloak returned an unreadable access token', 502);
         }
 
-        const user = await resolveLocalUser(claims);
+        const user = resolveLocalUser(claims);
         if (!user) return null;
 
         // We don't store Keycloak tokens: role is on the local user, and we

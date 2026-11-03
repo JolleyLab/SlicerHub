@@ -21,17 +21,13 @@
 
 import config from '../config/index.js';
 import { ValidationError } from '../utils/errors.js';
-import { directusProvider } from './providers/directus.js';
 import { keycloakProvider } from './providers/keycloak.js';
 import { issueAppSession, destroyAppSession, clearAuthCookie } from './session.js';
 import { clearProviderTokens, clearProviderTokensForUser } from './identityStore.js';
-import { setDirectusLinkCookie, clearDirectusLinkCookie } from './directusLinkCookie.js';
-import { isDirectusLinkRequired } from './requireDirectusLink.js';
 import { deleteAllUserSessions } from '../middleware/authMiddleware.js';
 import { msg } from '../i18n/index.js';
 
 const PROVIDERS = {
-    directus: directusProvider,
     keycloak: keycloakProvider
 };
 
@@ -58,10 +54,6 @@ export function getAuthProvider() {
     return PROVIDERS[getAuthProviderName()];
 }
 
-export function shouldStoreProviderTokens() {
-    return config.auth?.storeProviderTokens === true;
-}
-
 /**
  * Public flags for the SPA (no secrets).
  */
@@ -71,13 +63,8 @@ export function getPublicAuthConfig() {
     return {
         provider,
         methods: ['password'],
-        /** product direction: collab users map 1:1 to Directus */
-        identityMode: config.auth?.identityMode || 'directus-linked',
-        requireDirectusLink: isDirectusLinkRequired(),
-        identityLabel: (provider === 'directus' || provider === 'keycloak') ? 'Email' : 'Username or email',
-        identityPlaceholder: (provider === 'directus' || provider === 'keycloak')
-            ? 'you@example.com'
-            : 'Username or email',
+        identityLabel: 'Email',
+        identityPlaceholder: 'you@example.com',
         devRelaxed: config.auth?.devRelaxed === true,
         registrationEnabled: true
     };
@@ -114,23 +101,6 @@ export async function loginWithProvider(req, res, credentials) {
 
     const { user, sessionPayload } = issueAppSession(req, res, result.user);
 
-    if (
-        shouldStoreProviderTokens()
-        && result.externalTokens
-        && typeof provider.storeSessionTokens === 'function'
-    ) {
-        provider.storeSessionTokens(sessionPayload.jti, result.user.id, result.externalTokens);
-        if (providerName === 'directus') {
-            setDirectusLinkCookie(res, {
-                userId: result.user.id,
-                accessToken: result.externalTokens.accessToken || result.externalTokens.access_token,
-                refreshToken: result.externalTokens.refreshToken || result.externalTokens.refresh_token,
-                expiresAt: result.externalTokens.expiresAt || null,
-                expires: result.externalTokens.expires
-            });
-        }
-    }
-
     clearLegacyDeviceCookie(res);
 
     return {
@@ -153,12 +123,11 @@ export function logoutCurrentSession(req, res) {
 }
 
 /**
- * Drop all app sessions for this user (+ provider tokens + Directus link).
+ * Drop all app sessions for this user (+ provider tokens).
  */
 export function logoutAllSessions(userId, res) {
     deleteAllUserSessions(userId);
     clearProviderTokensForUser(userId);
     clearAuthCookie(res);
-    clearDirectusLinkCookie(res);
     clearLegacyDeviceCookie(res);
 }

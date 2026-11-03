@@ -21,7 +21,7 @@ const DEFAULT_ROLE_OPTIONS = Object.freeze([
 ]);
 
 function inviteKind(invite) {
-    if (invite?.kind === 'signup' || invite?.kind === 'existing') return invite.kind;
+    if (invite?.kind === 'signup' || invite?.kind === 'existing' || invite?.kind === 'group') return invite.kind;
     if (invite?.status === 'pending_approval' || invite?.status === 'pending_signup') return 'signup';
     if (!invite?.inviteeDirectusUserId && invite?.inviteeEmail) return 'signup';
     return 'existing';
@@ -61,6 +61,7 @@ function hasMeaningfulLabel(person) {
  * @param {{ currentUserId?: string|null, unknownLabels?: Map<string, string> }} [ctx]
  */
 function displayName(person, ctx = {}) {
+    if (person?.type === 'group') return person.name || t('people.unnamedGroup');
     const id = person?.id != null ? String(person.id) : '';
     if (ctx.currentUserId && id && id === String(ctx.currentUserId)) {
         return t('common.me');
@@ -80,7 +81,7 @@ function buildUnknownLabels(members = [], currentUserId = null) {
     const me = currentUserId != null ? String(currentUserId) : '';
     for (const member of members) {
         const id = member?.id != null ? String(member.id) : '';
-        if (!id || (me && id === me)) continue;
+        if (!id || (me && id === me) || member?.type === 'group') continue;
         if (hasMeaningfulLabel(member)) continue;
         n += 1;
         labels.set(id, t('people.unknownUserN', { n }));
@@ -88,8 +89,20 @@ function buildUnknownLabels(members = [], currentUserId = null) {
     return labels;
 }
 
+/** Hover text listing a group's current members — discoverable without a separate dialog. */
+function groupMembersTitle(member) {
+    const members = Array.isArray(member?.groupMembers) ? member.groupMembers : [];
+    if (!members.length) return t('people.noGroupMembers');
+    return t('people.groupMembersTitle', { names: members.map((m) => m.displayName).join(', ') });
+}
+
 /** Secondary line: email when primary is not a real name (and not Me). */
 function memberSecondaryLine(person, ctx = {}) {
+    if (person?.type === 'group') {
+        return person.memberCount != null
+            ? t('people.groupMemberCount', { n: person.memberCount })
+            : t('people.group');
+    }
     const id = person?.id != null ? String(person.id) : '';
     if (ctx.currentUserId && id === String(ctx.currentUserId)) return '';
     if (hasPersonName(person)) return '';
@@ -126,6 +139,8 @@ export class PeopleDialog extends LitElement {
             lookupFn: { attribute: false },
             /** Optional async ({ email, role }) => invite result */
             inviteFn: { attribute: false },
+            /** Optional async ({ groupId, role }) => { status, group } */
+            groupInviteFn: { attribute: false },
             members: { type: Array },
             pendingInvites: { type: Array },
             emailQuery: { type: String },
@@ -139,7 +154,13 @@ export class PeopleDialog extends LitElement {
             /** Last minted signup invite URL (copy-link) */
             lastInviteUrl: { type: String },
             /** Directus user id of the signed-in viewer (for "Me" label) */
-            currentUserId: { type: String }
+            currentUserId: { type: String },
+            /** SlicerHub groups the viewer can add as a collaborator: [{ id, name }] */
+            availableGroups: { type: Array },
+            groupPickId: { type: String },
+            groupPickRole: { type: String },
+            groupAdding: { type: Boolean },
+            groupMessage: { type: String }
         };
     }
 
@@ -154,6 +175,7 @@ export class PeopleDialog extends LitElement {
         this.roleOptions = null;
         this.lookupFn = null;
         this.inviteFn = null;
+        this.groupInviteFn = null;
         this.members = [];
         this.pendingInvites = [];
         this.emailQuery = '';
@@ -165,6 +187,11 @@ export class PeopleDialog extends LitElement {
         this.inviteRole = '';
         this.lastInviteUrl = '';
         this.currentUserId = '';
+        this.availableGroups = [];
+        this.groupPickId = '';
+        this.groupPickRole = '';
+        this.groupAdding = false;
+        this.groupMessage = '';
         this._baselineIds = new Set();
     }
 
@@ -203,6 +230,8 @@ export class PeopleDialog extends LitElement {
         this.lastInviteUrl = options.lastInviteUrl || this.lastInviteUrl || '';
         this.error = '';
         this.inviting = false;
+        this.groupPickId = '';
+        this.groupPickRole = '';
         await this.updateComplete;
         this.renderRoot?.querySelector('app-dialog')?.openDialog?.();
     }
@@ -351,6 +380,50 @@ export class PeopleDialog extends LitElement {
         this.lookupMessage = '';
     }
 
+    get unaddedGroups() {
+        const addedIds = new Set(
+            this.members.filter((m) => m.type === 'group').map((m) => m.id)
+        );
+        const pendingIds = new Set(
+            (Array.isArray(this.pendingInvites) ? this.pendingInvites : [])
+                .filter((inv) => inv?.kind === 'group' && !['rejected', 'expired'].includes(inv.status))
+                .map((inv) => `group:${inv.groupId}`)
+        );
+        return (Array.isArray(this.availableGroups) ? this.availableGroups : [])
+            .filter((g) => !addedIds.has(`group:${g.id}`) && !pendingIds.has(`group:${g.id}`));
+    }
+
+    async handleAddGroup() {
+        if (!this.groupPickId || !this.groupPickRole || this.groupAdding) return;
+        const group = this.availableGroups.find((g) => String(g.id) === String(this.groupPickId));
+        if (!group) return;
+
+        if (typeof this.groupInviteFn !== 'function') {
+            this.groupMessage = t('people.groupAddUnavailable');
+            return;
+        }
+
+        this.groupAdding = true;
+        this.error = '';
+        try {
+            const result = await this.groupInviteFn({ groupId: group.id, role: this.groupPickRole });
+            this.groupPickId = '';
+            this.groupPickRole = '';
+            this.groupMessage = result?.status === 'pending_approval'
+                ? t('people.groupInvitePending')
+                : t('people.groupAdded');
+            this.dispatchEvent(new CustomEvent('people-invited', {
+                detail: result || {},
+                bubbles: true,
+                composed: true
+            }));
+        } catch (err) {
+            this.error = err?.message || t('people.groupAddFailed');
+        } finally {
+            this.groupAdding = false;
+        }
+    }
+
     async copyInviteUrl() {
         const url = this.lastInviteUrl;
         if (!url) return;
@@ -387,12 +460,14 @@ export class PeopleDialog extends LitElement {
         const name = displayName(member, ctx);
         const secondary = memberSecondaryLine(member, ctx);
         const editable = this.memberIsEditable(member);
+        const isGroup = member?.type === 'group';
         return html`
             <div class="row">
                 <person-chip
                     .avatarUrl=${member.avatarUrl || ''}
                     .name=${name}
                     .secondaryLine=${secondary}
+                    title=${isGroup ? groupMembersTitle(member) : ''}
                 ></person-chip>
                 <div class="meta">
                     ${editable ? html`
@@ -481,6 +556,52 @@ export class PeopleDialog extends LitElement {
         `;
     }
 
+    renderGroupPicker() {
+        if (!this.canInvite || !Array.isArray(this.availableGroups) || !this.availableGroups.length) return html``;
+
+        const unadded = this.unaddedGroups;
+        if (!unadded.length) {
+            return html`
+                <div class="invite-footer">
+                    <p class="invite-status">${t('people.allGroupsAdded')}</p>
+                </div>
+            `;
+        }
+
+        const groupOptions = [
+            { value: '', label: t('people.selectGroupPlaceholder'), disabled: true },
+            ...unadded.map((g) => ({ value: String(g.id), label: g.name }))
+        ];
+        const addDisabled = !this.groupPickId || !this.groupPickRole || this.saving || this.groupAdding;
+
+        return html`
+            <div class="invite-footer">
+                <div class="invite-match">
+                    <dropdown-select
+                        .value=${this.groupPickId}
+                        .options=${groupOptions}
+                        aria-label=${t('people.selectGroupPlaceholder')}
+                        @change=${(e) => { this.groupPickId = e.target?.value || e.detail?.value || ''; }}
+                    ></dropdown-select>
+                    <div class="meta">
+                        <dropdown-select
+                            .value=${this.groupPickRole}
+                            .options=${this.effectiveRoleOptions}
+                            aria-label=${t('people.groupRoleAria')}
+                            @change=${(e) => { this.groupPickRole = e.target?.value || e.detail?.value || ''; }}
+                        ></dropdown-select>
+                        <app-button
+                            variant="primary"
+                            ?disabled=${addDisabled}
+                            @click=${() => this.handleAddGroup()}
+                        >${this.groupAdding ? t('people.sending') : t('people.addGroupToCase')}</app-button>
+                    </div>
+                </div>
+                ${this.groupMessage ? html`<p class="invite-status">${this.groupMessage}</p>` : ''}
+            </div>
+        `;
+    }
+
     renderPending() {
         const pending = (Array.isArray(this.pendingInvites) ? this.pendingInvites : [])
             .filter((invite) => invite && invite.status !== 'expired');
@@ -489,6 +610,7 @@ export class PeopleDialog extends LitElement {
             <div class="pending-block">
                 <p class="pending-heading">${t('people.pendingInvites')}</p>
                 ${pending.map((invite) => {
+            const isGroup = invite.kind === 'group';
             const isSignup = invite.kind === 'signup';
             const needsApproval = invite.status === 'pending'
                 || invite.status === 'pending_approval';
@@ -497,11 +619,17 @@ export class PeopleDialog extends LitElement {
                 ? t('people.awaitingSignup')
                 : `${t('people.awaitingApproval')}${isSignup ? ` (${t('people.newAccount')})` : ''}`;
             const statusLine = `${roleLabel(invite.proposedRole)} · ${statusSuffix}`;
+            const groupTitle = isGroup
+                ? (Array.isArray(invite.groupMembers) && invite.groupMembers.length
+                    ? t('people.groupMembersTitle', { names: invite.groupMembers.map((m) => m.displayName).join(', ') })
+                    : t('people.noGroupMembers'))
+                : '';
             return html`
                     <div class="row">
                         <person-chip
-                            .name=${invite.inviteeEmail || invite.inviteeDirectusUserId}
+                            .name=${isGroup ? invite.groupName : (invite.inviteeEmail || invite.inviteeDirectusUserId)}
                             .secondaryLine=${statusLine}
+                            title=${groupTitle}
                         ></person-chip>
                         ${this.canManage ? html`
                             <div class="pending-actions">
@@ -550,6 +678,7 @@ export class PeopleDialog extends LitElement {
                             ` : this.members.map((m) => this.renderMemberRow(m))}
                         </div>
                         ${this.renderInvite()}
+                        ${this.renderGroupPicker()}
                     </div>
 
                     ${this.renderPending()}
