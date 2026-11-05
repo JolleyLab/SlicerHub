@@ -165,6 +165,10 @@ test('mapMember maps all standard fields', () => {
     assert.equal(m.createdAt, '2026-02-01T00:00:00Z');
 });
 
+test('mapMember includes the group id as a string', () => {
+    assert.equal(mapMember({ id: 1, group_id: 7, kc_sub: 'x' }).groupId, '7');
+});
+
 test('mapMember coerces id to string', () => {
     assert.equal(mapMember({ id: 99, kc_sub: 'x' }).id, '99');
 });

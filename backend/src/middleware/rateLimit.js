@@ -7,11 +7,14 @@ function nowMs() {
     return Date.now();
 }
 
+/**
+ * Client IP for rate limits and audit. Uses Express's req.ip, which (with
+ * `trust proxy` = 1 in server.js) is the address nginx puts in X-Forwarded-For.
+ * nginx overwrites that header with the real client address (resolved from
+ * CF-Connecting-IP behind the Cloudflare tunnel), so the raw header — whose first
+ * entry the client controls — must not be read here.
+ */
 function getClientIp(req) {
-    const forwardedFor = req.headers['x-forwarded-for'];
-    if (typeof forwardedFor === 'string' && forwardedFor.trim()) {
-        return forwardedFor.split(',')[0].trim();
-    }
     return req.ip || req.socket?.remoteAddress || 'unknown-ip';
 }
 

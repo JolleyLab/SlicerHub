@@ -223,6 +223,8 @@ export default async function containerRoutes(app) {
                 sessionToken,
                 metadata: {
                     sessionId: sessionData.sessionId,
+                    // Read by /api/internal/viewer-auth to tie /trame-session-port/{port} to this user.
+                    sessionPort: sessionData.port != null ? Number(sessionData.port) : null,
                     trameServiceUrl,
                     projectId: trameContext?.projectId ?? null
                 }

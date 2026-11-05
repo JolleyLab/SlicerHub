@@ -17,6 +17,8 @@ import passwordResetRoutes from "./routes/passwordReset.js";
 import featuresRoutes from "./routes/features.js";
 import slicerWebRoutes from "./routes/slicerWeb.js";
 import announcementRoutes from "./routes/announcement.js";
+import viewerAuthRoutes from "./routes/viewerAuth.js";
+import { runRetentionSweep } from "./services/dataRetention.js";
 import { startStablePoller, startLatestPoller } from "./services/slicerWebUpdater.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { startBillingWatchdog } from "./gpu/billingWatchdog.js";
@@ -107,8 +109,8 @@ async function seedRegistrationReviewersGroup() {
             getUsersWithRealmRole('app-org-admin'),
             getUsersWithRealmRole('app-admin'),
         ]);
-        console.log(`[seed] app-org-admin users: ${orgAdmins.map(u => u.email).join(', ') || '(none)'}`);
-        console.log(`[seed] app-admin users: ${admins.map(u => u.email).join(', ') || '(none)'}`);
+        // Counts only — no emails in logs (privacy minimization).
+        console.log(`[seed] Found ${orgAdmins.length} app-org-admin and ${admins.length} app-admin user(s)`);
         const adminSubs = [...new Map(
             [...orgAdmins, ...admins].filter(u => u.id).map(u => [u.id, u])
         ).values()].map(u => u.id);
@@ -133,6 +135,14 @@ async function seedRegistrationReviewersGroup() {
     } catch (err) {
         console.warn('Registration Reviewers group seed failed:', err.message);
     }
+}
+
+function startDataRetentionSweep() {
+    const INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 h
+    const sweep = () => runRetentionSweep(getPayloadClient());
+    sweep();
+    setInterval(sweep, INTERVAL_MS);
+    console.log('Data retention sweep started (6 h interval)');
 }
 
 function startInviteExpiryWatchdog() {
@@ -203,6 +213,7 @@ passwordResetRoutes(app);
 featuresRoutes(app);
 slicerWebRoutes(app);
 announcementRoutes(app);
+viewerAuthRoutes(app);   // nginx auth_request for viewer containers
 
 // Register file routes
 fileRoutes(app);
@@ -251,6 +262,7 @@ app.listen(config.server.port, config.server.host, async () => {
     startBillingWatchdog();
     startViewerSessionWatchdog();
     startInviteExpiryWatchdog();
+    startDataRetentionSweep();
     seedRegistrationReviewersGroup();
     startStablePoller();
     startLatestPoller();

@@ -45,12 +45,8 @@ export function issueAppSession(req, res, user) {
     const decoded = jwt.decode(token);
     const expiresAt = new Date(decoded.exp * 1000).toISOString();
 
-    storeSession(
-        user.id,
-        decoded.jti,
-        expiresAt,
-        req.get('user-agent')
-    );
+    // No user agent: nothing reads it, so it is not stored (privacy minimization).
+    storeSession(user.id, decoded.jti, expiresAt, null);
 
     res.cookie('token', token, authCookieOptions());
 

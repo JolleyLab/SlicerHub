@@ -251,6 +251,7 @@ export default {
     groups: {
         name_required: 'Group name is required',
         not_found: 'Group not found',
+        member_not_found: 'Member not found in this group',
         user_not_found: 'No user found with that email address',
         user_id_required: 'A user ID or email address is required',
         already_member: 'That user is already a member of this group',

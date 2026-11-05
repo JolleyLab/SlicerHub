@@ -34,6 +34,7 @@ export class UserSettingsPage extends LitElement {
             useSimplifiedViewer: { type: Boolean },
             slicerWebChannel: { type: String },
             notifyRegistrationApproval: { type: Boolean },
+            shareNameInGroups: { type: Boolean },
             activityFilters: { type: Array },
             saveState: { type: String },
             saveStatusMessage: { type: String },
@@ -81,6 +82,7 @@ export class UserSettingsPage extends LitElement {
         this.useSimplifiedViewer = prefs.useSimplifiedViewer;
         this.slicerWebChannel = prefs.slicerWebChannel ?? 'stable';
         this.notifyRegistrationApproval = prefs.notifyRegistrationApproval !== false;
+        this.shareNameInGroups = prefs.shareNameInGroups === true;
         this.activityFilters = prefs.activityFilters ?? null;
     }
 
@@ -201,6 +203,7 @@ export class UserSettingsPage extends LitElement {
             this.useSimplifiedViewer = next.useSimplifiedViewer;
             this.slicerWebChannel = next.slicerWebChannel ?? 'stable';
             this.notifyRegistrationApproval = next.notifyRegistrationApproval !== false;
+            this.shareNameInGroups = next.shareNameInGroups === true;
             this.activityFilters = next.activityFilters ?? null;
             this._prefsDirty = false;
         } catch (error) {
@@ -226,6 +229,7 @@ export class UserSettingsPage extends LitElement {
                 homeLayout: this.homeLayout,
                 slicerWebChannel: this.slicerWebChannel,
                 notifyRegistrationApproval: this.notifyRegistrationApproval,
+                shareNameInGroups: this.shareNameInGroups,
                 activityFilters: this.activityFilters,
             }));
             await Promise.all(saves);
@@ -499,6 +503,17 @@ export class UserSettingsPage extends LitElement {
                                             ?disabled=${this.profileSaving}
                                             @input=${(e) => this.onProfileFieldInput('preferredName', e.target.value)} />
                                     </div>
+                                    <label class="checkbox-row">
+                                        <input type="checkbox"
+                                            .checked=${this.shareNameInGroups}
+                                            @change=${(e) => { this.shareNameInGroups = e.target.checked; this._prefsDirty = true; }} />
+                                        <span>
+                                            ${t('settings.shareNameInGroups')}
+                                            <span class="section-description" style="display:block;margin-top:2px">
+                                                ${t('settings.shareNameInGroupsHint')}
+                                            </span>
+                                        </span>
+                                    </label>
                                 </div>
                             </section>
 

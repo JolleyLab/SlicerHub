@@ -19,6 +19,7 @@ import { Server as TusServer } from '@tus/server';
 import { FileStore } from '@tus/file-store';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { getKeycloakSubForUser } from '../services/keycloakAdmin.js';
+import { assertCaseAccess } from '../utils/caseAccess.js';
 
 // FileStore writes files flat under this directory as {uploadId}.
 // The storage key is caseFiles/{uploadId} — matches CASE_KEY_PREFIX in contract.js.
@@ -32,11 +33,15 @@ const CASE_FILES_DIR = path.resolve('caseFiles');
  * @param {import('payload').Payload} payload
  */
 export function registerCaseTusRoute(app, payload) {
+    const datastore = new FileStore({ directory: CASE_FILES_DIR });
     const tusServer = new TusServer({
         // path is required but overridden by generateUrl below.
         path: '/api/cases',
         relativeLocation: true,
-        datastore: new FileStore({ directory: CASE_FILES_DIR }),
+        datastore,
+        // A finished upload is a case attachment; it is removed through the
+        // attachments API (case admin only), never by a TUS DELETE.
+        disableTerminationForFinishedUploads: true,
 
         // Build Location: /api/cases/{caseId}/files/tus/{uploadId}
         // req here is srvx's NodeRequest; original Express req is at req.runtime.node.req.
@@ -46,9 +51,24 @@ export function registerCaseTusRoute(app, payload) {
             return `/api/cases/${encodeURIComponent(caseId)}/files/tus/${encodeURIComponent(id)}`;
         },
 
-        // Auth is enforced by the authenticateToken Express middleware on the route below.
+        // Auth and case access are enforced by the Express middleware on the routes below.
         // onIncomingRequest is NOT used here because @tus/server wraps Express's req in a
         // srvx NodeRequest before calling hooks — req.user from Express is not present on it.
+
+        /**
+         * Stamp the case and uploader into the upload's metadata (overwriting anything
+         * the client sent) so later PATCH/HEAD/DELETE requests can be tied back to them.
+         */
+        async onUploadCreate(req, upload) {
+            const expressReq = req.runtime?.node?.req ?? req;
+            return {
+                metadata: {
+                    ...(upload.metadata ?? {}),
+                    caseId: String(expressReq.params?.caseId ?? ''),
+                    uploaderSub: String(expressReq.tusUploaderSub ?? ''),
+                },
+            };
+        },
 
         /**
          * Called once the upload is 100% complete.
@@ -99,15 +119,61 @@ export function registerCaseTusRoute(app, payload) {
         },
     });
 
+    /**
+     * Uploading needs collaborator access to the case in the URL. An existing upload
+     * can only be resumed, inspected or cancelled by the person who started it, on the
+     * case it was started on. GET is refused: @tus/server would otherwise serve the
+     * file bytes, bypassing the attachment download permission check.
+     */
+    async function requireCaseUploadAccess(req, res, next) {
+        try {
+            const method = req.method.toUpperCase();
+            if (method === 'OPTIONS') return next();
+            if (method === 'GET') {
+                return res.status(405).json({ error: { message: 'Method not allowed' } });
+            }
+
+            const caseId = String(req.params.caseId || '');
+            if (!/^\d+$/.test(caseId)) {
+                return res.status(404).json({ error: { message: 'Case not found' } });
+            }
+            const caseDoc = await payload.findByID({ collection: 'cases', id: caseId, depth: 0 })
+                .catch(() => null);
+            if (!caseDoc) {
+                return res.status(404).json({ error: { message: 'Case not found' } });
+            }
+            await assertCaseAccess(caseDoc, req, 'collaborator');
+
+            const uploaderSub = req.user?.keycloakSub || getKeycloakSubForUser(req.user?.id);
+            if (!uploaderSub) {
+                return res.status(403).json({ error: { message: 'A Keycloak identity is required to upload' } });
+            }
+            req.tusUploaderSub = uploaderSub;
+
+            if (req.params.uploadId) {
+                const upload = await datastore.getUpload(req.params.uploadId).catch(() => null);
+                const meta = upload?.metadata ?? {};
+                if (!upload || meta.caseId !== caseId || meta.uploaderSub !== uploaderSub) {
+                    return res.status(404).json({ error: { message: 'Upload not found' } });
+                }
+            }
+            next();
+        } catch (err) {
+            next(err);
+        }
+    }
+
     // All TUS methods under /api/cases/:caseId/files/tus[/:uploadId]
     app.all(
         '/api/cases/:caseId/files/tus',
         authenticateToken,
+        requireCaseUploadAccess,
         (req, res) => tusServer.handle(req, res),
     );
     app.all(
         '/api/cases/:caseId/files/tus/:uploadId',
         authenticateToken,
+        requireCaseUploadAccess,
         (req, res) => tusServer.handle(req, res),
     );
 }

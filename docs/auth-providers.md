@@ -63,7 +63,7 @@ They are complementary: **httpOnly ≠ instead of HTTPS**. Production should hav
 | MFA / TOTP | Login returns `error.code=OTP_REQUIRED`; SPA second step posts `otp`. |
 | Remember this device | After MFA, optional httpOnly cookie + encrypted Directus refresh; later password logins that hit OTP use refresh instead of re-prompt (password still validated first). Default trust 30 days (90 with `AUTH_DEV_RELAXED`). |
 | AUTH_DEV_RELAXED | **Not** a full MFA kill-switch (Directus still requires first OTP). Softens testing friction only. **Fatal if set in production.** |
-| Login audit | `auth_audit_events` — success/failure/register/logout; identity **hashed**; IP + UA; retention `AUTH_AUDIT_RETENTION_DAYS` (90). |
+| Login audit | `auth_audit_events` — success/failure/register/logout; event, user id and time only (no IP, user agent or login identity); retention `AUTH_AUDIT_RETENTION_DAYS` (30). |
 | Timing pad | Local login always runs a bcrypt compare (dummy hash if identity missing/disabled). |
 | Origin check | Cookie auth mutations require `Origin`/`Referer` in `CORS_ORIGINS` when present. |
 | Role elevation | Directus admin ≠ product admin. Shadows always `role=user`. |

@@ -150,6 +150,35 @@ export async function findUserByEmail(email) {
 }
 
 /**
+ * Current account state for session re-validation: whether the user still exists,
+ * whether it is enabled, and its effective realm roles (including roles inherited
+ * through Keycloak groups and composites). Throws on Keycloak/network errors so
+ * callers can tell "account gone" apart from "Keycloak unreachable".
+ *
+ * @returns {Promise<{ exists: boolean, enabled: boolean, realmRoles: string[] }>}
+ */
+export async function getUserAccountState(keycloakUserId) {
+    const token = await getAdminToken();
+    const base = `${adminBase()}/users/${encodeURIComponent(keycloakUserId)}`;
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const userRes = await fetch(base, { headers, signal: AbortSignal.timeout(5000) });
+    if (userRes.status === 404) return { exists: false, enabled: false, realmRoles: [] };
+    if (!userRes.ok) throw new AppError(`Keycloak GET user failed (${userRes.status})`, 502);
+    const user = await userRes.json();
+
+    const rolesRes = await fetch(`${base}/role-mappings/realm/composite`, { headers, signal: AbortSignal.timeout(5000) });
+    if (!rolesRes.ok) throw new AppError(`Keycloak GET realm roles failed (${rolesRes.status})`, 502);
+    const roles = await rolesRes.json();
+
+    return {
+        exists: true,
+        enabled: user?.enabled !== false,
+        realmRoles: (Array.isArray(roles) ? roles : []).map(r => r?.name).filter(Boolean),
+    };
+}
+
+/**
  * Get a Keycloak user by their Keycloak ID.
  * Returns { id, email, firstName, lastName, username, preferredName, displayName } or null.
  */

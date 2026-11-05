@@ -1,9 +1,10 @@
 import { buildConfig } from 'payload'
 import { postgresAdapter } from '@payloadcms/db-postgres'
 import { Users, Cases, Attachments, CaseComments, CaseInvites, CaseGroupAccess, UserPreferences, RegistrationRequests, Groups, GroupMembers, PasswordResetTokens } from './collections.js'
+import { resolvePayloadSecret } from './secret.js'
 
 export default buildConfig({
-    secret: process.env.PAYLOAD_SECRET || 'dev-secret-please-change',
+    secret: resolvePayloadSecret(),
 
     db: postgresAdapter({
         pool: {

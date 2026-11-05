@@ -55,7 +55,7 @@ function decodeJwtPayload(token) {
 
 // Map Keycloak realm role names to local role values.
 // Priority: most-privileged role wins.
-function pickRole(roles) {
+export function pickRole(roles) {
     if (!Array.isArray(roles)) return 'user';
     if (roles.includes('app-admin'))     return 'admin';
     if (roles.includes('app-org-admin')) return 'org-admin';

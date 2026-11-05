@@ -23,6 +23,7 @@ import {
     getKeycloakSubForUser,
     getKeycloakUser,
     getUserCaseRoleMap,
+    getUsersWithRealmRole,
     kcDisplayName,
 } from '../services/keycloakAdmin.js';
 import {
@@ -51,7 +52,8 @@ function groupIdFromCollaboratorId(id) {
  * look like any other collaborator in the list — same id/role/display shape,
  * just `type: 'group'` and a member count instead of an email.
  */
-async function buildMergedCollaborators(caseId) {
+async function buildMergedCollaborators(caseId, req) {
+    const describeMembers = makeGroupMemberDescriber(req);
     const [userCollaborators, groupAccess] = await Promise.all([
         listCaseCollaborators(caseId),
         listGroupAccessForCase(caseId),
@@ -59,13 +61,15 @@ async function buildMergedCollaborators(caseId) {
 
     const groupCollaborators = await Promise.all(groupAccess.map(async (access) => {
         const group = await getGroup(access.groupId).catch(() => null);
+        const { members, hiddenCount } = await describeMembers(group);
         return {
             id: `${GROUP_ID_PREFIX}${access.groupId}`,
             type: 'group',
             groupId: access.groupId,
             displayName: group?.name || 'Unknown group',
             memberCount: group?.members?.length ?? null,
-            members: await describeGroupMembers(group),
+            members,
+            hiddenMemberCount: hiddenCount,
             role: access.role,
         };
     }));
@@ -76,18 +80,71 @@ async function buildMergedCollaborators(caseId) {
     ];
 }
 
-/**
- * Display names for a group's current members — lets an admin see who's in a
- * group (hover / expand) without leaving the case, both when reviewing an
- * already-added group and when reviewing a pending group-invite.
- */
-async function describeGroupMembers(group) {
-    if (!group?.members?.length) return [];
-    return Promise.all(group.members.map(async (m) => {
-        const kcUser = await getKeycloakUser(m.kcSub).catch(() => null);
-        return { id: m.kcSub, displayName: kcUser ? kcDisplayName(kcUser) : m.kcSub };
-    }));
+function isPlatformAdmin(req) {
+    return req.user?.role === 'admin' || req.user?.role === 'org-admin';
 }
+
+async function getPlatformAdminSubs() {
+    const lists = await Promise.all(['app-org-admin', 'app-admin'].map(getUsersWithRealmRole));
+    return new Set(lists.flat().map(u => u.id));
+}
+
+async function getNameSharingSubs(kcSubs) {
+    if (!kcSubs.length) return new Set();
+    const result = await getPayloadClient().find({
+        collection: 'user-preferences',
+        where: {
+            and: [
+                { keycloak_sub: { in: kcSubs } },
+                { share_name_in_groups: { equals: true } },
+            ],
+        },
+        limit: kcSubs.length,
+        depth: 0,
+    });
+    return new Set(result.docs.map(d => d.keycloak_sub));
+}
+
+/**
+ * Which of a group's members the viewer may see by name (hover text on the
+ * group's row). Org/site admins see everyone, with email, so they can audit
+ * membership; a group's own managers see everyone, as on the group page.
+ * Anyone else sees only group managers, org/site admins, and members who
+ * turned on "Share my name" — the rest are just counted, so a case admin
+ * linking a generic group ("Students") doesn't learn every member.
+ */
+function makeGroupMemberDescriber(req) {
+    const viewerSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
+    const platformAdminViewer = isPlatformAdmin(req);
+    let adminSubsPromise = null;
+
+    return async function describeMembers(group) {
+        const all = group?.members || [];
+        if (!all.length) return { members: [], hiddenCount: 0 };
+
+        let visible = all;
+        const seesAll = platformAdminViewer || all.some(m => m.kcSub === viewerSub && m.canManageGroup);
+        if (!seesAll) {
+            adminSubsPromise ??= getPlatformAdminSubs();
+            const [adminSubs, sharing] = await Promise.all([
+                adminSubsPromise,
+                getNameSharingSubs(all.map(m => m.kcSub)),
+            ]);
+            visible = all.filter(m => m.canManageGroup || adminSubs.has(m.kcSub) || sharing.has(m.kcSub));
+        }
+
+        const members = await Promise.all(visible.map(async (m) => {
+            const kcUser = await getKeycloakUser(m.kcSub).catch(() => null);
+            if (platformAdminViewer) {
+                return { id: m.kcSub, displayName: kcUser ? kcDisplayName(kcUser) : m.kcSub, email: kcUser?.email || '' };
+            }
+            // Names only (preferred, then full, then username) — never email for non-admin viewers.
+            return { id: m.kcSub, displayName: (kcUser && kcDisplayName({ ...kcUser, email: '' })) || 'Unnamed member' };
+        }));
+        return { members, hiddenCount: all.length - visible.length };
+    };
+}
+
 
 function requirePayload(req, res, next) {
     if (!getPayloadClient()) {
@@ -313,12 +370,14 @@ export default function caseCollaboratorsRoutes(app) {
             if (user) nameMap[sub] = kcDisplayName(user) || null;
         }));
 
-        const groupNameMap = {};
+        const describeMembers = makeGroupMemberDescriber(req);
+        const groupInfoMap = {};
         await Promise.all(
             [...new Set(result.docs.filter(d => d.kind === 'group').map(d => d.group_id))]
                 .map(async (groupId) => {
                     const group = await getGroup(groupId).catch(() => null);
-                    groupNameMap[groupId] = group?.name || 'Unknown group';
+                    const { members, hiddenCount } = await describeMembers(group);
+                    groupInfoMap[groupId] = { name: group?.name || 'Unknown group', members, hiddenCount };
                 })
         );
 
@@ -330,9 +389,11 @@ export default function caseCollaboratorsRoutes(app) {
             caseTitle: doc.case?.title ?? null,
             inviteeEmail: doc.kind === 'group' ? null : doc.invitee_email,
             inviteeName: doc.kind === 'group'
-                ? groupNameMap[doc.group_id]
+                ? groupInfoMap[doc.group_id].name
                 : (doc.keycloak_user_id && nameMap[doc.keycloak_user_id]) || doc.invitee_email,
             groupId: doc.kind === 'group' ? doc.group_id : null,
+            groupMembers: doc.kind === 'group' ? groupInfoMap[doc.group_id].members : undefined,
+            groupHiddenMemberCount: doc.kind === 'group' ? groupInfoMap[doc.group_id].hiddenCount : undefined,
             inviterName: (doc.inviter_id && nameMap[doc.inviter_id]) || null,
             proposedRole: doc.role,
             createdAt: doc.createdAt,
@@ -354,7 +415,7 @@ export default function caseCollaboratorsRoutes(app) {
         await assertCaseAccess(doc, req, 'read_only');
 
         const [collaborators, ownerKc] = await Promise.all([
-            buildMergedCollaborators(req.params.id),
+            buildMergedCollaborators(req.params.id, req),
             doc.owner_id ? getKeycloakUser(doc.owner_id).catch(() => null) : Promise.resolve(null),
         ]);
 
@@ -408,6 +469,7 @@ export default function caseCollaboratorsRoutes(app) {
             sort: 'createdAt',
         });
 
+        const describeMembers = makeGroupMemberDescriber(req);
         const invites = await Promise.all(result.docs.map(async (inv) => {
             const base = {
                 id:           inv.id,
@@ -417,11 +479,13 @@ export default function caseCollaboratorsRoutes(app) {
             };
             if (inv.kind === 'group') {
                 const group = await getGroup(inv.group_id).catch(() => null);
+                const { members, hiddenCount } = await describeMembers(group);
                 return {
                     ...base,
                     groupId:      inv.group_id,
                     groupName:    group?.name || 'Unknown group',
-                    groupMembers: await describeGroupMembers(group),
+                    groupMembers: members,
+                    groupHiddenMemberCount: hiddenCount,
                 };
             }
             return { ...base, inviteeEmail: inv.invitee_email };
@@ -539,11 +603,13 @@ export default function caseCollaboratorsRoutes(app) {
                 proposedRole: role,
             });
 
+            // The link is only for the invitee. Hand it to the inviter only when the email
+            // could not be sent; otherwise the inviter could claim the account themselves.
             return res.status(201).json({
                 status:     'signup_invite',
                 emailSent:  emailResult.sent,
                 emailError: emailResult.sent ? undefined : emailResult.error,
-                inviteUrl,
+                inviteUrl:  emailResult.sent ? undefined : inviteUrl,
                 invitee:    { email },
             });
         }
@@ -627,7 +693,7 @@ export default function caseCollaboratorsRoutes(app) {
 
         // ── Admin path: act immediately ──────────────────────────────────────
         await setGroupAccessForCase(req.params.id, groupId, effectiveRole);
-        const collaborators = await buildMergedCollaborators(req.params.id);
+        const collaborators = await buildMergedCollaborators(req.params.id, req);
         res.status(201).json({
             status: 'added',
             group:  { id: groupId, name: group.name },
@@ -660,10 +726,14 @@ export default function caseCollaboratorsRoutes(app) {
         const caseId = req.params.id;
 
         if (invite.kind === 'group') {
+            const group = await getGroup(invite.group_id).catch(() => null);
+            if (!group) {
+                await payload.delete({ collection: 'case-invites', id: invite.id });
+                return res.status(409).json({ error: { message: 'That group no longer exists' } });
+            }
             await setGroupAccessForCase(caseId, invite.group_id, role);
             await payload.update({ collection: 'case-invites', id: invite.id, data: { status: 'accepted' } });
-            const group = await getGroup(invite.group_id).catch(() => null);
-            return res.json({ status: 'approved', group: { id: invite.group_id, name: group?.name || 'Group' } });
+            return res.json({ status: 'approved', group: { id: invite.group_id, name: group.name } });
         }
 
         if (invite.kind === 'existing') {
@@ -707,11 +777,12 @@ export default function caseCollaboratorsRoutes(app) {
             proposedRole: role,
         });
 
+        // As above: only expose the link when the email could not be sent.
         res.json({
             status:     'signup_invite',
             emailSent:  emailResult.sent,
             emailError: emailResult.sent ? undefined : emailResult.error,
-            inviteUrl,
+            inviteUrl:  emailResult.sent ? undefined : inviteUrl,
         });
     }));
 
@@ -782,6 +853,7 @@ export default function caseCollaboratorsRoutes(app) {
         }
 
         // Groups must exist before we link them to the case
+        const currentGroups = await listGroupAccessForCase(req.params.id);
         for (const entry of groupEntries) {
             const group = await getGroup(entry.groupId);
             if (!group) throw new ValidationError(`Group not found: ${entry.groupId}`);
@@ -804,7 +876,6 @@ export default function caseCollaboratorsRoutes(app) {
         }
 
         // ── Reconcile SlicerHub group collaborators ──────────────────────────
-        const currentGroups = await listGroupAccessForCase(req.params.id);
         const incomingGroupIds = new Set(groupEntries.map(g => g.groupId));
 
         for (const g of currentGroups) {
@@ -819,7 +890,7 @@ export default function caseCollaboratorsRoutes(app) {
             }
         }
 
-        const updated = await buildMergedCollaborators(req.params.id);
+        const updated = await buildMergedCollaborators(req.params.id, req);
         res.json({ collaborators: updated });
     }));
 

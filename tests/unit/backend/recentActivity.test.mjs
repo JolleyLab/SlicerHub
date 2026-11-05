@@ -23,6 +23,15 @@ mock.module('../../../backend/src/services/keycloakAdmin.js', {
     }
 });
 
+let groupRoleMap = {};
+let groups = {}; // groupId -> { id, name }
+mock.module('../../../backend/src/services/caseGroupAccess.js', {
+    namedExports: { getCaseRoleMapFromGroups: async () => groupRoleMap }
+});
+mock.module('../../../backend/src/services/groupStore.js', {
+    namedExports: { getGroup: async (id) => groups[id] || null }
+});
+
 const { listRecentActivityKC, ACTIVITY_TYPES } = await import('../../../backend/src/services/recentActivity.js');
 
 const ME = 'kc-me';
@@ -31,6 +40,8 @@ test.beforeEach(() => {
     roleMap = {};
     users = {};
     getKeycloakUserCalls = [];
+    groupRoleMap = {};
+    groups = {};
 });
 
 /** A fake Payload client. Each key is a collection name; docs() returns {docs}. */
@@ -83,6 +94,30 @@ test('case ids from KC roles and from Payload ownership are merged and de-duplic
     await listRecentActivityKC({ kcSub: ME, payload });
     const inviteCall = payload.calls.find((c) => c.collection === 'case-invites');
     assert.deepEqual([...inviteCall.where.case.in].sort(), ['case-1', 'case-2']);
+});
+
+test('cases reached through SlicerHub group access contribute activity, read_only excepted', async () => {
+    groupRoleMap = { 'case-3': 'collaborator', 'case-4': 'read_only' };
+    const payload = fakePayload({ cases: [], 'case-invites': [], 'case-comments': [], attachments: [] });
+    await listRecentActivityKC({ kcSub: ME, payload });
+    const inviteCall = payload.calls.find((c) => c.collection === 'case-invites');
+    assert.deepEqual([...inviteCall.where.case.in], ['case-3']);
+});
+
+test('a group invite names the group as the invitee', async () => {
+    roleMap = { c1: 'admin' };
+    groups.g1 = { id: 'g1', name: 'Radiology Team' };
+    const payload = fakePayload({
+        cases: [],
+        'case-invites': [{
+            id: 'i1', kind: 'group', group_id: 'g1', case: 'c1', invitee_email: null,
+            role: 'collaborator', inviter_id: 'inviter-1', createdAt: '2026-09-25T10:00:00.000Z'
+        }],
+        'case-comments': [],
+        attachments: []
+    });
+    const [event] = await listRecentActivityKC({ kcSub: ME, payload });
+    assert.equal(event.inviteeName, 'Radiology Team');
 });
 
 test('a sent invite is one event; an invite missing createdAt contributes nothing', async () => {

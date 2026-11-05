@@ -15,12 +15,17 @@ function higherRole(a, b) {
     return (ROLE_RANK[b] ?? 0) > (ROLE_RANK[a] ?? 0) ? b : a;
 }
 
+// Payload rejects a string id for the integer `case` relationship on create.
+function caseKey(caseId) {
+    return Number(caseId);
+}
+
 export async function listGroupAccessForCase(caseId) {
     const payload = getPayloadClient();
     if (!payload) return [];
     const result = await payload.find({
         collection: 'case-group-access',
-        where: { case: { equals: caseId } },
+        where: { case: { equals: caseKey(caseId) } },
         limit: 200,
         depth: 0,
     });
@@ -33,7 +38,7 @@ export async function setGroupAccessForCase(caseId, groupId, role) {
         collection: 'case-group-access',
         where: {
             and: [
-                { case: { equals: caseId } },
+                { case: { equals: caseKey(caseId) } },
                 { group_id: { equals: String(groupId) } },
             ],
         },
@@ -43,7 +48,32 @@ export async function setGroupAccessForCase(caseId, groupId, role) {
     if (existing.docs.length) {
         return payload.update({ collection: 'case-group-access', id: existing.docs[0].id, data: { role } });
     }
-    return payload.create({ collection: 'case-group-access', data: { case: caseId, group_id: String(groupId), role } });
+    return payload.create({ collection: 'case-group-access', data: { case: caseKey(caseId), group_id: String(groupId), role } });
+}
+
+export async function removeAllGroupAccessForCase(caseId) {
+    const payload = getPayloadClient();
+    if (!payload) return;
+    await payload.delete({ collection: 'case-group-access', where: { case: { equals: caseKey(caseId) } } });
+}
+
+/**
+ * Unlinks a deleted group from every case and deletes its requests,
+ * so cases don't keep an "Unknown group" collaborator or invite row.
+ */
+export async function removeGroupFromAllCases(groupId) {
+    const payload = getPayloadClient();
+    if (!payload) return;
+    await payload.delete({ collection: 'case-group-access', where: { group_id: { equals: String(groupId) } } });
+    await payload.delete({
+        collection: 'case-invites',
+        where: {
+            and: [
+                { kind: { equals: 'group' } },
+                { group_id: { equals: String(groupId) } },
+            ],
+        },
+    });
 }
 
 export async function removeGroupAccessForCase(caseId, groupId) {
@@ -52,7 +82,7 @@ export async function removeGroupAccessForCase(caseId, groupId) {
         collection: 'case-group-access',
         where: {
             and: [
-                { case: { equals: caseId } },
+                { case: { equals: caseKey(caseId) } },
                 { group_id: { equals: String(groupId) } },
             ],
         },
@@ -81,7 +111,7 @@ export async function getCaseRoleFromGroups(kcSub, caseId) {
         collection: 'case-group-access',
         where: {
             and: [
-                { case: { equals: caseId } },
+                { case: { equals: caseKey(caseId) } },
                 { group_id: { in: groupIds } },
             ],
         },

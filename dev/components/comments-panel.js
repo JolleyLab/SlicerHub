@@ -574,15 +574,19 @@ export class CommentsPanel extends LitElement {
         }
     }
 
-    /** Resolve @uuid tokens in body text to @Name chips using the collaborators list. */
-    renderBody(text) {
-        const idToName = new Map((this.collaborators || []).map(c => [c.id, c.name]));
+    /**
+     * Resolve @uuid tokens to @Name chips. Names the server resolved for this
+     * comment win; the collaborator list is only a fallback (e.g. a comment
+     * object built before the server responded).
+     */
+    renderBody(text, mentions = {}) {
+        const idToName = new Map((this.collaborators || []).map(c => [String(c.id).toLowerCase(), c.name]));
         // UUID pattern: 8-4-4-4-12 hex groups
         const parts = String(text || '').split(/(@[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
         return parts.map((part) => {
             if (part.startsWith('@')) {
-                const id = part.slice(1);
-                const name = idToName.get(id);
+                const id = part.slice(1).toLowerCase();
+                const name = mentions?.[id] || idToName.get(id);
                 return name
                     ? html`<span class="mention-chip">@${name}</span>`
                     : part; // unknown uuid — render as-is
@@ -607,7 +611,7 @@ export class CommentsPanel extends LitElement {
                         <span class="comment-author">${name}</span>
                         <span class="comment-date">${this.formatCommentDate(comment.createdAt)}</span>
                     </div>
-                    <p class="comment-body">${this.renderBody(comment.body)}</p>
+                    <p class="comment-body">${this.renderBody(comment.body, comment.mentions)}</p>
                 </div>
             </div>
         `;

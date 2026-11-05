@@ -17,6 +17,8 @@ import { createRateLimiter, getRateLimitClientIp } from '../middleware/rateLimit
 import { getPayloadClient } from '../payload/index.js';
 import { findUserByEmail, setKeycloakUserPassword, enableKeycloakUser } from '../services/keycloakAdmin.js';
 import { loginWithProvider } from '../auth/index.js';
+import { deleteAllUserSessions } from '../middleware/authMiddleware.js';
+import { clearProviderTokensForUser } from '../auth/identityStore.js';
 import { sendPasswordResetEmail, sendAccountActivationEmail, isMailConfigured } from '../services/mail.js';
 import { ValidationError, NotFoundError } from '../utils/errors.js';
 import { msg } from '../i18n/index.js';
@@ -94,12 +96,12 @@ export default function passwordResetRoutes(app) {
                 await sendPasswordResetEmail({ to: email, firstName, resetUrl, expiresAt });
             }
 
-            const emailWorking = isMailConfigured();
-            res.json({
-                status: 'sent',
-                // In dev (no SMTP), surface the link so it can be used directly
-                ...(emailWorking ? {} : { resetUrl, kind })
-            });
+            // Never return the link: this endpoint is public, so returning it would let
+            // anyone reset any account. Without SMTP in local dev, read it from the logs.
+            if (!isMailConfigured() && !config.isProduction) {
+                console.info(`[password-reset] SMTP not configured — ${kind} link for ${email}: ${resetUrl}`);
+            }
+            res.json({ status: 'sent' });
         })
     );
 
@@ -137,6 +139,11 @@ export default function passwordResetRoutes(app) {
             if (!kcUser) throw new NotFoundError(msg('passwordReset.userNotFound'), null, 'passwordReset.userNotFound');
 
             await setKeycloakUserPassword(kcUser.id, String(password));
+
+            // A reset is often a response to a compromised account: end every existing
+            // session (app user id is the Keycloak sub) before signing in fresh below.
+            deleteAllUserSessions(kcUser.id);
+            clearProviderTokensForUser(kcUser.id);
 
             if (doc.kind === 'activation') {
                 await enableKeycloakUser(kcUser.id);

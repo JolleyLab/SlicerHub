@@ -25,6 +25,7 @@ const kc = {
     collaborators: [],  // listCaseCollaborators() result
     userCaseRole: {},   // `${sub}:${caseId}` -> role | undefined (caseAccess.js fallback)
     caseRoleMap: {},    // sub -> { [caseId]: role } (pending-approval route)
+    realmRoleUsers: {}, // realm role -> [{ id }]
     calls: { addUserToCaseGroup: [], removeUserFromAllCaseGroups: [], createKeycloakUser: [], setKeycloakUserPassword: [], enableKeycloakUser: [] }
 };
 mock.module('../../../backend/src/services/keycloakAdmin.js', {
@@ -46,10 +47,11 @@ mock.module('../../../backend/src/services/keycloakAdmin.js', {
         getKeycloakUser: async (sub) => kc.usersBySub[sub] || null,
         getUserCaseRoleMap: async (sub) => kc.caseRoleMap[sub] || {},
         getUserCaseRole: async (sub, caseId) => kc.userCaseRole[`${sub}:${caseId}`] ?? null,
+        getUsersWithRealmRole: async (role) => kc.realmRoleUsers[role] || [],
         kcDisplayName: (user) => {
             if (!user) return '';
             const full = [user.firstName, user.lastName].filter(Boolean).join(' ');
-            return full || user.username || user.email || '';
+            return user.preferredName || full || user.username || user.email || '';
         }
     }
 });
@@ -97,6 +99,7 @@ test.beforeEach(() => {
     kc.collaborators = [];
     kc.userCaseRole = {};
     kc.caseRoleMap = {};
+    kc.realmRoleUsers = {};
     for (const k of Object.keys(kc.calls)) kc.calls[k] = [];
     groupAccess.byCase = {};
     groupAccess.roleFromGroups = {};
@@ -201,6 +204,9 @@ function fakePayload(initial = {}) {
             if (!doc) throw new Error('not found');
             Object.assign(doc, fields);
             return doc;
+        },
+        async delete({ collection, id }) {
+            data[collection] = (data[collection] || []).filter((d) => String(d.id) !== String(id));
         }
     };
 }
@@ -246,7 +252,7 @@ test('a signup invite created by POST /invites can be previewed and redeemed wit
     });
     assert.equal(created.status, 201);
     assert.equal(created.body.status, 'signup_invite');
-    const token = new URL(created.body.inviteUrl, 'http://x').searchParams.get('kc-invite');
+    const token = new URL(mail.calls.at(-1).inviteUrl, 'http://x').searchParams.get('kc-invite');
 
     const preview = await call('GET', '/api/cases/invites/preview', { query: { token } });
     assert.equal(preview.status, 200);
@@ -263,7 +269,7 @@ test('a signup invite created by POST /invites can be previewed and redeemed wit
 test('redeeming the same signup invite twice fails the second time (status is no longer pending_signup)', async () => {
     payloadClient = fakePayload({ cases: [makeCase()] });
     const created = await call('POST', '/api/cases/1/invites', { user: ADMIN_USER, body: { email: 'unknown@x.org' } });
-    const token = new URL(created.body.inviteUrl, 'http://x').searchParams.get('kc-invite');
+    const token = new URL(mail.calls.at(-1).inviteUrl, 'http://x').searchParams.get('kc-invite');
     await call('POST', '/api/cases/invites/redeem', { body: { token, password: 'longenough1' } });
     const second = await call('POST', '/api/cases/invites/redeem', { body: { token, password: 'longenough1' } });
     assert.equal(second.status, 404);
@@ -274,7 +280,7 @@ test('an expired signup invite is rejected at preview and marked expired', async
     // going through the real create flow rather than hand-seeding a token_hash.
     payloadClient = fakePayload({ cases: [makeCase()] });
     const created = await call('POST', '/api/cases/1/invites', { user: ADMIN_USER, body: { email: 'new2@x.org' } });
-    const token = new URL(created.body.inviteUrl, 'http://x').searchParams.get('kc-invite');
+    const token = new URL(mail.calls.at(-1).inviteUrl, 'http://x').searchParams.get('kc-invite');
     const invite = payloadClient.rows['case-invites'].find((i) => i.invitee_email === 'new2@x.org');
     invite.expires_at = new Date(Date.now() - 1000).toISOString();
     const res = await call('GET', '/api/cases/invites/preview', { query: { token } });
@@ -363,6 +369,61 @@ test('GET collaborators merges individual Keycloak collaborators with SlicerHub 
     assert.equal(group.role, 'read_only');
 });
 
+function groupWithMixedMembers() {
+    groups['g1'] = { id: 'g1', name: 'Students', members: [
+        { kcSub: 'kc-manager', canManageGroup: true },
+        { kcSub: 'kc-orgadmin' },
+        { kcSub: 'kc-sharer' },
+        { kcSub: 'kc-private' },
+    ] };
+    groupAccess.byCase['1'] = [{ groupId: 'g1', role: 'read_only' }];
+    kc.realmRoleUsers['app-org-admin'] = [{ id: 'kc-orgadmin' }];
+    kc.usersBySub['kc-manager'] = { firstName: 'Mo', lastName: 'Manager', email: 'mo@x.org' };
+    kc.usersBySub['kc-orgadmin'] = { firstName: 'Olu', lastName: 'Org', email: 'olu@x.org' };
+    kc.usersBySub['kc-sharer'] = { preferredName: 'Sam', firstName: 'Samantha', email: 'sam@x.org' };
+    kc.usersBySub['kc-private'] = { firstName: 'Pat', lastName: 'Private', email: 'pat@x.org' };
+}
+
+test('a case admin sees only group managers, org/site admins and members who share their name — never emails', async () => {
+    payloadClient = fakePayload({
+        cases: [makeCase()],
+        'user-preferences': [
+            { id: 1, keycloak_sub: 'kc-sharer', share_name_in_groups: true },
+            { id: 2, keycloak_sub: 'kc-private', share_name_in_groups: false },
+        ]
+    });
+    groupWithMixedMembers();
+    const res = await call('GET', '/api/cases/1/collaborators', { user: ADMIN_USER });
+    const group = res.body.collaborators.find((c) => c.type === 'group');
+    assert.deepEqual(group.members, [
+        { id: 'kc-manager', displayName: 'Mo Manager' },
+        { id: 'kc-orgadmin', displayName: 'Olu Org' },
+        { id: 'kc-sharer', displayName: 'Sam' },
+    ]);
+    assert.equal(group.hiddenMemberCount, 1);
+    assert.equal(group.memberCount, 4);
+});
+
+test('an org admin sees every group member with their email, to audit membership', async () => {
+    payloadClient = fakePayload({ cases: [makeCase()] });
+    groupWithMixedMembers();
+    const res = await call('GET', '/api/cases/1/collaborators', { user: { id: 9, role: 'org-admin', keycloakSub: 'kc-some-org-admin' } });
+    const group = res.body.collaborators.find((c) => c.type === 'group');
+    assert.equal(group.hiddenMemberCount, 0);
+    assert.deepEqual(group.members.find((m) => m.id === 'kc-private'), { id: 'kc-private', displayName: 'Pat Private', email: 'pat@x.org' });
+});
+
+test('a manager of the group sees every member by name', async () => {
+    payloadClient = fakePayload({ cases: [makeCase()] });
+    groupWithMixedMembers();
+    groupAccess.roleFromGroups['kc-manager:1'] = 'read_only';
+    const res = await call('GET', '/api/cases/1/collaborators', { user: { id: 8, role: 'user', keycloakSub: 'kc-manager' } });
+    const group = res.body.collaborators.find((c) => c.type === 'group');
+    assert.equal(group.hiddenMemberCount, 0);
+    assert.equal(group.members.length, 4);
+    assert.ok(group.members.every((m) => !('email' in m)));
+});
+
 test('GET collaborators includes the owner profile shape when the case has an owner', async () => {
     payloadClient = fakePayload({ cases: [makeCase()] });
     kc.usersBySub['kc-admin'] = { email: 'owner@x.org', firstName: 'Ada', lastName: 'Lovelace' };
@@ -424,6 +485,24 @@ test('an admin inviting an unknown email creates a disabled account and a pendin
     assert.equal(payloadClient.rows['case-invites'][0].status, 'pending_signup');
 });
 
+// The signup link lets whoever holds it set the new account's password, so it must only
+// reach the invitee. The inviter sees it only as a fallback when the email failed.
+test('the signup link is not returned to the inviter when the invite email was sent', async () => {
+    payloadClient = fakePayload({ cases: [makeCase()] });
+    const res = await call('POST', '/api/cases/1/invites', { user: ADMIN_USER, body: { email: 'new@x.org' } });
+    assert.equal(res.body.emailSent, true);
+    assert.equal(res.body.inviteUrl, undefined);
+    assert.match(mail.calls[0].inviteUrl, /kc-invite=/);
+});
+
+test('the signup link is returned to the inviter when the invite email could not be sent', async () => {
+    payloadClient = fakePayload({ cases: [makeCase()] });
+    mail.result = { sent: false, error: 'SMTP disabled' };
+    const res = await call('POST', '/api/cases/1/invites', { user: ADMIN_USER, body: { email: 'new@x.org' } });
+    assert.equal(res.body.emailSent, false);
+    assert.match(res.body.inviteUrl, /kc-invite=/);
+});
+
 test('a collaborator inviting someone queues a pending_approval invite instead of acting immediately', async () => {
     payloadClient = fakePayload({ cases: [makeCase()] });
     groupAccess.roleFromGroups['kc-collab:1'] = 'collaborator';
@@ -473,7 +552,7 @@ test('an invalid role is rejected before any Payload or Keycloak call', async ()
 
 test('an admin proposing a group links it to the case immediately', async () => {
     payloadClient = fakePayload({ cases: [makeCase()] });
-    groups['g1'] = { id: 'g1', name: 'Radiology Team', members: [] };
+    groups['g1'] = { id: 'g1', name: 'Radiology Team', members: [{ kcSub: 'kc-admin' }] };
     const res = await call('POST', '/api/cases/1/group-invites', { user: ADMIN_USER, body: { groupId: 'g1', role: 'collaborator' } });
     assert.equal(res.status, 201);
     assert.equal(res.body.status, 'added');
@@ -482,11 +561,18 @@ test('an admin proposing a group links it to the case immediately', async () => 
 
 test('a collaborator proposing a group queues it for approval instead', async () => {
     payloadClient = fakePayload({ cases: [makeCase()] });
-    groups['g1'] = { id: 'g1', name: 'Radiology Team', members: [] };
+    groups['g1'] = { id: 'g1', name: 'Radiology Team', members: [{ kcSub: 'kc-collab' }] };
     groupAccess.roleFromGroups['kc-collab:1'] = 'collaborator';
     const res = await call('POST', '/api/cases/1/group-invites', { user: COLLAB_USER, body: { groupId: 'g1' } });
     assert.equal(res.body.status, 'pending_approval');
     assert.equal(groupAccess.calls.setGroupAccessForCase.length, 0);
+});
+
+test('a case admin can link a group they are not a member of', async () => {
+    payloadClient = fakePayload({ cases: [makeCase()] });
+    groups['g1'] = { id: 'g1', name: 'Students', members: [{ kcSub: 'kc-stranger' }] };
+    const res = await call('POST', '/api/cases/1/group-invites', { user: ADMIN_USER, body: { groupId: 'g1' } });
+    assert.equal(res.body.status, 'added');
 });
 
 test('proposing a group that does not exist 404s', async () => {
@@ -497,7 +583,7 @@ test('proposing a group that does not exist 404s', async () => {
 
 test('proposing a group that is already linked to the case is rejected', async () => {
     payloadClient = fakePayload({ cases: [makeCase()] });
-    groups['g1'] = { id: 'g1', name: 'Radiology Team', members: [] };
+    groups['g1'] = { id: 'g1', name: 'Radiology Team', members: [{ kcSub: 'kc-admin' }] };
     groupAccess.byCase['1'] = [{ groupId: 'g1', role: 'read_only' }];
     const res = await call('POST', '/api/cases/1/group-invites', { user: ADMIN_USER, body: { groupId: 'g1' } });
     assert.equal(res.status, 409);
@@ -527,6 +613,29 @@ test('approving a "group" invite links the group and marks the invite accepted',
     const res = await call('POST', '/api/cases/1/invites/1/approve', { user: ADMIN_USER });
     assert.equal(res.body.status, 'approved');
     assert.deepEqual(groupAccess.calls.setGroupAccessForCase[0], { caseId: '1', groupId: 'g1', role: 'read_only' });
+});
+
+test('approving a group invite whose group was deleted deletes the request instead of linking', async () => {
+    payloadClient = fakePayload({
+        cases: [makeCase()],
+        'case-invites': [{ id: 1, case: '1', status: 'pending_approval', kind: 'group', group_id: 'gone', role: 'read_only' }]
+    });
+    const res = await call('POST', '/api/cases/1/invites/1/approve', { user: ADMIN_USER });
+    assert.equal(res.status, 409);
+    assert.equal(groupAccess.calls.setGroupAccessForCase.length, 0);
+    assert.equal(payloadClient.rows['case-invites'].length, 0);
+});
+
+test('pending-approval includes the current members of a proposed group', async () => {
+    payloadClient = fakePayload({
+        cases: [makeCase()],
+        'case-invites': [{ id: 1, case: '1', status: 'pending_approval', kind: 'group', group_id: 'g1', role: 'collaborator' }]
+    });
+    groups['g1'] = { id: 'g1', name: 'Radiology Team', members: [{ kcSub: 'kc-m1', canManageGroup: true }, { kcSub: 'kc-m2' }] };
+    kc.usersBySub['kc-m1'] = { firstName: 'Ada', lastName: 'Lee' };
+    const res = await call('GET', '/api/cases/invites/pending-approval', { user: ADMIN_USER });
+    assert.deepEqual(res.body.invites[0].groupMembers, [{ id: 'kc-m1', displayName: 'Ada Lee' }]);
+    assert.equal(res.body.invites[0].groupHiddenMemberCount, 1);
 });
 
 test('approving a "signup" invite creates the account and sends an email, moving status to pending_signup', async () => {
@@ -609,7 +718,7 @@ test('bulk update adds new collaborators, changes roles, and removes ones no lon
 test('bulk update reconciles SlicerHub group entries the same way as individual users', async () => {
     payloadClient = fakePayload({ cases: [makeCase()] });
     groups['g1'] = { id: 'g1', name: 'Team One' };
-    groups['g2'] = { id: 'g2', name: 'Team Two' };
+    groups['g2'] = { id: 'g2', name: 'Team Two', members: [{ kcSub: 'kc-admin' }] };
     groupAccess.byCase['1'] = [{ groupId: 'g1', role: 'read_only' }];
     const res = await call('PUT', '/api/cases/1/collaborators', {
         user: ADMIN_USER,

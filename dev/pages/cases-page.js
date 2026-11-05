@@ -35,8 +35,8 @@ import {
 } from '../utils/viewerLaunch.js';
 import { getCachedLocalSlicerViewerOptions, getCachedUserPreferences } from '../utils/userPreferences.js';
 import { resolveSimplifiedViewerChoice } from '../utils/localSlicerViewerOptions.js';
-import { isInviteEmailEnabled, isSlicerWebDevModeEnabled, loadAppFeatures } from '../services/features.js';
-import { getMyGroups } from '../services/groups.js';
+import { isSlicerWebDevModeEnabled, loadAppFeatures } from '../services/features.js';
+import { listAllGroups } from '../services/groups.js';
 import { sendViewerHeartbeat } from '../utils/viewerHeartbeat.js';
 import { stopViewerSession } from '../utils/viewerSessionLifecycle.js';
 import {
@@ -1655,12 +1655,10 @@ export class CasesPage extends LitElement {
     async loadCaseCollaborators(caseId) {
         try {
             const data = await listCollaborators(caseId);
-            const collaborators = data.collaborators || [];
-            const owner = data.owner;
-            const ownerAlreadyListed = owner && collaborators.some((c) => c.id === owner.id);
-            const all = (owner && !ownerAlreadyListed) ? [owner, ...collaborators] : collaborators;
             this.cases = this.cases.map((row) =>
-                row.id === caseId ? { ...row, keycloakCollaborators: all } : row
+                row.id === caseId
+                    ? { ...row, keycloakCollaborators: data.collaborators || [], _ownerInfo: data.owner || row._ownerInfo || null }
+                    : row
             );
         } catch {
             // non-fatal; mention picker shows empty
@@ -1676,6 +1674,7 @@ export class CasesPage extends LitElement {
                 createdAt: c.createdAt,
                 author_id: c.author_id,
                 author:    c.author,
+                mentions:  c.mentions || {},
             }));
             this.cases = this.cases.map((row) =>
                 row.id === caseId ? { ...row, comments } : row
@@ -1714,6 +1713,7 @@ export class CasesPage extends LitElement {
                     displayName: entry.displayName || '',
                     memberCount: entry.memberCount ?? null,
                     groupMembers: entry.members || [],
+                    hiddenMemberCount: entry.hiddenMemberCount || 0,
                     role: entry.role || 'collaborator',
                     locked: false,
                 });
@@ -1748,11 +1748,7 @@ export class CasesPage extends LitElement {
         dialog.availableGroups = [];
         if (canInvite) {
             try {
-                const memberships = await getMyGroups();
-                dialog.availableGroups = (memberships || []).map((m) => ({
-                    id: m.group.id,
-                    name: m.group.name,
-                }));
+                dialog.availableGroups = await listAllGroups();
             } catch { /* non-fatal; group picker just stays empty */ }
         }
 
@@ -1862,10 +1858,11 @@ export class CasesPage extends LitElement {
             const data = await approveCaseInvite(caseRow.id, inviteId);
             await this.handlePeopleInvited({ detail: { status: data.status || 'approved', inviteUrl: data.inviteUrl || null } });
             const dialog = this.renderRoot?.querySelector('#case-people-dialog');
-            if (dialog && data.inviteUrl) {
-                dialog.lookupMessage = (data.emailSent && isInviteEmailEnabled())
-                    ? t('people.inviteApprovedEmailed')
-                    : t('people.inviteApprovedCopyLink');
+            if (dialog && data.status === 'signup_invite') {
+                // The server only returns the link when the email could not be sent.
+                dialog.lookupMessage = data.inviteUrl
+                    ? t('people.inviteApprovedCopyLink')
+                    : t('people.inviteApprovedEmailed');
             }
         } catch (err) {
             const dialog = this.renderRoot?.querySelector('#case-people-dialog');
@@ -1944,6 +1941,7 @@ export class CasesPage extends LitElement {
                 createdAt: c.createdAt,
                 author_id: c.author_id,
                 author:    c.author,
+                mentions:  c.mentions || {},
             } : null;
             panel?.clearDraft?.();
             this.cases = this.cases.map((row) => {
@@ -3604,8 +3602,11 @@ export class CasesPage extends LitElement {
 
                         <comments-panel
                             .comments=${comments}
-                            .collaborators=${(caseRow.keycloakCollaborators || [])
-                                .filter((c) => c.id && c.type !== 'group')
+                            .collaborators=${[
+                                ...(caseRow._ownerInfo?.id ? [caseRow._ownerInfo] : []),
+                                ...(caseRow.keycloakCollaborators || []),
+                            ]
+                                .filter((c, i, all) => c.id && c.type !== 'group' && all.findIndex((x) => x.id === c.id) === i)
                                 .map((c) => ({
                                     id:        c.id,
                                     name:      c.displayName || [c.firstName, c.lastName].filter(Boolean).join(' ') || c.email || c.id,

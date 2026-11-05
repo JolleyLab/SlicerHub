@@ -15,6 +15,7 @@ export function mapMember(doc) {
     if (!doc) return null;
     return {
         id: String(doc.id),
+        groupId: doc.group_id != null ? String(doc.group_id) : '',
         kcSub: doc.kc_sub || '',
         canManageGroup: Boolean(doc.can_manage_group),
         createdAt: doc.createdAt || null,

@@ -96,10 +96,6 @@ export class ResetPasswordForm extends LitElement {
             const data = await res.json();
             if (!res.ok) throw new Error(data?.error?.message || t('common.networkError'));
             this._state = 'sent';
-            // Dev: no SMTP — surface the link
-            if (data.resetUrl) {
-                console.info('[dev] Reset URL:', data.resetUrl);
-            }
         } catch (err) {
             this._error = err.message;
         } finally {

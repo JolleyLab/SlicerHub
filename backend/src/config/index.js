@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -7,24 +8,43 @@ import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-/**
- * Throws an error in production if a required value is missing
- * In development, returns a default value with a warning
- */
-function requireInProduction(envVar, defaultValue, errorMessage) {
-    const value = process.env[envVar];
+const WEAK_JWT_SECRETS = new Set([
+    'dev-secret-CHANGE-IN-PRODUCTION',
+    'please-change-this-to-a-secure-random-string-in-production',
+    'generate-a-secure-random-string-here'
+]);
 
-    if (!value) {
-        if (process.env.NODE_ENV === 'production') {
-            throw new Error(errorMessage || `${envVar} is required in production`);
-        }
-        console.warn(`⚠️  WARNING: ${envVar} not set. Using default: "${defaultValue}"`);
-        console.warn(`   Set this in production for security!`);
-        return defaultValue;
-    }
-
-    return value;
+function isWeakJwtSecret(secret) {
+    return !secret || secret.includes('dev-secret') || WEAK_JWT_SECRETS.has(secret);
 }
+
+/**
+ * JWT signing secret. Production requires a strong JWT_SECRET (checked below).
+ * Elsewhere, an unset or well-known default secret is replaced by a random one kept
+ * next to the database, so a dev/demo server never signs tokens with a public value.
+ */
+function resolveJwtSecret(dbPath) {
+    const fromEnv = (process.env.JWT_SECRET || '').trim();
+    if (process.env.NODE_ENV === 'production' || !isWeakJwtSecret(fromEnv)) {
+        return fromEnv;
+    }
+    const secretFile = path.join(path.dirname(dbPath), '.jwt-secret');
+    try {
+        const saved = fs.readFileSync(secretFile, 'utf8').trim();
+        if (saved.length >= 64) return saved;
+    } catch { /* not created yet */ }
+    const generated = crypto.randomBytes(64).toString('hex');
+    try {
+        fs.mkdirSync(path.dirname(secretFile), { recursive: true });
+        fs.writeFileSync(secretFile, generated, { mode: 0o600 });
+        console.warn(`⚠️  JWT_SECRET unset or a known default — using a generated secret saved to ${secretFile}`);
+    } catch (err) {
+        console.warn(`⚠️  JWT_SECRET unset or a known default — could not save a generated secret (${err.message}); sessions will not survive a restart`);
+    }
+    return generated;
+}
+
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/users.db');
 
 /**
  * Central configuration for the application
@@ -47,18 +67,14 @@ const config = {
 
     // JWT Authentication
     jwt: {
-        secret: requireInProduction(
-            'JWT_SECRET',
-            'dev-secret-CHANGE-IN-PRODUCTION',
-            'JWT_SECRET must be set in production for security'
-        ),
+        secret: resolveJwtSecret(DB_PATH),
         expiresIn: process.env.JWT_EXPIRES_IN || '7d',
         algorithm: 'HS256'
     },
 
     // Database
     database: {
-        path: process.env.DB_PATH || path.join(__dirname, '../../data/users.db')
+        path: DB_PATH
     },
 
     // Docker
@@ -299,16 +315,11 @@ const config = {
 };
 
 // Validate configuration on startup
-const WEAK_JWT_SECRETS = new Set([
-    'dev-secret-CHANGE-IN-PRODUCTION',
-    'please-change-this-to-a-secure-random-string-in-production',
-    'generate-a-secure-random-string-here'
-]);
 if (config.isProduction) {
     if (process.env.AUTH_DEV_RELAXED === 'true') {
         throw new Error('FATAL: AUTH_DEV_RELAXED must not be enabled in production');
     }
-    if (config.jwt.secret.includes('dev-secret') || WEAK_JWT_SECRETS.has(config.jwt.secret)) {
+    if (isWeakJwtSecret(config.jwt.secret)) {
         throw new Error('FATAL: Set a strong random JWT_SECRET in production (see .env.example)');
     }
     if (!process.env.GPU_CREDENTIALS_KEY?.trim()) {

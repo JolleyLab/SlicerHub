@@ -3,8 +3,8 @@ import { peopleDialogStyles } from './people-dialog.styles.js';
 import './person-chip.js';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
-import { isInviteEmailEnabled } from '../services/features.js';
 import { normalizeMember } from '../utils/memberNormalize.js';
+import { groupMembersTitle } from '../utils/groupMembersTitle.js';
 import { roleOrder } from '../utils/casePermissions.js';
 import { roleLabel } from '../utils/activityItems.js';
 import './app-dialog.js';
@@ -87,13 +87,6 @@ function buildUnknownLabels(members = [], currentUserId = null) {
         labels.set(id, t('people.unknownUserN', { n }));
     }
     return labels;
-}
-
-/** Hover text listing a group's current members — discoverable without a separate dialog. */
-function groupMembersTitle(member) {
-    const members = Array.isArray(member?.groupMembers) ? member.groupMembers : [];
-    if (!members.length) return t('people.noGroupMembers');
-    return t('people.groupMembersTitle', { names: members.map((m) => m.displayName).join(', ') });
 }
 
 /** Secondary line: email when primary is not a real name (and not Me). */
@@ -336,11 +329,12 @@ export class PeopleDialog extends LitElement {
                 this.unknownEmail = '';
                 this.emailQuery = '';
                 this.inviteRole = '';
-                if (result?.status === 'signup_invite' && result?.inviteUrl) {
-                    this.lastInviteUrl = result.inviteUrl;
-                    this.lookupMessage = (result.emailSent && isInviteEmailEnabled())
-                        ? t('people.inviteEmailSent')
-                        : t('people.inviteLinkReady');
+                if (result?.status === 'signup_invite') {
+                    // The server only returns the link when the email could not be sent.
+                    this.lastInviteUrl = result.inviteUrl || '';
+                    this.lookupMessage = result.inviteUrl
+                        ? t('people.inviteLinkReady')
+                        : t('people.inviteEmailSent');
                 } else if (result?.status === 'pending' || result?.status === 'pending_approval') {
                     this.lookupMessage = t('people.invitePending');
                 } else {
@@ -467,7 +461,7 @@ export class PeopleDialog extends LitElement {
                     .avatarUrl=${member.avatarUrl || ''}
                     .name=${name}
                     .secondaryLine=${secondary}
-                    title=${isGroup ? groupMembersTitle(member) : ''}
+                    title=${isGroup ? groupMembersTitle(member.groupMembers, member.hiddenMemberCount) : ''}
                 ></person-chip>
                 <div class="meta">
                     ${editable ? html`
@@ -619,11 +613,7 @@ export class PeopleDialog extends LitElement {
                 ? t('people.awaitingSignup')
                 : `${t('people.awaitingApproval')}${isSignup ? ` (${t('people.newAccount')})` : ''}`;
             const statusLine = `${roleLabel(invite.proposedRole)} · ${statusSuffix}`;
-            const groupTitle = isGroup
-                ? (Array.isArray(invite.groupMembers) && invite.groupMembers.length
-                    ? t('people.groupMembersTitle', { names: invite.groupMembers.map((m) => m.displayName).join(', ') })
-                    : t('people.noGroupMembers'))
-                : '';
+            const groupTitle = isGroup ? groupMembersTitle(invite.groupMembers, invite.groupHiddenMemberCount) : '';
             return html`
                     <div class="row">
                         <person-chip

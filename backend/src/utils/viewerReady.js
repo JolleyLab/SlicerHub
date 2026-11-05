@@ -32,7 +32,9 @@ export function isLocalDockerSession(trameContext) {
 
 export function buildInternalViewerCheckUrl(sessionUserId, sessionPort, trameContext) {
     if (trameContext?.viewerPublicBaseUrl) {
-        return `http://nginx:80/trame-session-port/${sessionPort}/`;
+        // Probe the remote GPU host directly: the app nginx route now requires a user session.
+        const base = String(trameContext.viewerPublicBaseUrl).replace(/\/+$/, '');
+        return `${base}/trame-session-port/${sessionPort}/`;
     }
 
     const runtime = (trameContext?.runtime || process.env.TRAME_SESSION_RUNTIME || 'docker')

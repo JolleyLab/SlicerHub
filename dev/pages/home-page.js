@@ -17,6 +17,7 @@ import { condensedTime, fullTime } from '../utils/condensedTime.js';
 import { ICON_CASES, ICON_TODO, ICON_ACTIVITY, ICON_GEAR } from '../utils/homeIcons.js';
 import { visibleColumns, normalizeHomeLayout } from '../utils/homeLayout.js';
 import { getCachedUserPreferences } from '../utils/userPreferences.js';
+import { groupMembersTitle } from '../utils/groupMembersTitle.js';
 import '../components/page-layout-template.js';
 
 /** Time-of-day greeting key, so the page feels current without any data behind it. */
@@ -78,6 +79,7 @@ function inviteToTodo(invite) {
             case: invite.caseTitle || t('home.invite.untitledCase')
         }),
         detail: t('home.card.asRole', { role: roleLabel(invite.proposedRole) }),
+        hoverText: invite.kind === 'group' ? groupMembersTitle(invite.groupMembers, invite.groupHiddenMemberCount) : '',
         at: invite.createdAt,
         actionRequired: true,
         invite
@@ -302,7 +304,7 @@ export class HomePage extends LitElement {
             this.todo = this.todo.filter((entry) => entry.id !== item.id);
             this.updateStatusIsError = false;
             this.updateStatus = t(decision === 'approve' ? 'home.invite.approved' : 'home.invite.rejected', {
-                email: invite.inviteeEmail
+                email: invite.inviteeName || invite.inviteeEmail
             });
             invalidateNotifications();
         } catch (err) {
@@ -449,7 +451,7 @@ export class HomePage extends LitElement {
                 <time class="card-time" datetime=${item.at} title=${fullTime(item.at)}>${condensedTime(item.at)}</time>
             ` : ''}
             <div class="card-main">
-                <p class="card-title">${item.title}</p>
+                <p class="card-title" title=${item.hoverText || ''}>${item.title}</p>
                 ${item.detail ? html`<p class="card-detail">${item.detail}</p>` : ''}
             </div>
         `;

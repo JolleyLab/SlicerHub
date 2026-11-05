@@ -5,7 +5,8 @@ import { getPayloadClient } from '../payload/index.js';
 import { ValidationError, NotFoundError, ForbiddenError } from '../utils/errors.js';
 import storage from '../storage/index.js';
 import { attachmentOpenFlags } from '../utils/attachmentFlags.js';
-import { assertCaseAccess, buildCaseRoleMap } from '../utils/caseAccess.js';
+import { assertCaseAccess, buildCaseRoleMap, getCaseRoleForSub } from '../utils/caseAccess.js';
+import { removeAllGroupAccessForCase } from '../services/caseGroupAccess.js';
 import { getKeycloakSubForUser, getKeycloakUser, kcDisplayName } from '../services/keycloakAdmin.js';
 import { listRecentActivityKC } from '../services/recentActivity.js';
 import { findLink } from '../auth/identityStore.js';
@@ -24,6 +25,39 @@ import { SESSION_KINDS } from '../sessions/kinds.js';
 import { msg } from '../i18n/index.js';
 import { buildViewerFrontendUrl } from '../utils/viewerUrl.js';
 import { resolveUseSimplifiedViewer } from '../slicerGui/viewerPreferences.js';
+
+const MENTION_RE = /(?:^|[^/\w])@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi;
+
+/** Keycloak subs @mentioned in a comment body, lowercased. */
+function mentionedSubs(body) {
+    return [...String(body || '').matchAll(MENTION_RE)].map(m => m[1].toLowerCase());
+}
+
+/**
+ * { sub: displayName } for a comment's mentions, resolved server-side so the
+ * client can show names for anyone mentioned — including people later removed
+ * from the case — without depending on its current collaborator list.
+ */
+function mentionNames(body, nameMap) {
+    const out = {};
+    for (const sub of mentionedSubs(body)) {
+        if (nameMap[sub]) out[sub] = nameMap[sub];
+    }
+    return out;
+}
+
+/**
+ * Whether a mentioned user should get a mention notification for this case.
+ * The notification carries the case title and part of the comment, so only people
+ * who can open the case receive one.
+ *
+ * This is the single place mention delivery is decided: a per-user opt-out
+ * (e.g. a "Mentions" preference read via getPreferencesByKcSub) belongs here.
+ */
+async function shouldNotifyMention(caseDoc, kcSub) {
+    const role = await getCaseRoleForSub(caseDoc, kcSub).catch(() => null);
+    return Boolean(role);
+}
 
 function parseOptionalSeatId(raw) {
     if (raw == null || raw === '') return null;
@@ -260,6 +294,13 @@ export default function casesRoutes(app) {
             await storage.delete(att.storage_key).catch(() => {});
         }
 
+        // These `case` columns are NOT NULL with ON DELETE SET NULL, so leftover rows block the delete.
+        const caseWhere = { case: { equals: Number(req.params.id) } };
+        for (const collection of ['attachments', 'case-comments', 'case-invites']) {
+            await payload.delete({ collection, where: caseWhere });
+        }
+        await removeAllGroupAccessForCase(req.params.id);
+
         await payload.delete({ collection: 'cases', id: req.params.id });
         res.status(204).end();
     }));
@@ -358,12 +399,11 @@ export default function casesRoutes(app) {
             limit: 500,
         });
 
-        // Resolve unique author names from Keycloak (skip sqlite: bridge IDs)
-        const uniqueSubs = [...new Set(
-            result.docs
-                .map(c => c.author_id)
-                .filter(id => id && !id.startsWith('sqlite:'))
-        )];
+        // Resolve author and @mentioned names from Keycloak in one pass (skip sqlite: bridge IDs)
+        const uniqueSubs = [...new Set([
+            ...result.docs.map(c => c.author_id).filter(id => id && !id.startsWith('sqlite:')),
+            ...result.docs.flatMap(c => mentionedSubs(c.body)),
+        ])];
         const nameMap = {};
         await Promise.all(uniqueSubs.map(async (sub) => {
             const user = await getKeycloakUser(sub);
@@ -376,7 +416,7 @@ export default function casesRoutes(app) {
             const author = (isKcSub || name)
                 ? { name, avatarUrl: isKcSub ? `/api/users/${encodeURIComponent(c.author_id)}/avatar` : null }
                 : undefined;
-            return { ...c, author };
+            return { ...c, author, mentions: mentionNames(c.body, nameMap) };
         });
 
         res.set('Cache-Control', 'no-store');
@@ -414,16 +454,13 @@ export default function casesRoutes(app) {
         const authorName = kcUser ? (kcDisplayName(kcUser) || null) : null;
 
         // Fire mention notifications for any @<kc-sub-uuid> patterns in the comment body
-        const mentionRe = /(?:^|[^/\w])@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi;
-        const mentionedSubs = new Set();
-        let m;
-        while ((m = mentionRe.exec(body)) !== null) mentionedSubs.add(m[1].toLowerCase());
-        if (mentionedSubs.size > 0) {
+        const mentioned = new Set(mentionedSubs(body));
+        const uuidNameMap = new Map();
+        if (mentioned.size > 0) {
             const caseTitle = doc.title || 'a case';
 
             // Resolve @uuid → @DisplayName in the notification body so recipients see names
-            const uuidNameMap = new Map();
-            for (const sub of mentionedSubs) {
+            for (const sub of mentioned) {
                 try {
                     const kcUser = await getKeycloakUser(sub);
                     if (kcUser) {
@@ -438,9 +475,10 @@ export default function casesRoutes(app) {
             }
             const notifBody = resolvedBody.slice(0, 200);
 
-            for (const sub of mentionedSubs) {
+            for (const sub of mentioned) {
                 if (sub === authorId) continue; // don't notify yourself
                 try {
+                    if (!(await shouldNotifyMention(doc, sub))) continue;
                     const link = findLink('keycloak', sub);
                     if (!link) continue;
                     createNotification({
@@ -460,6 +498,7 @@ export default function casesRoutes(app) {
             comment: {
                 ...comment,
                 author: authorName ? { name: authorName, avatarUrl: `/api/users/${encodeURIComponent(authorId)}/avatar` } : undefined,
+                mentions: mentionNames(body, Object.fromEntries(uuidNameMap)),
             },
         });
     }));

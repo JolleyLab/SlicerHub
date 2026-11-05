@@ -20,6 +20,7 @@ function docToPrefs(doc) {
         homeLayout: doc.home_layout,
         slicerWebChannel: doc.slicer_web_channel,
         notifyRegistrationApproval: doc.notify_registration_approval,
+        shareNameInGroups: doc.share_name_in_groups,
         activityFilters: doc.activity_filters,
     });
 }
@@ -32,6 +33,7 @@ function prefsToDoc(prefs) {
         home_layout: prefs.homeLayout ?? null,
         slicer_web_channel: prefs.slicerWebChannel,
         notify_registration_approval: prefs.notifyRegistrationApproval !== false,
+        share_name_in_groups: prefs.shareNameInGroups === true,
         activity_filters: prefs.activityFilters ?? null,
     };
 }

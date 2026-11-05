@@ -70,7 +70,10 @@ export default function slicerWebRoutes(app) {
             .createHmac('sha256', config.slicerWeb.webhookSecret)
             .update(req.body) // Buffer — express.raw captured this before express.json ran
             .digest('hex');
-        if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
+        // timingSafeEqual throws on unequal lengths, so check that first (a 500 otherwise).
+        const sigBuf = Buffer.from(String(sig));
+        const expectedBuf = Buffer.from(expected);
+        if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
             return res.status(401).json({ error: 'Invalid signature' });
         }
 

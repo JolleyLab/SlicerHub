@@ -80,10 +80,13 @@ services:
     # Copy deploy key to /tmp so we can chmod 600 it (Windows bind mounts always arrive as 755).
     command: ["sh", "-c", "test -d node_modules/nodemailer && test -d node_modules/heic-convert && test -d node_modules/payload || npm ci; if [ -f /run/secrets/slicerweb/slicerweb-deploy-key ]; then cp /run/secrets/slicerweb/slicerweb-deploy-key /tmp/slicerweb-deploy-key && chmod 600 /tmp/slicerweb-deploy-key; fi; exec node src/server.js"]
     environment:
-      - NODE_ENV=development
+      # Taken from .env so NODE_ENV=production there turns on the production safety checks.
+      - NODE_ENV=${NODE_ENV:-development}
       - DB_PATH=/app/data/users.db
       - DB_SAVE_DIRECT=true
-      - JWT_SECRET=${JWT_SECRET:-please-change-this-to-a-secure-random-string-in-production}
+      # No fallback: when unset outside production the backend generates a random
+      # secret and keeps it in /app/data (see backend/src/config/index.js).
+      - JWT_SECRET=${JWT_SECRET:-}
       - GPU_CREDENTIALS_KEY=${GPU_CREDENTIALS_KEY:-}
       - WORKSPACE_ROOT=/workspace
       - TRAME_SERVICE_URL=${TRAME_SERVICE_URL:-http://trame-service:8090}
@@ -110,7 +113,9 @@ services:
       # Host repo path for nested `docker run -v` (Windows Docker Desktop / DinD binds).
       - HOST_WORKSPACE_ROOT=${HOST_WORKSPACE_ROOT:-${PWD}}
       - SLICER_GUI_IMAGE=${SLICER_GUI_IMAGE:-slicer-web-slicer-gui:local}
-      - SLICER_GUI_NETWORK=${SLICER_GUI_NETWORK:-trame-net}
+      # Seats get their own network (shared only with nginx + backend) so a seat's Slicer
+      # Python console cannot reach trame-service (docker.sock), the databases or Redis.
+      - SLICER_GUI_NETWORK=${SLICER_GUI_NETWORK:-slicer-seat-net}
       # Dev only: bind-mount host launch-slicer.sh / slicer_session.py into seats.
       # Leave off in production — Linux host scripts are often non-executable (exit 126).
       - SLICER_GUI_MOUNT_DEV_SCRIPTS=${SLICER_GUI_MOUNT_DEV_SCRIPTS:-false}
@@ -149,6 +154,7 @@ services:
       - mailpit
     networks:
       - trame-net
+      - slicer-seat-net
 
   # Catch-all SMTP for local invite email testing (UI: http://localhost:8025).
   mailpit:
@@ -194,6 +200,7 @@ services:
       - trame-job
     networks:
       - trame-net
+      - slicer-seat-net
   
   # Secret manager (always-on — stores all application secrets)
   # Admin UI: http://localhost:8888   First run: node scripts/setup-infisical.mjs
@@ -433,7 +440,7 @@ services:
     tty: true
     restart: unless-stopped
     networks:
-      - trame-net
+      - slicer-seat-net
     deploy:
       resources:
         reservations:
@@ -445,6 +452,10 @@ services:
 networks:
   trame-net:
     name: trame-net
+    driver: bridge
+  # Full Slicer seats only (plus nginx + backend, which proxy to / probe them).
+  slicer-seat-net:
+    name: slicer-seat-net
     driver: bridge
 
 volumes:

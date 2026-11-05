@@ -10,6 +10,7 @@ export function normalizeMember(m) {
             name: m.displayName || m.name || '',
             memberCount: m.memberCount ?? null,
             groupMembers: Array.isArray(m.groupMembers) ? m.groupMembers : [],
+            hiddenMemberCount: m.hiddenMemberCount || 0,
             role: m.role || 'collaborator',
             locked: Boolean(m.locked)
         };

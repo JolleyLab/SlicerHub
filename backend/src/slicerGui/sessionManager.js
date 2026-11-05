@@ -45,7 +45,8 @@ const docker = new Docker({
     socketPath: process.env.DOCKER_HOST?.replace('unix://', '') || '/var/run/docker.sock'
 });
 
-const NETWORK = process.env.SLICER_GUI_NETWORK || 'trame-net';
+// Seats live on their own network, isolated from trame-net (see docker-compose.yml).
+const NETWORK = process.env.SLICER_GUI_NETWORK || 'slicer-seat-net';
 const IMAGE = process.env.SLICER_GUI_IMAGE || 'slicer-web-slicer-gui:local';
 
 /** Host files bind-mounted into seats when SLICER_GUI_MOUNT_DEV_SCRIPTS=true. */
@@ -510,7 +511,7 @@ async function startOrReuseSeat({
     };
 }
 
-/** Ensure a per-user seat container is running on trame-net. */
+/** Ensure a per-user seat container is running on the seat network. */
 export async function ensureSlicerGuiSession({
     userId,
     seatId = null,

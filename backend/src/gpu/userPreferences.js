@@ -24,6 +24,7 @@ export const DEFAULT_USER_PREFERENCES = Object.freeze({
     homeLayout: normalizeHomeLayout(null),
     slicerWebChannel: 'stable',
     notifyRegistrationApproval: true,
+    shareNameInGroups: false,
     activityFilters: ['comment'],
 });
 
@@ -38,6 +39,7 @@ export function normalizeUserPreferences(input = {}) {
         homeLayout: normalizeHomeLayout(input?.homeLayout),
         slicerWebChannel,
         notifyRegistrationApproval: input?.notifyRegistrationApproval !== false,
+        shareNameInGroups: input?.shareNameInGroups === true,
         activityFilters: normalizeActivityFilters(input?.activityFilters),
     };
 }

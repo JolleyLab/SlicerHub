@@ -23,7 +23,8 @@ export async function writeGpuViewerProxy(viewerPublicBaseUrl) {
     await fs.mkdir(NGINX_USERS_DIR, { recursive: true });
     const conf = `
 # Auto-generated: proxy viewer traffic to remote GPU nginx (Vast).
-location ~ ^/trame-session-port/(\\d+)(/.*)?$ {
+location ~ ^/trame-session-port/(900[0-9])(/.*)?$ {
+    include /etc/nginx/conf.d/viewer-auth.inc;
     set $viewer_port $1;
     set $viewer_path $2;
     proxy_pass ${base.origin}/trame-session-port/$viewer_port$viewer_path$is_args$args;

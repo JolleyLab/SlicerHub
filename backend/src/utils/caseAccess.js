@@ -39,15 +39,28 @@ function higherRole(a, b) {
 export async function getCaseRole(caseDoc, req) {
     if (req.user.role === 'admin' || req.user.role === 'org-admin') return 'admin';
     const requesterSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
-    if (requesterSub && caseDoc.owner_id === requesterSub) return 'admin';
+    return getCaseRoleForSub(caseDoc, requesterSub);
+}
 
-    if (!requesterSub) return null;
+/**
+ * A Keycloak user's role on a case from ownership, direct Keycloak case groups and
+ * SlicerHub group links. Unlike getCaseRole this works for any user, not just the
+ * requester, and does not include site/org-admin realm roles (those live on the
+ * requester's session, not on the case).
+ *
+ * @param {object} caseDoc
+ * @param {string|null} kcSub
+ * @returns {Promise<'admin'|'collaborator'|'read_only'|null>}
+ */
+export async function getCaseRoleForSub(caseDoc, kcSub) {
+    if (!kcSub) return null;
+    if (caseDoc.owner_id === kcSub) return 'admin';
 
     const [kcRole, groupRole] = await Promise.all([
         config.auth.provider === 'keycloak'
-            ? getUserCaseRole(requesterSub, String(caseDoc.id))
+            ? getUserCaseRole(kcSub, String(caseDoc.id))
             : Promise.resolve(null),
-        getCaseRoleFromGroups(requesterSub, String(caseDoc.id)),
+        getCaseRoleFromGroups(kcSub, String(caseDoc.id)),
     ]);
 
     return higherRole(kcRole, groupRole);

@@ -4,6 +4,7 @@ import db from '../db/database.js';
 import config from '../config/index.js';
 import { UnauthorizedError, ForbiddenError } from '../utils/errors.js';
 import { msg } from '../i18n/index.js';
+import { getCurrentAccount } from '../auth/accountRefresh.js';
 
 /**
  * Intentionally a no-op for single-session expiry.
@@ -48,7 +49,7 @@ function generateJti() {
 /**
  * Middleware to verify JWT token
  */
-export function authenticateToken(req, res, next) {
+export async function authenticateToken(req, res, next) {
     try {
         // Get token from Authorization header or cookie
         const authHeader = req.headers['authorization'];
@@ -79,6 +80,19 @@ export function authenticateToken(req, res, next) {
             throw new UnauthorizedError(msg('auth.session_inactivity_timeout'), null, 'auth.session_inactivity_timeout');
         }
 
+        // The role in the token is from login time. Re-check it against Keycloak
+        // (cached, see auth/accountRefresh.js) so demotions and disabled accounts take
+        // effect within minutes instead of lasting as long as the user stays active.
+        let role = decoded.role;
+        if (decoded.keycloakSub && config.auth?.provider === 'keycloak') {
+            const account = await getCurrentAccount(decoded.keycloakSub);
+            if (account.active === false) {
+                deleteAllUserSessions(decoded.userId);
+                throw new UnauthorizedError(msg('auth.session_invalid'), null, 'auth.session_invalid');
+            }
+            if (account.active === true) role = account.role;
+        }
+
         // Sliding activity window: refresh activity timestamp on each valid request.
         db.prepare('UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE id = ?')
             .run(session.id);
@@ -87,7 +101,7 @@ export function authenticateToken(req, res, next) {
         req.user = {
             id: decoded.userId,
             username: decoded.username,
-            role: decoded.role,
+            role,
             jti: decoded.jti,
             keycloakSub: decoded.keycloakSub || null,
             firstName: decoded.firstName || null,

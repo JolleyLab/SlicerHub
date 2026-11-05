@@ -183,6 +183,8 @@ export const UserPreferences = {
             defaultValue: 'stable',
         },
         { name: 'notify_registration_approval', type: 'checkbox', defaultValue: true },
+        // Show my name in group member lists (e.g. when a case admin reviews a group), even as a regular member
+        { name: 'share_name_in_groups',         type: 'checkbox', defaultValue: false },
         { name: 'activity_filters', type: 'json' },
     ],
 };

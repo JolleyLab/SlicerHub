@@ -11,6 +11,14 @@ function throwApiError(res, data, fallback) {
     throw err;
 }
 
+/** Every group's { id, name } — for linking any group to a case. */
+export async function listAllGroups() {
+    const response = await fetch(`${API_URL}/api/groups`, { credentials: 'include' });
+    const data = await parseJson(response);
+    if (!response.ok) throwApiError(response, data, 'Failed to load groups');
+    return data.data || [];
+}
+
 // --- My groups (non-admin) ---
 
 export async function getMyGroups() {

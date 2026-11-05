@@ -5,6 +5,8 @@
  */
 
 import { getUserCaseRoleMap, getKeycloakUser, kcDisplayName } from './keycloakAdmin.js';
+import { getCaseRoleMapFromGroups } from './caseGroupAccess.js';
+import { getGroup } from './groupStore.js';
 
 export const ACTIVITY_TYPES = Object.freeze({
     INVITE_SENT: 'invite_sent',
@@ -25,9 +27,12 @@ export async function listRecentActivityKC({
 }) {
     if (!kcSub || !payloadClient) return [];
 
-    // Case IDs from KC group membership (admin + collaborator only)
-    const roleMap = await getUserCaseRoleMap(kcSub);
-    const kcCaseIds = Object.entries(roleMap)
+    // Case IDs from KC group membership or SlicerHub group access (admin + collaborator only)
+    const [roleMap, groupRoleMap] = await Promise.all([
+        getUserCaseRoleMap(kcSub),
+        getCaseRoleMapFromGroups(kcSub).catch(() => ({})),
+    ]);
+    const kcCaseIds = [...Object.entries(roleMap), ...Object.entries(groupRoleMap)]
         .filter(([, role]) => role === 'admin' || role === 'collaborator')
         .map(([id]) => String(id));
 
@@ -60,6 +65,15 @@ export async function listRecentActivityKC({
         if (user) nameMap[sub] = kcDisplayName(user) || null;
     }));
 
+    const groupNames = {};
+    await Promise.all(
+        [...new Set(inviteResult.docs.filter(d => d.kind === 'group').map(d => d.group_id))]
+            .map(async (groupId) => {
+                const group = await getGroup(groupId).catch(() => null);
+                groupNames[groupId] = group?.name || null;
+            })
+    );
+
     const inviteEvents = inviteResult.docs.flatMap((invite) => {
         const caseId = String(invite.case?.id ?? invite.case);
         const caseTitle = invite.case?.title ?? null;
@@ -68,7 +82,7 @@ export async function listRecentActivityKC({
             caseId,
             caseTitle,
             inviteeEmail: invite.invitee_email,
-            inviteeName: invite.invitee_email,
+            inviteeName: invite.kind === 'group' ? groupNames[invite.group_id] : invite.invitee_email,
             proposedRole: invite.role,
         };
         if (!invite.createdAt) return [];

@@ -8,3 +8,5 @@ proxy_set_header Host $http_host;
 proxy_set_header X-Forwarded-Host $http_host;
 proxy_set_header X-Forwarded-Proto $forwarded_proto_effective;
 proxy_set_header X-Real-IP $remote_addr;
+# Overwrite (not append) so the backend never sees a client-supplied address.
+proxy_set_header X-Forwarded-For $remote_addr;

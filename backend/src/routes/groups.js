@@ -7,6 +7,7 @@ import { msg } from '../i18n/index.js';
 import { getPayloadClient } from '../payload/index.js';
 import { findUserByEmail, getKeycloakUser, kcDisplayName, getKeycloakSubForUser } from '../services/keycloakAdmin.js';
 import { CAPABILITIES } from '../services/groupCapabilities.js';
+import { removeGroupFromAllCases } from '../services/caseGroupAccess.js';
 import {
     listGroups,
     getGroup,
@@ -64,6 +65,23 @@ async function assertNotLastCapabilityMember(groupId, memberId) {
     }
 }
 
+// Loads a membership row and checks it belongs to groupId — the member routes take both
+// ids from the URL, and authorization is checked against groupId only.
+async function getMemberInGroup(groupId, memberId) {
+    const member = await getGroupMemberById(memberId);
+    if (!member || member.groupId !== String(groupId)) {
+        throw new NotFoundError(msg('groups.member_not_found'), null, 'groups.member_not_found');
+    }
+    return member;
+}
+
+// Accepts true/false and the strings 'true'/'false'; anything else is left unchanged.
+function parseCanManage(value) {
+    if (value === true || value === 'true') return true;
+    if (value === false || value === 'false') return false;
+    return undefined;
+}
+
 // Verifies the caller is a manager of groupId. Returns { kcSub, membership }.
 async function assertGroupManager(req, groupId) {
     const kcSub = getCallerKcSub(req);
@@ -107,6 +125,15 @@ export default function groupRoutes(app) {
                 console.warn('[my-groups] Could not load group memberships:', err?.message);
                 res.json({ data: [] });
             }
+        })
+    );
+
+    // --- Any authenticated user: every group's id and name (for adding a group to a case) ---
+    app.get('/api/groups',
+        authenticateToken,
+        asyncHandler(async (_req, res) => {
+            const groups = await listGroups();
+            res.json({ data: groups.map(g => ({ id: g.id, name: g.name })) });
         })
     );
 
@@ -183,12 +210,10 @@ export default function groupRoutes(app) {
         authenticateToken,
         asyncHandler(async (req, res) => {
             const { kcSub: callerKcSub } = await assertGroupManager(req, req.params.groupId);
-            const { canManageGroup } = req.body || {};
-            if (canManageGroup === false || canManageGroup === 'false') {
-                const target = await getGroupMemberById(req.params.memberId);
-                if (target?.kcSub === callerKcSub) {
-                    throw new ValidationError(msg('groups.cannotRemoveOwnManage'), null, 'groups.cannotRemoveOwnManage');
-                }
+            const target = await getMemberInGroup(req.params.groupId, req.params.memberId);
+            const canManageGroup = parseCanManage(req.body?.canManageGroup);
+            if (canManageGroup === false && target.kcSub === callerKcSub) {
+                throw new ValidationError(msg('groups.cannotRemoveOwnManage'), null, 'groups.cannotRemoveOwnManage');
             }
             const member = await updateGroupMember(req.params.memberId, { canManageGroup });
             const enriched = await enrichMember(member);
@@ -201,6 +226,7 @@ export default function groupRoutes(app) {
         authenticateToken,
         asyncHandler(async (req, res) => {
             await assertGroupManager(req, req.params.groupId);
+            await getMemberInGroup(req.params.groupId, req.params.memberId);
             await assertNotLastCapabilityMember(req.params.groupId, req.params.memberId);
             await removeGroupMember(req.params.memberId);
             res.json({ status: 'removed' });
@@ -279,6 +305,7 @@ export default function groupRoutes(app) {
                     }
                 }
             }
+            await removeGroupFromAllCases(req.params.id);
             await deleteGroup(req.params.id);
             res.json({ status: 'deleted' });
         })
@@ -315,15 +342,11 @@ export default function groupRoutes(app) {
         authenticateToken,
         ...requireOrgAdmin,
         asyncHandler(async (req, res) => {
-            const { canManageGroup } = req.body || {};
-            if (canManageGroup === false || canManageGroup === 'false') {
-                const callerKcSub = getCallerKcSub(req);
-                if (callerKcSub) {
-                    const target = await getGroupMemberById(req.params.memberId);
-                    if (target?.kcSub === callerKcSub) {
-                        throw new ValidationError(msg('groups.cannotRemoveOwnManage'), null, 'groups.cannotRemoveOwnManage');
-                    }
-                }
+            const target = await getMemberInGroup(req.params.id, req.params.memberId);
+            const canManageGroup = parseCanManage(req.body?.canManageGroup);
+            const callerKcSub = getCallerKcSub(req);
+            if (canManageGroup === false && callerKcSub && target.kcSub === callerKcSub) {
+                throw new ValidationError(msg('groups.cannotRemoveOwnManage'), null, 'groups.cannotRemoveOwnManage');
             }
             const member = await updateGroupMember(req.params.memberId, { canManageGroup });
             const enriched = await enrichMember(member);
@@ -336,6 +359,7 @@ export default function groupRoutes(app) {
         authenticateToken,
         ...requireOrgAdmin,
         asyncHandler(async (req, res) => {
+            await getMemberInGroup(req.params.id, req.params.memberId);
             await assertNotLastCapabilityMember(req.params.id, req.params.memberId);
             await removeGroupMember(req.params.memberId);
             res.json({ status: 'removed' });

@@ -658,6 +658,15 @@ const migrations = [
             DELETE FROM user_notifications WHERE invite_id IS NOT NULL;
         `
     },
+    {
+        // Privacy minimization: these were written but never read. New rows no longer
+        // set them (auth/auditLog.js, auth/session.js); clear what was already stored.
+        id: '032_scrub_audit_ip_user_agent',
+        up: `
+            UPDATE auth_audit_events SET ip = NULL, user_agent = NULL, identity_hash = NULL;
+            UPDATE sessions SET user_agent = NULL;
+        `
+    },
 ];
 
 function runMigrations() {
