@@ -105,23 +105,23 @@ Administrator. See `docs/directus-schema-setup.md`.
 
 ```
 backend/src/auth/
-  index.js           # façade: login, logout, public config
+  index.js           # façade: logout, public config
+  oidc.js            # sign-in on Keycloak's page (code flow + PKCE), logout URL,
+                     # back-channel logout; the only way in (password grant is off)
   session.js         # product JWT + cookie only
+  procedureMode.js   # long-case sessions (24 h cap)
   identityStore.js   # links (+ optional encrypted token rows)
   tokenCrypto.js     # key boundary for at-rest IdP tokens
-  loginRateLimit.js  # attempt / failure budgets
   originCheck.js     # CORS-origin gate for cookie mutations
-  auditLog.js        # hashed-identity auth events
-  changePassword.js  # provisioned-user password change (Keycloak Admin API)
+  auditLog.js        # app-only auth events (sign-ins are in Keycloak's events)
   providers/
-    local.js         # fallback
-    directus.js      # legacy — being retired
+    keycloak.js      # roles → app role / approval, ID-token claims → user
   # Legacy Directus Cases call-as-user (retained while Directus is still live):
   directusLinkCookie.js / directusUserSession.js
   requireDirectusLink.js
 ```
 
-Public: `GET /api/auth/config` and `GET /api/features` → `auth` (`methods: ["password"]`, provider flags). Passkeys / remember-device were removed from the tree (SSO/OIDC later).
+Public: `GET /api/auth/config` and `GET /api/features` → `auth` (provider flags). Sign-in, sign-up, password reset and password change are Keycloak's pages; lockout is Keycloak's brute-force detection. See `docs/redirect-login-and-sessions-design.md`.
 
 ## Open decisions (compromise later — keep seams)
 
@@ -129,7 +129,7 @@ Public: `GET /api/auth/config` and `GET /api/features` → `auth` (`methods: ["p
 |----------|-------------------|------|
 | ~~Final IdP~~ | **Resolved:** Keycloak (`AUTH_PROVIDER=keycloak`). Directus password provider is retired. | `providers/*` |
 | Cloud secrets (Key Vault / KMS) | Env-mounted keys; dual-key decrypt | `tokenCrypto` |
-| Multi-instance rate limits / sessions | In-process maps + SQLite sessions | `loginRateLimit`, `sessions` table |
+| Multi-instance sessions | SQLite sessions (moving to Postgres next) | `sessions` table |
 | Admin UI to link accounts under `strict` | Manual DB link row or brief `AUTH_LINK_POLICY=email` window | `auth_identity_links` |
 | Shared audit export / SIEM | SQLite table with prune | `auditLog.recordAuthEvent` |
 | Full user migration to Keycloak/Payload | SQLite user id used as owner bridge in Payload | `owner_id`, `uploaded_by` fields on Payload collections |

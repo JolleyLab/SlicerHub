@@ -1,60 +1,27 @@
 /**
- * Keycloak password login via BFF (Resource Owner Password Credentials flow).
- *
- * The user submits email + password to our login form. The backend exchanges
- * them for a Keycloak access token — no browser redirect to Keycloak.
- *
- * Role from Keycloak JWT claims is synced to the local user record at login
- * time so downstream middleware can read req.user.role without an extra
- * network call on every request.
+ * Keycloak identity mapping: realm roles → app role and approval, ID-token claims →
+ * the app user. Sign-in is Keycloak's own page (auth/oidc.js); the password grant is
+ * off for this client.
  */
 
 import { AppError } from '../../utils/errors.js';
 
 const PROVIDER = 'keycloak';
 
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
-
-function keycloakConfig() {
-    const url    = (process.env.KEYCLOAK_URL    || '').trim().replace(/\/+$/, '');
-    const realm  = (process.env.KEYCLOAK_REALM  || 'slicer-web').trim();
-    const clientId     = (process.env.KEYCLOAK_CLIENT_ID     || 'slicer-web-backend').trim();
-    const clientSecret = (process.env.KEYCLOAK_CLIENT_SECRET || '').trim();
-
-    if (!url) {
-        throw new AppError(
-            'Keycloak is not configured (KEYCLOAK_URL missing)',
-            503,
-            null,
-            'keycloak.not_configured'
-        );
-    }
-
-    return { url, realm, clientId, clientSecret };
-}
-
-function tokenEndpoint({ url, realm }) {
-    return `${url}/realms/${encodeURIComponent(realm)}/protocol/openid-connect/token`;
-}
-
-// ---------------------------------------------------------------------------
-// JWT helpers (no signature verification — token came directly from Keycloak)
-// ---------------------------------------------------------------------------
-
-function decodeJwtPayload(token) {
-    const parts = String(token || '').split('.');
-    if (parts.length !== 3) return null;
-    try {
-        return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-    } catch {
-        return null;
-    }
-}
-
 // Map Keycloak realm role names to local role values.
 // Priority: most-privileged role wins.
+/**
+ * Approval gate: an account may use SlicerHub only with app-user, or an admin role
+ * (admins are approved by definition). Accounts without one — e.g. a first hospital
+ * SSO sign-in, or self-registration — wait for a reviewer.
+ * docs/redirect-login-and-sessions-design.md ("Approval gate").
+ */
+export const APP_ACCESS_ROLES = Object.freeze(['app-user', 'app-org-admin', 'app-admin']);
+
+export function hasAppAccess(roles) {
+    return Array.isArray(roles) && roles.some((r) => APP_ACCESS_ROLES.includes(r));
+}
+
 export function pickRole(roles) {
     if (!Array.isArray(roles)) return 'user';
     if (roles.includes('app-admin'))     return 'admin';
@@ -62,7 +29,7 @@ export function pickRole(roles) {
     return 'user';
 }
 
-function resolveLocalUser(claims) {
+export function resolveLocalUser(claims) {
     const externalId = String(claims?.sub || '').trim();
     if (!externalId) throw new AppError('Keycloak token missing sub claim', 502);
 
@@ -73,6 +40,7 @@ function resolveLocalUser(claims) {
         id:          externalId,
         email,
         role:        pickRole(claims?.roles),
+        approved:    hasAppAccess(claims?.roles),
         username:    buildUsername(claims, email),
         firstName:   String(claims?.given_name  || '').trim() || null,
         lastName:    String(claims?.family_name || '').trim() || null,
@@ -86,71 +54,5 @@ function buildUsername(claims, email) {
     return email.split('@')[0].replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 40) || 'user';
 }
 
-// ---------------------------------------------------------------------------
-// Provider
-// ---------------------------------------------------------------------------
-
-export const keycloakProvider = {
-    name: PROVIDER,
-
-    /**
-     * @param {{ identity: string, password: string }} credentials
-     * @returns {Promise<{ user: object, externalTokens: null } | null>}
-     */
-    async login({ identity, password }) {
-        const cfg = keycloakConfig();
-
-        const res = await fetch(tokenEndpoint(cfg), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-                grant_type:    'password',
-                client_id:     cfg.clientId,
-                client_secret: cfg.clientSecret,
-                username:      String(identity || '').trim(),
-                password:      String(password || ''),
-                scope:         'openid profile email'
-            })
-        });
-
-        // Bad credentials
-        if (res.status === 401 || res.status === 400) {
-            let body = null;
-            try { body = await res.json(); } catch { /* non-JSON */ }
-
-            if (body?.error === 'invalid_grant') return null;
-
-            // Account disabled / locked
-            if (body?.error_description?.toLowerCase().includes('disabled')) {
-                return null;
-            }
-
-            throw new AppError(
-                body?.error_description || 'Keycloak login failed',
-                res.status >= 500 ? 502 : res.status
-            );
-        }
-
-        if (!res.ok) {
-            let body = null;
-            try { body = await res.json(); } catch { /* non-JSON */ }
-            throw new AppError(
-                body?.error_description || `Keycloak error ${res.status}`,
-                502
-            );
-        }
-
-        const data = await res.json();
-        const claims = decodeJwtPayload(data.access_token);
-        if (!claims) {
-            throw new AppError('Keycloak returned an unreadable access token', 502);
-        }
-
-        const user = resolveLocalUser(claims);
-        if (!user) return null;
-
-        // We don't store Keycloak tokens: role is on the local user, and we
-        // don't make call-as-user requests to Keycloak. Return null tokens.
-        return { user, externalTokens: null };
-    }
-};
+/** Provider name used by the auth façade (auth/index.js). Sign-in itself is auth/oidc.js. */
+export const keycloakProvider = Object.freeze({ name: PROVIDER });

@@ -5,7 +5,6 @@
  * Pending invites (collaborator-submitted or admin signup invites) stored in case-invites Payload collection.
  */
 
-import crypto from 'crypto';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { getPayloadClient } from '../payload/index.js';
@@ -18,9 +17,9 @@ import {
     removeUserFromAllCaseGroups,
     listCaseCollaborators,
     createKeycloakUser,
-    setKeycloakUserPassword,
-    enableKeycloakUser,
-    getKeycloakSubForUser,
+    sendExecuteActionsEmail,
+    prepareAccountSetup,
+    assignRealmRole,
     getKeycloakUser,
     getUserCaseRoleMap,
     getUsersWithRealmRole,
@@ -33,7 +32,7 @@ import {
     getCaseRoleMapFromGroups,
 } from '../services/caseGroupAccess.js';
 import { getGroup } from '../services/groupStore.js';
-import { sendCaseSignupInviteEmail } from '../services/mail.js';
+import { removeUnusedInviteeAccount } from '../services/inviteExpiry.js';
 import config from '../config/index.js';
 
 const GROUP_ID_PREFIX = 'group:';
@@ -114,7 +113,7 @@ async function getNameSharingSubs(kcSubs) {
  * linking a generic group ("Students") doesn't learn every member.
  */
 function makeGroupMemberDescriber(req) {
-    const viewerSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
+    const viewerSub = req.user.keycloakSub;
     const platformAdminViewer = isPlatformAdmin(req);
     let adminSubsPromise = null;
 
@@ -164,121 +163,34 @@ function requireKeycloak(req, res, next) {
     next();
 }
 
-function hashToken(token) {
-    return crypto.createHash('sha256').update(String(token)).digest('hex');
-}
-
-function mintToken() {
-    return crypto.randomBytes(32).toString('base64url');
-}
-
 function inviteExpiresAt() {
     const days = config.caseInviteTtlDays || 7;
     return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
 }
 
-function kcInviteUrl(token) {
-    const base = (config.publicAppUrl || 'http://localhost:8000').replace(/\/+$/, '');
-    return `${base}/?kc-invite=${encodeURIComponent(token)}`;
+/**
+ * Keycloak account setup: a new invitee gets an enabled account that can't sign in
+ * until they verify their email and choose a password, via Keycloak's own emailed link.
+ * Keycloak's email is generic (it can't name the case); the case is in their list once
+ * they sign in. An invite that expires unused also removes that account
+ * (services/inviteExpiry.js).
+ */
+const ACCOUNT_SETUP_ACTIONS = ['VERIFY_EMAIL', 'UPDATE_PASSWORD'];
+
+async function sendAccountSetupEmail(kcUserId) {
+    try {
+        await sendExecuteActionsEmail(kcUserId, ACCOUNT_SETUP_ACTIONS, {
+            lifespanSeconds: config.caseInviteTtlDays * 24 * 60 * 60,
+        });
+        return { sent: true };
+    } catch (err) {
+        console.warn('[invites] Keycloak account-setup email failed:', err.message);
+        return { sent: false, error: 'Could not send the account setup email' };
+    }
 }
 
 export default function caseCollaboratorsRoutes(app) {
     const auth = [authenticateToken, requirePayload, requireKeycloak];
-
-    /**
-     * Preview a Keycloak signup invite by token (public — invitee is not logged in yet).
-     * Returns: { email, caseTitle, caseId, role, expiresAt }
-     */
-    app.get('/api/cases/invites/preview', asyncHandler(async (req, res) => {
-        const token = String(req.query.token || '').trim();
-        if (!token) throw new ValidationError('Token required');
-
-        const payload = getPayloadClient();
-        if (!payload) {
-            return res.status(503).json({ error: { message: 'Cases service not available' } });
-        }
-
-        const tokenHash = hashToken(token);
-        const result = await payload.find({
-            collection: 'case-invites',
-            where: {
-                token_hash: { equals: tokenHash },
-                status:     { equals: 'pending_signup' },
-            },
-            depth: 0,
-            limit: 1,
-        });
-
-        const invite = result.docs[0];
-        if (!invite) {
-            return res.status(404).json({ error: { message: 'Invite not found or already used' } });
-        }
-        if (invite.expires_at && new Date(invite.expires_at).getTime() < Date.now()) {
-            await payload.update({ collection: 'case-invites', id: invite.id, data: { status: 'expired' } });
-            return res.status(410).json({ error: { message: 'This invite link has expired' } });
-        }
-
-        const caseId = invite.case?.id ?? invite.case;
-        const caseDoc = await payload.findByID({ collection: 'cases', id: caseId });
-        res.json({
-            email:      invite.invitee_email,
-            caseTitle:  caseDoc?.title || 'a case',
-            caseId,
-            role:       invite.role,
-            expiresAt:  invite.expires_at,
-        });
-    }));
-
-    /**
-     * Redeem a Keycloak signup invite (public — invitee is not logged in yet).
-     * Body: { token, firstName?, lastName?, password }
-     * Sets the Keycloak user's password and enables the account.
-     */
-    app.post('/api/cases/invites/redeem', asyncHandler(async (req, res) => {
-        const token     = String(req.body?.token    || '').trim();
-        const password  = String(req.body?.password || '').trim();
-        const firstName = String(req.body?.firstName || '').trim() || undefined;
-        const lastName  = String(req.body?.lastName  || '').trim() || undefined;
-
-        if (!token)    throw new ValidationError('Token required');
-        if (!password || password.length < 8) throw new ValidationError('Password must be at least 8 characters');
-
-        const payload = getPayloadClient();
-        if (!payload) {
-            return res.status(503).json({ error: { message: 'Cases service not available' } });
-        }
-
-        const tokenHash = hashToken(token);
-        const result = await payload.find({
-            collection: 'case-invites',
-            where: {
-                token_hash: { equals: tokenHash },
-                status:     { equals: 'pending_signup' },
-            },
-            depth: 0,
-            limit: 1,
-        });
-
-        const invite = result.docs[0];
-        if (!invite) {
-            return res.status(404).json({ error: { message: 'Invite not found or already used' } });
-        }
-        if (invite.expires_at && new Date(invite.expires_at).getTime() < Date.now()) {
-            await payload.update({ collection: 'case-invites', id: invite.id, data: { status: 'expired' } });
-            return res.status(410).json({ error: { message: 'This invite link has expired' } });
-        }
-
-        await setKeycloakUserPassword(invite.keycloak_user_id, password);
-        await enableKeycloakUser(invite.keycloak_user_id, { firstName, lastName });
-        await payload.update({
-            collection: 'case-invites',
-            id: invite.id,
-            data: { status: 'accepted' },
-        });
-
-        const caseId = invite.case?.id ?? invite.case;
-        res.json({ status: 'accepted', email: invite.invitee_email, caseId });
-    }));
 
     /**
      * Look up a Keycloak user by email (for the invite dialog search).
@@ -325,7 +237,7 @@ export default function caseCollaboratorsRoutes(app) {
      */
     app.get('/api/cases/invites/pending-approval', ...auth, asyncHandler(async (req, res) => {
         const payload = getPayloadClient();
-        const kcSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
+        const kcSub = req.user.keycloakSub;
         if (!kcSub) return res.json({ invites: [] });
 
         const [kcRoleMap, groupRoleMap] = await Promise.all([
@@ -444,7 +356,7 @@ export default function caseCollaboratorsRoutes(app) {
         const myRole = await assertCaseAccess(doc, req, 'read_only');
         const effectiveAdmin = myRole === 'admin';
 
-        const actorSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
+        const actorSub = req.user.keycloakSub;
         const caseId   = parseInt(req.params.id, 10);
 
         const where = {
@@ -518,7 +430,7 @@ export default function caseCollaboratorsRoutes(app) {
             throw new ValidationError(`Role must be one of: ${CASE_ROLES.join(', ')}`);
         }
 
-        const actorSub   = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
+        const actorSub   = req.user.keycloakSub;
         const caseId     = parseInt(req.params.id, 10);
         const actorIsAdmin = (await getCaseRole(doc, req)) === 'admin';
 
@@ -573,11 +485,9 @@ export default function caseCollaboratorsRoutes(app) {
 
         // ── Admin path: act immediately ──────────────────────────────────────
         if (!user) {
-            // Unknown email — create a disabled KC account, add to group, send invite email
-            const kcUser    = await createKeycloakUser({ email });
-            const token     = mintToken();
-            const expiresAt = inviteExpiresAt();
-
+            const kcUser = await createKeycloakUser({ email, requiredActions: ACCOUNT_SETUP_ACTIONS });
+            // A case admin's invite is the approval: the new account may use SlicerHub.
+            await assignRealmRole(kcUser.id, 'app-user');
             await addUserToCaseGroup(kcUser.id, req.params.id, role);
             await payload.create({
                 collection: 'case-invites',
@@ -589,27 +499,15 @@ export default function caseCollaboratorsRoutes(app) {
                     case:             caseId,
                     role,
                     keycloak_user_id: kcUser.id,
-                    token_hash:       hashToken(token),
-                    expires_at:       expiresAt,
+                    expires_at:       inviteExpiresAt(),
                 },
             });
-
-            const inviteUrl   = kcInviteUrl(token);
-            const emailResult = await sendCaseSignupInviteEmail({
-                to:           email,
-                caseTitle:    doc.title,
-                inviteUrl,
-                expiresAt,
-                proposedRole: role,
-            });
-
-            // The link is only for the invitee. Hand it to the inviter only when the email
-            // could not be sent; otherwise the inviter could claim the account themselves.
+            const emailResult = await sendAccountSetupEmail(kcUser.id);
+            // No link to hand back: Keycloak's setup link only ever goes to the invitee.
             return res.status(201).json({
                 status:     'signup_invite',
                 emailSent:  emailResult.sent,
                 emailError: emailResult.sent ? undefined : emailResult.error,
-                inviteUrl:  emailResult.sent ? undefined : inviteUrl,
                 invitee:    { email },
             });
         }
@@ -646,7 +544,7 @@ export default function caseCollaboratorsRoutes(app) {
         const group = await getGroup(groupId);
         if (!group) throw new NotFoundError('Group not found');
 
-        const actorSub     = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
+        const actorSub     = req.user.keycloakSub;
         const caseId       = parseInt(req.params.id, 10);
         const actorIsAdmin = (await getCaseRole(doc, req)) === 'admin';
 
@@ -746,43 +644,37 @@ export default function caseCollaboratorsRoutes(app) {
             return res.json({ status: 'approved', collaborator: { id: kcUserId, email, role } });
         }
 
-        // signup kind — create KC user if needed, then send invite email
+        // signup kind: Keycloak account setup
         let kcUser = invite.keycloak_user_id
             ? { id: invite.keycloak_user_id, email }
             : await findUserByEmail(email);
+        let needsSetup = true;
         if (!kcUser) {
-            kcUser = await createKeycloakUser({ email });
+            kcUser = await createKeycloakUser({ email, requiredActions: ACCOUNT_SETUP_ACTIONS });
+        } else {
+            // Left disabled by the older invite flow → enable for setup; already active → no setup.
+            needsSetup = await prepareAccountSetup(kcUser.id, ACCOUNT_SETUP_ACTIONS);
         }
-
-        const token     = mintToken();
-        const expiresAt = inviteExpiresAt();
+        await assignRealmRole(kcUser.id, 'app-user');
         await addUserToCaseGroup(kcUser.id, caseId, role);
+        if (!needsSetup) {
+            await payload.update({ collection: 'case-invites', id: invite.id, data: { status: 'accepted', keycloak_user_id: kcUser.id } });
+            return res.json({ status: 'approved', collaborator: { id: kcUser.id, email, role } });
+        }
         await payload.update({
             collection: 'case-invites',
             id: invite.id,
             data: {
                 status:           'pending_signup',
                 keycloak_user_id: kcUser.id,
-                token_hash:       hashToken(token),
-                expires_at:       expiresAt,
+                expires_at:       inviteExpiresAt(),
             },
         });
-
-        const inviteUrl   = kcInviteUrl(token);
-        const emailResult = await sendCaseSignupInviteEmail({
-            to:           email,
-            caseTitle:    doc.title,
-            inviteUrl,
-            expiresAt,
-            proposedRole: role,
-        });
-
-        // As above: only expose the link when the email could not be sent.
+        const emailResult = await sendAccountSetupEmail(kcUser.id);
         res.json({
             status:     'signup_invite',
             emailSent:  emailResult.sent,
             emailError: emailResult.sent ? undefined : emailResult.error,
-            inviteUrl:  emailResult.sent ? undefined : inviteUrl,
         });
     }));
 
@@ -803,16 +695,21 @@ export default function caseCollaboratorsRoutes(app) {
             return res.status(409).json({ error: { message: 'Invite cannot be rejected in its current state' } });
         }
 
-        // If a KC user was already added to the case group, remove them
-        if (invite.keycloak_user_id && invite.status === 'pending_signup') {
-            await removeUserFromAllCaseGroups(invite.keycloak_user_id, req.params.id).catch(() => {});
-        }
-
+        const wasWaitingForSignup = invite.status === 'pending_signup';
         await payload.update({
             collection: 'case-invites',
             id: invite.id,
-            data: { status: 'rejected', token_hash: null },
+            data: { status: 'rejected' },
         });
+
+        // If a KC user was already added to the case group, remove them; an account made
+        // only for this invite and never set up goes too (rejected first, so this invite
+        // no longer counts as waiting on it).
+        if (invite.keycloak_user_id && wasWaitingForSignup) {
+            await removeUserFromAllCaseGroups(invite.keycloak_user_id, req.params.id).catch(() => {});
+            await removeUnusedInviteeAccount(payload, invite.keycloak_user_id).catch((err) =>
+                console.warn('[invites] Could not remove unused invitee account:', err.message));
+        }
 
         res.json({ status: 'rejected' });
     }));

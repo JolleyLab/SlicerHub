@@ -367,40 +367,7 @@ export async function rejectDirectusCaseInvite(caseId, inviteId, { kind } = {}) 
     return data;
 }
 
-// --- Registration request flow ---
-
-export async function submitRegistrationRequest({ email, firstName, lastName, affiliation, intendedUse }) {
-    const response = await fetch(`${API_URL}/api/auth/register-request`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, firstName, lastName, affiliation, intendedUse })
-    });
-    const data = await parseJson(response);
-    if (!response.ok) throwApiError(response, data, t('errors.registrationFailed'));
-    return data;
-}
-
-export async function previewRegistrationToken(token) {
-    const response = await fetch(
-        `${API_URL}/api/auth/register-request/preview?token=${encodeURIComponent(token)}`,
-        { method: 'GET', cache: 'no-store' }
-    );
-    const data = await parseJson(response);
-    if (!response.ok) throwApiError(response, data, t('errors.invalidInviteLink'));
-    return data;
-}
-
-export async function completeRegistration({ token, password, firstName, lastName, theme }) {
-    const response = await fetch(`${API_URL}/api/auth/register-request/complete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ token, password, firstName, lastName, theme })
-    });
-    const data = await parseJson(response);
-    if (!response.ok) throwApiError(response, data, t('errors.createAccountFailed'));
-    return data;
-}
+// --- Registration review ---
 
 export async function listPendingRegistrations() {
     const response = await fetch(`${API_URL}/api/admin/registration-requests`, {
@@ -444,35 +411,6 @@ export async function rejectRegistration(id) {
 }
 
 // --- Case signup invites ---
-
-export async function previewSignupInvite(token) {
-    const response = await fetch(
-        `${API_URL}/api/invites/signup/${encodeURIComponent(token)}`,
-        { method: 'GET', cache: 'no-store' }
-    );
-    const data = await parseJson(response);
-    if (!response.ok) {
-        throwApiError(response, data, t('errors.invalidInviteLink'));
-    }
-    return data;
-}
-
-export async function acceptSignupInvite(token, { firstName, lastName } = {}) {
-    const response = await fetch(
-        `${API_URL}/api/invites/signup/${encodeURIComponent(token)}/accept`,
-        {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ firstName, lastName })
-        }
-    );
-    const data = await parseJson(response);
-    if (!response.ok) {
-        throwApiError(response, data, t('errors.createAccountFailed'));
-    }
-    return data;
-}
 
 export {
     listNotifications,

@@ -5,10 +5,14 @@
  * Run after: docker compose --profile keycloak up -d
  *
  *   node scripts/setup-keycloak.mjs
+ *   node scripts/setup-keycloak.mjs --settings-only   # realm/client settings only:
+ *                                                     # no secret rotation, no prompts
  *
  * Idempotent — safe to re-run. Creates or updates:
- *   - slicer-web realm (token lifetimes, brute-force protection, password policy)
- *   - slicer-web-backend client (Direct Access Grants / ROPC, confidential)
+ *   - slicer-web realm (session lifetimes, brute-force protection, password policy,
+ *     event retention, SMTP)
+ *   - slicer-web-backend client (confidential; redirect login with PKCE only — the
+ *     password grant is off, so the app never handles passwords)
  *   - Realm roles: app-user, app-org-admin, app-admin
  *   - Token mapper: roles claim in access token
  *   - The first admin account (required — not skippable). The app's own
@@ -38,19 +42,90 @@ const ENV_FILE  = path.join(ROOT, '.env');
 const REALM_NAME  = 'slicer-web';
 const CLIENT_ID   = 'slicer-web-backend';
 
+const env = readEnvFile(ENV_FILE);
+
+// Public app origin (what browsers use). Keycloak's pages live under <this>/sso/.
+const PUBLIC_APP_URL = (env.PUBLIC_APP_URL || env.APP_PUBLIC_URL || 'http://localhost:8000').replace(/\/+$/, '');
+
+const DAY_SECONDS = 24 * 60 * 60;
+
+/** "Name <addr@x>" or "addr@x" → { from, fromDisplayName } */
+function parseFrom(value) {
+    const m = String(value || '').match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
+    if (m) return { from: m[2].trim(), fromDisplayName: m[1].replace(/^"|"$/g, '').trim() };
+    return { from: String(value || '').trim(), fromDisplayName: '' };
+}
+
+const IS_PRODUCTION = (env.NODE_ENV || '').trim() === 'production';
+
+/**
+ * Realm SMTP from the app's SMTP_* settings, so Keycloak's emails (password reset,
+ * email verification, account setup) go out the same way the app's do.
+ *
+ * Keycloak has no "show the link instead" fallback the way the app does, so outside
+ * production with no SMTP configured it uses the local Mailpit container (read the
+ * mail at http://localhost:8025) — nothing leaves the machine.
+ * In production with no SMTP, returns undefined (a re-run never wipes a configured one)
+ * and main() warns.
+ */
+function smtpServerFromEnv() {
+    const host = (env.SMTP_HOST || '').trim();
+    if (!host || env.SMTP_ENABLED === 'false') {
+        if (IS_PRODUCTION) return undefined;
+        return { host: 'mailpit', port: '1025', from: 'noreply@localhost', fromDisplayName: 'SlicerHub (local)', ssl: 'false', starttls: 'false', auth: 'false' };
+    }
+    const { from, fromDisplayName } = parseFrom(env.SMTP_FROM || 'SlicerHub <noreply@localhost>');
+    const user = (env.SMTP_USER || '').trim();
+    return {
+        host,
+        port:            String(env.SMTP_PORT || '587'),
+        from,
+        fromDisplayName: fromDisplayName || 'SlicerHub',
+        ssl:             env.SMTP_SECURE === 'true' ? 'true' : 'false',
+        starttls:        env.SMTP_SECURE === 'true' ? 'false' : (user ? 'true' : 'false'),
+        auth:            user ? 'true' : 'false',
+        ...(user ? { user, password: env.SMTP_PASS || '' } : {}),
+    };
+}
+
 const REALM_CONFIG = {
     realm:        REALM_NAME,
     enabled:      true,
-    displayName:  'SlicerWeb',
+    // Shown on Keycloak's sign-in pages (keycloak/themes/slicerhub).
+    displayName:      'SlicerHub',
+    displayNameHtml:  'SlicerHub',
+    loginTheme:       'slicerhub',
+    emailTheme:       'slicerhub',
+
+    // Languages on with English only: Keycloak then sets <html lang="en"> on its pages
+    // (WCAG 3.1.1) without showing a language picker.
+    internationalizationEnabled: true,
+    supportedLocales:            ['en'],
+    defaultLocale:               'en',
 
     // Token lifetimes. The backend issues its own session cookies after login;
-    // Keycloak tokens are short-lived because they're only used at login time
-    // and for the password change flow — not as browser session tokens.
+    // Keycloak tokens are short-lived because they're only used at sign-in
+    // (the ID token is kept, encrypted, for sign-out) — not as browser session tokens.
     accessTokenLifespan:         300,   // 5 minutes
-    ssoSessionIdleTimeout:       1800,  // 30 minutes (matches SESSION_TTL_SECONDS default)
-    ssoSessionMaxLifespan:       36000, // 10 hours
+    // Keycloak sign-in session = how long a "session ended" popup can sign the user
+    // back in without a password. Matches the app's normal session rules
+    // (docs/redirect-login-and-sessions-design.md): 30 min idle, 12 h absolute.
+    ssoSessionIdleTimeout:       1800,  // 30 minutes
+    ssoSessionMaxLifespan:       12 * 60 * 60, // 12 hours
 
-    // Allow users to log in with their email address (required for BFF ROPC flow)
+    // Self-registration, email verification and password reset on Keycloak's own pages
+    // (design doc rollout phase 5). New self-registered accounts have no app-user role, so
+    // they wait at "Access pending approval" until a reviewer approves them.
+    // An enabled account whose email isn't verified is asked to verify it at its next
+    // sign-in — main() lists any such account.
+    registrationAllowed:         true,
+    registrationEmailAsUsername: true,   // SlicerHub identifies people by email
+    editUsernameAllowed:         false,
+    rememberMe:                  false,
+    verifyEmail:                 true,
+    resetPasswordAllowed:        true,
+
+    // People sign in with their email address
     loginWithEmailAllowed:       true,
     duplicateEmailsAllowed:      false,
 
@@ -65,22 +140,52 @@ const REALM_CONFIG = {
         'length(8)',
         'notUsername',
         'notEmail'
-    ].join(' and ')
+    ].join(' and '),
+
+    // Event records, kept 30 days (design doc decision 6): sign-in events for
+    // security investigations (they include the client IP — mention in the privacy
+    // notice); admin events without user representations, to avoid copying profiles.
+    eventsEnabled:               true,
+    eventsExpiration:            30 * DAY_SECONDS,
+    adminEventsEnabled:          true,
+    adminEventsDetailsEnabled:   false,
+    attributes: {
+        adminEventsExpiration:   String(30 * DAY_SECONDS),
+    },
+
+    ...(smtpServerFromEnv() ? { smtpServer: smtpServerFromEnv() } : {}),
 };
 
 const CLIENT_CONFIG = {
     clientId:                   CLIENT_ID,
     enabled:                    true,
     clientAuthenticatorType:    'client-secret',
-    // Direct Access Grants = Resource Owner Password Credentials (ROPC).
-    // The user submits email + password to our backend; our backend verifies
-    // with Keycloak. No browser redirect to Keycloak login page.
-    directAccessGrantsEnabled:  true,
-    // Standard flow (browser redirect) is off — the SPA uses our own login form.
-    standardFlowEnabled:        false,
+    // Direct Access Grants = the OAuth password grant (deprecated; no SSO). Off: sign-in
+    // is Keycloak's own page. Turned off on existing realms too, each time this runs.
+    directAccessGrantsEnabled:  false,
+    // Standard flow = redirect sign-in (authorization code + PKCE): the only way in.
+    standardFlowEnabled:        true,
     implicitFlowEnabled:        false,
     serviceAccountsEnabled:     false,
     publicClient:               false,
+    frontchannelLogout:         false,
+    // "Back to SlicerHub" link on Keycloak's pages (e.g. after finishing account setup).
+    baseUrl:                    `${PUBLIC_APP_URL}/`,
+    redirectUris: [
+        `${PUBLIC_APP_URL}/api/auth/callback`,
+        `${PUBLIC_APP_URL}/api/auth/popup-callback`,
+    ],
+    // The browser never calls Keycloak's APIs directly (backend-for-frontend).
+    webOrigins: [],
+    attributes: {
+        'pkce.code.challenge.method':          'S256',
+        'post.logout.redirect.uris':           `${PUBLIC_APP_URL}/`,
+        // Keycloak tells the backend (on the Docker network) when a sign-in session
+        // ends elsewhere, so the app session ends too.
+        'backchannel.logout.url':              'http://backend:8080/api/auth/backchannel-logout',
+        'backchannel.logout.session.required': 'true',
+        'backchannel.logout.revoke.offline.tokens': 'false',
+    },
 };
 
 const ROLES = [
@@ -124,8 +229,6 @@ function readEnvFile(filePath) {
             })
     );
 }
-
-const env = readEnvFile(ENV_FILE);
 
 // KEYCLOAK_URL is the internal Docker service URL (http://keycloak:8080) used by the
 // backend container. This script runs on the host, so it needs the host-accessible port.
@@ -211,7 +314,13 @@ async function ensureRealm(token) {
     step('Realm');
     const check = await api(token, 'GET', `/admin/realms/${REALM_NAME}`);
     if (check.status === 200) {
-        await api(token, 'PUT', `/admin/realms/${REALM_NAME}`, REALM_CONFIG);
+        // Merge realm attributes so unmanaged ones (set by Keycloak) are kept.
+        const merged = {
+            ...REALM_CONFIG,
+            attributes: { ...(check.json?.attributes || {}), ...REALM_CONFIG.attributes },
+        };
+        const res = await api(token, 'PUT', `/admin/realms/${REALM_NAME}`, merged);
+        if (!res.ok) throw new Error(`Failed to update realm (${res.status}): ${res.text}`);
         skip(`realm "${REALM_NAME}" (settings updated)`);
     } else {
         const res = await api(token, 'POST', '/admin/realms', REALM_CONFIG);
@@ -234,6 +343,109 @@ async function ensureRoles(token) {
     }
 }
 
+/**
+ * Registration fields on Keycloak's sign-up page, matching the app's access-request
+ * form: both optional. Copied into the review item when the account first signs in and
+ * removed from the account once a reviewer approves it (privacy minimization).
+ */
+const REGISTRATION_ATTRIBUTES = [
+    {
+        name: 'affiliation',
+        displayName: 'Affiliation (institution or organization)',
+        validations: { length: { max: 200 } },
+        annotations: {},
+        permissions: { view: ['admin', 'user'], edit: ['admin', 'user'] },
+        multivalued: false,
+    },
+    {
+        name: 'intendedUse',
+        displayName: 'How do you plan to use SlicerHub?',
+        validations: { length: { max: 2000 } },
+        annotations: { inputType: 'textarea' },
+        permissions: { view: ['admin', 'user'], edit: ['admin', 'user'] },
+        multivalued: false,
+    },
+];
+
+async function ensureRegistrationAttributes(token) {
+    step('Registration fields (user profile)');
+    const res = await api(token, 'GET', `/admin/realms/${REALM_NAME}/users/profile`);
+    if (!res.ok) { warn(`Could not read the user profile (${res.status})`); return; }
+    const profile = res.json;
+    const attributes = [...(profile.attributes || [])];
+    let changed = false;
+    for (const attr of REGISTRATION_ATTRIBUTES) {
+        const i = attributes.findIndex((a) => a.name === attr.name);
+        if (i === -1) { attributes.push(attr); changed = true; }
+        else if (JSON.stringify(attributes[i]) !== JSON.stringify({ ...attributes[i], ...attr })) {
+            attributes[i] = { ...attributes[i], ...attr };
+            changed = true;
+        }
+    }
+    if (!changed) { skip('affiliation, intendedUse'); return; }
+    const put = await api(token, 'PUT', `/admin/realms/${REALM_NAME}/users/profile`, { ...profile, attributes });
+    if (!put.ok) throw new Error(`Failed to update the user profile (${put.status}): ${put.text}`);
+    ok('affiliation, intendedUse');
+}
+
+/**
+ * verifyEmail is on: an enabled account whose email isn't verified is asked to verify it
+ * at its next sign-in (Keycloak sends the email). Accounts set up through Keycloak's own
+ * flows are verified; list any made by hand.
+ */
+async function warnUnverifiedAccounts(token) {
+    step('Email verification check');
+    const res = await api(token, 'GET', `/admin/realms/${REALM_NAME}/users?max=1000&briefRepresentation=false`);
+    if (!res.ok) { warn(`Could not list users (${res.status})`); return; }
+    const unverified = (res.json || []).filter((u) => u.enabled && !u.emailVerified
+        && !(u.requiredActions || []).includes('VERIFY_EMAIL')
+        && !String(u.username || '').startsWith('service-account-'));
+    if (!unverified.length) { skip('every enabled account has a verified email'); return; }
+    warn(`${unverified.length} enabled account(s) have an unverified email and must verify it at their next sign-in:`);
+    for (const u of unverified.slice(0, 20)) warn(`  ${u.email || u.username}`);
+    warn('If you know these addresses are right, tick "Email verified" for them in the admin console.');
+}
+
+/**
+ * Approval gate safety: Keycloak gives every new account its realm's default roles.
+ * If an app role were among them, every self-registered or hospital-SSO account would
+ * be approved on creation. Remove any that slipped in.
+ */
+async function ensureDefaultRolesExcludeAppRoles(token) {
+    step('Default roles (approval gate)');
+    const realm = await api(token, 'GET', `/admin/realms/${REALM_NAME}`);
+    const defaultRoleId = realm.json?.defaultRole?.id;
+    if (!defaultRoleId) { warn('Could not read the realm default role'); return; }
+    const comps = await api(token, 'GET', `/admin/realms/${REALM_NAME}/roles-by-id/${defaultRoleId}/composites`);
+    const appNames = new Set(ROLES.map(r => r.name));
+    const offending = (comps.json || []).filter(r => appNames.has(r.name));
+    if (!offending.length) {
+        skip('no app roles in the default roles');
+        return;
+    }
+    const res = await api(token, 'DELETE', `/admin/realms/${REALM_NAME}/roles-by-id/${defaultRoleId}/composites`, offending);
+    if (!res.ok) throw new Error(`Failed to remove app roles from default roles (${res.status}): ${res.text}`);
+    ok(`removed ${offending.map(r => r.name).join(', ')} from the default roles`);
+}
+
+/**
+ * The admin console signs in through the master realm. KC_HOSTNAME makes every realm
+ * use the public <PUBLIC_APP_URL>/sso address, where nginx blocks the master realm on
+ * purpose — so the console showed "somethingWentWrong". Give the master realm its own
+ * frontend URL: the localhost-only admin address.
+ */
+async function ensureMasterRealmUsesAdminUrl(token) {
+    step('Admin console address (master realm)');
+    const res = await api(token, 'GET', '/admin/realms/master');
+    if (!res.ok) { warn(`Could not read the master realm (${res.status})`); return; }
+    const attributes = res.json?.attributes || {};
+    if (attributes.frontendUrl === KEYCLOAK_URL) { skip(`master realm uses ${KEYCLOAK_URL}`); return false; }
+    const put = await api(token, 'PUT', '/admin/realms/master', { attributes: { ...attributes, frontendUrl: KEYCLOAK_URL } });
+    if (!put.ok) throw new Error(`Failed to set the master realm address (${put.status}): ${put.text}`);
+    ok(`master realm uses ${KEYCLOAK_URL}`);
+    return true; // changed: tokens issued before this now have the wrong issuer
+}
+
 async function ensureClient(token) {
     step('Client');
     const list = await api(token, 'GET', `/admin/realms/${REALM_NAME}/clients?clientId=${encodeURIComponent(CLIENT_ID)}`);
@@ -244,7 +456,15 @@ async function ensureClient(token) {
 
     if (existing) {
         clientUuid = existing.id;
-        await api(token, 'PUT', `/admin/realms/${REALM_NAME}/clients/${clientUuid}`, { ...existing, ...CLIENT_CONFIG });
+        // Merge attributes rather than replace them: Keycloak keeps other client
+        // settings there that this script doesn't manage.
+        const merged = {
+            ...existing,
+            ...CLIENT_CONFIG,
+            attributes: { ...(existing.attributes || {}), ...CLIENT_CONFIG.attributes },
+        };
+        const res = await api(token, 'PUT', `/admin/realms/${REALM_NAME}/clients/${clientUuid}`, merged);
+        if (!res.ok) throw new Error(`Failed to update client (${res.status}): ${res.text}`);
         skip(`client "${CLIENT_ID}" (settings updated)`);
     } else {
         const res = await api(token, 'POST', `/admin/realms/${REALM_NAME}/clients`, CLIENT_CONFIG);
@@ -415,6 +635,19 @@ async function ensureTestUser(token) {
         [{ id: roleRes.json.id, name: role }]
     );
     ok(`role "${role}" assigned`);
+
+    // Approval gate: every approved account holds app-user (admin roles also pass the
+    // gate, but holding app-user keeps the account approved if the admin role is removed).
+    if (role !== 'app-user') {
+        const appUser = await api(token, 'GET', `/admin/realms/${REALM_NAME}/roles/app-user`);
+        if (appUser.ok) {
+            await api(token, 'POST',
+                `/admin/realms/${REALM_NAME}/users/${userId}/role-mappings/realm`,
+                [{ id: appUser.json.id, name: 'app-user' }]
+            );
+            ok('role "app-user" assigned');
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -485,13 +718,28 @@ async function main() {
     ok('Keycloak is healthy');
 
     step('Admin token');
-    const token = await getAdminToken();
+    let token = await getAdminToken();
     ok('Admin token obtained');
 
+    if (await ensureMasterRealmUsesAdminUrl(token)) token = await getAdminToken();
     await ensureRealm(token);
     await ensureRoles(token);
+    await ensureDefaultRolesExcludeAppRoles(token);
+    await ensureRegistrationAttributes(token);
+    await warnUnverifiedAccounts(token);
+    if (!REALM_CONFIG.smtpServer) {
+        warn('No SMTP configured: Keycloak cannot send verification, password-reset or account-setup emails. Set SMTP_* in .env and re-run.');
+    }
     const clientUuid = await ensureClient(token);
     await ensureRolesMapper(token, clientUuid);
+
+    // --settings-only: apply realm/client settings after pulling config changes,
+    // without rotating the client secret or touching the admin account.
+    if (process.argv.includes('--settings-only')) {
+        console.log('\n  Settings applied (--settings-only: client secret and admin account untouched).\n');
+        return;
+    }
+
     await regenerateAndSaveSecret(token, clientUuid);
     await seedEnvVars();
     await ensureTestUser(token);

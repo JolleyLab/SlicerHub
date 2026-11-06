@@ -4,7 +4,7 @@ import { API_URL } from '../config.js';
 import { t } from '../i18n/index.js';
 import '../components/page-layout-template.js';
 import '../components/theme-toggle.js';
-import '../components/change-password-dialog.js';
+import { openKeycloakPopup } from '../services/keycloakPopup.js';
 import '../components/local-slicer-viewer-options.js';
 import '../components/home-layout-settings.js';
 import '../components/page-content-message.js';
@@ -38,6 +38,8 @@ export class UserSettingsPage extends LitElement {
             activityFilters: { type: Array },
             saveState: { type: String },
             saveStatusMessage: { type: String },
+            _passwordBusy: { state: true },
+            _passwordStatus: { state: true },
             errorMessage: { type: String },
             firstName: { type: String },
             lastName: { type: String },
@@ -60,6 +62,8 @@ export class UserSettingsPage extends LitElement {
         this.errorMessage = '';
         this.saveState = 'idle';
         this.saveStatusMessage = '';
+        this._passwordBusy = false;
+        this._passwordStatus = null; // { state: 'saved'|'error', text }
         this.firstName = '';
         this.lastName = '';
         this.preferredName = '';
@@ -388,6 +392,33 @@ export class UserSettingsPage extends LitElement {
         }
     }
 
+    /**
+     * Change the password on Keycloak's page, in a popup so this page stays as it is.
+     * Keycloak asks for the current password first if the sign-in is over 5 minutes old.
+     */
+    async _changePassword() {
+        this._passwordStatus = null;
+        this._passwordBusy = true;
+        let result;
+        try {
+            result = await openKeycloakPopup({ action: 'password' });
+        } catch {
+            this._passwordStatus = { state: 'error', text: t('auth.reauth.popupBlocked') };
+            return;
+        } finally {
+            this._passwordBusy = false;
+        }
+        if (result.ok) {
+            this._passwordStatus = { state: 'saved', text: t('auth.changePassword.changed') };
+        } else if (result.code === 'login_action_cancelled' || result.code === 'popup_closed') {
+            this._passwordStatus = { state: '', text: t('auth.changePassword.notChanged') };
+        } else if (result.code === 'login_wrong_account') {
+            this._passwordStatus = { state: 'error', text: t('auth.changePassword.wrongAccount') };
+        } else {
+            this._passwordStatus = { state: 'error', text: t('auth.changePassword.passwordFailed') };
+        }
+    }
+
     render() {
         const showProfile = !this.profileLoading && this.profileLinked;
         const tab = this._activeTab;
@@ -521,13 +552,13 @@ export class UserSettingsPage extends LitElement {
                                 <h2 class="section-title">${t('settings.security')}</h2>
                                 <p class="section-description">${t('settings.securityHint')}</p>
                                 <button type="button" class="btn-save-profile"
-                                    @click=${() => this.renderRoot?.querySelector('change-password-dialog')?.open()}>
-                                    ${t('auth.changePassword.settingsTitle')}
+                                    ?disabled=${this._passwordBusy}
+                                    @click=${() => this._changePassword()}>
+                                    ${this._passwordBusy ? t('auth.changePassword.waiting') : t('auth.changePassword.settingsTitle')}
                                 </button>
-                                <change-password-dialog
-                                    .firstName=${this.firstName}
-                                    .lastName=${this.lastName}
-                                ></change-password-dialog>
+                                <span class="save-status" data-state=${this._passwordStatus?.state || ''} aria-live="polite">
+                                    ${this._passwordStatus?.text || ''}
+                                </span>
                             </section>
 
                             <section class="settings-section">

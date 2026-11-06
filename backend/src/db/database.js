@@ -667,6 +667,26 @@ const migrations = [
             UPDATE sessions SET user_agent = NULL;
         `
     },
+    {
+        // Redirect (OIDC) login: the Keycloak session id lets back-channel logout find
+        // the app sessions to end; the ID token (encrypted) is the id_token_hint for a
+        // one-step sign-out. Both are deleted with the session row.
+        id: '033_sessions_oidc',
+        up: `
+            ALTER TABLE sessions ADD COLUMN kc_sid TEXT;
+            ALTER TABLE sessions ADD COLUMN id_token_enc TEXT;
+            CREATE INDEX IF NOT EXISTS idx_sessions_kc_sid ON sessions(kc_sid);
+        `
+    },
+    {
+        // Procedure mode: until when this session is exempt from the idle timeout and
+        // the 12 h limit, and whether it was started as "until I end it".
+        id: '034_sessions_procedure_mode',
+        up: `
+            ALTER TABLE sessions ADD COLUMN procedure_until DATETIME;
+            ALTER TABLE sessions ADD COLUMN procedure_open_ended INTEGER DEFAULT 0;
+        `
+    },
 ];
 
 function runMigrations() {

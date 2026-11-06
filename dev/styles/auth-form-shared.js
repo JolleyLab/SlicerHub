@@ -1,15 +1,12 @@
 import { css } from 'lit-element';
 
 /**
- * Shared look for login / register / invite / change-password cards.
+ * Shared look for the sign-in card and the session dialogs (re-sign-in, procedure mode).
  * Forms stay light-DOM where needed; inject via styleText helper.
  */
 export const authFormSharedStyles = css`
   :host,
-  login-form,
-  register-form,
-  invite-accept-form,
-  change-password-form {
+  login-form {
     display: block;
     width: 100%;
     max-width: 420px;

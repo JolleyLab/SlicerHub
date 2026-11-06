@@ -5,7 +5,7 @@ import config from '../config/index.js';
 import { ValidationError, NotFoundError, ConflictError, ForbiddenError } from '../utils/errors.js';
 import { msg } from '../i18n/index.js';
 import { getPayloadClient } from '../payload/index.js';
-import { findUserByEmail, getKeycloakUser, kcDisplayName, getKeycloakSubForUser } from '../services/keycloakAdmin.js';
+import { findUserByEmail, getKeycloakUser, kcDisplayName } from '../services/keycloakAdmin.js';
 import { CAPABILITIES } from '../services/groupCapabilities.js';
 import {
     listTaskGroups,
@@ -24,7 +24,7 @@ import {
 const requireOrgAdmin = [requireRole('org-admin')];
 
 function getCallerKcSub(req) {
-    return req.user?.keycloakSub || getKeycloakSubForUser(req.user?.id) || null;
+    return req.user?.keycloakSub || null;
 }
 
 async function enrichMember(m) {

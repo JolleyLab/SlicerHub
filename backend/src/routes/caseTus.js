@@ -18,7 +18,6 @@ import path from 'path';
 import { Server as TusServer } from '@tus/server';
 import { FileStore } from '@tus/file-store';
 import { authenticateToken } from '../middleware/authMiddleware.js';
-import { getKeycloakSubForUser } from '../services/keycloakAdmin.js';
 import { assertCaseAccess } from '../utils/caseAccess.js';
 
 // FileStore writes files flat under this directory as {uploadId}.
@@ -79,7 +78,10 @@ export function registerCaseTusRoute(app, payload) {
         async onUploadFinish(req, upload) {
             const expressReq = req.runtime?.node?.req ?? req;
             const caseId = expressReq.params?.caseId;
-            const userId = getKeycloakSubForUser(expressReq.user?.id) ?? null;
+            // The upload guard below resolved the uploader's Keycloak id (tusUploaderSub).
+            const userId = expressReq.tusUploaderSub
+                || expressReq.user?.keycloakSub
+                || null;
             const meta   = upload.metadata ?? {};
 
             // Metadata values are already base64-decoded by @tus/utils — no extra decode needed.
@@ -87,6 +89,7 @@ export function registerCaseTusRoute(app, payload) {
             const mimeType = meta.filetype || 'application/octet-stream';
 
             if (!userId) {
+                console.error('[TUS] onUploadFinish: uploader has no Keycloak identity — attachment not created', { caseId, uploadId: upload.id });
                 throw new Error('[TUS] uploader has no Keycloak identity — cannot create attachment record');
             }
 
@@ -144,7 +147,7 @@ export function registerCaseTusRoute(app, payload) {
             }
             await assertCaseAccess(caseDoc, req, 'collaborator');
 
-            const uploaderSub = req.user?.keycloakSub || getKeycloakSubForUser(req.user?.id);
+            const uploaderSub = req.user?.keycloakSub;
             if (!uploaderSub) {
                 return res.status(403).json({ error: { message: 'A Keycloak identity is required to upload' } });
             }

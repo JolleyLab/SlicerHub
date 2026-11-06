@@ -67,18 +67,17 @@ The entry point and specific storage services differ between the two options; ev
 
 ## Keycloak in Production
 
-Authentication is handled by Keycloak using a **Backend-for-Frontend (BFF) pattern**: the browser submits credentials to the Node.js backend, which verifies them with Keycloak server-to-server. The browser never contacts Keycloak directly.
+Authentication is handled by Keycloak using a **Backend-for-Frontend (BFF) pattern**: the browser signs in on Keycloak's own page (served at `/sso/` on the same domain, through nginx), and the backend finishes the OpenID Connect code flow server-to-server. Keycloak's tokens never reach the browser; the app never sees passwords. See `docs/redirect-login-and-sessions-design.md`.
 
 ```
-Browser → HTTPS → backend (/api/auth/login)
-                       ↓  server-to-server (internal network only)
-                   Keycloak
+Browser → HTTPS → /api/auth/login/start → /sso/ (Keycloak sign-in page)
+        ← /api/auth/callback ← backend ↔ Keycloak (code exchange, internal network)
 ```
 
 This has two practical consequences for cloud deployment:
 
-- **Keycloak does not need a public URL.** It communicates only with the backend over the internal container network. No Cloudflare tunnel, no public DNS entry, no ALB/Front Door rule pointing at Keycloak is required.
-- **No nginx or routing changes are needed** when moving from the current Cloudflare-tunnel setup to a cloud deployment. The backend's `KEYCLOAK_URL` env var points at the internal service address (`http://keycloak:8080` in Docker Compose; an internal hostname or private IP in cloud).
+- **Keycloak's sign-in pages are public, on the app's own domain at `/sso/`** (nginx proxies them; no separate DNS entry or tunnel). Its admin console and `master` realm are blocked from outside (404); admins use the localhost port or a tunnel. Set `KC_HOSTNAME` to the public `/sso` URL and run Keycloak in production mode (`KEYCLOAK_START_COMMAND=start`).
+- **The backend still reaches Keycloak internally.** `KEYCLOAK_URL` points at the internal service address (`http://keycloak:8080` in Docker Compose; an internal hostname or private IP in cloud) for the code exchange, keys and back-channel logout.
 
 ### What changes on Azure vs. local
 

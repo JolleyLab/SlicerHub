@@ -13,12 +13,14 @@ import projectRoutes from "./routes/projects.js";
 import projectGpuRoutes from "./routes/projectGpu.js";
 import registrationRequestRoutes from "./routes/registrationRequests.js";
 import groupRoutes from "./routes/groups.js";
-import passwordResetRoutes from "./routes/passwordReset.js";
 import featuresRoutes from "./routes/features.js";
 import slicerWebRoutes from "./routes/slicerWeb.js";
 import announcementRoutes from "./routes/announcement.js";
 import viewerAuthRoutes from "./routes/viewerAuth.js";
+import notificationRoutes from "./routes/notifications.js";
 import { runRetentionSweep } from "./services/dataRetention.js";
+import { expireStaleInvites } from "./services/inviteExpiry.js";
+import { startAppUserGate } from "./services/appUserGate.js";
 import { startStablePoller, startLatestPoller } from "./services/slicerWebUpdater.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { startBillingWatchdog } from "./gpu/billingWatchdog.js";
@@ -40,30 +42,6 @@ import { addGroupMember } from "./services/groupStore.js";
 import casesRoutes from "./routes/cases.js";
 import caseCollaboratorsRoutes from "./routes/caseCollaborators.js";
 import { registerCaseTusRoute } from "./routes/caseTus.js";
-
-async function expireStaleInvites() {
-    const payload = getPayloadClient();
-    if (!payload) return;
-    try {
-        const stale = await payload.find({
-            collection: 'case-invites',
-            where: {
-                status:     { equals: 'pending_signup' },
-                expires_at: { less_than: new Date().toISOString() },
-            },
-            limit: 200,
-            depth: 0,
-        });
-        for (const inv of stale.docs) {
-            await payload.update({ collection: 'case-invites', id: inv.id, data: { status: 'expired' } });
-        }
-        if (stale.docs.length) {
-            console.log(`Expired ${stale.docs.length} stale case invite(s)`);
-        }
-    } catch (err) {
-        console.warn('Case invite expiry sweep failed:', err.message);
-    }
-}
 
 async function seedRegistrationReviewersGroup() {
     const payload = getPayloadClient();
@@ -147,8 +125,9 @@ function startDataRetentionSweep() {
 
 function startInviteExpiryWatchdog() {
     const INTERVAL_MS = 60 * 60 * 1000; // hourly
-    expireStaleInvites();
-    setInterval(expireStaleInvites, INTERVAL_MS);
+    const expireInvites = () => expireStaleInvites(getPayloadClient());
+    expireInvites();
+    setInterval(expireInvites, INTERVAL_MS);
     console.log('Case invite expiry watchdog started (1 h interval)');
 }
 
@@ -208,12 +187,12 @@ app.use(cors({
 authRoutes(app);
 registrationRequestRoutes(app);
 groupRoutes(app);
-passwordResetRoutes(app);
 
 featuresRoutes(app);
 slicerWebRoutes(app);
 announcementRoutes(app);
 viewerAuthRoutes(app);   // nginx auth_request for viewer containers
+notificationRoutes(app); // bell + Home "To do" (mentions)
 
 // Register file routes
 fileRoutes(app);
@@ -263,6 +242,7 @@ app.listen(config.server.port, config.server.host, async () => {
     startViewerSessionWatchdog();
     startInviteExpiryWatchdog();
     startDataRetentionSweep();
+    startAppUserGate();
     seedRegistrationReviewersGroup();
     startStablePoller();
     startLatestPoller();

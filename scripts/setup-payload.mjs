@@ -14,6 +14,9 @@
  *   2. Generates PAYLOAD_SECRET if not already in .env
  *   3. Writes PAYLOAD_DATABASE_URI, PAYLOAD_DB_USER, PAYLOAD_DB_PASSWORD to .env
  *      (using existing values where already set)
+ *   4. Drops tables/columns of features that were removed (see RETIRED_SCHEMA). Payload's
+ *      dev push would otherwise stop at startup to ask about dropping them, and with no
+ *      one to answer it exits — so this must run before the backend starts.
  *
  * After running this script:
  *   docker compose up -d backend
@@ -149,6 +152,39 @@ async function ensurePayloadSecret(current) {
 }
 
 // ---------------------------------------------------------------------------
+// Retired schema
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema left by features that are gone (docs/redirect-login-and-sessions-design.md,
+ * phase 7: the app's own password reset, registration completion and invite links).
+ * IF EXISTS throughout, so this is a no-op on a fresh database or a second run.
+ */
+const RETIRED_SCHEMA = [
+    'ALTER TABLE IF EXISTS payload_locked_documents_rels DROP COLUMN IF EXISTS password_reset_tokens_id',
+    'DROP TABLE IF EXISTS password_reset_tokens CASCADE',
+    'DROP TYPE IF EXISTS enum_password_reset_tokens_kind',
+    'ALTER TABLE IF EXISTS case_invites DROP COLUMN IF EXISTS token_hash',
+    'ALTER TABLE IF EXISTS registration_requests DROP COLUMN IF EXISTS completion_token_hash',
+    'ALTER TABLE IF EXISTS registration_requests DROP COLUMN IF EXISTS completion_token_expires_at',
+];
+
+function dropRetiredSchema(dbUser) {
+    step('Removing schema of retired features');
+    const sql = RETIRED_SCHEMA.map((q) => `${q};`).join(' ');
+    try {
+        execSync(
+            `docker compose exec -T payload-db psql -v ON_ERROR_STOP=1 -q -U ${dbUser} -d payload`,
+            { cwd: ROOT, input: sql, stdio: ['pipe', 'pipe', 'pipe'] }
+        );
+        ok('old password-reset table and invite/registration token columns are gone');
+    } catch (err) {
+        const detail = String(err.stderr || err.message || '').trim().split(/\r?\n/)[0];
+        warn(`Could not remove retired schema (${detail}). The backend may stop at startup asking about it.`);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -163,6 +199,8 @@ async function main() {
 
     await waitForPayloadDb(dbUser);
     ok('payload-db is healthy');
+
+    dropRetiredSchema(dbUser);
 
     console.log(`
   ─────────────────────────────────────────────

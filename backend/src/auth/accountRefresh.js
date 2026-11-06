@@ -10,14 +10,14 @@
  */
 
 import { getUserAccountState } from '../services/keycloakAdmin.js';
-import { pickRole } from './providers/keycloak.js';
+import { pickRole, hasAppAccess } from './providers/keycloak.js';
 
 export const REFRESH_MS = 5 * 60 * 1000;
 /** After a failed lookup, try again this soon instead of waiting the full interval. */
 const RETRY_AFTER_FAILURE_MS = 30 * 1000;
 const LOOKUP_TIMEOUT_MS = 5000;
 
-/** @type {Map<string, { role: string|null, active: boolean|null, checkedAt: number }>} */
+/** @type {Map<string, { role: string|null, approved: boolean|null, active: boolean|null, notBefore: number, checkedAt: number }>} */
 const cache = new Map();
 /** @type {Map<string, Promise<void>>} */
 const inflight = new Map();
@@ -37,7 +37,13 @@ async function refresh(kcSub, fetchState) {
     try {
         const state = await withTimeout(fetchState(kcSub), LOOKUP_TIMEOUT_MS);
         const active = Boolean(state?.exists && state?.enabled);
-        cache.set(kcSub, { role: active ? pickRole(state.realmRoles) : null, active, checkedAt: now });
+        cache.set(kcSub, {
+            role: active ? pickRole(state.realmRoles) : null,
+            approved: active ? hasAppAccess(state.realmRoles) : null,
+            active,
+            notBefore: Number(state?.notBefore) || 0,
+            checkedAt: now,
+        });
     } catch (err) {
         // Keycloak unreachable: keep the last known state (or "unknown") rather than
         // locking everyone out, and retry soon.
@@ -45,7 +51,9 @@ async function refresh(kcSub, fetchState) {
         const prev = cache.get(kcSub);
         cache.set(kcSub, {
             role: prev?.role ?? null,
+            approved: prev?.approved ?? null,
             active: prev?.active ?? null,
+            notBefore: prev?.notBefore ?? 0,
             checkedAt: now - REFRESH_MS + RETRY_AFTER_FAILURE_MS,
         });
     }
@@ -53,9 +61,10 @@ async function refresh(kcSub, fetchState) {
 
 /**
  * Current account state for a Keycloak user.
- *   { active: true,  role }  — use this role instead of the one in the token
- *   { active: false }        — account deleted or disabled; end the session
- *   { active: null }         — unknown (Keycloak unreachable, nothing cached); keep token role
+ *   { active: true,  role, approved, notBefore } — use this role/approval instead of the token's;
+ *                                       sessions issued before notBefore (seconds) are ended
+ *   { active: false }                  — account deleted or disabled; end the session
+ *   { active: null }                   — unknown (Keycloak unreachable, nothing cached); keep token role
  *
  * @param {string} kcSub
  * @param {{ fetchState?: Function }} [deps]
@@ -69,7 +78,12 @@ export async function getCurrentAccount(kcSub, { fetchState = getUserAccountStat
         await inflight.get(kcSub);
     }
     const current = cache.get(kcSub);
-    return { active: current?.active ?? null, role: current?.role ?? null };
+    return {
+        active: current?.active ?? null,
+        role: current?.role ?? null,
+        approved: current?.approved ?? null,
+        notBefore: current?.notBefore ?? 0,
+    };
 }
 
 /** Drop cached state (tests; or after a known role change). */

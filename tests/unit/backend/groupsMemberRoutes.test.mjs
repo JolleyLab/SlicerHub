@@ -18,7 +18,6 @@ mock.module('../../../backend/src/services/keycloakAdmin.js', {
         findUserByEmail: async () => null,
         getKeycloakUser: async () => null,
         kcDisplayName: () => '',
-        getKeycloakSubForUser: () => null
     }
 });
 mock.module('../../../backend/src/services/caseGroupAccess.js', {

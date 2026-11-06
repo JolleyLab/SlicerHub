@@ -27,7 +27,7 @@ test('Payload secret is not required when Payload is not configured', () => {
 test('a demotion in Keycloak replaces the login-time role', async () => {
     forgetAccount();
     const fetchState = async () => ({ exists: true, enabled: true, realmRoles: ['app-org-admin'] });
-    assert.deepEqual(await getCurrentAccount('sub-1', { fetchState }), { active: true, role: 'org-admin' });
+    assert.deepEqual(await getCurrentAccount('sub-1', { fetchState }), { active: true, role: 'org-admin', approved: true, notBefore: 0 });
 });
 
 test('a disabled or deleted account is reported inactive', async () => {
@@ -57,8 +57,14 @@ test('when Keycloak is unreachable the state is unknown, not inactive (no mass l
     console.warn = () => {};
     try {
         const failing = async () => { throw new Error('ECONNREFUSED'); };
-        assert.deepEqual(await getCurrentAccount('sub-5', { fetchState: failing }), { active: null, role: null });
+        assert.deepEqual(await getCurrentAccount('sub-5', { fetchState: failing }), { active: null, role: null, approved: null, notBefore: 0 });
     } finally {
         console.warn = original;
     }
+});
+
+test('Keycloak "log out user" (notBefore) is passed through so older sessions can be ended', async () => {
+    forgetAccount();
+    const fetchState = async () => ({ exists: true, enabled: true, realmRoles: [], notBefore: 1793916170 });
+    assert.equal((await getCurrentAccount('sub-6', { fetchState })).notBefore, 1793916170);
 });

@@ -6,7 +6,6 @@
  */
 
 import config from '../config/index.js';
-import { findLinkForUser } from '../auth/identityStore.js';
 import { AppError, NotFoundError } from '../utils/errors.js';
 
 export const CASE_ROLES = ['admin', 'collaborator', 'read_only'];
@@ -155,7 +154,10 @@ export async function findUserByEmail(email) {
  * through Keycloak groups and composites). Throws on Keycloak/network errors so
  * callers can tell "account gone" apart from "Keycloak unreachable".
  *
- * @returns {Promise<{ exists: boolean, enabled: boolean, realmRoles: string[] }>}
+ * `notBefore` (seconds, 0 = none) is set by Keycloak's "log out user" admin action:
+ * sessions started before it are no longer valid.
+ *
+ * @returns {Promise<{ exists: boolean, enabled: boolean, realmRoles: string[], notBefore: number }>}
  */
 export async function getUserAccountState(keycloakUserId) {
     const token = await getAdminToken();
@@ -163,7 +165,7 @@ export async function getUserAccountState(keycloakUserId) {
     const headers = { Authorization: `Bearer ${token}` };
 
     const userRes = await fetch(base, { headers, signal: AbortSignal.timeout(5000) });
-    if (userRes.status === 404) return { exists: false, enabled: false, realmRoles: [] };
+    if (userRes.status === 404) return { exists: false, enabled: false, realmRoles: [], notBefore: 0 };
     if (!userRes.ok) throw new AppError(`Keycloak GET user failed (${userRes.status})`, 502);
     const user = await userRes.json();
 
@@ -175,6 +177,7 @@ export async function getUserAccountState(keycloakUserId) {
         exists: true,
         enabled: user?.enabled !== false,
         realmRoles: (Array.isArray(roles) ? roles : []).map(r => r?.name).filter(Boolean),
+        notBefore: Number(user?.notBefore) || 0,
     };
 }
 
@@ -217,20 +220,20 @@ export async function updateKeycloakUserProfile(keycloakUserId, { firstName, las
         }
     }
 
-    const update = { attributes };
+    // Keycloak's user profile (KC 24+) validates the whole representation on PUT: fields
+    // left out read as cleared, and a missing email fails "error-user-attribute-required".
+    // Send the current username/email/names back unchanged alongside the edit.
+    const update = {
+        username:  current?.username,
+        email:     current?.email,
+        firstName: current?.firstName,
+        lastName:  current?.lastName,
+        attributes,
+    };
     if (firstName !== undefined) update.firstName = String(firstName || '').trim();
     if (lastName  !== undefined) update.lastName  = String(lastName  || '').trim();
 
     await keycloakPut(`/users/${encodeURIComponent(keycloakUserId)}`, update);
-}
-
-/**
- * Look up the Keycloak subject (sub) for a SQLite user.
- * Returns the Keycloak user ID string or null.
- */
-export function getKeycloakSubForUser(sqliteUserId) {
-    const link = findLinkForUser(sqliteUserId, 'keycloak');
-    return link?.external_id ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -238,12 +241,16 @@ export function getKeycloakSubForUser(sqliteUserId) {
 // ---------------------------------------------------------------------------
 
 /**
- * Create a new Keycloak user. The account is disabled until they redeem their invite
- * and set a password. Returns { id, email, firstName, lastName }.
+ * Create a new Keycloak user. Returns { id, email, firstName, lastName }.
  * If the email already exists, returns the existing user.
+ *
+ * Default (app's own invite flow): disabled until they redeem their invite and set a
+ * password. With `requiredActions` (Keycloak flow): enabled but unable to sign in until
+ * they complete the actions from Keycloak's account-setup email (sendExecuteActionsEmail).
  */
-export async function createKeycloakUser({ email, firstName = '', lastName = '' }) {
+export async function createKeycloakUser({ email, firstName = '', lastName = '', requiredActions = null }) {
     const token = await getAdminToken();
+    const keycloakFlow = Array.isArray(requiredActions) && requiredActions.length > 0;
     const res = await fetch(`${adminBase()}/users`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -252,8 +259,9 @@ export async function createKeycloakUser({ email, firstName = '', lastName = '' 
             firstName,
             lastName,
             username: email,
-            enabled: false,
+            enabled: keycloakFlow,
             emailVerified: false,
+            ...(keycloakFlow ? { requiredActions } : {}),
         }),
     });
 
@@ -274,24 +282,73 @@ export async function createKeycloakUser({ email, firstName = '', lastName = '' 
 }
 
 /**
- * Set a user's password. Use temporary=false for a permanent password set during invite redeem.
+ * Ask Keycloak to email the user a link to complete `actions` (e.g. VERIFY_EMAIL,
+ * UPDATE_PASSWORD), then return them to `redirectUri`. Uses the realm's SMTP and the
+ * slicerhub email theme. Throws if Keycloak could not send it.
  */
-export async function setKeycloakUserPassword(keycloakUserId, password, { temporary = false } = {}) {
-    await keycloakPut(`/users/${encodeURIComponent(keycloakUserId)}/reset-password`, {
-        type: 'password',
-        value: password,
-        temporary,
-    });
+export async function sendExecuteActionsEmail(keycloakUserId, actions, { redirectUri, lifespanSeconds } = {}) {
+    const params = new URLSearchParams({ client_id: config.keycloak.clientId });
+    if (redirectUri) params.set('redirect_uri', redirectUri);
+    if (lifespanSeconds) params.set('lifespan', String(Math.floor(lifespanSeconds)));
+    await keycloakPut(`/users/${encodeURIComponent(keycloakUserId)}/execute-actions-email?${params}`, actions);
 }
 
 /**
- * Enable a Keycloak user and optionally update their profile fields.
+ * Make an existing account ready for Keycloak account setup, if it needs it.
+ * - disabled (left so by the app's older invite flow): enable it and add `actions`;
+ * - enabled with setup still pending: leave it;
+ * - enabled and set up (an active account): leave it — never force a password reset.
+ * Returns true when the account still needs setup (send the setup email), false when
+ * it is already active.
  */
-export async function enableKeycloakUser(keycloakUserId, { firstName, lastName } = {}) {
-    const updates = { enabled: true, emailVerified: true };
-    if (firstName !== undefined) updates.firstName = firstName;
-    if (lastName  !== undefined) updates.lastName  = lastName;
-    await keycloakPut(`/users/${encodeURIComponent(keycloakUserId)}`, updates);
+export async function prepareAccountSetup(keycloakUserId, actions) {
+    const user = await keycloakGet(`/users/${encodeURIComponent(keycloakUserId)}`);
+    if (!user) return true;
+    const pending = user.requiredActions || [];
+    if (user.enabled) return actions.some((a) => pending.includes(a));
+    const requiredActions = [...new Set([...pending, ...actions])];
+    await keycloakPut(`/users/${encodeURIComponent(keycloakUserId)}`, { ...user, enabled: true, requiredActions });
+    return true;
+}
+
+/**
+ * Delete an invitee's account if it was never set up: password setup still pending and
+ * no password stored. Used when an invite expires unused, so the account (with the
+ * email and case role) doesn't linger. Returns true if deleted.
+ */
+export async function deleteAccountIfNeverSetUp(keycloakUserId) {
+    const id = encodeURIComponent(keycloakUserId);
+    const user = await keycloakGet(`/users/${id}`).catch((err) => {
+        if (/\(404\)/.test(String(err?.message))) return null; // already gone
+        throw err;
+    });
+    if (!user) return false;
+    if (!(user.requiredActions || []).includes('UPDATE_PASSWORD')) return false;
+    const credentials = await keycloakGet(`/users/${id}/credentials`);
+    if ((Array.isArray(credentials) ? credentials : []).some((c) => c?.type === 'password')) return false;
+    await keycloakDelete(`/users/${id}`);
+    return true;
+}
+
+/** Registration details a person entered on Keycloak's sign-up page (user-profile attributes). */
+export async function getRegistrationAttributes(keycloakUserId) {
+    const user = await keycloakGet(`/users/${encodeURIComponent(keycloakUserId)}`);
+    const first = (name) => String(user?.attributes?.[name]?.[0] || '').trim();
+    return { affiliation: first('affiliation'), intendedUse: first('intendedUse') };
+}
+
+/**
+ * Remove registration-only attributes from the Keycloak account once a reviewer has
+ * decided (privacy minimization: the review record keeps them, and is itself cleared
+ * after 30 days by the retention sweep).
+ */
+export async function clearRegistrationAttributes(keycloakUserId) {
+    const user = await keycloakGet(`/users/${encodeURIComponent(keycloakUserId)}`);
+    if (!user) return;
+    const attributes = { ...(user.attributes || {}) };
+    delete attributes.affiliation;
+    delete attributes.intendedUse;
+    await keycloakPut(`/users/${encodeURIComponent(keycloakUserId)}`, { ...user, attributes });
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +398,49 @@ export async function assignRealmRole(keycloakUserId, roleName) {
     await keycloakPost(`/users/${encodeURIComponent(keycloakUserId)}/role-mappings/realm`, [
         { id: role.id, name: role.name }
     ]);
+}
+
+/** Realm attributes (string map) from the realm representation. */
+export async function getRealmAttributes() {
+    const realm = await keycloakGet('');
+    return realm?.attributes || {};
+}
+
+/** Set realm attributes, keeping the ones not mentioned. */
+export async function setRealmAttributes(patch) {
+    const current = await getRealmAttributes();
+    await keycloakPut('', { attributes: { ...current, ...patch } });
+}
+
+/** Every user id in the realm (paged), excluding service-account users. */
+export async function listAllUserIds({ pageSize = 100 } = {}) {
+    const ids = [];
+    for (let first = 0; ; first += pageSize) {
+        const page = await keycloakGet(`/users?first=${first}&max=${pageSize}&briefRepresentation=true`);
+        if (!Array.isArray(page) || page.length === 0) break;
+        for (const u of page) {
+            if (u?.id && !String(u.username || '').startsWith('service-account-')) ids.push(u.id);
+        }
+        if (page.length < pageSize) break;
+    }
+    return ids;
+}
+
+/** Ids of users who hold a realm role directly. */
+export async function listRealmRoleMemberIds(roleName, { pageSize = 100 } = {}) {
+    const ids = new Set();
+    for (let first = 0; ; first += pageSize) {
+        const page = await keycloakGet(`/roles/${encodeURIComponent(roleName)}/users?first=${first}&max=${pageSize}&briefRepresentation=true`);
+        if (!Array.isArray(page) || page.length === 0) break;
+        for (const u of page) if (u?.id) ids.add(u.id);
+        if (page.length < pageSize) break;
+    }
+    return ids;
+}
+
+/** Permanently delete a Keycloak user (used when a reviewer rejects an account). */
+export async function deleteKeycloakUser(keycloakUserId) {
+    await keycloakDelete(`/users/${encodeURIComponent(keycloakUserId)}`);
 }
 
 // ---------------------------------------------------------------------------

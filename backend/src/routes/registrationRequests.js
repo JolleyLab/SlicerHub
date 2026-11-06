@@ -1,138 +1,40 @@
 /**
- * Registration request flow (org-level signup approval).
+ * Registration review (approval gate).
  *
- * Public:
- *   POST /api/auth/register-request          — submit a request (no account yet)
- *   GET  /api/auth/register-request/preview  — preview a completion token (like invite preview)
- *   POST /api/auth/register-request/complete — set password and activate account
- *
- * OrgAdmin:
- *   GET  /api/admin/registration-requests         — list pending requests
- *   GET  /api/admin/registration-requests/count   — pending count (bell + home todo)
- *   POST /api/admin/registration-requests/:id/approve — approve + send completion link
- *   POST /api/admin/registration-requests/:id/reject  — reject
+ * People request access on Keycloak's sign-up page; their first sign-in creates the
+ * review item (routes/auth.js, /api/auth/me). Reviewers:
+ *   GET  /api/admin/registration-requests            — list pending + recently decided
+ *   GET  /api/admin/registration-requests/count      — pending count (bell + home todo)
+ *   POST /api/admin/registration-requests/:id/approve — grant app-user (+ app-org-admin)
+ *   POST /api/admin/registration-requests/:id/reject  — delete the Keycloak account
  */
 
 import { authenticateToken } from '../middleware/authMiddleware.js';
-import { requireRole } from '../auth/requireRole.js';
 import { requireKcGroupCapability } from '../auth/requireKcGroupCapability.js';
 import { CAPABILITIES } from '../services/groupCapabilities.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import { requireAllowedWebOrigin } from '../auth/originCheck.js';
-import { createRateLimiter, getRateLimitClientIp } from '../middleware/rateLimit.js';
 import config from '../config/index.js';
 import {
-    createRegistrationRequest,
     listPending,
     listRecentlyDecided,
     getById,
-    approveRequest,
     rejectRequest,
-    findByToken,
-    markCompleted,
+    markAccountApproved,
     REG_STATUS
 } from '../services/registrationRequestStore.js';
 import {
-    findUserByEmail,
-    createKeycloakUser,
-    setKeycloakUserPassword,
-    enableKeycloakUser,
     assignRealmRole,
+    deleteKeycloakUser,
+    clearRegistrationAttributes,
 } from '../services/keycloakAdmin.js';
-import { loginWithProvider } from '../auth/index.js';
-import { ValidationError, NotFoundError, ConflictError } from '../utils/errors.js';
+import { forgetAccount } from '../auth/accountRefresh.js';
+import { ValidationError, NotFoundError } from '../utils/errors.js';
 import { msg } from '../i18n/index.js';
-import { sendRegistrationApprovalEmail, sendRegistrationReceivedEmail, isMailConfigured } from '../services/mail.js';
-import { notifyNewRequest } from '../services/registrationGroupNotifier.js';
+import { sendAccessApprovedEmail } from '../services/mail.js';
 
 const requireRegistrationAccess = [requireKcGroupCapability(CAPABILITIES.APPROVE_REGISTRATIONS)];
 
-const submitRateLimit = createRateLimiter({
-    windowMs: 60 * 60 * 1000,
-    max: 5,
-    message: msg('registration.rate_limit'),
-    getKey: (req) => `reg-request:${getRateLimitClientIp(req)}`
-});
-
 export default function registrationRequestRoutes(app) {
-
-    // --- Public: submit a registration request ---
-    app.post('/api/auth/register-request',
-        submitRateLimit,
-        asyncHandler(async (req, res) => {
-            const { email, firstName, lastName, affiliation, intendedUse } = req.body || {};
-
-            if (!email || !String(email).includes('@')) {
-                throw new ValidationError(msg('auth.email_required'), null, 'auth.email_required');
-            }
-            if (!firstName || !String(firstName).trim()) {
-                throw new ValidationError(msg('auth.first_name_required'), null, 'auth.first_name_required');
-            }
-            if (!lastName || !String(lastName).trim()) {
-                throw new ValidationError(msg('auth.last_name_required'), null, 'auth.last_name_required');
-            }
-
-            const normalized = String(email).trim().toLowerCase();
-
-            const existingUser = await findUserByEmail(normalized);
-            if (existingUser) {
-                throw new ConflictError(msg('registration.email_already_registered'), 'EMAIL_ALREADY_REGISTERED', 'registration.email_already_registered');
-            }
-
-            let request;
-            try {
-                request = await createRegistrationRequest({ email, firstName, lastName, affiliation, intendedUse });
-            } catch (err) {
-                if (err.code === 'DUPLICATE_REGISTRATION') {
-                    throw new ConflictError(msg('registration.duplicate'), null, 'registration.duplicate');
-                }
-                throw err;
-            }
-
-            await sendRegistrationReceivedEmail({ to: email, firstName });
-
-            notifyNewRequest().catch(() => { });
-
-            res.status(201).json({ status: 'pending', id: request.id });
-        })
-    );
-
-    // --- Public: preview a completion token ---
-    app.get('/api/auth/register-request/preview',
-        requireAllowedWebOrigin,
-        asyncHandler(async (req, res) => {
-            const token = String(req.query.token || '').trim();
-            if (!token) throw new ValidationError(msg('registration.token_required'), null, 'registration.token_required');
-
-            const request = await findByToken(token);
-            if (!request) throw new NotFoundError(msg('registration.token_invalid'), null, 'registration.token_invalid');
-
-            res.json({
-                email:     request.email,
-                firstName: request.firstName,
-                lastName:  request.lastName
-            });
-        })
-    );
-
-    // --- Public: complete registration (set password, create account) ---
-    app.post('/api/auth/register-request/complete',
-        requireAllowedWebOrigin,
-        asyncHandler(async (req, res) => {
-            const { token: rawToken, password, firstName, lastName, theme } = req.body || {};
-
-            const token = String(rawToken || '').trim();
-            if (!token) throw new ValidationError(msg('registration.token_required'), null, 'registration.token_required');
-            if (!password || String(password).length < 8) {
-                throw new ValidationError(msg('auth.password_min_length_short', { min: 8 }), null, 'auth.password_min_length_short');
-            }
-
-            const request = await findByToken(token);
-            if (!request) throw new NotFoundError(msg('registration.token_invalid'), null, 'registration.token_invalid');
-
-            await _completeWithKeycloak(req, res, request, { password, firstName, lastName, theme });
-        })
-    );
 
     // --- Registration reviewer: pending count ---
     app.get('/api/admin/registration-requests/count',
@@ -171,24 +73,26 @@ export default function registrationRequestRoutes(app) {
             const callerIsOrgAdmin = req.user?.role === 'admin' || req.user?.role === 'org-admin';
             const asAdmin = callerIsOrgAdmin && req.body?.asAdmin === true;
             const reviewerSub = req.user?.keycloakSub || null;
-            const { token, completionUrl, expiresAt } = await approveRequest(
-                request.id,
-                asAdmin,
-                reviewerSub
-            );
 
-            await sendRegistrationApprovalEmail({
+            // Every request is an existing Keycloak account (sign-up page or hospital SSO).
+            // A record from the old app-run flow has none: ask them to sign up again.
+            if (!request.keycloakSub) {
+                throw new ValidationError(msg('registration.legacy_request'), 'LEGACY_REQUEST', 'registration.legacy_request');
+            }
+            await assignRealmRole(request.keycloakSub, 'app-user');
+            if (asAdmin) await assignRealmRole(request.keycloakSub, 'app-org-admin');
+            await markAccountApproved(request.id, asAdmin, reviewerSub);
+            forgetAccount(request.keycloakSub); // takes effect on their next request
+            // The review record keeps affiliation/intended use (cleared after 30 days);
+            // the Keycloak account doesn't need them.
+            await clearRegistrationAttributes(request.keycloakSub).catch((err) =>
+                console.warn('[registration] Could not clear registration attributes:', err.message));
+            await sendAccessApprovedEmail({
                 to: request.email,
                 firstName: request.firstName,
-                completionUrl,
-                expiresAt
+                signInUrl: `${config.publicAppUrl}/`,
             });
-
-            const emailWorking = isMailConfigured();
-            res.json({
-                expiresAt,
-                ...(emailWorking ? {} : { token, completionUrl })
-            });
+            res.json({ approved: true });
         })
     );
 
@@ -204,43 +108,14 @@ export default function registrationRequestRoutes(app) {
             }
 
             const reviewerSub = req.user?.keycloakSub || null;
+            // Account request: the account was never allowed in; remove it
+            // (design decision: reject = delete the Keycloak account).
+            if (request.keycloakSub) {
+                await deleteKeycloakUser(request.keycloakSub);
+                forgetAccount(request.keycloakSub);
+            }
             await rejectRequest(request.id, reviewerSub);
             res.json({ status: 'rejected' });
         })
     );
 }
-
-async function _completeWithKeycloak(req, res, request, { password, firstName, lastName, theme }) {
-    const email = request.email;
-
-    const existing = await findUserByEmail(email);
-    if (existing) throw new ConflictError(msg('case.signup_email_exists'), null, 'case.signup_email_exists');
-
-    const fn = String(firstName || request.firstName || '').trim();
-    const ln = String(lastName  || request.lastName  || '').trim();
-
-    // Create disabled KC user, set password, enable
-    const kcUser = await createKeycloakUser({ email, firstName: fn, lastName: ln });
-    await setKeycloakUserPassword(kcUser.id, String(password));
-    await enableKeycloakUser(kcUser.id, { firstName: fn, lastName: ln });
-
-    if (request.isOrgAdmin) {
-        await assignRealmRole(kcUser.id, 'app-org-admin');
-    }
-
-    await markCompleted(request.id);
-
-    // Log the user in immediately — keycloak provider creates the shadow user automatically
-    const result = await loginWithProvider(req, res, { identity: email, password: String(password) });
-    if (!result) {
-        // Account created but login failed — should not happen
-        return res.status(201).json({ status: 'completed' });
-    }
-
-    if (theme === 'dark' || theme === 'light') {
-        // Theme is stored in UserPreferences by the settings route; nothing to do here
-    }
-
-    res.json({ status: 'completed', user: result.user });
-}
-

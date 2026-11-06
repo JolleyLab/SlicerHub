@@ -13,13 +13,13 @@ import {
   writeAppViewToUrl
 } from './components/app-views.js';
 import { loadAppFeatures, areAppFeaturesLoaded } from './services/features.js';
-import './auth/login-form.js';
-import './auth/registration-request-form.js';
-import './auth/complete-registration-form.js';
-import './auth/reset-password-form.js';
-import './auth/invite-accept-form.js';
-import './kc-invite-accept-form.js';
-import './auth/change-password-form.js';
+import { setReauthHandler, clearReauthHandler, requestReauth } from './services/reauth.js';
+import { installAuthFetch, uninstallAuthFetch } from './services/authFetch.js';
+import { startActivityTracking, stopActivityTracking, setIdleExempt, markActive } from './services/sessionActivity.js';
+import { getSessionState, setSessionState } from './services/sessionState.js';
+import './components/session-reauth-dialog.js';
+import './components/procedure-mode-dialog.js';
+import { noteSignOutReason } from './auth/login-form.js';
 import './pages/admin-registrations-page.js';
 import './pages/admin-groups-page.js';
 import './pages/file-manager.js';
@@ -35,7 +35,6 @@ import {
 } from './utils/viewerActivity.js';
 import {
   hydrateUserPreferencesFromUser,
-  fetchUserPreferences,
   clearCachedUserPreferences
 } from './utils/userPreferences.js';
 import { watchSystemColorScheme } from './components/theme.js';
@@ -70,17 +69,16 @@ export class SlicerApp extends LitElement {
     return {
       // Auth properties
       isAuthenticated: { type: Boolean },
+      // Approval gate: signed in, but waiting for a reviewer to grant access
+      accessPending: { type: Boolean },
       user: { type: Object },
-      showLogin: { type: Boolean },
+      _signingOut: { type: Boolean },
       currentView: { type: String },
       selectedProjectId: { type: Number },
       shareToken:          { type: String },
-      inviteToken:         { type: String },
-      kcInviteToken:       { type: String },
-      registerToken:       { type: String },
-      resetToken:          { type: String },
-      _showPasswordReset:  { type: Boolean },
-      _passwordResetMode:  { type: String },
+      // false until the first /api/auth/me answers: the sign-in screen goes straight to
+      // Keycloak, so it must not appear for someone who is already signed in.
+      _authCheckDone:      { type: Boolean },
       isOrgAdmin: { type: Boolean },
       isRegistrationReviewer: { type: Boolean },
       keycloakSub:            { type: String },
@@ -105,19 +103,17 @@ export class SlicerApp extends LitElement {
 
     // Auth state
     this.isAuthenticated = false;
+    this.accessPending = false;
     this.isOrgAdmin = false;
     this.isRegistrationReviewer = false;
     this.keycloakSub = null;
     this.user = null;
-    this.showLogin = true; // Show login by default
+    this._signingOut = false;
     this.currentView = DEFAULT_APP_VIEW;
     this.selectedProjectId = null;
     this.inactivityTimeout = null;
     this.shareToken    = new URLSearchParams(window.location.search).get('share')     || '';
-    this.inviteToken   = new URLSearchParams(window.location.search).get('invite')   || '';
-    this.kcInviteToken = new URLSearchParams(window.location.search).get('kc-invite') || '';
-    this.registerToken = new URLSearchParams(window.location.search).get('register') || '';
-    this.resetToken    = new URLSearchParams(window.location.search).get('reset')    || '';
+    this._dropRetiredLinkParams();
     this.shareLoading = false;
     this.shareError = '';
     this.shareErrorStatus = 0;
@@ -144,7 +140,7 @@ export class SlicerApp extends LitElement {
     this._authCheckDone = false;
     this._onPopState = () => this.handlePopState();
 
-    if (!this.shareToken && !this.inviteToken && !this.kcInviteToken) {
+    if (!this.shareToken) {
       this.initializeAppView();
       this.checkExistingSession();
     }
@@ -284,6 +280,19 @@ export class SlicerApp extends LitElement {
   }
 
 
+  /**
+   * Links from emails sent before sign-up, reset and invites moved to Keycloak
+   * (?register= ?reset= ?invite= ?kc-invite=) no longer do anything: drop them, so the
+   * person lands on the normal sign-in (with "Forgot your password?" there).
+   */
+  _dropRetiredLinkParams() {
+    const url = new URL(window.location.href);
+    const retired = ['register', 'reset', 'invite', 'kc-invite'].filter((k) => url.searchParams.has(k));
+    if (!retired.length) return;
+    retired.forEach((k) => url.searchParams.delete(k));
+    history.replaceState(null, '', `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams}` : ''}${url.hash}`);
+  }
+
   async checkExistingSession() {
     try {
       const res = await fetch(`${API_URL}/api/auth/me`, {
@@ -294,6 +303,8 @@ export class SlicerApp extends LitElement {
         const data = await res.json();
         this.user = data.user;
         this.isAuthenticated = true;
+        this.accessPending = data.accessPending === true;
+        this._applySessionInfo(data.session);
         this.isOrgAdmin = data.isOrgAdmin === true;
         this.isRegistrationReviewer = data.isRegistrationReviewer === true;
         this.keycloakSub = data.keycloakSub || null;
@@ -325,6 +336,8 @@ export class SlicerApp extends LitElement {
       if (!res.ok) return;
       const data = await res.json();
       if (data.user) this.user = { ...(this.user || {}), ...data.user };
+      if (typeof data.accessPending === 'boolean') this.accessPending = data.accessPending;
+      if (data.session) this._applySessionInfo(data.session);
       if (typeof data.isOrgAdmin === 'boolean') this.isOrgAdmin = data.isOrgAdmin;
       if (typeof data.isRegistrationReviewer === 'boolean') this.isRegistrationReviewer = data.isRegistrationReviewer;
       if (data.keycloakSub) this.keycloakSub = data.keycloakSub;
@@ -344,113 +357,9 @@ export class SlicerApp extends LitElement {
     }
     this.user = null;
     this.isAuthenticated = false;
-    this.showLogin = true;
+    this.accessPending = false;
     this.stopInactivityTimer();
     this._syncAuthThemeWatch();
-  }
-
-  handleLoginSuccess(e) {
-    const { user } = e.detail || {};
-    this.user = user;
-    this.isAuthenticated = true;
-    // Signing in always starts on Home, whatever view was open before.
-    this.selectedProjectId = null;
-    this.currentView = APP_VIEWS.HOME;
-    this.syncViewToUrl();
-    this._stopAuthThemeWatch();
-    hydrateUserPreferencesFromUser(user);
-    this.startInactivityTimer();
-    this.refreshUserProfile();
-    // Re-fetch preferences in case Payload wasn't ready when the login response was built
-    // (startup race: login returns defaults, /api/auth/me returns the real saved theme).
-    if (!user?.hasCustomPreferences) {
-      fetchUserPreferences().catch(() => {});
-    }
-  }
-
-  handleRegisterSuccess(e) {
-    const { user } = e.detail;
-    this.user = user;
-    this.isAuthenticated = true;
-    this._stopAuthThemeWatch();
-    hydrateUserPreferencesFromUser(user);
-    this.startInactivityTimer();
-  }
-
-  handleRegistrationComplete(e) {
-    const { user } = e.detail || {};
-    this.registerToken = '';
-    const url = new URL(window.location.href);
-    url.searchParams.delete('register');
-    history.replaceState(null, '', `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams}` : ''}`);
-    if (user) {
-      this.user = user;
-      this.isAuthenticated = true;
-      this._stopAuthThemeWatch();
-      hydrateUserPreferencesFromUser(user);
-      this.startInactivityTimer();
-      this.checkExistingSession();
-    }
-  }
-
-  handlePasswordResetComplete(e) {
-    const { user } = e.detail || {};
-    this.resetToken = '';
-    const url = new URL(window.location.href);
-    url.searchParams.delete('reset');
-    history.replaceState(null, '', `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams}` : ''}`);
-    if (user) {
-      this.user = user;
-      this.isAuthenticated = true;
-      this._stopAuthThemeWatch();
-      hydrateUserPreferencesFromUser(user);
-      this.startInactivityTimer();
-      this.checkExistingSession();
-    }
-  }
-
-  handleShowPasswordReset(mode = 'reset', email = '') {
-    this.resetToken = '';
-    this._passwordResetMode = mode;
-    this._passwordResetEmail = email || '';
-    this.showLogin = false;
-    this._showPasswordReset = true;
-    this.requestUpdate();
-  }
-
-  handleKcInviteAccepted(e) {
-    const { caseId } = e.detail || {};
-    this.kcInviteToken = '';
-    const url = new URL(window.location.href);
-    url.searchParams.delete('kc-invite');
-    if (caseId) {
-      url.searchParams.set('view', 'cases');
-      url.searchParams.set('case', String(caseId));
-    }
-    history.replaceState(null, '', `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams}` : ''}`);
-    // Account is now active — go to login so the user can sign in
-    this.initializeAppView();
-  }
-
-  handleInviteAccepted(e) {
-    const { user, caseId } = e.detail || {};
-    this.inviteToken = '';
-    const url = new URL(window.location.href);
-    url.searchParams.delete('invite');
-    if (caseId) {
-      url.searchParams.set('view', 'cases');
-      url.searchParams.set('case', String(caseId));
-    }
-    history.replaceState(null, '', `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams}` : ''}`);
-    if (user) {
-      this.user = user;
-      this.isAuthenticated = true;
-      this._stopAuthThemeWatch();
-      hydrateUserPreferencesFromUser(user);
-      this.startInactivityTimer();
-      this.checkExistingSession();
-    }
-    this.initializeAppView();
   }
 
   handleNotificationOpen(e) {
@@ -486,28 +395,10 @@ export class SlicerApp extends LitElement {
     });
   }
 
-  handlePasswordChanged(e) {
-    const { user } = e.detail || {};
-    if (user) {
-      this.user = { ...(this.user || {}), ...user, mustChangePassword: false };
-    } else if (this.user) {
-      this.user = { ...this.user, mustChangePassword: false };
-    }
-  }
-
   handleProfileUpdated(e) {
     const { user } = e.detail || {};
     if (!user) return;
     this.user = { ...(this.user || {}), ...user };
-  }
-
-  handleShowRegister() {
-    this.showLogin = false;
-  }
-
-  handleShowLogin() {
-    this.showLogin = true;
-    this._showPasswordReset = false;
   }
 
   openSettingsFlow() {
@@ -583,46 +474,135 @@ export class SlicerApp extends LitElement {
     }
   }
 
+  /**
+   * Session guards while signed in (docs/redirect-login-and-sessions-design.md, "Sessions"):
+   *   - real use (page + same-origin viewer frames) is reported to the server; after the
+   *     idle limit the page is hidden behind the sign-in dialog (work stays in memory);
+   *   - any 401 opens that dialog and retries the request after signing in;
+   *   - procedure mode: no idle timeout; signed out when it runs out.
+   * (Replaces the old timer, which only saw the main page and signed people out mid-work.)
+   */
   startInactivityTimer() {
-    // Clear any existing timer
     this.stopInactivityTimer();
-
-    const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
-
-    // Reset timer on any user activity
-    const resetTimer = () => {
-      this.stopInactivityTimer();
-      this.inactivityTimeout = setTimeout(() => {
-        console.log('User inactive for 30 minutes, logging out...');
-        // Skip billing dialog — user is already gone; idle auto-stop still applies.
-        this.performLogout();
-      }, INACTIVITY_TIMEOUT);
-    };
-
-    // Track various user activities
-    this.activityEvents = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
-    this.resetTimer = resetTimer;
-
-    this.activityEvents.forEach(event => {
-      document.addEventListener(event, resetTimer, true);
+    installAuthFetch({ onProcedureModeEnded: () => this._handleProcedureModeEnded() });
+    setReauthHandler((reason) => this._promptReauth(reason));
+    startActivityTracking({
+      idleMinutes: this._sessionInfo?.idleMinutes || 30,
+      onIdle: () => this._handleIdle(),
     });
-
-    // Start initial timer
-    resetTimer();
+    setIdleExempt(Boolean(getSessionState().procedureMode?.active));
   }
 
   stopInactivityTimer() {
-    if (this.inactivityTimeout) {
-      clearTimeout(this.inactivityTimeout);
-      this.inactivityTimeout = null;
-    }
+    stopActivityTracking();
+    clearReauthHandler();
+    uninstallAuthFetch();
+    this._clearProcedureTimer();
+    this._reauthDialog?.remove();
+    this._reauthDialog = null;
+  }
 
-    // Remove event listeners
-    if (this.resetTimer && this.activityEvents) {
-      this.activityEvents.forEach(event => {
-        document.removeEventListener(event, this.resetTimer, true);
-      });
+  _applySessionInfo(session) {
+    if (!session) return;
+    const idleChanged = this._sessionInfo && this._sessionInfo.idleMinutes !== session.idleMinutes;
+    this._sessionInfo = session;
+    setSessionState({
+      procedureSettings: session.procedureSettings || { enabled: false },
+      procedureMode: session.procedureMode || { active: false },
+    });
+    setIdleExempt(Boolean(session.procedureMode?.active));
+    this._scheduleProcedureEnd(session.procedureMode);
+    if (idleChanged && this.isAuthenticated) this.startInactivityTimer();
+    this.requestUpdate();
+  }
+
+  _ensureReauthDialog() {
+    if (!this._reauthDialog) {
+      this._reauthDialog = document.createElement('session-reauth-dialog');
+      this._reauthDialog.addEventListener('reauth-sign-out', () => this.performLogout());
+      document.body.appendChild(this._reauthDialog);
     }
+    const dialog = this._reauthDialog;
+    dialog.userId = this.user?.id != null ? String(this.user.id) : '';
+    dialog.idleMinutes = this._sessionInfo?.idleMinutes || 30;
+    dialog.maxHours = this._sessionInfo?.maxHours || 12;
+    return dialog;
+  }
+
+  async _promptReauth(reason) {
+    await this._ensureReauthDialog().prompt(reason);
+    markActive();
+    this.refreshUserProfile();
+  }
+
+  /** Idle limit reached: end the server session and hide the page until they sign in. */
+  _handleIdle() {
+    if (getSessionState().procedureMode?.active) return;
+    fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
+    requestReauth('idle').catch(() => {});
+  }
+
+  _clearProcedureTimer() {
+    if (this._procedureTimer) {
+      clearTimeout(this._procedureTimer);
+      this._procedureTimer = null;
+    }
+  }
+
+  /** When procedure mode runs out, sign the workstation out (the server enforces it too). */
+  _scheduleProcedureEnd(procedureMode) {
+    this._clearProcedureTimer();
+    if (!procedureMode?.active || !procedureMode.until) return;
+    const ms = Date.parse(procedureMode.until) - Date.now();
+    // setTimeout can't wait longer than ~24.8 days; procedure mode is at most 24 h.
+    this._procedureTimer = setTimeout(() => this._handleProcedureModeEnded(), Math.max(0, ms) + 1000);
+  }
+
+  _handleProcedureModeEnded() {
+    if (this._procedureEnding) return;
+    this._procedureEnding = true;
+    setSessionState({ procedureMode: { active: false } });
+    noteSignOutReason('procedure_mode_ended');
+    this.performLogout().finally(() => { this._procedureEnding = false; });
+  }
+
+  _openProcedureModeDialog() {
+    const settings = getSessionState().procedureSettings || {};
+    if (!settings.enabled) return;
+    if (!this._procedureDialog) {
+      this._procedureDialog = document.createElement('procedure-mode-dialog');
+      this._procedureDialog.addEventListener('procedure-mode-started', (e) => {
+        markActive();
+        this.refreshUserProfile();
+        this._applySessionInfo({ ...(this._sessionInfo || {}), procedureMode: e.detail });
+      });
+      document.body.appendChild(this._procedureDialog);
+    }
+    const dialog = this._procedureDialog;
+    dialog.defaultHours = settings.defaultHours || 8;
+    dialog.maxHours = settings.maxHours || 24;
+    dialog.open();
+  }
+
+  async _endProcedureMode() {
+    try {
+      await fetch(`${API_URL}/api/auth/procedure-mode/end`, { method: 'POST', credentials: 'include' });
+    } finally {
+      markActive();
+      this._applySessionInfo({ ...(this._sessionInfo || {}), procedureMode: { active: false } });
+    }
+  }
+
+  _renderProcedureBanner() {
+    const pm = getSessionState().procedureMode;
+    if (!this.isAuthenticated || !pm?.active) return '';
+    const time = new Date(pm.until).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+    return html`
+      <div class="procedure-banner" role="status">
+        <span>${pm.openEnded ? t('procedureMode.bannerOpen', { time }) : t('procedureMode.bannerTimed', { time })}</span>
+        <button type="button" @click=${() => this._endProcedureMode()}>${t('procedureMode.end')}</button>
+      </div>
+    `;
   }
 
   /**
@@ -873,7 +853,11 @@ export class SlicerApp extends LitElement {
   }
 
   async performLogout() {
+    // Guards off first: the sign-out calls below may hit an already-ended session, and
+    // that must not pop up the "sign in again" dialog.
+    this.stopInactivityTimer();
     uploadManager.cancelAll();
+    let keycloakLogoutUrl = null;
     try {
       // Stop any running containers before logout
       await fetch(`${API_URL}/api/containers/stop`, {
@@ -884,19 +868,24 @@ export class SlicerApp extends LitElement {
         credentials: 'include'
       }).catch(err => console.log('Container cleanup on logout:', err.message));
 
-      // Call logout API (this clears the cookie)
-      await fetch(`${API_URL}/api/auth/logout`, {
+      // Call logout API (this clears the cookie). Sessions from Keycloak redirect login
+      // also get a logoutUrl that ends the Keycloak sign-in; we go there last.
+      const res = await fetch(`${API_URL}/api/auth/logout`, {
         method: 'POST',
         credentials: 'include'
       });
+      const data = await res.json().catch(() => null);
+      keycloakLogoutUrl = typeof data?.logoutUrl === 'string' ? data.logoutUrl : null;
     } catch (err) {
       console.error('Logout error:', err);
     }
 
-    // Clear state
+    // Clear state. While the browser heads to Keycloak's sign-out, show "Signing out"
+    // rather than the sign-in screen (which would start a sign-in of its own).
+    this._signingOut = Boolean(keycloakLogoutUrl);
     this.user = null;
     this.isAuthenticated = false;
-    this.showLogin = true;
+    this.accessPending = false;
     this._navHistory = [];
     this._canGoBack = false;
     clearCachedUserPreferences();
@@ -908,6 +897,12 @@ export class SlicerApp extends LitElement {
 
     // Cleanup any running containers
     await this.cleanupContainer();
+
+    // End the Keycloak sign-in too (shared workstations); Keycloak sends the browser
+    // back to the app's start page afterwards.
+    if (keycloakLogoutUrl) {
+      window.location.assign(keycloakLogoutUrl);
+    }
   }
 
   connectedCallback() {
@@ -919,6 +914,8 @@ export class SlicerApp extends LitElement {
     this.addEventListener('pending-registrations-request', this._onPendingRegistrations);
     this._onNavigateBack = () => this._handleNavigateBack();
     this.addEventListener('navigate-back', this._onNavigateBack);
+    this._onProcedureModeRequest = () => this._openProcedureModeDialog();
+    this.addEventListener('procedure-mode-request', this._onProcedureModeRequest);
     this._syncAuthThemeWatch();
     if (this.shareToken) {
       this.launchSharedViewer();
@@ -1004,7 +1001,7 @@ export class SlicerApp extends LitElement {
                 <button
                   slot="actions"
                   class="primary"
-                  @click=${() => { window.location.href = signInUrl; }}
+                  @click=${() => { window.location.href = `${API_URL}/api/auth/login/start?returnTo=${encodeURIComponent(signInUrl)}`; }}
                 >
                   Sign in and retry
                 </button>
@@ -1038,90 +1035,42 @@ export class SlicerApp extends LitElement {
       `;
     }
 
-    if (this.registerToken) {
-      return html`
-        <div class="auth-container">
-          <complete-registration-form
-            .token=${this.registerToken}
-            @registration-complete=${this.handleRegistrationComplete}
-          ></complete-registration-form>
-        </div>
-      `;
-    }
-
-    if (this.resetToken) {
-      return html`
-        <div class="auth-container">
-          <reset-password-form
-            .token=${this.resetToken}
-            @password-reset-complete=${this.handlePasswordResetComplete}
-            @show-login=${this.handleShowLogin}
-          ></reset-password-form>
-        </div>
-      `;
-    }
-
-    if (this.inviteToken) {
-      return html`
-        <div class="auth-container">
-          <invite-accept-form
-            .token=${this.inviteToken}
-            @invite-accepted=${this.handleInviteAccepted}
-          ></invite-accept-form>
-        </div>
-      `;
-    }
-
-    if (this.kcInviteToken) {
-      return html`
-        <div class="auth-container">
-          <kc-invite-accept-form
-            .token=${this.kcInviteToken}
-            @kc-invite-accepted=${this.handleKcInviteAccepted}
-          ></kc-invite-accept-form>
-        </div>
-      `;
-    }
-
-    // Show auth forms if not authenticated
+    // Signed out: Keycloak's sign-in page (login-form goes there unless it has a message).
+    // Wait for the first session check, and don't start a sign-in while signing out.
     if (!this.isAuthenticated) {
+      if (!this._authCheckDone) return html``;
+      if (this._signingOut) {
+        return html`<div class="auth-container"><status-card title=${t('auth.signingOut')}></status-card></div>`;
+      }
       return html`
         <div class="auth-container">
-          ${this._showPasswordReset
-          ? html`<reset-password-form
-                .mode=${this._passwordResetMode || 'reset'}
-                .prefillEmail=${this._passwordResetEmail || ''}
-                @password-reset-complete=${this.handlePasswordResetComplete}
-                @show-login=${this.handleShowLogin}>
-              </reset-password-form>`
-          : this.showLogin
-          ? html`<login-form
-                @login-success=${this.handleLoginSuccess}
-                @show-register=${this.handleShowRegister}
-                @show-password-reset=${(e) => this.handleShowPasswordReset(e.detail?.mode || 'reset', e.detail?.email || '')}
-                @show-activate=${(e) => this.handleShowPasswordReset('activate', e.detail?.email || '')}>
-              </login-form>`
-          : html`<registration-request-form
-                @show-login=${this.handleShowLogin}>
-              </registration-request-form>`
-        }
+          <login-form></login-form>
         </div>
       `;
     }
 
-    // Provisioned accounts must set a personal password before using the product
-    if (this.user?.mustChangePassword) {
+    // Approval gate: signed in, but a reviewer hasn't granted access yet
+    if (this.accessPending) {
       return html`
         <div class="auth-container">
-          <change-password-form
-            @password-changed=${this.handlePasswordChanged}>
-          </change-password-form>
+          <status-card
+            title=${t('auth.pending.title')}
+            .message=${t('auth.pending.message')}
+          >
+            <button slot="actions" class="primary" @click=${() => this.refreshUserProfile()}>
+              ${t('auth.pending.checkAgain')}
+            </button>
+            <button slot="actions" @click=${() => this.performLogout()}>
+              ${t('auth.pending.signOut')}
+            </button>
+          </status-card>
         </div>
       `;
     }
 
     // Show main app if authenticated
     return html`
+      ${this._renderProcedureBanner()}
       ${this.currentView === APP_VIEWS.HOME ? html`
         <home-page
           .username=${userDisplayName(this.user)}

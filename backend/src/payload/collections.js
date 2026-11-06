@@ -124,7 +124,8 @@ export const CaseInvites = {
             defaultValue: 'collaborator',
         },
         { name: 'keycloak_user_id', type: 'text' },  // set once KC user exists
-        { name: 'token_hash',       type: 'text', index: true },  // for signup invite links
+        // Signup invites: when Keycloak's account-setup link runs out; after that the
+        // invite is expired and an account never set up is removed (services/inviteExpiry.js).
         { name: 'expires_at',       type: 'date' },
         { name: 'group_id',        type: 'text', index: true },  // SlicerHub group ID, kind: 'group' only
     ],
@@ -211,8 +212,9 @@ export const RegistrationRequests = {
             required: true,
         },
         { name: 'is_org_admin',                type: 'checkbox', defaultValue: false },
-        { name: 'completion_token_hash',       type: 'text', index: true },
-        { name: 'completion_token_expires_at', type: 'date' },
+        // Set when the account already exists in Keycloak (first hospital SSO sign-in,
+        // self-registration) and only needs approval: approving grants app-user.
+        { name: 'keycloak_sub',                type: 'text', index: true },
         { name: 'reviewed_by',                 type: 'text' },
         { name: 'reviewed_at',                 type: 'date' },
     ],
@@ -288,22 +290,22 @@ export const Attachments = {
     ],
 };
 
-export const PasswordResetTokens = {
-    slug: 'password-reset-tokens',
-    admin: { useAsTitle: 'email' },
+/**
+ * In-app notifications (bell + Home), e.g. @mentions in case comments. Replaces the SQLite
+ * user_notifications table, which was keyed by the old integer user ids and silently
+ * dropped every notification for Keycloak accounts.
+ * Retention: services/dataRetention.js.
+ */
+export const UserNotifications = {
+    slug: 'user-notifications',
+    admin: { useAsTitle: 'title' },
     fields: [
-        { name: 'email',      type: 'email', required: true, index: true },
-        { name: 'token_hash', type: 'text',  required: true, index: true, unique: true },
-        {
-            name: 'kind',
-            type: 'select',
-            options: [
-                { label: 'Account activation (new/migrated user)', value: 'activation' },
-                { label: 'Password reset (forgot password)',        value: 'reset' },
-            ],
-            required: true,
-        },
-        { name: 'expires_at', type: 'date', required: true },
-        { name: 'used_at',    type: 'date' },
+        { name: 'user_id',   type: 'text', required: true, index: true, label: 'Recipient (Keycloak sub)' },
+        { name: 'type',      type: 'text', required: true },
+        { name: 'title',     type: 'text', required: true },
+        { name: 'body',      type: 'textarea' },
+        { name: 'case_id',   type: 'text', index: true },
+        { name: 'invite_id', type: 'text', index: true },
+        { name: 'read_at',   type: 'date', index: true },
     ],
 };

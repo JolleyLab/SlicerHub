@@ -1,0 +1,299 @@
+/*
+ * SlicerHub look for Keycloak's sign-in pages (on top of keycloak.v2 / PatternFly 5).
+ * Mirrors the app's login card (dev/styles/auth-form-shared.js) and colours
+ * (dev/components/theme.js).
+ *
+ * Accessibility (WCAG 2.1 AA), contrast measured against the card/page background:
+ *   light: text 20.4:1, labels 18.6:1, links 5.3:1, button text 9.4:1,
+ *          input borders 8.8:1, focus ring 6.7:1, error text 8.2:1
+ *   dark:  text 15.3:1, labels 10.2:1, links 8.7:1, button text 9.8:1,
+ *          input borders 4.4:1, button edge 6.8:1, focus ring 6.8:1, error text 11.1:1
+ * The app's own dark links (#3d4d9a, 2.2:1) and input borders (#343e58, 1.6:1) fall
+ * short, so this page uses the adjusted values below.
+ *
+ * Every rule starts with html.login-pf (a class Keycloak always sets) so it outranks
+ * PatternFly's .pf-v5-theme-dark overrides and still applies without JavaScript.
+ */
+
+html.login-pf {
+    --sh-bg: #ecf4f9;
+    --sh-panel: #ffffff;
+    --sh-text: #040316;
+    --sh-text-secondary: #0c0941;
+    --sh-primary: #074174;
+    --sh-on-primary: #ecf4f9;
+    --sh-button-edge: #074174;
+    --sh-link: #1372a2;
+    --sh-border: #224f6b;
+    --sh-focus: #0057c2;
+    --sh-focus-ring: 0 0 0 2px #ffffff, 0 0 0 5px #0057c2;
+    --sh-placeholder: #4f5b6b;
+    --sh-error-bg: #fde8e6;
+    --sh-error-fg: #8a1212;
+    --sh-error-border: #c43c32;
+    --sh-success-bg: #e6f6ed;
+    --sh-success-fg: #0b5c38;
+    --sh-success-border: #2f8f63;
+    --sh-shadow: 0 2px 12px rgba(4, 3, 22, 0.08);
+    /* Inter if installed; no web-font download (no third-party request from the sign-in page). */
+    --sh-font: InterVariable, Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+
+    --pf-v5-global--FontFamily--text: var(--sh-font);
+    --pf-v5-global--FontFamily--heading: var(--sh-font);
+    --pf-v5-global--link--Color: var(--sh-link);
+    --pf-v5-global--link--Color--hover: var(--sh-link);
+    --pf-v5-global--primary-color--100: var(--sh-primary);
+    --pf-v5-global--Color--100: var(--sh-text);
+    --pf-v5-global--Color--200: var(--sh-text-secondary);
+    --pf-v5-global--BackgroundColor--100: var(--sh-panel);
+    color-scheme: light;
+}
+
+html.login-pf[data-sh-theme="dark"] {
+    --sh-bg: #090b14;
+    --sh-panel: #161b2c;
+    --sh-text: #f0f2f8;
+    --sh-text-secondary: #c2c8d8;
+    --sh-primary: #2c3878;
+    --sh-on-primary: #f2f4fa;
+    --sh-button-edge: #8fa3d4;   /* app's #2c3878 edge is 1.6:1 on the card */
+    --sh-link: #a9b8e6;          /* app's #3d4d9a is 2.2:1 */
+    --sh-border: #7480a8;        /* app's #343e58 is 1.6:1 */
+    --sh-focus: #8fa3d4;
+    --sh-focus-ring: 0 0 0 3px #8fa3d4;
+    --sh-placeholder: #a0a8bd;
+    --sh-error-bg: #3a1418;
+    --sh-error-fg: #ffc9c2;
+    --sh-error-border: #e06b5f;
+    --sh-success-bg: #0f2a1c;
+    --sh-success-fg: #b6f0cf;
+    --sh-success-border: #3d9a6a;
+    --sh-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+    color-scheme: dark;
+}
+
+/* ── Page ─────────────────────────────────────────────────────────────── */
+
+html.login-pf,
+html.login-pf body {
+    background: var(--sh-bg) !important; /* replaces keycloak.v2's photo background */
+    color: var(--sh-text);
+    font-family: var(--sh-font);
+    font-feature-settings: "liga" 1, "calt" 1;
+}
+
+html.login-pf .pf-v5-c-login__container {
+    grid-template-columns: minmax(0, 420px);
+    justify-content: center;
+    padding: 48px 16px;
+}
+
+/* Product name above the card (Keycloak's realm display name). */
+html.login-pf #kc-header-wrapper {
+    color: var(--sh-text) !important;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 1.75rem;
+    font-weight: 600;
+    line-height: 1.2;
+    margin-bottom: 16px;
+}
+
+/* ── Card ─────────────────────────────────────────────────────────────── */
+
+html.login-pf .pf-v5-c-login__main {
+    background: var(--sh-panel);
+    color: var(--sh-text);
+    border: 1px solid var(--sh-border);
+    border-radius: 8px;
+    box-shadow: var(--sh-shadow);
+}
+
+html.login-pf .pf-v5-c-login__main-header {
+    padding: 30px 30px 0;
+    display: block;
+}
+
+html.login-pf #kc-page-title {
+    margin: 0;
+    text-align: center;
+    color: var(--sh-text);
+    font-size: 1.35rem;
+    font-weight: 600;
+}
+
+html.login-pf .pf-v5-c-login__main-body {
+    padding: 20px 30px 30px;
+}
+
+html.login-pf .pf-v5-c-login__main-footer {
+    padding: 0 30px;
+}
+
+html.login-pf .pf-v5-c-login__main-footer-band {
+    background: transparent;
+    border-top: 1px solid color-mix(in srgb, var(--sh-border) 35%, transparent);
+    color: var(--sh-text-secondary);
+}
+
+/* ── Fields ───────────────────────────────────────────────────────────── */
+
+/* Room between a label and its field, so the focus ring never touches the label. */
+html.login-pf .pf-v5-c-form__group > div.pf-v5-c-form__label {
+    display: block;
+    padding-bottom: 8px;
+}
+
+html.login-pf .pf-v5-c-form__label,
+html.login-pf .pf-v5-c-form__label-text {
+    color: var(--sh-text-secondary);
+    font-weight: 500;
+    font-size: 0.9rem;
+}
+
+html.login-pf .pf-v5-c-form-control {
+    --pf-v5-c-form-control--BackgroundColor: var(--sh-panel);
+    --pf-v5-c-form-control--Color: var(--sh-text);
+    --pf-v5-c-form-control--before--BorderTopColor: var(--sh-border);
+    --pf-v5-c-form-control--before--BorderRightColor: var(--sh-border);
+    --pf-v5-c-form-control--before--BorderBottomColor: var(--sh-border);
+    --pf-v5-c-form-control--before--BorderLeftColor: var(--sh-border);
+    --pf-v5-c-form-control--after--BorderBottomColor: var(--sh-border);
+    --pf-v5-c-form-control--hover--after--BorderBottomColor: var(--sh-border);
+    --pf-v5-c-form-control--focus--after--BorderBottomColor: var(--sh-focus);
+    --pf-v5-c-form-control--m-placeholder--Color: var(--sh-placeholder);
+    --pf-v5-c-form-control--m-readonly--BackgroundColor: color-mix(in srgb, var(--sh-panel) 85%, var(--sh-border));
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+html.login-pf .pf-v5-c-form-control > input,
+html.login-pf .pf-v5-c-form-control > select {
+    padding: 10px 12px;
+    color: var(--sh-text);
+    background: transparent;
+    font-family: inherit;
+}
+
+html.login-pf .pf-v5-c-form-control > input::placeholder {
+    color: var(--sh-placeholder);
+    opacity: 1;
+}
+
+/* Visible keyboard focus (WCAG 2.4.7): the whole field gets the app's focus ring. */
+html.login-pf .pf-v5-c-form-control:focus-within {
+    box-shadow: var(--sh-focus-ring);
+}
+html.login-pf .pf-v5-c-form-control > input:focus,
+html.login-pf .pf-v5-c-form-control > input:focus-visible {
+    outline: none;
+}
+
+/* Required-field marker and inline error text. */
+html.login-pf .pf-v5-c-form__label-required {
+    color: var(--sh-error-fg);
+}
+html.login-pf .pf-v5-c-helper-text__item-text.pf-m-error,
+html.login-pf .kc-feedback-text.pf-m-error {
+    color: var(--sh-error-fg);
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+
+html.login-pf .pf-v5-c-button.pf-m-primary {
+    --pf-v5-c-button--m-primary--BackgroundColor: var(--sh-primary);
+    --pf-v5-c-button--m-primary--Color: var(--sh-on-primary);
+    --pf-v5-c-button--m-primary--hover--BackgroundColor: color-mix(in srgb, var(--sh-primary) 88%, var(--sh-text));
+    --pf-v5-c-button--m-primary--hover--Color: var(--sh-on-primary);
+    --pf-v5-c-button--m-primary--focus--BackgroundColor: var(--sh-primary);
+    --pf-v5-c-button--m-primary--focus--Color: var(--sh-on-primary);
+    --pf-v5-c-button--m-primary--active--BackgroundColor: var(--sh-primary);
+    --pf-v5-c-button--m-primary--active--Color: var(--sh-on-primary);
+    border: 1px solid var(--sh-button-edge);
+    border-radius: 4px;
+    padding: 12px;
+    font-size: 16px;
+    font-weight: 500;
+}
+
+html.login-pf .pf-v5-c-button.pf-m-secondary {
+    --pf-v5-c-button--m-secondary--Color: var(--sh-text);
+    --pf-v5-c-button--m-secondary--BackgroundColor: transparent;
+    --pf-v5-c-button--m-secondary--after--BorderColor: var(--sh-border);
+    --pf-v5-c-button--m-secondary--hover--Color: var(--sh-text);
+    --pf-v5-c-button--m-secondary--focus--Color: var(--sh-text);
+    border-radius: 4px;
+}
+
+html.login-pf .pf-v5-c-button.pf-m-control {
+    --pf-v5-c-button--m-control--BackgroundColor: var(--sh-panel);
+    --pf-v5-c-button--m-control--Color: var(--sh-text-secondary);
+    --pf-v5-c-button--m-control--after--BorderTopColor: var(--sh-border);
+    --pf-v5-c-button--m-control--after--BorderRightColor: var(--sh-border);
+    --pf-v5-c-button--m-control--after--BorderBottomColor: var(--sh-border);
+    --pf-v5-c-button--m-control--after--BorderLeftColor: var(--sh-border);
+}
+
+html.login-pf .pf-v5-c-button:focus-visible {
+    outline: none;
+    box-shadow: var(--sh-focus-ring);
+}
+
+/* ── Links ────────────────────────────────────────────────────────────── */
+
+/* Underlined so links don't rely on colour alone (WCAG 1.4.1). */
+html.login-pf main a,
+html.login-pf .pf-v5-c-button.pf-m-link,
+html.login-pf .pf-v5-c-button.pf-m-inline {
+    color: var(--sh-link);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    font-weight: 500;
+}
+html.login-pf main a:focus-visible {
+    outline: none;
+    border-radius: 2px;
+    box-shadow: var(--sh-focus-ring);
+}
+
+/* Help text under a form (e.g. the password-reset instructions). */
+html.login-pf #kc-info-wrapper {
+    margin-top: 16px;
+    color: var(--sh-text-secondary);
+}
+
+/* ── Messages ─────────────────────────────────────────────────────────── */
+
+html.login-pf .pf-v5-c-alert.pf-m-inline {
+    border-radius: 4px;
+    box-shadow: none;
+    font-size: 14px;
+}
+html.login-pf .pf-v5-c-alert.pf-m-inline.pf-m-danger {
+    background: var(--sh-error-bg);
+    border: 1px solid var(--sh-error-border);
+    --pf-v5-c-alert__title--Color: var(--sh-error-fg);
+    --pf-v5-c-alert--m-danger__title--Color: var(--sh-error-fg);
+    --pf-v5-c-alert--m-danger__icon--Color: var(--sh-error-fg);
+}
+html.login-pf .pf-v5-c-alert.pf-m-inline.pf-m-success {
+    background: var(--sh-success-bg);
+    border: 1px solid var(--sh-success-border);
+    --pf-v5-c-alert__title--Color: var(--sh-success-fg);
+    --pf-v5-c-alert--m-success__title--Color: var(--sh-success-fg);
+    --pf-v5-c-alert--m-success__icon--Color: var(--sh-success-fg);
+}
+
+/* Keycloak's hover-only tooltip text is low-contrast; keep it readable. */
+html.login-pf .kc-login-tooltip .kc-tooltip-text {
+    background: var(--sh-text);
+    color: var(--sh-panel);
+    opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html.login-pf * {
+        transition: none !important;
+        animation: none !important;
+    }
+}

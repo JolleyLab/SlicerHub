@@ -7,9 +7,8 @@ import storage from '../storage/index.js';
 import { attachmentOpenFlags } from '../utils/attachmentFlags.js';
 import { assertCaseAccess, buildCaseRoleMap, getCaseRoleForSub } from '../utils/caseAccess.js';
 import { removeAllGroupAccessForCase } from '../services/caseGroupAccess.js';
-import { getKeycloakSubForUser, getKeycloakUser, kcDisplayName } from '../services/keycloakAdmin.js';
+import { getKeycloakUser, kcDisplayName } from '../services/keycloakAdmin.js';
 import { listRecentActivityKC } from '../services/recentActivity.js';
-import { findLink } from '../auth/identityStore.js';
 import { createNotification } from '../services/notifications.js';
 import { stageCachedFileForSlicerGui, readSlicerGuiBusyStatus } from '../slicerGui/stageFile.js';
 import { buildSlicerGuiViewerPath, writeLastLoadedFile, readLoadResultFile } from '../slicerGui/paths.js';
@@ -147,7 +146,7 @@ export default function casesRoutes(app) {
         const page  = Math.max(Number(req.query.page)  || 1,  1);
 
         // Build Keycloak case role map once — efficient single Admin API call
-        const keycloakSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
+        const keycloakSub = req.user.keycloakSub;
         const roleMap = req.user.role === 'admin' ? {} : await buildCaseRoleMap(req);
         const collaboratorCaseIds = Object.keys(roleMap).map(Number);
 
@@ -203,7 +202,7 @@ export default function casesRoutes(app) {
      */
     app.get('/api/cases/activity/recent', ...auth, asyncHandler(async (req, res) => {
         const payload = getPayloadClient();
-        const kcSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
+        const kcSub = req.user.keycloakSub;
         if (!kcSub) {
             return res.json({ events: [] });
         }
@@ -235,7 +234,7 @@ export default function casesRoutes(app) {
         if (!title) throw new ValidationError('Title is required');
 
         const payload = getPayloadClient();
-        const ownerSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
+        const ownerSub = req.user.keycloakSub;
         if (!ownerSub) throw new ForbiddenError('A Keycloak identity is required to create cases');
 
         const newCase = await payload.create({
@@ -437,7 +436,7 @@ export default function casesRoutes(app) {
         if (!body) throw new ValidationError('Comment text is required');
         if (body.length > 5000) throw new ValidationError('Comment is too long (max 5000 characters)');
 
-        const authorId = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
+        const authorId = req.user.keycloakSub;
         if (!authorId) throw new ForbiddenError('A Keycloak identity is required to comment on cases');
 
         const comment = await payload.create({
@@ -479,10 +478,9 @@ export default function casesRoutes(app) {
                 if (sub === authorId) continue; // don't notify yourself
                 try {
                     if (!(await shouldNotifyMention(doc, sub))) continue;
-                    const link = findLink('keycloak', sub);
-                    if (!link) continue;
-                    createNotification({
-                        userId: link.user_id,
+                    // App user id = Keycloak sub (what /api/notifications reads).
+                    await createNotification({
+                        userId: sub,
                         type: 'mention',
                         title: `${authorName || 'Someone'} mentioned you in "${caseTitle}"`,
                         body: notifBody,

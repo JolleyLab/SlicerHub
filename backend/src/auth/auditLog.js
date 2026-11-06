@@ -1,10 +1,9 @@
 /**
- * Auth audit trail (login outcomes, logout, password changes).
+ * Auth audit trail for app-only events (procedure mode, sign-out, password changes).
+ * Sign-ins are not recorded here: Keycloak keeps those (design decision 6).
  *
  * Privacy: records what happened, to which account (user id) and when — nothing else.
- * No IP address, browser/user agent or login identity is stored: the per-IP rate
- * limits keep IPs in memory only (auth/loginRateLimit.js), and an unsalted hash of an
- * email is reversible by anyone holding a list of candidate emails.
+ * No IP address, browser/user agent or login identity is stored.
  * Retention: prune events older than AUTH_AUDIT_RETENTION_DAYS (default 30).
  */
 

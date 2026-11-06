@@ -12,7 +12,7 @@
 
 import config from '../config/index.js';
 import { ForbiddenError } from './errors.js';
-import { getKeycloakSubForUser, getUserCaseRole, getUserCaseRoleMap } from '../services/keycloakAdmin.js';
+import { getUserCaseRole, getUserCaseRoleMap } from '../services/keycloakAdmin.js';
 import { getCaseRoleFromGroups, getCaseRoleMapFromGroups } from '../services/caseGroupAccess.js';
 
 
@@ -38,7 +38,7 @@ function higherRole(a, b) {
  */
 export async function getCaseRole(caseDoc, req) {
     if (req.user.role === 'admin' || req.user.role === 'org-admin') return 'admin';
-    const requesterSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
+    const requesterSub = req.user.keycloakSub;
     return getCaseRoleForSub(caseDoc, requesterSub);
 }
 
@@ -90,7 +90,7 @@ export async function assertCaseAccess(caseDoc, req, minRole = 'read_only') {
  * Returns {} if Keycloak is not configured or user has no Keycloak link.
  */
 export async function buildCaseRoleMap(req) {
-    const keycloakSub = req.user.keycloakSub || getKeycloakSubForUser(req.user.id);
+    const keycloakSub = req.user.keycloakSub;
     if (!keycloakSub) return {};
 
     const [kcMap, groupMap] = await Promise.all([

@@ -68,7 +68,9 @@ const config = {
     // JWT Authentication
     jwt: {
         secret: resolveJwtSecret(DB_PATH),
-        expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+        // Normal sessions last at most SESSION_MAX_HOURS from sign-in (procedure-mode
+        // sessions get their own lifetime). JWT_EXPIRES_IN is no longer used.
+        expiresIn: `${Math.max(1, parseInt(process.env.SESSION_MAX_HOURS || '12', 10) || 12)}h`,
         algorithm: 'HS256'
     },
 
@@ -103,7 +105,7 @@ const config = {
     // Security
     security: {
         bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS || '10', 10),
-        passwordMinLength: parseInt(process.env.PASSWORD_MIN_LENGTH || '8', 10),
+        // Password rules are Keycloak's realm password policy (scripts/setup-keycloak.mjs).
         // AUTH_DEV_RELAXED uses a longer idle default so re-login (and MFA) is less frequent
         sessionIdleMinutes: parseInt(
             process.env.SESSION_IDLE_MINUTES
@@ -111,8 +113,30 @@ const config = {
                     ? '480'
                     : '30'),
             10
-        )
+        ),
+        /**
+         * Absolute session lifetime from sign-in (re-enter the password after this).
+         * 12 h / 30 min idle: OWASP Session Management, NIST SP 800-63B AAL2.
+         * docs/redirect-login-and-sessions-design.md ("Sessions").
+         */
+        sessionMaxHours: Math.max(1, parseInt(process.env.SESSION_MAX_HOURS || '12', 10) || 12),
     },
+
+    /**
+     * Procedure mode: keep a theatre workstation signed in for a long case.
+     * Hard cap 24 h in code (HARD_CAP below); sites may set lower with PROCEDURE_MODE_MAX_HOURS.
+     */
+    procedureMode: (() => {
+        const HARD_CAP = 24;
+        const max = Math.min(HARD_CAP, Math.max(1, parseInt(process.env.PROCEDURE_MODE_MAX_HOURS || String(HARD_CAP), 10) || HARD_CAP));
+        const def = Math.min(max, Math.max(1, parseInt(process.env.PROCEDURE_MODE_DEFAULT_HOURS || '8', 10) || 8));
+        return {
+            enabled: process.env.PROCEDURE_MODE_ENABLED !== 'false',
+            defaultHours: def,
+            maxHours: max,
+            hardCapHours: HARD_CAP,
+        };
+    })(),
 
     /**
      * Authentication (BFF).
@@ -134,19 +158,7 @@ const config = {
          */
         devRelaxed: process.env.AUTH_DEV_RELAXED === 'true'
             && (process.env.NODE_ENV || 'development') !== 'production',
-        /** Consecutive bad passwords before account cool-down (default 5). */
-        loginMaxFailures: (() => {
-            const n = parseInt(process.env.AUTH_LOGIN_MAX_FAILURES || '5', 10);
-            return Number.isFinite(n) && n > 0 ? n : 5;
-        })(),
-        /**
-         * Cool-down minutes after the failure threshold (default 30).
-         * Soft-lock until email / secondary verification exists.
-         */
-        loginLockoutMinutes: (() => {
-            const n = parseInt(process.env.AUTH_LOGIN_LOCKOUT_MINUTES || '30', 10);
-            return Number.isFinite(n) && n > 0 ? n : 30;
-        })(),
+        // Sign-in lockout is Keycloak's brute-force detection (scripts/setup-keycloak.mjs).
         /**
          * North star: every product user is also a Directus user (auth_identity_links).
          *   directus-linked — collab/Cases require a Directus link (default when Cases on)

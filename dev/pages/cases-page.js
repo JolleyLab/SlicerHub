@@ -1780,7 +1780,6 @@ export class CasesPage extends LitElement {
             return {
                 status:    data.status,
                 emailSent: data.emailSent,
-                inviteUrl: data.inviteUrl,
                 collaborator: data.collaborator,
             };
         };
@@ -1856,13 +1855,12 @@ export class CasesPage extends LitElement {
 
         try {
             const data = await approveCaseInvite(caseRow.id, inviteId);
-            await this.handlePeopleInvited({ detail: { status: data.status || 'approved', inviteUrl: data.inviteUrl || null } });
+            await this.handlePeopleInvited({ detail: { status: data.status || 'approved' } });
             const dialog = this.renderRoot?.querySelector('#case-people-dialog');
             if (dialog && data.status === 'signup_invite') {
-                // The server only returns the link when the email could not be sent.
-                dialog.lookupMessage = data.inviteUrl
-                    ? t('people.inviteApprovedCopyLink')
-                    : t('people.inviteApprovedEmailed');
+                // Keycloak emails the account-setup link; nobody else ever sees it.
+                if (data.emailSent === false) dialog.error = t('people.inviteEmailFailed');
+                else dialog.lookupMessage = t('people.inviteApprovedEmailed');
             }
         } catch (err) {
             const dialog = this.renderRoot?.querySelector('#case-people-dialog');
@@ -2953,10 +2951,12 @@ export class CasesPage extends LitElement {
                     }, 2000);
                     return;
                 }
-                this._backgroundSave = {
-                    ...this._backgroundSave,
-                    error: this.userFacingError(err, t('errors.saveSceneFailed'))
-                };
+                const error = this.userFacingError(err, t('errors.saveSceneFailed'));
+                this._backgroundSave = { ...this._backgroundSave, error };
+                // Make the failure hard to miss: the scene counts as unsaved again (Save is
+                // enabled) and, if the viewer was closed meanwhile, a toast says so.
+                this.hasUnsavedChanges = true;
+                if (!this.showIframe) this.showToast(error);
             });
     }
 
@@ -3650,7 +3650,10 @@ export class CasesPage extends LitElement {
                             <span class="save-indicator">${this.saveIndicatorMessage}</span>
                         ` : ''}
                         ${this._backgroundSave?.error ? html`
-                            <span class="viewer-error-message">${this._backgroundSave.error}</span>
+                            <span class="viewer-error-message" role="alert">${this._backgroundSave.error}</span>
+                            <button class="secondary-button" type="button" @click=${() => this._retryBackgroundSave()}>
+                                ${t('files.retrySave')}
+                            </button>
                         ` : ''}
                         ${isSlicerWeb ? html`
                             <button

@@ -78,7 +78,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     # Re-install when a new lockfile dep is missing from the volume (e.g. nodemailer).
     # Copy deploy key to /tmp so we can chmod 600 it (Windows bind mounts always arrive as 755).
-    command: ["sh", "-c", "test -d node_modules/nodemailer && test -d node_modules/heic-convert && test -d node_modules/payload || npm ci; if [ -f /run/secrets/slicerweb/slicerweb-deploy-key ]; then cp /run/secrets/slicerweb/slicerweb-deploy-key /tmp/slicerweb-deploy-key && chmod 600 /tmp/slicerweb-deploy-key; fi; exec node src/server.js"]
+    command: ["sh", "-c", "test -d node_modules/nodemailer && test -d node_modules/heic-convert && test -d node_modules/payload && test -f node_modules/jose/dist/webapi/index.js || npm ci; if [ -f /run/secrets/slicerweb/slicerweb-deploy-key ]; then cp /run/secrets/slicerweb/slicerweb-deploy-key /tmp/slicerweb-deploy-key && chmod 600 /tmp/slicerweb-deploy-key; fi; exec node src/server.js"]
     environment:
       # Taken from .env so NODE_ENV=production there turns on the production safety checks.
       - NODE_ENV=${NODE_ENV:-development}
@@ -288,8 +288,10 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
     container_name: keycloak
+    # start-dev locally; set KEYCLOAK_START_COMMAND=start in production .env
+    # (production mode: strict hostname, caching, no dev defaults).
     command: >
-      start-dev
+      ${KEYCLOAK_START_COMMAND:-start-dev}
       --import-realm
     environment:
       KC_DB: postgres
@@ -298,21 +300,32 @@ services:
       KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak-dev-password}
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
-      # Relaxed hostname checks for local dev
-      KC_HOSTNAME_STRICT: "false"
+      # Browsers reach Keycloak through nginx at <PUBLIC_APP_URL>/sso/ (nginx strips
+      # the /sso prefix; Keycloak itself still serves from /). The admin console is
+      # only on the localhost port below; nginx blocks /sso/admin from outside.
+      # The backend keeps using http://keycloak:8080 on the Docker network.
+      KC_HOSTNAME: ${PUBLIC_APP_URL:-http://localhost:8000}/sso
+      KC_HOSTNAME_ADMIN: ${KEYCLOAK_ADMIN_URL:-http://localhost:8082}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      # Trust X-Forwarded-* from nginx (client IP in events, scheme/host for links).
+      KC_PROXY_HEADERS: xforwarded
       KC_HTTP_ENABLED: "true"
       KC_HEALTH_ENABLED: "true"
     volumes:
       # Realm JSON exported here is auto-imported on first start.
       # Export: scripts/export-keycloak-realm.sh  (see keycloak/README.md)
       - ./keycloak/realms:/opt/keycloak/data/import:ro
+      # SlicerHub sign-in page theme (selected by scripts/setup-keycloak.mjs).
+      # start-dev reloads theme edits live; production mode needs a restart.
+      - ./keycloak/themes/slicerhub:/opt/keycloak/themes/slicerhub:ro
     ports:
       - "127.0.0.1:8082:8080"
     depends_on:
       keycloak-db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/realms/master || exit 1"]
+      # The Keycloak image has no curl; probe the management port's readiness endpoint with bash.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && grep -q '\"UP\"' <&3"]
       interval: 15s
       timeout: 5s
       retries: 10

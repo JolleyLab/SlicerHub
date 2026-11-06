@@ -177,4 +177,37 @@ export const appShellStyles = css`
         gap: 8px;
         margin-top: 8px;
     }
+
+    /* Procedure mode: always visible while on (text 9.4:1 light / 9.8:1 dark on primary). */
+    .procedure-banner {
+        position: sticky;
+        top: 0;
+        z-index: 1000;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 8px 16px;
+        padding: 8px 16px;
+        background: var(--color-primary);
+        color: var(--color-on-primary);
+        font-weight: 500;
+        font-size: 0.95rem;
+    }
+    .procedure-banner button {
+        background: transparent;
+        color: var(--color-on-primary);
+        border: 1px solid var(--color-on-primary);
+        border-radius: var(--radius-sm, 4px);
+        padding: 4px 12px;
+        font: inherit;
+        cursor: pointer;
+    }
+    .procedure-banner button:hover {
+        background: color-mix(in srgb, var(--color-on-primary) 15%, transparent);
+    }
+    .procedure-banner button:focus-visible {
+        outline: 3px solid var(--color-on-primary);
+        outline-offset: 2px;
+    }
 `;

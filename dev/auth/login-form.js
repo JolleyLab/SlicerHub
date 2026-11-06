@@ -17,9 +17,37 @@ const loginExtras = css`
   }
 `;
 
+const SIGN_OUT_REASON_KEY = 'sh-sign-out-reason';
+
 /**
- * Login form in light DOM so browser password managers can autofill.
- * Colors come from document theme tokens (OS light/dark on auth screens).
+ * Say why the app signed out, for the sign-in screen after Keycloak's sign-out sends the
+ * browser back (it always returns to "/", so this can't ride in the URL).
+ */
+export function noteSignOutReason(code) {
+    try { sessionStorage.setItem(SIGN_OUT_REASON_KEY, String(code)); } catch { /* storage blocked */ }
+}
+
+function takeSignOutReason() {
+    try {
+        const code = sessionStorage.getItem(SIGN_OUT_REASON_KEY);
+        sessionStorage.removeItem(SIGN_OUT_REASON_KEY);
+        return code;
+    } catch {
+        return null;
+    }
+}
+
+const KNOWN_ERRORS = [
+    'login_expired', 'login_state_mismatch', 'login_denied', 'login_failed',
+    'login_unavailable', 'login_not_fresh', 'procedure_mode_ended',
+];
+
+/**
+ * Sign-in screen. Signing in, requesting access and resetting a password all happen on
+ * Keycloak's pages (styled as SlicerHub), so a signed-out visit goes straight there and
+ * comes back to the same page. This card is shown only when there is something to say
+ * first: a sign-in that failed, or procedure mode that ended.
+ * docs/redirect-login-and-sessions-design.md ("Login flow").
  */
 export class LoginForm extends LitElement {
     static get styles() {
@@ -28,19 +56,9 @@ export class LoginForm extends LitElement {
 
     static get properties() {
         return {
-            identity: { type: String },
-            password: { type: String },
-            otp: { type: String },
-            otpRequired: { type: Boolean },
             devRelaxed: { type: Boolean },
             loading: { type: Boolean },
             error: { type: String },
-            success: { type: String },
-            identityLabel: { type: String },
-            identityPlaceholder: { type: String },
-            identityInputType: { type: String },
-            authProvider: { type: String },
-            registrationEnabled: { type: Boolean }
         };
     }
 
@@ -50,253 +68,66 @@ export class LoginForm extends LitElement {
 
     constructor() {
         super();
-        this.identity = '';
-        this.password = '';
-        this.otp = '';
-        this.otpRequired = false;
         this.devRelaxed = false;
         this.loading = false;
         this.error = '';
-        this.success = '';
-        this._accountDisabled = false;
-        this.identityLabel = t('auth.login.identityDefault');
-        this.identityPlaceholder = t('auth.login.identityDefault');
-        this.identityInputType = 'text';
-        this.authProvider = 'local';
-        this.registrationEnabled = true;
     }
 
     connectedCallback() {
         super.connectedCallback();
-        this._loadAuthConfig();
+        this._takeRedirectLoginError();
+        // Nothing to tell them: go straight to Keycloak's sign-in page.
+        if (!this.error) this.startRedirectLogin();
+        else this._loadAuthConfig();
     }
 
-    applyAuthConfig(auth) {
-        if (!auth || typeof auth !== 'object') return;
-        const provider = String(auth.provider || 'local').trim().toLowerCase();
-        this.authProvider = provider;
-        if (provider === 'directus') {
-            this.identityLabel = auth.identityLabel || t('auth.login.identityEmail');
-            this.identityPlaceholder = auth.identityPlaceholder || t('auth.login.identityEmailPlaceholder');
-            this.identityInputType = 'email';
-        } else {
-            this.identityLabel = auth.identityLabel || t('auth.login.identityDefault');
-            this.identityPlaceholder = auth.identityPlaceholder || t('auth.login.identityDefault');
-            this.identityInputType = 'text';
-        }
-        if (typeof auth.registrationEnabled === 'boolean') {
-            this.registrationEnabled = auth.registrationEnabled;
-        }
-        this.devRelaxed = auth.devRelaxed === true;
+    /**
+     * A failed sign-in lands on /?login_error=<code>; a sign-out the person didn't choose
+     * (procedure mode ran out) leaves a note. Show it once, then drop it.
+     */
+    _takeRedirectLoginError() {
+        const url = new URL(window.location.href);
+        const code = url.searchParams.get('login_error') || takeSignOutReason();
+        if (!code) return;
+        this.error = t(`auth.login.redirectErrors.${KNOWN_ERRORS.includes(code) ? code : 'login_failed'}`);
+        url.searchParams.delete('login_error');
+        history.replaceState(null, '', `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams}` : ''}${url.hash}`);
+    }
+
+    /** Go to Keycloak's sign-in page; come back to the current page afterwards. */
+    startRedirectLogin() {
+        this.loading = true;
+        const returnTo = `${window.location.pathname}${window.location.search}`;
+        window.location.assign(`${API_URL}/api/auth/login/start?returnTo=${encodeURIComponent(returnTo)}`);
     }
 
     async _loadAuthConfig() {
         try {
-            let auth = null;
             const flags = await loadAppFeatures();
-            auth = flags?.auth || getAppFeatures()?.auth;
-            if (!auth) {
-                try {
-                    const res = await fetch(`${API_URL}/api/auth/config`, {
-                        credentials: 'include',
-                        cache: 'no-store'
-                    });
-                    if (res.ok) auth = await res.json();
-                } catch {
-                    /* keep defaults */
-                }
-            }
-            this.applyAuthConfig(auth);
+            const auth = flags?.auth || getAppFeatures()?.auth;
+            this.devRelaxed = auth?.devRelaxed === true;
         } catch {
             // keep defaults
         }
-    }
-
-    async handleSubmit(e) {
-        e.preventDefault();
-
-        this.error = '';
-        this.success = '';
-
-        if (!this.identity || !this.password) {
-            this.error = t('auth.login.needCredentials');
-            return;
-        }
-
-        if (this.otpRequired && !this.otp) {
-            this.error = t('auth.login.needOtp');
-            return;
-        }
-
-        this.loading = true;
-
-        try {
-            const body = {
-                identity: this.identity,
-                username: this.identity,
-                password: this.password
-            };
-            if (this.otpRequired && this.otp) {
-                body.otp = this.otp.trim();
-            }
-
-            const response = await fetch(`${API_URL}/api/auth/login`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify(body)
-            });
-
-            const data = await response.json();
-            const errCode = data.error?.code;
-            const errMsg = data.error?.message || data.error || data.message || t('auth.login.failed');
-
-            if (response.ok) {
-                this.success = t('auth.login.success');
-                this.otpRequired = false;
-                this.otp = '';
-                this.dispatchEvent(new CustomEvent('login-success', {
-                    detail: { user: data.user, identity: data.identity || null },
-                    bubbles: true,
-                    composed: true
-                }));
-                this.identity = '';
-                this.password = '';
-            } else if (
-                errCode === 'OTP_REQUIRED'
-                || (response.status === 401 && /verification|otp|totp/i.test(String(errMsg)))
-            ) {
-                this.otpRequired = true;
-                this.error = '';
-                this.otp = '';
-            } else if (response.status === 429 || errCode === 'ACCOUNT_COOLDOWN') {
-                this.error = typeof errMsg === 'string'
-                    ? errMsg
-                    : t('auth.login.cooldownGeneric');
-            } else if (errCode === 'ACCOUNT_DISABLED' || /disabled|not.*enabled|account.*inactive/i.test(String(errMsg))) {
-                // Migrated account — steer to activation flow
-                this._accountDisabled = true;
-                this.error = t('passwordReset.needActivation');
-            } else {
-                this.error = typeof errMsg === 'string' ? errMsg : t('auth.login.failed');
-            }
-        } catch (err) {
-            console.error('Login error:', err);
-            this.error = t('common.networkError');
-        } finally {
-            this.loading = false;
-        }
-    }
-
-    handleBackFromOtp(e) {
-        e.preventDefault();
-        this.otpRequired = false;
-        this.otp = '';
-        this.error = '';
-    }
-
-    handleRegisterClick(e) {
-        e.preventDefault();
-        this.dispatchEvent(new CustomEvent('show-register', {
-            bubbles: true,
-            composed: true
-        }));
     }
 
     render() {
         return html`
       <style>${authFormStyleText(loginExtras)}</style>
       <div class="auth-card">
-        <h2>${this.otpRequired ? t('auth.login.verificationTitle') : t('auth.login.title')}</h2>
+        <h2>${t('auth.login.title')}</h2>
         ${this.error ? html`
           <div class="auth-alert auth-alert--error" role="alert">${this.error}</div>
         ` : ''}
-        ${this.success ? html`
-          <div class="auth-alert auth-alert--success" role="status">${this.success}</div>
-        ` : ''}
-        ${this.devRelaxed && !this.otpRequired ? html`
+        ${this.devRelaxed ? html`
           <div class="dev-banner">${t('auth.login.devRelaxedBanner')}</div>
         ` : ''}
-        <form @submit=${this.handleSubmit} autocomplete="on">
-          ${this.otpRequired ? html`
-          <p class="hint">${t('auth.login.otpHint')}</p>
-          <div class="form-group">
-            <label for="otp">${t('auth.login.otpLabel')}</label>
-            <input
-              id="otp"
-              name="otp"
-              type="text"
-              inputmode="numeric"
-              autocomplete="one-time-code"
-              .value=${this.otp}
-              @input=${(e) => this.otp = e.target.value}
-              ?disabled=${this.loading}
-              placeholder=${t('auth.login.otpPlaceholder')}
-            />
-          </div>
-          ` : html`
-          <div class="form-group">
-            <label for="identity">${this.identityLabel}</label>
-            <input
-              id="identity"
-              name=${this.authProvider === 'directus' ? 'email' : 'username'}
-              type=${this.identityInputType}
-              autocomplete=${this.authProvider === 'directus' ? 'email' : 'username'}
-              inputmode=${this.authProvider === 'directus' ? 'email' : 'text'}
-              .value=${this.identity}
-              @input=${(e) => this.identity = e.target.value}
-              ?disabled=${this.loading}
-              placeholder=${this.identityPlaceholder}
-            />
-          </div>
-
-          <div class="form-group">
-            <label for="password">${t('auth.login.password')}</label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              autocomplete="current-password"
-              .value=${this.password}
-              @input=${(e) => this.password = e.target.value}
-              ?disabled=${this.loading}
-              placeholder=${t('auth.login.passwordPlaceholder')}
-            />
-          </div>
-          `}
-
-          <button type="submit" ?disabled=${this.loading}>
-            ${this.loading
-                ? html`<span class="spinner"></span>${this.otpRequired ? t('auth.login.verifying') : t('auth.login.submitting')}`
-                : (this.otpRequired ? t('auth.login.verify') : t('auth.login.submit'))}
-          </button>
-
-          ${this.otpRequired ? html`
-          <button type="button" class="secondary" @click=${this.handleBackFromOtp} ?disabled=${this.loading}>
-            ${t('auth.login.back')}
-          </button>
-          ` : ''}
-        </form>
-
-        ${!this.otpRequired ? html`
-        <div class="switch-link">
-          <a @click=${(e) => { e.preventDefault(); this.dispatchEvent(new CustomEvent('show-password-reset', { detail: { mode: 'reset' }, bubbles: true, composed: true })); }}>
-            ${t('passwordReset.forgotPassword')}
-          </a>
-        </div>
-        ` : ''}
-        ${!this.otpRequired && this._accountDisabled ? html`
-        <div class="switch-link">
-          <a @click=${(e) => { e.preventDefault(); this.dispatchEvent(new CustomEvent('show-activate', { detail: { email: this.identity }, bubbles: true, composed: true })); }}>
-            ${t('passwordReset.activateLink')}
-          </a>
-        </div>
-        ` : ''}
-        ${!this.otpRequired && this.registrationEnabled ? html`
-        <div class="switch-link">
-          ${t('auth.login.noAccount')} <a @click=${this.handleRegisterClick}>${t('auth.login.registerHere')}</a>
-        </div>
-        ` : ''}
+        <!-- Keycloak's page has its own "Forgot your password?" and "Request access" links. -->
+        <button type="button" @click=${this.startRedirectLogin} ?disabled=${this.loading}>
+          ${this.loading
+              ? html`<span class="spinner"></span>${t('auth.login.redirecting')}`
+              : t('auth.login.submit')}
+        </button>
       </div>
     `;
     }

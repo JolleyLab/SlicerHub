@@ -38,7 +38,6 @@ mock.module('../../../backend/src/middleware/authMiddleware.js', {
 const roles = {}; // `${sub}:${caseId}` -> role
 mock.module('../../../backend/src/services/keycloakAdmin.js', {
     namedExports: {
-        getKeycloakSubForUser: () => null,
         getUserCaseRole: async (sub, caseId) => roles[`${sub}:${caseId}`] ?? null,
         getUserCaseRoleMap: async () => ({})
     }

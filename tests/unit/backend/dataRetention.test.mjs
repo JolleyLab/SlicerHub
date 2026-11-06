@@ -17,17 +17,10 @@ function fakePayload({ failOn } = {}) {
     return { calls, delete: record('delete'), update: record('update') };
 }
 
-test('used or expired password reset tokens are deleted after a day', async () => {
+test('the password-reset token store is gone: nothing is swept there', async () => {
     const payload = fakePayload();
     await runRetentionSweep(payload, { now: NOW });
-    const call = payload.calls.find((c) => c.collection === 'password-reset-tokens');
-    assert.equal(call.op, 'delete');
-    assert.deepEqual(call.where, {
-        or: [
-            { used_at: { less_than: daysBefore(1) } },
-            { expires_at: { less_than: daysBefore(1) } },
-        ],
-    });
+    assert.equal(payload.calls.some((c) => c.collection === 'password-reset-tokens'), false);
 });
 
 test('only rejected or expired invites are deleted, after 30 days', async () => {
@@ -42,7 +35,7 @@ test('only rejected or expired invites are deleted, after 30 days', async () => 
     });
 });
 
-test('registration requests: rejected and unused ones deleted, completed ones stripped of free text', async () => {
+test('registration requests: rejected and old-flow approved ones deleted after 30 days, completed ones stripped of free text', async () => {
     const payload = fakePayload();
     await runRetentionSweep(payload, { now: NOW });
     const reg = payload.calls.filter((c) => c.collection === 'registration-requests');
@@ -50,7 +43,12 @@ test('registration requests: rejected and unused ones deleted, completed ones st
     const deletes = reg.filter((c) => c.op === 'delete');
     assert.equal(deletes.length, 2);
     assert.deepEqual(deletes[0].where.and[0], { status: { equals: 'rejected' } });
-    assert.deepEqual(deletes[1].where.and[0], { status: { equals: 'approved' } });
+    assert.deepEqual(deletes[1].where, {
+        and: [
+            { status: { equals: 'approved' } },
+            { updatedAt: { less_than: daysBefore(30) } },
+        ],
+    });
 
     const update = reg.find((c) => c.op === 'update');
     assert.deepEqual(update.where.and[0], { status: { equals: 'completed' } });
@@ -60,7 +58,7 @@ test('registration requests: rejected and unused ones deleted, completed ones st
 });
 
 test('one failing step does not stop the others', async () => {
-    const payload = fakePayload({ failOn: 'password-reset-tokens' });
+    const payload = fakePayload({ failOn: 'case-invites' });
     const original = console.warn;
     console.warn = () => {};
     try {
@@ -68,8 +66,8 @@ test('one failing step does not stop the others', async () => {
     } finally {
         console.warn = original;
     }
-    assert.ok(payload.calls.some((c) => c.collection === 'case-invites'));
     assert.ok(payload.calls.some((c) => c.collection === 'registration-requests'));
+    assert.ok(payload.calls.some((c) => c.collection === 'user-notifications'));
 });
 
 test('does nothing when Payload is not configured', async () => {

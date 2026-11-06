@@ -303,7 +303,7 @@ export async function listCaseInvites(caseId) {
 
 /**
  * Approve a pending invite (admin only).
- * Returns { status, emailSent?, inviteUrl?, collaborator? }
+ * Returns { status, emailSent?, collaborator? }
  */
 export async function approveCaseInvite(caseId, inviteId) {
     const res = await fetch(
@@ -321,30 +321,6 @@ export async function rejectCaseInvite(caseId, inviteId) {
         `${API_URL}/api/cases/${encodeURIComponent(caseId)}/invites/${encodeURIComponent(inviteId)}/reject`,
         { method: 'POST', credentials: 'include' }
     );
-    return parseResponse(res);
-}
-
-/**
- * Preview a Keycloak case signup invite by token (no auth required).
- * Returns { email, caseTitle, caseId, role, expiresAt }
- */
-export async function previewKcInvite(token) {
-    const res = await fetch(
-        `${API_URL}/api/cases/invites/preview?token=${encodeURIComponent(token)}`
-    );
-    return parseResponse(res);
-}
-
-/**
- * Redeem a Keycloak case signup invite: set name + password, enable account.
- * Returns { status: 'accepted', email, caseId }
- */
-export async function redeemKcInvite(token, { firstName, lastName, password } = {}) {
-    const res = await fetch(`${API_URL}/api/cases/invites/redeem`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, firstName, lastName, password }),
-    });
     return parseResponse(res);
 }
 
@@ -395,17 +371,25 @@ export async function uploadCaseAttachment(caseId, file, { signal, onProgress } 
  */
 export async function savePayloadSlicerWebScene(caseId, attachmentId, file, { saveMode = 'overwrite', name, signal, onProgress } = {}) {
     const uploadFile = name ? new File([file], name, { type: file.type }) : file;
+    const startedAt = Date.now();
     await uploadCaseAttachment(caseId, uploadFile, { signal, onProgress });
 
+    // Find the attachment this upload created: same name, created since the save began.
+    // (Not just "the newest one": if the server failed to record the upload, the newest
+    // would be some other file — and overwrite mode would then delete the original.)
     const data = await listAttachments(caseId);
-    const sorted = [...(data.attachments || [])].sort((a, b) => {
-        const ta = Date.parse(a.createdAt || '') || 0;
-        const tb = Date.parse(b.createdAt || '') || 0;
-        return tb - ta;
-    });
-    const newAtt = sorted[0] || null;
+    const newAtt = [...(data.attachments || [])]
+        .filter((a) => String(a.original_filename || '') === uploadFile.name
+            && (Date.parse(a.createdAt || '') || 0) >= startedAt - 60 * 1000
+            && String(a.id) !== String(attachmentId))
+        .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0))[0] || null;
 
-    if (saveMode === 'overwrite' && attachmentId && newAtt?.id !== attachmentId) {
+    if (!newAtt) {
+        // Nothing to show for it: report the failure and keep the original untouched.
+        throw new Error(t('errors.saveSceneFailed'));
+    }
+
+    if (saveMode === 'overwrite' && attachmentId) {
         await deleteAttachment(caseId, attachmentId).catch(() => {});
     }
 

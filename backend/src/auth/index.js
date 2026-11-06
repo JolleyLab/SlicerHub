@@ -8,24 +8,22 @@
  *
  * Expand by adding providers/* and identityStore features — not by branching routes/UI.
  *
- *   AUTH_PROVIDER=local     → SQLite credential check
- *   AUTH_PROVIDER=directus  → BFF password login to Directus, map to local user
+ * Sign-in is Keycloak's own page (OpenID Connect code flow + PKCE, auth/oidc.js);
+ * the app never sees passwords. docs/redirect-login-and-sessions-design.md
  *
  * Default: Do not persist IdP tokens after login (identity mapping only).
  * Opt in with AUTH_STORE_PROVIDER_TOKENS=true when a feature must call the IdP as the end user
  * (e.g. Cases call-as-user).
  *
- * AUTH_DEV_RELAXED=true (non-production only): softer login rate limits, longer idle default —
- * not a full MFA kill-switch (IdP still enforces OTP when required).
+ * AUTH_DEV_RELAXED=true (non-production only): shows a dev banner; Keycloak still applies
+ * its own lockout and MFA rules.
  */
 
 import config from '../config/index.js';
-import { ValidationError } from '../utils/errors.js';
 import { keycloakProvider } from './providers/keycloak.js';
-import { issueAppSession, destroyAppSession, clearAuthCookie } from './session.js';
+import { destroyAppSession, clearAuthCookie } from './session.js';
 import { clearProviderTokens, clearProviderTokensForUser } from './identityStore.js';
 import { deleteAllUserSessions } from '../middleware/authMiddleware.js';
-import { msg } from '../i18n/index.js';
 
 const PROVIDERS = {
     keycloak: keycloakProvider
@@ -60,52 +58,11 @@ export function getAuthProvider() {
 export function getPublicAuthConfig() {
     const provider = getAuthProviderName();
 
+    // Sign-in, registration and password reset all happen on Keycloak's pages
+    // (/api/auth/login/start); the SPA needs no more than this.
     return {
         provider,
-        methods: ['password'],
-        identityLabel: 'Email',
-        identityPlaceholder: 'you@example.com',
         devRelaxed: config.auth?.devRelaxed === true,
-        registrationEnabled: true
-    };
-}
-
-/**
- * Authenticate against the active provider and issue an app session cookie.
- * @returns {{ user: object, provider: string } | null}
- */
-export async function loginWithProvider(req, res, credentials) {
-    const identity = String(credentials?.identity || credentials?.username || credentials?.email || '').trim();
-    const password = String(credentials?.password || '');
-    const otp = credentials?.otp != null ? String(credentials.otp) : undefined;
-
-    if (!identity || !password) {
-        throw new ValidationError(msg('auth.identity_password_required'), null, 'auth.identity_password_required');
-    }
-
-    const providerName = getAuthProviderName();
-    const provider = getAuthProvider();
-
-    if (typeof provider.login !== 'function') {
-        throw new ValidationError(msg('auth.provider_cannot_login', { provider: providerName }), null, 'auth.provider_cannot_login');
-    }
-
-    const result = await provider.login({
-        identity,
-        password,
-        otp
-    });
-    if (!result?.user) {
-        return null;
-    }
-
-    const { user, sessionPayload } = issueAppSession(req, res, result.user);
-
-    clearLegacyDeviceCookie(res);
-
-    return {
-        user,
-        provider: providerName
     };
 }
 

@@ -25,7 +25,9 @@ function secretCandidates() {
         process.env.AUTH_TOKEN_KEY,
         process.env.AUTH_TOKEN_KEY_PREVIOUS,
         process.env.GPU_CREDENTIALS_KEY,
-        process.env.JWT_SECRET,
+        // The resolved JWT secret, not process.env.JWT_SECRET: when the env value is a
+        // public placeholder, config replaces it with a generated one (config/index.js),
+        // and encrypting with the placeholder would protect nothing.
         config.jwt?.secret
     ]) {
         const secret = String(raw || '').trim();

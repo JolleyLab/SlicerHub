@@ -136,8 +136,6 @@ export class AdminRegistrationsPage extends LitElement {
                         ${this._approvedLink ? html`
                             <approval-link-panel
                                 .email=${this._approvedLink.email}
-                                .completionUrl=${this._approvedLink.completionUrl}
-                                .expiresAt=${this._approvedLink.expiresAt}
                                 .asAdmin=${this._approvedLink.asAdmin}
                                 @done=${() => { this._approvedLink = null; }}
                             ></approval-link-panel>

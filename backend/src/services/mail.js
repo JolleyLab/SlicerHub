@@ -64,50 +64,6 @@ export async function sendMail(message) {
 }
 
 /**
- * Case signup invite email (single-use redeem link).
- */
-export async function sendCaseSignupInviteEmail({
-    to,
-    caseTitle,
-    inviteUrl,
-    expiresAt,
-    proposedRole
-} = {}) {
-    const title = caseTitle || 'a case';
-    const role = String(proposedRole || 'collaborator').replace(/_/g, ' ');
-    const expiry = expiresAt
-        ? new Date(expiresAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-        : null;
-    const subject = `You're invited to join “${title}”`;
-    const lines = [
-        `You've been invited to join “${title}” as ${role}.`,
-        '',
-        'Open this link to create your account and join the case:',
-        String(inviteUrl || ''),
-        ''
-    ];
-    if (expiry) {
-        lines.push(`This link expires on ${expiry}.`);
-        lines.push('');
-    }
-    lines.push('If you were not expecting this, you can ignore this email.');
-
-    const html = `
-      <p>You've been invited to join <strong>${escapeHtml(title)}</strong> as ${escapeHtml(role)}.</p>
-      <p><a href="${escapeAttr(inviteUrl)}">Create your account and join</a></p>
-      ${expiry ? `<p>This link expires on ${escapeHtml(expiry)}.</p>` : ''}
-      <p style="color:#666;font-size:13px;">If you were not expecting this, you can ignore this email.</p>
-    `.trim();
-
-    return sendMail({
-        to,
-        subject,
-        text: lines.join('\n'),
-        html
-    });
-}
-
-/**
  * Registration received email — sent to the applicant immediately after their request is created.
  */
 export async function sendRegistrationReceivedEmail({ to, firstName } = {}) {
@@ -118,7 +74,7 @@ export async function sendRegistrationReceivedEmail({ to, firstName } = {}) {
         '',
         'Thank you for requesting access to SlicerHub. We\'ve received your request and an administrator will review it shortly.',
         '',
-        'We\'ll send you another email with a link to activate your account once your request has been approved.',
+        'We\'ll email you again once your request has been approved.',
         '',
         'If you did not make this request, you can safely ignore this email.'
     ];
@@ -126,48 +82,8 @@ export async function sendRegistrationReceivedEmail({ to, firstName } = {}) {
     const html = `
       <p>Hi ${escapeHtml(name)},</p>
       <p>Thank you for requesting access to <strong>SlicerHub</strong>. We've received your request and an administrator will review it shortly.</p>
-      <p>We'll send you another email with a link to activate your account once your request has been approved.</p>
+      <p>We'll email you again once your request has been approved.</p>
       <p style="color:#666;font-size:13px;">If you did not make this request, you can safely ignore this email.</p>
-    `.trim();
-
-    return sendMail({ to, subject, text: lines.join('\n'), html });
-}
-
-/**
- * Registration approval email — sent to the applicant with their one-time completion link.
- */
-export async function sendRegistrationApprovalEmail({
-    to,
-    firstName,
-    completionUrl,
-    expiresAt
-} = {}) {
-    const name = String(firstName || '').trim() || 'there';
-    const expiry = expiresAt
-        ? new Date(expiresAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-        : null;
-    const subject = 'Your SlicerHub account request has been approved';
-    const lines = [
-        `Hi ${name},`,
-        '',
-        'Your request to access SlicerHub has been approved.',
-        '',
-        'Click the link below to set your password and activate your account:',
-        String(completionUrl || ''),
-        ''
-    ];
-    if (expiry) {
-        lines.push(`This link expires on ${expiry}.`);
-        lines.push('');
-    }
-    lines.push('If you did not request access, you can ignore this email.');
-
-    const html = `
-      <p>Hi ${escapeHtml(name)},</p>
-      <p>Your request to access <strong>SlicerHub</strong> has been approved.</p>
-      <p><a href="${escapeAttr(completionUrl)}">Set your password and activate your account</a></p>
-      ${expiry ? `<p>This link expires on ${escapeHtml(expiry)}.</p>` : ''}
-      <p style="color:#666;font-size:13px;">If you did not request access, you can ignore this email.</p>
     `.trim();
 
     return sendMail({ to, subject, text: lines.join('\n'), html });
@@ -206,60 +122,26 @@ export async function sendRegistrationPendingReviewEmail({ to, firstName, review
 }
 
 /**
- * Account activation email — for migrated/provisioned users setting a password for the first time.
+ * Access approved — for an account that already exists (e.g. hospital sign-in) and was
+ * waiting for approval. No link to set a password: they just sign in.
  */
-export async function sendAccountActivationEmail({ to, firstName, activationUrl, expiresAt } = {}) {
+export async function sendAccessApprovedEmail({ to, firstName, signInUrl } = {}) {
     const name = String(firstName || '').trim() || 'there';
-    const expiry = expiresAt
-        ? new Date(expiresAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-        : null;
-    const subject = 'Activate your SlicerHub account';
+    const url = String(signInUrl || '');
+    const subject = 'Your SlicerHub access has been approved';
     const lines = [
         `Hi ${name},`,
         '',
-        'Your SlicerHub account has been created. Click the link below to set your password and get started:',
-        String(activationUrl || ''),
-        ''
-    ];
-    if (expiry) { lines.push(`This link expires on ${expiry}.`, ''); }
-    lines.push('If you were not expecting this, you can ignore this email.');
-
-    const html = `
-      <p>Hi ${escapeHtml(name)},</p>
-      <p>Your <strong>SlicerHub</strong> account has been created. Click the link below to set your password and get started:</p>
-      <p><a href="${escapeAttr(activationUrl)}">Activate my account</a></p>
-      ${expiry ? `<p>This link expires on ${escapeHtml(expiry)}.</p>` : ''}
-      <p style="color:#666;font-size:13px;">If you were not expecting this, you can ignore this email.</p>
-    `.trim();
-
-    return sendMail({ to, subject, text: lines.join('\n'), html });
-}
-
-/**
- * Password reset email — for existing users who forgot their password.
- */
-export async function sendPasswordResetEmail({ to, firstName, resetUrl, expiresAt } = {}) {
-    const name = String(firstName || '').trim() || 'there';
-    const expiry = expiresAt
-        ? new Date(expiresAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-        : null;
-    const subject = 'Reset your SlicerHub password';
-    const lines = [
-        `Hi ${name},`,
+        'Your request to access SlicerHub has been approved. You can sign in now:',
+        url,
         '',
-        'We received a request to reset your SlicerHub password. Click the link below:',
-        String(resetUrl || ''),
-        ''
+        'If you did not request access, you can ignore this email.'
     ];
-    if (expiry) { lines.push(`This link expires on ${expiry}.`, ''); }
-    lines.push('If you did not request a password reset, you can ignore this email — your password will not change.');
-
     const html = `
       <p>Hi ${escapeHtml(name)},</p>
-      <p>We received a request to reset your <strong>SlicerHub</strong> password.</p>
-      <p><a href="${escapeAttr(resetUrl)}">Reset my password</a></p>
-      ${expiry ? `<p>This link expires on ${escapeHtml(expiry)}.</p>` : ''}
-      <p style="color:#666;font-size:13px;">If you did not request a password reset, you can ignore this email — your password will not change.</p>
+      <p>Your request to access <strong>SlicerHub</strong> has been approved.</p>
+      <p><a href="${escapeAttr(url)}">Sign in to SlicerHub</a></p>
+      <p style="color:#666;font-size:13px;">If you did not request access, you can ignore this email.</p>
     `.trim();
 
     return sendMail({ to, subject, text: lines.join('\n'), html });

@@ -8,6 +8,7 @@
  */
 
 import { t } from '../i18n/index.js';
+import { requestReauth, isReauthAvailable } from './reauth.js';
 
 const TUS_VERSION = '1.0.0';
 export const DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024;
@@ -97,6 +98,23 @@ export function xhrTransport({ method, url, headers = {}, body, onUploadProgress
  *   the server's file record, and the server forgets it once the upload ends; identify the resulting
  *   file with a token in `metadata` instead (see uploadFileResumable).
  */
+/**
+ * If the session ended mid-upload (401), ask the person to sign in again (the page and
+ * the file stay as they are) and send the same request once more.
+ */
+function withReauth(transport) {
+    return async (opts) => {
+        const response = await transport(opts);
+        if (response.status !== 401 || !isReauthAvailable()) return response;
+        try {
+            await requestReauth('expired');
+        } catch {
+            return response; // signed out instead
+        }
+        return transport(opts);
+    };
+}
+
 export async function tusUpload({
     file,
     endpoint,
@@ -108,6 +126,7 @@ export async function tusUpload({
     retryDelayMs = 1000
 }) {
     if (!file?.size) throw new TusError(t('uploads.errorEmptyFile'));
+    transport = withReauth(transport);
     const base = globalThis.location?.href || 'http://localhost/';
     const common = { 'Tus-Resumable': TUS_VERSION };
     const report = (sent) => onProgress?.(Math.min(sent, file.size), file.size);

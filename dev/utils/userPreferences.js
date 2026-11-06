@@ -58,9 +58,16 @@ export function getCachedLocalSlicerViewerOptions() {
     return normalizeLocalSlicerViewerOptions(cachedPreferences);
 }
 
+// Theme of the last account signed in on this device. Read by the Keycloak sign-in
+// pages (same origin, /sso/) so they open in the user's light/dark setting.
+// Unlike ui-theme, signed-out screens never overwrite it. Just "light"/"dark".
+const ACCOUNT_THEME_KEY = 'sh-account-theme';
+
 function cacheThemeLocally(theme) {
+    const value = theme === 'dark' ? 'dark' : 'light';
     try {
-        localStorage.setItem(THEME_CACHE_KEY, theme === 'dark' ? 'dark' : 'light');
+        localStorage.setItem(THEME_CACHE_KEY, value);
+        localStorage.setItem(ACCOUNT_THEME_KEY, value);
     } catch (_) {
         /* ignore */
     }

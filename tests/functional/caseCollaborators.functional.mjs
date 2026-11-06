@@ -31,6 +31,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { signIn } from '../lib/signIn.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -69,20 +70,12 @@ class Session {
     }
 
     async login(identity, password) {
-        const res = await fetch(`${BASE_URL}/api/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ identity, password })
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-            throw new Error(`[${this.label}] login failed (${res.status}): ${body?.error?.message || JSON.stringify(body)}`);
-        }
-        const setCookie = res.headers.getSetCookie?.() || [];
-        this.cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
-        if (!this.cookie) throw new Error(`[${this.label}] login succeeded but no session cookie was set`);
-        this.user = body.user;
-        return body;
+        // Keycloak's sign-in page, as a browser would (the password grant is off).
+        const signedIn = await signIn(BASE_URL, identity, password)
+            .catch((err) => { throw new Error(`[${this.label}] ${err.message}`); });
+        this.cookie = signedIn.cookie;
+        this.user = signedIn.user;
+        return signedIn;
     }
 
     /** @returns {Promise<{status: number, body: any}>} */

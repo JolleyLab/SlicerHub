@@ -8,12 +8,14 @@ import {
     generateToken,
     storeSession,
     deleteSession,
-    decodeToken
+    decodeToken,
+    getSessionOidc
 } from '../middleware/authMiddleware.js';
 
-const AUTH_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_COOKIE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
-export function authCookieOptions() {
+/** Session cookie options; maxAge follows the token's own lifetime. */
+export function authCookieOptions({ maxAgeMs = DEFAULT_COOKIE_MAX_AGE_MS } = {}) {
     const secure = process.env.COOKIE_SECURE === 'true'
         || (process.env.COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production');
     return {
@@ -21,7 +23,7 @@ export function authCookieOptions() {
         secure,
         sameSite: 'strict',
         path: '/',
-        maxAge: AUTH_COOKIE_MAX_AGE_MS
+        maxAge: Math.max(0, maxAgeMs)
     };
 }
 
@@ -38,17 +40,44 @@ export function clearAuthCookie(res) {
 
 /**
  * Issue JWT, persist session row, set httpOnly cookie.
+ *
+ * options (all optional):
+ *   kcSid, idTokenEnc            — redirect (OIDC) login link to the Keycloak session
+ *   procedureUntil (ISO), procedureOpenEnded — procedure mode
+ *   issuedAt (seconds)           — keep an existing sign-in time (re-issue)
+ * With no options, re-issuing for a signed-in user (profile update) carries over the
+ * current session's Keycloak link, procedure mode and sign-in time.
+ *
  * @returns {{ user: object, token: string, sessionPayload: { jti: string, exp: number } }}
  */
-export function issueAppSession(req, res, user) {
-    const token = generateToken(user);
+export function issueAppSession(req, res, user, options = null) {
+    const carried = options || {
+        ...getSessionOidc(req.user?.jti),
+        issuedAt: req.user?.iat || null,
+    };
+    const {
+        kcSid = null, idTokenEnc = null,
+        procedureUntil = null, procedureOpenEnded = false,
+        issuedAt = null,
+    } = carried;
+
+    // Procedure mode: the token lives until the procedure ends; otherwise SESSION_MAX_HOURS.
+    const procedureMs = procedureUntil ? Date.parse(procedureUntil) : null;
+    const expiresInSeconds = procedureMs
+        ? Math.max(60, Math.ceil((procedureMs - (issuedAt ? issuedAt * 1000 : Date.now())) / 1000))
+        : null;
+    const token = generateToken(user, { expiresInSeconds, issuedAt });
     const decoded = jwt.decode(token);
     const expiresAt = new Date(decoded.exp * 1000).toISOString();
 
     // No user agent: nothing reads it, so it is not stored (privacy minimization).
-    storeSession(user.id, decoded.jti, expiresAt, null);
+    storeSession(user.id, decoded.jti, expiresAt, null, {
+        kcSid, idTokenEnc,
+        procedureUntil: procedureMs ? new Date(procedureMs).toISOString() : null,
+        procedureOpenEnded,
+    });
 
-    res.cookie('token', token, authCookieOptions());
+    res.cookie('token', token, authCookieOptions({ maxAgeMs: decoded.exp * 1000 - Date.now() }));
 
     return {
         user: {
@@ -64,6 +93,7 @@ export function issueAppSession(req, res, user) {
                 return full || user.email || user.username || 'Guest';
             })(),
             role: user.role,
+            approved: user.approved !== false,
             mustChangePassword: Boolean(user.mustChangePassword),
             preferences: user.preferences
         },
@@ -104,15 +134,17 @@ export function rotateAppSession(req, res, user) {
     const authHeader = req.headers['authorization'];
     const oldToken = (authHeader && authHeader.split(' ')[1]) || req.cookies?.token;
     let previousJti = null;
+    let oidc = { kcSid: null, idTokenEnc: null };
 
     if (oldToken) {
         const oldDecoded = decodeToken(oldToken);
         if (oldDecoded?.jti) {
             previousJti = oldDecoded.jti;
+            oidc = { ...getSessionOidc(oldDecoded.jti), issuedAt: oldDecoded.iat || null };
             deleteSession(oldDecoded.jti);
         }
     }
 
-    const { sessionPayload } = issueAppSession(req, res, user);
+    const { sessionPayload } = issueAppSession(req, res, user, oidc);
     return { user, sessionPayload, previousJti };
 }

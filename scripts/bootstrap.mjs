@@ -12,10 +12,16 @@
  *
  * What it does:
  *   1. docker compose up -d           (starts all services including Infisical)
+ *      + nginx reload                 (picks up nginx/*.conf changes after a pull)
  *   2. node scripts/setup-infisical.mjs (first-time Infisical setup + secrets migration)
- *   3. node scripts/setup-keycloak.mjs  (provisions realm, writes KEYCLOAK_CLIENT_SECRET)
+ *   3. node scripts/setup-keycloak.mjs  (provisions realm + sign-in client settings — redirect
+ *                                       sign-in only, password grant off — and writes
+ *                                       KEYCLOAK_CLIENT_SECRET)
  *   4. node scripts/setup-payload.mjs   (waits for postgres, writes PAYLOAD_DATABASE_URI + PAYLOAD_SECRET)
- *   5. start.mjs up -d backend        (restarts backend with secrets injected from Infisical)
+ *   5. start.mjs up -d backend        (restarts backend with secrets injected from Infisical;
+ *                                       on its first start against a realm the backend grants
+ *                                       app-user to existing accounts — the approval gate's
+ *                                       one-off rollout step, recorded in a realm attribute)
  *
  * Idempotent — safe to re-run on an already-running stack.
  * After bootstrap: use  node scripts/start.mjs  instead of  docker compose.
@@ -71,6 +77,12 @@ function preflight() {
 
     if (!env.AUTH_PROVIDER) {
         warn('AUTH_PROVIDER is not set in .env — recommend AUTH_PROVIDER=keycloak');
+    }
+
+    // Keycloak builds its sign-in links from PUBLIC_APP_URL (<url>/sso/). The default
+    // (http://localhost:8000) is right for local dev; other machines must set it.
+    if (env.PUBLIC_APP_URL && !/^https?:\/\//.test(env.PUBLIC_APP_URL)) {
+        warn(`PUBLIC_APP_URL should be a full origin like http://localhost:8000 (got "${env.PUBLIC_APP_URL}")`);
     }
 
     ok('.env found');
@@ -217,6 +229,12 @@ async function main() {
     run('docker compose up', 'docker', ['compose', 'up', '-d']);
     ok('Services started');
 
+    // nginx reads its config from the mounted nginx/ folder; `up -d` doesn't restart an
+    // unchanged container, so after pulling new routes (e.g. Keycloak at /sso/) reload it.
+    const reload = spawnSync('docker', ['exec', 'nginx', 'nginx', '-s', 'reload'], { cwd: ROOT, stdio: 'pipe' });
+    if (reload.status === 0) ok('nginx config reloaded');
+    else warn('Could not reload nginx (is it running?) — run: docker exec nginx nginx -s reload');
+
     step('Setting up Infisical secret manager');
     runScript(path.join(__dirname, 'setup-infisical.mjs'));
 
@@ -258,9 +276,12 @@ async function main() {
 ├─────────────────────────────────────────────┤
 │  App:           http://localhost:8000       │
 │  Infisical:     http://localhost:8888       │
-│  Keycloak:      http://localhost:8082       │
+│  Keycloak admin: http://localhost:8082/admin│
+│  Sign-in pages: http://localhost:8000/sso/  │
 │  Payload admin: http://localhost:3001/admin │
 │  Email (local): http://localhost:8025       │
+│   (Keycloak's verify / reset / account-     │
+│    setup emails — nothing leaves the PC)    │
 │                                             │
 │  Start services (with Infisical injection): │
 │    node scripts/start.mjs up -d             │

@@ -26,7 +26,9 @@ const kc = {
     userCaseRole: {},   // `${sub}:${caseId}` -> role | undefined (caseAccess.js fallback)
     caseRoleMap: {},    // sub -> { [caseId]: role } (pending-approval route)
     realmRoleUsers: {}, // realm role -> [{ id }]
-    calls: { addUserToCaseGroup: [], removeUserFromAllCaseGroups: [], createKeycloakUser: [], setKeycloakUserPassword: [], enableKeycloakUser: [] }
+    calls: { addUserToCaseGroup: [], removeUserFromAllCaseGroups: [], createKeycloakUser: [], assignRealmRole: [], createOptions: [], sendExecuteActionsEmail: [], prepareAccountSetup: [] },
+    setupEmailFails: false,
+    activeAccounts: new Set(), // ids prepareAccountSetup reports as already set up
 };
 mock.module('../../../backend/src/services/keycloakAdmin.js', {
     namedExports: {
@@ -35,15 +37,22 @@ mock.module('../../../backend/src/services/keycloakAdmin.js', {
         addUserToCaseGroup: async (userId, caseId, role) => { kc.calls.addUserToCaseGroup.push({ userId, caseId, role }); },
         removeUserFromAllCaseGroups: async (userId, caseId) => { kc.calls.removeUserFromAllCaseGroups.push({ userId, caseId }); },
         listCaseCollaborators: async () => kc.collaborators,
-        createKeycloakUser: async ({ email }) => {
+        createKeycloakUser: async ({ email, requiredActions = null }) => {
             kc.calls.createKeycloakUser.push(email);
+            kc.calls.createOptions.push({ email, requiredActions });
             const user = { id: `kc-new-${email}`, email };
             kc.usersByEmail[email] = user;
             return user;
         },
-        setKeycloakUserPassword: async (id, password) => { kc.calls.setKeycloakUserPassword.push({ id, password }); },
-        enableKeycloakUser: async (id, opts) => { kc.calls.enableKeycloakUser.push({ id, opts }); },
-        getKeycloakSubForUser: () => null,
+        assignRealmRole: async (id, role) => { kc.calls.assignRealmRole.push({ id, role }); },
+        sendExecuteActionsEmail: async (id, actions, opts) => {
+            if (kc.setupEmailFails) throw new Error('SMTP down');
+            kc.calls.sendExecuteActionsEmail.push({ id, actions, opts });
+        },
+        prepareAccountSetup: async (id, actions) => {
+            kc.calls.prepareAccountSetup.push({ id, actions });
+            return !kc.activeAccounts.has(id);
+        },
         getKeycloakUser: async (sub) => kc.usersBySub[sub] || null,
         getUserCaseRoleMap: async (sub) => kc.caseRoleMap[sub] || {},
         getUserCaseRole: async (sub, caseId) => kc.userCaseRole[`${sub}:${caseId}`] ?? null,
@@ -85,9 +94,12 @@ mock.module('../../../backend/src/services/groupStore.js', {
     namedExports: { getGroup: async (id) => groups[id] || null }
 });
 
-const mail = { calls: [], result: { sent: true } };
-mock.module('../../../backend/src/services/mail.js', {
-    namedExports: { sendCaseSignupInviteEmail: async (opts) => { mail.calls.push(opts); return mail.result; } }
+// An invitee account never set up is removed when its invite is rejected or expires.
+const unusedAccounts = { calls: [] };
+mock.module('../../../backend/src/services/inviteExpiry.js', {
+    namedExports: {
+        removeUnusedInviteeAccount: async (_payload, id) => { unusedAccounts.calls.push(id); return true; },
+    }
 });
 
 const caseCollaboratorsRoutes = (await import('../../../backend/src/routes/caseCollaborators.js')).default;
@@ -101,13 +113,14 @@ test.beforeEach(() => {
     kc.caseRoleMap = {};
     kc.realmRoleUsers = {};
     for (const k of Object.keys(kc.calls)) kc.calls[k] = [];
+    kc.setupEmailFails = false;
+    kc.activeAccounts = new Set();
     groupAccess.byCase = {};
     groupAccess.roleFromGroups = {};
     groupAccess.roleMapFromGroups = {};
     for (const k of Object.keys(groupAccess.calls)) groupAccess.calls[k] = [];
     for (const k of Object.keys(groups)) delete groups[k];
-    mail.calls = [];
-    mail.result = { sent: true };
+    unusedAccounts.calls = [];
 });
 
 // --------------------------------------------------------------------------
@@ -222,70 +235,13 @@ test('every authenticated route 503s when Payload is not configured', async () =
 });
 
 // --------------------------------------------------------------------------
-// GET /api/cases/invites/preview and POST /api/cases/invites/redeem (public)
+// The app's own invite links are gone: Keycloak's emailed link sets the account up
 // --------------------------------------------------------------------------
 
-test('invite preview 404s for an unknown token', async () => {
-    payloadClient = fakePayload();
-    const res = await call('GET', '/api/cases/invites/preview', { query: { token: 'nope' } });
-    assert.equal(res.status, 404);
-});
-
-test('invite redeem rejects a short password without calling Keycloak', async () => {
-    payloadClient = fakePayload();
-    const res = await call('POST', '/api/cases/invites/redeem', { body: { token: 'x', password: 'short' } });
-    assert.equal(res.error.statusCode, 400);
-    assert.equal(kc.calls.setKeycloakUserPassword.length, 0);
-});
-
-test('invite redeem 404s for an unknown token', async () => {
-    payloadClient = fakePayload();
-    const res = await call('POST', '/api/cases/invites/redeem', { body: { token: 'nope', password: 'longenough' } });
-    assert.equal(res.status, 404);
-});
-
-test('a signup invite created by POST /invites can be previewed and redeemed with the same raw token', async () => {
-    payloadClient = fakePayload({ cases: [makeCase()] });
-    const created = await call('POST', '/api/cases/1/invites', {
-        user: ADMIN_USER,
-        body: { email: 'unknown@x.org', role: 'collaborator' }
-    });
-    assert.equal(created.status, 201);
-    assert.equal(created.body.status, 'signup_invite');
-    const token = new URL(mail.calls.at(-1).inviteUrl, 'http://x').searchParams.get('kc-invite');
-
-    const preview = await call('GET', '/api/cases/invites/preview', { query: { token } });
-    assert.equal(preview.status, 200);
-    assert.equal(preview.body.email, 'unknown@x.org');
-    assert.equal(preview.body.caseTitle, 'Cardiac CT');
-
-    const redeemed = await call('POST', '/api/cases/invites/redeem', { body: { token, password: 'longenough1' } });
-    assert.equal(redeemed.status, 200);
-    assert.equal(redeemed.body.status, 'accepted');
-    assert.equal(kc.calls.setKeycloakUserPassword.length, 1);
-    assert.equal(kc.calls.enableKeycloakUser.length, 1);
-});
-
-test('redeeming the same signup invite twice fails the second time (status is no longer pending_signup)', async () => {
-    payloadClient = fakePayload({ cases: [makeCase()] });
-    const created = await call('POST', '/api/cases/1/invites', { user: ADMIN_USER, body: { email: 'unknown@x.org' } });
-    const token = new URL(mail.calls.at(-1).inviteUrl, 'http://x').searchParams.get('kc-invite');
-    await call('POST', '/api/cases/invites/redeem', { body: { token, password: 'longenough1' } });
-    const second = await call('POST', '/api/cases/invites/redeem', { body: { token, password: 'longenough1' } });
-    assert.equal(second.status, 404);
-});
-
-test('an expired signup invite is rejected at preview and marked expired', async () => {
-    // The route hashes the raw token with sha256, so a usable record can only be produced by
-    // going through the real create flow rather than hand-seeding a token_hash.
-    payloadClient = fakePayload({ cases: [makeCase()] });
-    const created = await call('POST', '/api/cases/1/invites', { user: ADMIN_USER, body: { email: 'new2@x.org' } });
-    const token = new URL(mail.calls.at(-1).inviteUrl, 'http://x').searchParams.get('kc-invite');
-    const invite = payloadClient.rows['case-invites'].find((i) => i.invitee_email === 'new2@x.org');
-    invite.expires_at = new Date(Date.now() - 1000).toISOString();
-    const res = await call('GET', '/api/cases/invites/preview', { query: { token } });
-    assert.equal(res.status, 410);
-    assert.equal(invite.status, 'expired');
+test('the old public invite-link endpoints no longer exist', () => {
+    for (const path of ['/api/cases/invites/preview', '/api/cases/invites/redeem']) {
+        assert.equal(app.routes.some((r) => r.re.test(path) && r.keys.length === 0), false, path);
+    }
 });
 
 // --------------------------------------------------------------------------
@@ -475,32 +431,38 @@ test('an admin inviting a known user adds them directly, with no invite record',
     assert.equal(payloadClient.rows['case-invites'].length, 0);
 });
 
-test('an admin inviting an unknown email creates a disabled account and a pending_signup invite', async () => {
+test('an admin inviting a new email creates an account that must verify and set a password, and Keycloak emails the setup link', async () => {
     payloadClient = fakePayload({ cases: [makeCase()] });
-    const res = await call('POST', '/api/cases/1/invites', { user: ADMIN_USER, body: { email: 'new@x.org', role: 'admin' } });
+    const res = await call('POST', '/api/cases/1/invites', { user: ADMIN_USER, body: { email: 'new@x.org', role: 'read_only' } });
     assert.equal(res.status, 201);
     assert.equal(res.body.status, 'signup_invite');
     assert.equal(res.body.emailSent, true);
-    assert.equal(kc.calls.createKeycloakUser[0], 'new@x.org');
-    assert.equal(payloadClient.rows['case-invites'][0].status, 'pending_signup');
+    assert.equal(res.body.inviteUrl, undefined); // Keycloak's link only ever goes to the invitee
+    assert.deepEqual(kc.calls.createOptions[0], { email: 'new@x.org', requiredActions: ['VERIFY_EMAIL', 'UPDATE_PASSWORD'] });
+    // A case admin's invite is the approval: the new account passes the approval gate.
+    assert.deepEqual(kc.calls.assignRealmRole, [{ id: 'kc-new-new@x.org', role: 'app-user' }]);
+    assert.deepEqual(kc.calls.addUserToCaseGroup[0], { userId: 'kc-new-new@x.org', caseId: '1', role: 'read_only' });
+    assert.deepEqual(kc.calls.sendExecuteActionsEmail[0].actions, ['VERIFY_EMAIL', 'UPDATE_PASSWORD']);
+    const invite = payloadClient.rows['case-invites'][0];
+    assert.equal(invite.status, 'pending_signup');
+    assert.equal('token_hash' in invite, false);
+    assert.equal(invite.keycloak_user_id, 'kc-new-new@x.org');
+    assert.ok(invite.expires_at, 'expires when the setup link does');
 });
 
-// The signup link lets whoever holds it set the new account's password, so it must only
-// reach the invitee. The inviter sees it only as a fallback when the email failed.
-test('the signup link is not returned to the inviter when the invite email was sent', async () => {
+test('if Keycloak cannot send the setup email the inviter is told, without any link', async () => {
+    kc.setupEmailFails = true;
     payloadClient = fakePayload({ cases: [makeCase()] });
-    const res = await call('POST', '/api/cases/1/invites', { user: ADMIN_USER, body: { email: 'new@x.org' } });
-    assert.equal(res.body.emailSent, true);
-    assert.equal(res.body.inviteUrl, undefined);
-    assert.match(mail.calls[0].inviteUrl, /kc-invite=/);
-});
-
-test('the signup link is returned to the inviter when the invite email could not be sent', async () => {
-    payloadClient = fakePayload({ cases: [makeCase()] });
-    mail.result = { sent: false, error: 'SMTP disabled' };
-    const res = await call('POST', '/api/cases/1/invites', { user: ADMIN_USER, body: { email: 'new@x.org' } });
-    assert.equal(res.body.emailSent, false);
-    assert.match(res.body.inviteUrl, /kc-invite=/);
+    const original = console.warn;
+    console.warn = () => {};
+    try {
+        const res = await call('POST', '/api/cases/1/invites', { user: ADMIN_USER, body: { email: 'new@x.org' } });
+        assert.equal(res.body.emailSent, false);
+        assert.ok(res.body.emailError);
+        assert.equal(res.body.inviteUrl, undefined);
+    } finally {
+        console.warn = original;
+    }
 });
 
 test('a collaborator inviting someone queues a pending_approval invite instead of acting immediately', async () => {
@@ -638,15 +600,18 @@ test('pending-approval includes the current members of a proposed group', async 
     assert.equal(res.body.invites[0].groupHiddenMemberCount, 1);
 });
 
-test('approving a "signup" invite creates the account and sends an email, moving status to pending_signup', async () => {
+test('approving a "signup" invite creates the account and sends Keycloak account setup, moving status to pending_signup', async () => {
     payloadClient = fakePayload({
         cases: [makeCase()],
         'case-invites': [{ id: 1, case: '1', status: 'pending_approval', kind: 'signup', invitee_email: 'new@x.org', role: 'collaborator' }]
     });
     const res = await call('POST', '/api/cases/1/invites/1/approve', { user: ADMIN_USER });
     assert.equal(res.body.status, 'signup_invite');
-    assert.equal(mail.calls.length, 1);
+    assert.equal(kc.calls.sendExecuteActionsEmail.length, 1);
+    assert.deepEqual(kc.calls.createOptions[0].requiredActions, ['VERIFY_EMAIL', 'UPDATE_PASSWORD']);
     assert.equal(payloadClient.rows['case-invites'][0].status, 'pending_signup');
+    // Approved by the case admin, so the new account passes the approval gate.
+    assert.deepEqual(kc.calls.assignRealmRole, [{ id: 'kc-new-new@x.org', role: 'app-user' }]);
 });
 
 test('approving an invite that is not pending_approval is rejected', async () => {
@@ -676,7 +641,9 @@ test('rejecting a pending_signup invite revokes the Keycloak group membership it
     const res = await call('POST', '/api/cases/1/invites/1/reject', { user: ADMIN_USER });
     assert.equal(res.body.status, 'rejected');
     assert.deepEqual(kc.calls.removeUserFromAllCaseGroups[0], { userId: 'kc-x', caseId: '1' });
-    assert.equal(payloadClient.rows['case-invites'][0].token_hash, null);
+    assert.equal(payloadClient.rows['case-invites'][0].status, 'rejected');
+    // The account made for this invite goes too, if it was never set up.
+    assert.deepEqual(unusedAccounts.calls, ['kc-x']);
 });
 
 test('rejecting a pending_approval invite does not touch Keycloak group membership (none was granted yet)', async () => {
@@ -686,6 +653,7 @@ test('rejecting a pending_approval invite does not touch Keycloak group membersh
     });
     await call('POST', '/api/cases/1/invites/1/reject', { user: ADMIN_USER });
     assert.equal(kc.calls.removeUserFromAllCaseGroups.length, 0);
+    assert.deepEqual(unusedAccounts.calls, []);
 });
 
 // --------------------------------------------------------------------------
@@ -781,4 +749,34 @@ test('only a case admin can remove a collaborator', async () => {
     groupAccess.roleFromGroups['kc-collab:1'] = 'collaborator';
     const res = await call('DELETE', '/api/cases/1/collaborators/kc-someone', { user: COLLAB_USER });
     assert.equal(res.error.statusCode, 403);
+});
+
+// ── Keycloak account setup on approval ──────────────────────────────────────────
+
+test('approving a signup invite for an account left disabled by the old invite flow re-enables it for Keycloak setup', async () => {
+    kc.usersByEmail['old@x.org'] = { id: 'kc-old', email: 'old@x.org' };
+    payloadClient = fakePayload({
+        cases: [makeCase()],
+        'case-invites': [{ id: 1, case: '1', status: 'pending_approval', kind: 'signup', invitee_email: 'old@x.org', role: 'collaborator' }]
+    });
+    const res = await call('POST', '/api/cases/1/invites/1/approve', { user: ADMIN_USER });
+    assert.equal(res.body.status, 'signup_invite');
+    assert.deepEqual(kc.calls.prepareAccountSetup[0], { id: 'kc-old', actions: ['VERIFY_EMAIL', 'UPDATE_PASSWORD'] });
+    assert.equal(kc.calls.createKeycloakUser.length, 0);
+    assert.equal(kc.calls.sendExecuteActionsEmail.length, 1);
+    assert.equal(payloadClient.rows['case-invites'][0].status, 'pending_signup');
+});
+
+test('approving a signup invite for someone who has since set up an account adds them, with no setup email or forced reset', async () => {
+    kc.usersByEmail['now@x.org'] = { id: 'kc-active', email: 'now@x.org' };
+    kc.activeAccounts.add('kc-active');
+    payloadClient = fakePayload({
+        cases: [makeCase()],
+        'case-invites': [{ id: 1, case: '1', status: 'pending_approval', kind: 'signup', invitee_email: 'now@x.org', role: 'collaborator' }]
+    });
+    const res = await call('POST', '/api/cases/1/invites/1/approve', { user: ADMIN_USER });
+    assert.equal(res.body.status, 'approved');
+    assert.equal(kc.calls.sendExecuteActionsEmail.length, 0);
+    assert.deepEqual(kc.calls.addUserToCaseGroup[0], { userId: 'kc-active', caseId: '1', role: 'collaborator' });
+    assert.equal(payloadClient.rows['case-invites'][0].status, 'accepted');
 });

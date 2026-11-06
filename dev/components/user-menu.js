@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
+import { canStartProcedureMode } from '../services/sessionState.js';
 
 export class UserMenu extends LitElement {
     static get styles() {
@@ -167,6 +168,8 @@ export class UserMenu extends LitElement {
             avatarUrl:   { type: String },
             open:        { type: Boolean },
             isOrgAdmin:  { type: Boolean },
+            /** Offer "Start procedure mode" (enabled on this server and not already on). */
+            canStartProcedureMode: { type: Boolean },
             _imgError:   { type: Boolean, state: true },
         };
     }
@@ -178,6 +181,8 @@ export class UserMenu extends LitElement {
         this.displayName = '';
         this.avatarUrl = '';
         this.open = false;
+        this.canStartProcedureMode = canStartProcedureMode();
+        this._onSessionState = () => { this.canStartProcedureMode = canStartProcedureMode(); };
         this.isOrgAdmin = false;
         this._imgError = false;
         this._onDocPointer = (e) => {
@@ -194,10 +199,13 @@ export class UserMenu extends LitElement {
     connectedCallback() {
         super.connectedCallback();
         document.addEventListener('pointerdown', this._onDocPointer, true);
+        window.addEventListener('session-state-changed', this._onSessionState);
+        this._onSessionState();
     }
 
     disconnectedCallback() {
         document.removeEventListener('pointerdown', this._onDocPointer, true);
+        window.removeEventListener('session-state-changed', this._onSessionState);
         super.disconnectedCallback();
     }
 
@@ -237,6 +245,14 @@ export class UserMenu extends LitElement {
         this.closeMenu();
     }
 
+    requestProcedureMode() {
+        this.dispatchEvent(new CustomEvent('procedure-mode-request', {
+            bubbles: true,
+            composed: true
+        }));
+        this.closeMenu();
+    }
+
     requestPendingRegistrations() {
         this.dispatchEvent(new CustomEvent('pending-registrations-request', {
             bubbles: true,
@@ -261,6 +277,9 @@ export class UserMenu extends LitElement {
                     <button class="menu-item" @click=${this.requestSettings}>${t('nav.settings')}</button>
                     ${this.isOrgAdmin ? html`
                     <button class="menu-item" @click=${this.requestPendingRegistrations}>${t('nav.pendingRegistrations')}</button>
+                    ` : ''}
+                    ${this.canStartProcedureMode ? html`
+                    <button class="menu-item" @click=${this.requestProcedureMode}>${t('nav.procedureMode')}</button>
                     ` : ''}
                     <button class="menu-item" @click=${this.requestLogout}>${t('nav.logOut')}</button>
                 </div>

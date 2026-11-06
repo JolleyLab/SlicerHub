@@ -145,7 +145,6 @@ export class PeopleDialog extends LitElement {
             unknownEmail: { type: String },
             inviteRole: { type: String },
             /** Last minted signup invite URL (copy-link) */
-            lastInviteUrl: { type: String },
             /** Directus user id of the signed-in viewer (for "Me" label) */
             currentUserId: { type: String },
             /** SlicerHub groups the viewer can add as a collaborator: [{ id, name }] */
@@ -178,7 +177,6 @@ export class PeopleDialog extends LitElement {
         this.matchedUser = null;
         this.unknownEmail = '';
         this.inviteRole = '';
-        this.lastInviteUrl = '';
         this.currentUserId = '';
         this.availableGroups = [];
         this.groupPickId = '';
@@ -220,7 +218,6 @@ export class PeopleDialog extends LitElement {
         this.matchedUser = null;
         this.unknownEmail = '';
         this.inviteRole = '';
-        this.lastInviteUrl = options.lastInviteUrl || this.lastInviteUrl || '';
         this.error = '';
         this.inviting = false;
         this.groupPickId = '';
@@ -330,11 +327,9 @@ export class PeopleDialog extends LitElement {
                 this.emailQuery = '';
                 this.inviteRole = '';
                 if (result?.status === 'signup_invite') {
-                    // The server only returns the link when the email could not be sent.
-                    this.lastInviteUrl = result.inviteUrl || '';
-                    this.lookupMessage = result.inviteUrl
-                        ? t('people.inviteLinkReady')
-                        : t('people.inviteEmailSent');
+                    // Keycloak emails the account-setup link; nobody else ever sees it.
+                    if (result.emailSent === false) this.error = t('people.inviteEmailFailed');
+                    else this.lookupMessage = t('people.inviteEmailSent');
                 } else if (result?.status === 'pending' || result?.status === 'pending_approval') {
                     this.lookupMessage = t('people.invitePending');
                 } else {
@@ -415,17 +410,6 @@ export class PeopleDialog extends LitElement {
             this.error = err?.message || t('people.groupAddFailed');
         } finally {
             this.groupAdding = false;
-        }
-    }
-
-    async copyInviteUrl() {
-        const url = this.lastInviteUrl;
-        if (!url) return;
-        try {
-            await navigator.clipboard.writeText(url);
-            this.lookupMessage = t('people.inviteLinkCopied');
-        } catch {
-            this.lookupMessage = t('people.copyFailed');
         }
     }
 
@@ -516,14 +500,6 @@ export class PeopleDialog extends LitElement {
                 </form>
                 ${this.lookupMessage ? html`
                     <p class="invite-status ${/added|sent|notified|waiting|ready|copied|create one|email/i.test(this.lookupMessage) ? '' : (target ? '' : 'error')}">${this.lookupMessage}</p>
-                ` : ''}
-                ${this.lastInviteUrl ? html`
-                    <div class="invite-link-row">
-                        <input class="invite-input" type="text" readonly .value=${this.lastInviteUrl} />
-                        <app-button variant="ghost" @click=${() => this.copyInviteUrl()}>
-                            ${t('people.copyLink')}
-                        </app-button>
-                    </div>
                 ` : ''}
                 ${target ? html`
                     <div class="invite-match">

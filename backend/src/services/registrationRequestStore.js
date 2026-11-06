@@ -1,12 +1,11 @@
 /**
  * Registration requests stored in the Payload `registration-requests` collection (Postgres).
- * Users submit a request before any Keycloak account is created.
- * An OrgAdmin approves or rejects; approval generates a one-time completion token
- * the admin shares via email.
+ *
+ * Each request is a Keycloak account (sign-up page or hospital SSO) that has no app-user
+ * role yet (approval gate); approval grants the role. Status 'approved' only appears on
+ * records from the old app-run sign-up, which no longer exists.
  */
 
-import crypto from 'crypto';
-import config from '../config/index.js';
 import { getPayloadClient } from '../payload/index.js';
 
 const COLLECTION = 'registration-requests';
@@ -17,8 +16,6 @@ export const REG_STATUS = Object.freeze({
     REJECTED:  'rejected',
     COMPLETED: 'completed',
 });
-
-const TOKEN_TTL_DAYS = 7;
 
 export function toRegistrationRequestDTO(row) {
     if (!row) return null;
@@ -31,38 +28,78 @@ export function toRegistrationRequestDTO(row) {
         intendedUse:  row.intended_use || '',
         status:       row.status       || REG_STATUS.PENDING,
         isOrgAdmin:   row.is_org_admin === true,
+        keycloakSub:  row.keycloak_sub || null,
+        hasAccount:   Boolean(row.keycloak_sub),
         createdAt:    row.createdAt    || null,
         decidedAt:    row.reviewed_at  || null,
         reviewerName: null,
     };
 }
 
-export async function createRegistrationRequest({ email, firstName, lastName, affiliation, intendedUse }) {
-    const normalized = String(email || '').trim().toLowerCase();
-    if (!normalized) throw new Error('Email is required');
+/**
+ * Make sure an account waiting for approval has a pending review item.
+ * Returns { request, created }.
+ */
+export async function ensureAccountRequest({ kcSub, email, firstName, lastName, affiliation = '', intendedUse = '' }) {
+    const sub = String(kcSub || '').trim();
+    if (!sub) throw new Error('kcSub is required');
+    const payload = getPayloadClient();
 
-    const existing = await findOpenByEmail(normalized);
-    if (existing) {
-        const err = new Error('A registration request for this email already exists');
-        err.code = 'DUPLICATE_REGISTRATION';
-        throw err;
+    const bySub = await payload.find({
+        collection: COLLECTION,
+        where: {
+            and: [
+                { keycloak_sub: { equals: sub } },
+                { status: { equals: REG_STATUS.PENDING } },
+            ],
+        },
+        limit: 1,
+    });
+    if (bySub.docs[0]) return { request: toRegistrationRequestDTO(bySub.docs[0]), created: false };
+
+    const normalized = String(email || '').trim().toLowerCase();
+    const open = normalized ? await findOpenByEmail(normalized) : null;
+    if (open) {
+        // An earlier form request for the same email: attach the account to it.
+        const doc = await payload.update({
+            collection: COLLECTION,
+            id: open.id,
+            data: { keycloak_sub: sub, status: REG_STATUS.PENDING },
+        });
+        return { request: toRegistrationRequestDTO(doc), created: false };
     }
 
-    const payload = getPayloadClient();
     const doc = await payload.create({
         collection: COLLECTION,
         data: {
             email:        normalized,
-            first_name:   String(firstName   || '').trim(),
-            last_name:    String(lastName    || '').trim(),
-            affiliation:  String(affiliation || '').trim(),
-            intended_use: String(intendedUse || '').trim(),
+            first_name:   String(firstName || '').trim(),
+            last_name:    String(lastName  || '').trim(),
+            affiliation:  String(affiliation || '').trim().slice(0, 200),
+            intended_use: String(intendedUse || '').trim().slice(0, 2000),
+            keycloak_sub: sub,
             status:       REG_STATUS.PENDING,
         },
     });
-    return toRegistrationRequestDTO(doc);
+    return { request: toRegistrationRequestDTO(doc), created: true };
 }
 
+/** Approve an account request: the role grant happens in the route; this records the decision. */
+export async function markAccountApproved(id, asAdmin = false, reviewerSub = null) {
+    const payload = getPayloadClient();
+    await payload.update({
+        collection: COLLECTION,
+        id,
+        data: {
+            status:       REG_STATUS.COMPLETED,
+            is_org_admin: asAdmin === true,
+            reviewed_by:  reviewerSub || null,
+            reviewed_at:  new Date().toISOString(),
+        },
+    });
+}
+
+/** An open (pending, or approved by the old flow) request for this email, if any. */
 export async function findOpenByEmail(email) {
     const normalized = String(email || '').trim().toLowerCase();
     const payload = getPayloadClient();
@@ -117,38 +154,6 @@ export async function getById(id) {
     }
 }
 
-/**
- * Approve: store hashed token + expiry. Returns the raw token for the approval email.
- * reviewerSub is the Keycloak sub of the approving admin (for audit trail).
- */
-export async function approveRequest(id, asAdmin = false, reviewerSub = null) {
-    const rawToken   = crypto.randomBytes(32).toString('base64url');
-    const tokenHash  = crypto.createHash('sha256').update(rawToken).digest('hex');
-    const expiresAt  = new Date(Date.now() + TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
-    const reviewedAt = new Date().toISOString();
-
-    const payload = getPayloadClient();
-    await payload.update({
-        collection: COLLECTION,
-        id,
-        data: {
-            status:                        REG_STATUS.APPROVED,
-            completion_token_hash:         tokenHash,
-            completion_token_expires_at:   expiresAt,
-            is_org_admin:                  asAdmin === true,
-            reviewed_by:                   reviewerSub || null,
-            reviewed_at:                   reviewedAt,
-        },
-    });
-
-    const base = config.publicAppUrl || 'http://localhost:8000';
-    return {
-        token:         rawToken,
-        completionUrl: `${base}/?register=${encodeURIComponent(rawToken)}`,
-        expiresAt,
-    };
-}
-
 export async function rejectRequest(id, reviewerSub = null) {
     const payload = getPayloadClient();
     await payload.update({
@@ -159,37 +164,5 @@ export async function rejectRequest(id, reviewerSub = null) {
             reviewed_by: reviewerSub || null,
             reviewed_at: new Date().toISOString(),
         },
-    });
-}
-
-/** Find a pending-approved request by its raw token; returns null if missing, expired, or already used. */
-export async function findByToken(rawToken) {
-    const tokenHash = crypto.createHash('sha256').update(String(rawToken)).digest('hex');
-    const payload = getPayloadClient();
-    const result = await payload.find({
-        collection: COLLECTION,
-        where: {
-            and: [
-                { completion_token_hash: { equals: tokenHash } },
-                { status:               { equals: REG_STATUS.APPROVED } },
-            ],
-        },
-        limit: 1,
-    });
-    const row = result.docs[0] ?? null;
-    if (!row) return null;
-
-    const expires = row.completion_token_expires_at;
-    if (expires && new Date(expires).getTime() < Date.now()) return null;
-
-    return toRegistrationRequestDTO(row);
-}
-
-export async function markCompleted(id) {
-    const payload = getPayloadClient();
-    await payload.update({
-        collection: COLLECTION,
-        id,
-        data: { status: REG_STATUS.COMPLETED },
     });
 }

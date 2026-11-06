@@ -24,6 +24,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { signIn } from '../lib/signIn.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -171,27 +172,10 @@ async function api(baseUrl, token, method, apiPath, body) {
     return { json, res };
 }
 
+/** Sign in on Keycloak's page, as a browser would (the password grant is off). */
 async function login(baseUrl, username, password) {
-    const res = await fetch(`${baseUrl}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ username, password })
-    });
-    const text = await res.text();
-    let json = null;
-    try {
-        json = text ? JSON.parse(text) : null;
-    } catch {
-        json = null;
-    }
-    if (!res.ok) {
-        const err = new Error(json?.error?.message || text || `login ${res.status}`);
-        err.status = res.status;
-        throw err;
-    }
-    const token = extractToken(res);
-    if (!token) throw new Error(`Login for ${username} returned no token cookie`);
-    return { token, user: json.user };
+    const { token, user } = await signIn(baseUrl, username, password);
+    return { token, user: user || { username } };
 }
 
 async function registerOrLogin(baseUrl, username, email, password) {

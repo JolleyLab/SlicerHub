@@ -8,21 +8,38 @@
  *   - KEYCLOAK_URL, KEYCLOAK_REALM, KC_ADMIN_CLIENT_ID, KC_ADMIN_CLIENT_SECRET in .env
  *   - docker compose --profile payload up -d backend payload-db keycloak
  *
- * Run:
- *   node scripts/migrate-from-directus.mjs [--dry-run]
+ * Run on a freshly set-up stack (node scripts/bootstrap.mjs), as the one migration step:
+ *   node scripts/migrate-from-directus.mjs [--dry-run] [--send-setup-emails]
+ *
+ *   --send-setup-emails  have Keycloak email every migrated person who still needs to
+ *                        choose a password a "Set up your SlicerHub account" link (valid
+ *                        CASE_INVITE_TTL_DAYS, default 7). Without it, nobody is emailed:
+ *                        people use "Forgot your password?" on the sign-in page, or you
+ *                        re-run with the flag when ready. Needs working SMTP.
+ *
+ * Sign-in is Keycloak's own page, so passwords are never copied (Directus doesn't expose
+ * them). Each person sets one through Keycloak; their cases are waiting when they sign in.
  *
  * What it does (all idempotent — safe to re-run):
  *   1. Fetch all Directus users → look up in KC by email
- *        • already in KC → reuse their sub
- *        • not in KC → create disabled account (they set password via invite on first login)
- *        • superadmin email overlap → skip (don't overwrite)
+ *        • already in KC → reuse their sub (an account left disabled by an older run of
+ *          this script is enabled, with password setup pending)
+ *        • not in KC → create an enabled account with no password and the
+ *          UPDATE_PASSWORD required action (email already verified by Directus)
+ *        • either way grant `app-user`: they were already approved users, and the
+ *          backend's one-off grant may already have run before this script
  *   2. Migrate user-preferences (theme, layout flags)
  *   3. Migrate cases (owner mapped from Directus user_created → KC sub)
  *   4. Migrate case collaborators (case_directus_users junction → case-collaborators)
- *   5. Migrate non-expired case invites
+ *   5. Migrate non-expired case invites. Invites to a new email waiting for sign-up
+ *      become Keycloak account setup, the same as an invite made in the new app.
  *   6. Download attachment files from Directus /assets/, save to local storage,
  *      create Payload `attachments` records
  *   7. Drop comments (intentionally skipped)
+ *   8. Account setup emails (only with --send-setup-emails)
+ *
+ * Not migrated: Directus registration requests still waiting for review. Decide them
+ * before migrating, or ask those people to request access again on the sign-in page.
  */
 
 import path from 'path';
@@ -56,6 +73,7 @@ if (fs.existsSync(envFile)) {
 // ─── CLI ──────────────────────────────────────────────────────────────────────
 
 const DRY_RUN   = process.argv.includes('--dry-run');
+const SEND_SETUP_EMAILS = process.argv.includes('--send-setup-emails');
 const USE_LOCAL = process.argv.includes('--local');
 
 function log(msg) { console.log(`  ${msg}`); }
@@ -83,7 +101,12 @@ const DIRECTUS_ADMIN_PASSWORD = process.env.DIRECTUS_ADMIN_PASSWORD || '';
 
 let DIRECTUS_TOKEN = DIRECTUS_TOKEN_ENV;
 const KC_URL         = (process.env.KEYCLOAK_URL   || '').replace(/\/+$/, '');
-const KC_REALM       = process.env.KEYCLOAK_REALM  || 'slicer';
+// Same default as the backend (config.keycloak.realm).
+const KC_REALM       = process.env.KEYCLOAK_REALM  || 'slicer-web';
+const KC_CLIENT_ID   = process.env.KEYCLOAK_CLIENT_ID || 'slicer-web-backend';
+const SETUP_LINK_DAYS = Math.max(1, Number(process.env.CASE_INVITE_TTL_DAYS) || 7);
+const PASSWORD_SETUP  = ['UPDATE_PASSWORD'];
+const INVITEE_SETUP   = ['VERIFY_EMAIL', 'UPDATE_PASSWORD'];
 const KC_ADMIN_USER     = process.env.KEYCLOAK_ADMIN_USER     || 'admin';
 const KC_ADMIN_PASSWORD = process.env.KEYCLOAK_ADMIN_PASSWORD || '';
 
@@ -241,7 +264,11 @@ async function kcFindUserByEmail(email) {
     return Array.isArray(results) && results.length > 0 ? results[0] : null;
 }
 
-async function kcCreateUser({ email, firstName, lastName }) {
+/**
+ * Create an enabled account with no password. It can't be signed in to until the person
+ * finishes `requiredActions` from Keycloak's emailed link or "Forgot your password?".
+ */
+async function kcCreateUser({ email, firstName, lastName, requiredActions = PASSWORD_SETUP, emailVerified = true }) {
     if (DRY_RUN) {
         log(`  [dry] Would create KC user: ${email}`);
         return `dry-run-sub-${email}`;
@@ -257,8 +284,9 @@ async function kcCreateUser({ email, firstName, lastName }) {
             email,
             firstName: firstName || '',
             lastName: lastName || '',
-            enabled: false,
-            emailVerified: true
+            enabled: true,
+            emailVerified,
+            requiredActions,
         })
     });
     if (!res.ok) {
@@ -271,6 +299,39 @@ async function kcCreateUser({ email, firstName, lastName }) {
     if (!id) throw new Error(`KC create user ${email}: no ID in Location header`);
     return id; // This is the KC sub
 }
+
+/**
+ * An account left disabled (by an older run of this script, or the app's old invite
+ * flow) is enabled with `actions` pending. Returns true if the person still has to set
+ * the account up (so a setup email makes sense).
+ */
+async function kcPrepareSetup(user, actions) {
+    const pending = user.requiredActions || [];
+    if (user.enabled) return actions.some((a) => pending.includes(a));
+    if (DRY_RUN) {
+        log(`  [dry] Would enable ${user.email} with ${actions.join(', ')} pending`);
+        return true;
+    }
+    await kcAdmin(`/users/${encodeURIComponent(user.id)}`, {
+        method: 'PUT',
+        body: { ...user, enabled: true, requiredActions: [...new Set([...pending, ...actions])] },
+    });
+    return true;
+}
+
+let _appUserRole = null;
+/** Grant the realm role that lets an account use SlicerHub (approval gate). */
+async function kcGrantAppUser(kcSub) {
+    if (DRY_RUN) { log(`  [dry] Would grant app-user to ${kcSub}`); return; }
+    if (!_appUserRole) _appUserRole = await kcAdmin('/roles/app-user');
+    await kcAdmin(`/users/${encodeURIComponent(kcSub)}/role-mappings/realm`, {
+        method: 'POST',
+        body: [{ id: _appUserRole.id, name: _appUserRole.name }],
+    });
+}
+
+/** Accounts that still need setting up → the actions to email them (step 8). */
+const pendingSetup = new Map();
 
 // ─── Payload helpers ──────────────────────────────────────────────────────────
 
@@ -343,24 +404,30 @@ async function buildUserMap() {
         const email = String(du.email || '').trim().toLowerCase();
         if (!email) { skip(`User ${du.id} has no email — skipping`); skipped++; continue; }
 
-        const existing = await kcFindUserByEmail(email);
-        if (existing) {
-            userMap[du.id] = existing.id;
-            reused++;
-        } else {
-            try {
+        try {
+            const existing = await kcFindUserByEmail(email);
+            if (existing) {
+                userMap[du.id] = existing.id;
+                if (await kcPrepareSetup(existing, PASSWORD_SETUP)) {
+                    pendingSetup.set(existing.id, { email, actions: PASSWORD_SETUP });
+                }
+                reused++;
+            } else {
                 const kcSub = await kcCreateUser({
                     email,
                     firstName: du.first_name || '',
                     lastName: du.last_name || ''
                 });
                 userMap[du.id] = kcSub;
+                pendingSetup.set(kcSub, { email, actions: PASSWORD_SETUP });
                 created++;
                 ok(`Created KC user: ${email}`);
-            } catch (err) {
-                warn(`Failed to create KC user ${email}: ${err.message}`);
-                skipped++;
             }
+            await kcGrantAppUser(userMap[du.id]);
+        } catch (err) {
+            warn(`Failed to set up KC user ${email}: ${err.message}`);
+            delete userMap[du.id];
+            skipped++;
         }
     }
 
@@ -598,7 +665,7 @@ async function migrateCaseInvites(userMap, caseMap) {
     try {
         const result = await directusAll('/items/case_invite', {
             query: {
-                fields: 'id,kind,status,case,invitee_email,proposed_role,inviter,expires_at,token_hash',
+                fields: 'id,kind,status,case,invitee_email,proposed_role,inviter,expires_at',
                 'filter[expires_at][_gt]': now,
                 limit: '200'
             }
@@ -623,34 +690,59 @@ async function migrateCaseInvites(userMap, caseMap) {
             continue;
         }
 
-        // Idempotency on token_hash
-        if (inv.token_hash) {
-            const existing = await payloadFindOne('case-invites', {
-                token_hash: { equals: inv.token_hash }
-            });
-            if (existing) { skipped++; continue; }
-        }
-
         const inviterDirectusId = typeof inv.inviter === 'object' ? inv.inviter?.id : inv.inviter;
         const inviterKcSub = inviterDirectusId ? userMap[inviterDirectusId] : null;
+        const email = String(inv.invitee_email || '').trim().toLowerCase();
 
         const role = ['admin', 'collaborator', 'read_only'].includes(inv.proposed_role)
             ? inv.proposed_role
             : 'collaborator';
 
         const kind = inv.kind === 'signup' ? 'signup' : 'existing';
-        const status = ['pending_approval', 'pending_signup', 'accepted', 'rejected', 'expired'].includes(inv.status)
+        let status = ['pending_approval', 'pending_signup', 'accepted', 'rejected', 'expired'].includes(inv.status)
             ? inv.status
             : 'pending_approval';
+
+        // Idempotency: one invite per case + email + kind.
+        const existingInvite = email ? await payloadFindOne('case-invites', {
+            and: [
+                { case: { equals: payloadCaseId } },
+                { invitee_email: { equals: email } },
+                { kind: { equals: kind } },
+            ],
+        }) : null;
+        if (existingInvite) { skipped++; continue; }
+
+        // Waiting for sign-up: the old emailed link doesn't exist any more. Set the invitee
+        // up the way the app now does — a Keycloak account with setup pending, app-user and
+        // the case role; Keycloak's emailed link (step 8) finishes it.
+        let keycloakUserId = null;
+        if (kind === 'signup' && status === 'pending_signup' && email) {
+            try {
+                const found = await kcFindUserByEmail(email);
+                keycloakUserId = found?.id || await kcCreateUser({
+                    email, requiredActions: INVITEE_SETUP, emailVerified: false,
+                });
+                const needsSetup = found ? await kcPrepareSetup(found, INVITEE_SETUP) : true;
+                await kcGrantAppUser(keycloakUserId);
+                await addUserToKcCaseGroup(keycloakUserId, payloadCaseId, role);
+                if (needsSetup) pendingSetup.set(keycloakUserId, { email, actions: INVITEE_SETUP });
+                else status = 'accepted'; // already has a working account
+            } catch (err) {
+                warn(`Invite ${inv.id}: could not set up an account for ${email}: ${err.message}`);
+                skipped++;
+                continue;
+            }
+        }
 
         await payloadCreate('case-invites', {
             kind,
             status,
-            invitee_email: inv.invitee_email,
+            invitee_email: email || null,
             inviter_id: inviterKcSub || null,
             case: payloadCaseId,
             role,
-            token_hash: inv.token_hash || null,
+            keycloak_user_id: keycloakUserId,
             expires_at: inv.expires_at || null
         });
         done++;
@@ -763,6 +855,40 @@ async function migrateAttachments(userMap, caseMap) {
 // Main
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// STEP 8 — Account setup emails
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function sendSetupEmails() {
+    step('Step 8: Account setup emails');
+    if (!pendingSetup.size) { ok('Everyone already has a password'); return; }
+    if (!SEND_SETUP_EMAILS) {
+        log(`${pendingSetup.size} account(s) still need a password. Nobody was emailed.`);
+        log('They can use "Forgot your password?" on the sign-in page, or re-run with');
+        log('--send-setup-emails to have Keycloak email each of them a setup link.');
+        return;
+    }
+    let sent = 0, failed = 0;
+    const params = new URLSearchParams({
+        client_id: KC_CLIENT_ID,
+        lifespan: String(SETUP_LINK_DAYS * 24 * 60 * 60),
+    });
+    for (const [kcSub, { email, actions }] of pendingSetup) {
+        if (DRY_RUN) { log(`  [dry] Would email an account setup link to ${email}`); continue; }
+        try {
+            await kcAdmin(`/users/${encodeURIComponent(kcSub)}/execute-actions-email?${params}`, {
+                method: 'PUT',
+                body: actions,
+            });
+            sent++;
+        } catch (err) {
+            warn(`Could not email ${email}: ${err.message}`);
+            failed++;
+        }
+    }
+    ok(`Account setup emails: ${sent} sent, ${failed} failed (links valid ${SETUP_LINK_DAYS} days)`);
+}
+
 async function main() {
     console.log('\n═══════════════════════════════════════════════════');
     console.log('  Directus → Payload/Keycloak migration');
@@ -780,6 +906,7 @@ async function main() {
     await migrateCaseCollaborators(userMap, caseMap);
     await migrateCaseInvites(userMap, caseMap);
     await migrateAttachments(userMap, caseMap);
+    await sendSetupEmails();
 
     console.log('\n═══════════════════════════════════════════════════');
     console.log('  Migration complete!');
