@@ -709,6 +709,9 @@ async function migrateCaseInvites(userMap, caseMap) {
             ? inv.status
             : 'pending_approval';
 
+        // One bad invite (Directus left some malformed ones) must not stop the migration:
+        // it's skipped with a warning, and the rest (and the attachments) carry on.
+        try {
         // Idempotency: one invite per case + email + kind.
         const existingInvite = email ? await payloadFindOne('case-invites', {
             and: [
@@ -752,6 +755,11 @@ async function migrateCaseInvites(userMap, caseMap) {
             expires_at: inv.expires_at || null
         });
         done++;
+        } catch (err) {
+            const reason = String(err?.cause?.message || err?.message || err).split('\n')[0];
+            warn(`Invite ${inv.id} (${email || 'no email'}): skipped, ${reason}`);
+            skipped++;
+        }
     }
 
     ok(`Case invites: ${done} migrated, ${skipped} skipped`);

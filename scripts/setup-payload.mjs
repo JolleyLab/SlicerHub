@@ -6,8 +6,8 @@
  *
  *   node scripts/setup-payload.mjs
  *
- * Idempotent — safe to re-run. Does NOT contact Payload itself;
- * Payload runs its own migrations on first backend start.
+ * Idempotent — safe to re-run. Run it after every update that changes the Payload
+ * collections (bootstrap.mjs does).
  *
  * What this script does:
  *   1. Waits for payload-db (Postgres) to accept connections
@@ -17,6 +17,9 @@
  *   4. Drops tables/columns of features that were removed (see RETIRED_SCHEMA). Payload's
  *      dev push would otherwise stop at startup to ask about dropping them, and with no
  *      one to answer it exits — so this must run before the backend starts.
+ *   5. Creates or updates Payload's tables. Payload only syncs its schema outside
+ *      production (NODE_ENV=production skips it, and there are no migration files), so
+ *      a one-off backend container does it in development mode, then exits.
  *
  * After running this script:
  *   docker compose up -d backend
@@ -26,7 +29,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { readEnvFile, upsertEnvVar } from './lib/env.mjs';
 
@@ -154,6 +157,29 @@ function dropRetiredSchema(dbUser) {
     }
 }
 
+/**
+ * Payload's schema sync (dev push) is skipped when NODE_ENV=production, so on a
+ * production server the backend would never create or update its tables. Do it here in
+ * a one-off backend container, in development mode, with the backend's own config.
+ */
+function syncPayloadSchema() {
+    step('Creating / updating Payload tables');
+    const js = "import('/app/src/payload/index.js').then(async (m) => { await m.initPayload(); process.exit(0); })"
+        + ".catch((e) => { console.error(e?.message || e); process.exit(1); })";
+    const result = spawnSync('docker', [
+        'compose', 'run', '--rm', '--no-deps', '-T', '-e', 'NODE_ENV=development', 'backend',
+        'sh', '-c', `test -d node_modules/payload || npm ci >/dev/null; node -e "${js}"`,
+    ], { cwd: ROOT, encoding: 'utf8' });
+    const out = `${result.stdout || ''}${result.stderr || ''}`;
+    if (result.status === 0 && out.includes('Payload: initialized')) {
+        ok('Payload tables match the backend collections');
+        return;
+    }
+    // Payload exits on its own if a change would drop data and no one can confirm it.
+    const tail = out.trim().split(/\r?\n/).slice(-15).join('\n');
+    throw new Error(`Payload schema sync failed:\n${tail}`);
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -171,22 +197,21 @@ async function main() {
     ok('payload-db is healthy');
 
     dropRetiredSchema(dbUser);
+    syncPayloadSchema();
 
     console.log(`
   ─────────────────────────────────────────────
   Done. payload-db is running and .env is set.
 
-  Restart the backend to pick up the new vars
-  and let Payload run its migrations:
+  Restart the backend to pick up the new vars:
 
     docker compose up -d backend
     docker compose logs -f backend
 
   Watch for: "Payload: initialized"
 
-  Payload creates its tables on the backend's first start: cases and attachments,
-  case invites, groups, registration requests, notifications, user preferences, and
-  the site announcement (Payload admin → Globals → Site announcement).
+  Payload's tables (cases and attachments, case invites, groups, registration
+  requests, notifications, user preferences, the site announcement) are in place.
 
   To enable the SlicerWeb developer channel (latest build) in the UI,
   add to .env (after credentials are configured):
