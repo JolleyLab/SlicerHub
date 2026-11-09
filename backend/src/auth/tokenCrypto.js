@@ -1,14 +1,14 @@
 /**
- * Encrypt IdP tokens before writing SQLite (AES-256-GCM envelope payload).
+ * Encrypts the Keycloak ID token kept on each session row (only for id_token_hint at
+ * sign-out; deleted with the session). AES-256-GCM envelope.
  *
  * Key material:
- *   AUTH_TOKEN_KEY              — primary (required in production if storing tokens)
+ *   AUTH_TOKEN_KEY              — primary; set a dedicated one in production
  *   AUTH_TOKEN_KEY_PREVIOUS     — optional rotation peer (decrypt only)
- *   GPU_CREDENTIALS_KEY / JWT   — last-resort decrypt/encrypt when AUTH_TOKEN_KEY unset (dev)
+ *   GPU_CREDENTIALS_KEY / JWT   — fallback when AUTH_TOKEN_KEY is unset
  *
- * Production path when AUTH_STORE_PROVIDER_TOKENS is on:
- *   prefer dedicated AUTH_TOKEN_KEY; later swap to KMS envelope without changing callers
- *   (keep encryptTokenPayload / decryptTokenPayload as the boundary).
+ * Callers use only encryptTokenPayload / decryptTokenPayload, so a KMS envelope can
+ * replace this later without changing them.
  */
 
 import crypto from 'crypto';
@@ -101,12 +101,9 @@ export function decryptTokenPayload(stored) {
 }
 
 export function warnIfAuthTokenKeyMissing() {
-    if (config.auth?.storeProviderTokens !== true) {
-        return;
-    }
     if (process.env.AUTH_TOKEN_KEY?.trim()) return;
     console.warn(
-        '⚠️  AUTH_STORE_PROVIDER_TOKENS=true but AUTH_TOKEN_KEY is unset. '
+        '⚠️  AUTH_TOKEN_KEY is unset, so session ID tokens are encrypted with a fallback key. '
         + 'Set a dedicated AUTH_TOKEN_KEY (and AUTH_TOKEN_KEY_PREVIOUS during rotation).'
     );
 }

@@ -145,13 +145,6 @@ const config = {
      */
     auth: {
         provider: (process.env.AUTH_PROVIDER || 'local').trim().toLowerCase(),
-        storeProviderTokens: (() => {
-            // Cases require call-as-user tokens. Auto-on when Cases enabled unless explicitly false.
-            if (process.env.AUTH_STORE_PROVIDER_TOKENS === 'true') return true;
-            if (process.env.AUTH_STORE_PROVIDER_TOKENS === 'false') return false;
-            return process.env.ENABLE_DIRECTUS_CASES === 'true';
-        })(),
-        linkPolicy: (process.env.AUTH_LINK_POLICY || 'strict').trim().toLowerCase(),
         /**
          * Local/dev testing affordances. Never enabled in production
          * (startup throws if AUTH_DEV_RELAXED=true under NODE_ENV=production).
@@ -159,19 +152,6 @@ const config = {
         devRelaxed: process.env.AUTH_DEV_RELAXED === 'true'
             && (process.env.NODE_ENV || 'development') !== 'production',
         // Sign-in lockout is Keycloak's brute-force detection (scripts/setup-keycloak.mjs).
-        /**
-         * North star: every product user is also a Directus user (auth_identity_links).
-         *   directus-linked — collab/Cases require a Directus link (default when Cases on)
-         *   local-only      — legacy; no link required (not the long-term product path)
-         */
-        identityMode: (process.env.AUTH_IDENTITY_MODE || 'directus-linked').trim().toLowerCase(),
-        /**
-         * Force Directus link on collab routes.
-         * unset → true when ENABLE_DIRECTUS_CASES; false can bypass for local dev only
-         */
-        requireDirectusLink: process.env.AUTH_REQUIRE_DIRECTUS_LINK === 'true'
-            ? true
-            : (process.env.AUTH_REQUIRE_DIRECTUS_LINK === 'false' ? false : null),
     },
 
     // Keycloak (AUTH_PROVIDER=keycloak)
@@ -186,32 +166,9 @@ const config = {
         adminPassword: (process.env.KEYCLOAK_ADMIN_PASSWORD || '').trim()
     },
 
-    // Directus headless API (service credentials — Cases / system jobs, not user login)
-    directus: {
-        url: (process.env.DIRECTUS_URL || '').trim().replace(/\/+$/, ''),
-        token: (process.env.DIRECTUS_TOKEN || '').trim(),
-        cacheDir: (process.env.DIRECTUS_CACHE_DIR || '').trim(),
-        // Off by default — set ENABLE_DIRECTUS_CASES=true to expose Cases UI + /api/directus/*
-        casesEnabled: process.env.ENABLE_DIRECTUS_CASES === 'true',
-        /** Role UUID for newly provisioned Directus users (app clinician / non-admin). */
-        defaultRoleId: (process.env.DIRECTUS_DEFAULT_ROLE_ID || '').trim(),
-        /** Role UUID for OrgAdmin users. Set DIRECTUS_ORG_ADMIN_ROLE_ID in .env. */
-        orgAdminRoleId: (process.env.DIRECTUS_ORG_ADMIN_ROLE_ID || '').trim()
-    },
-
     myFiles: {
         // Set ENABLE_MY_FILES=true to show "My Files" in the sidebar nav (hidden by default).
         enabled: process.env.ENABLE_MY_FILES === 'true'
-    },
-
-    /**
-     * Admin bulk user provision (BFF creates Directus + local link).
-     * Modes: temp_password (Pattern A, default) | invite_email (Pattern B, later).
-     */
-    userProvision: {
-        mode: (process.env.USER_PROVISION_MODE || 'temp_password').trim().toLowerCase(),
-        /** Shared temp password for batch (empty → generate per user and return once). */
-        defaultTemporaryPassword: (process.env.USER_PROVISION_DEFAULT_PASSWORD || '').trim()
     },
 
     /**
@@ -224,18 +181,6 @@ const config = {
 
     /** Case signup invite link lifetime (days). */
     caseInviteTtlDays: Math.max(1, Math.min(30, Number(process.env.CASE_INVITE_TTL_DAYS || 7) || 7)),
-
-    /**
-     * Version history / retention.
-     * PRUNE_STRATEGY=delete  — delete file from Directus/storage (default)
-     * PRUNE_STRATEGY=archive — transition to cheaper storage tier and mark archived
-     */
-    versioning: {
-        pruneStrategy: (process.env.PRUNE_STRATEGY || 'delete').trim().toLowerCase(),
-        archiveTier: (process.env.PRUNE_ARCHIVE_TIER || 'glacier_ir').trim().toLowerCase(),
-        retentionEnabled: process.env.VERSION_RETENTION_ENABLED !== 'false',
-        storageDriverConfigured: Boolean(process.env.STORAGE_DRIVER?.trim())
-    },
 
     /**
      * SlicerWeb channel update service.
@@ -339,15 +284,6 @@ if (config.isProduction) {
     }
     if (!process.env.TRAME_SYNC_TOKEN?.trim() || process.env.TRAME_SYNC_TOKEN === 'test-sync-token-local') {
         throw new Error('FATAL: Set a strong TRAME_SYNC_TOKEN in production (not the compose default)');
-    }
-    if (config.auth.storeProviderTokens && !process.env.AUTH_TOKEN_KEY?.trim()) {
-        throw new Error(
-            'FATAL: AUTH_STORE_PROVIDER_TOKENS=true requires AUTH_TOKEN_KEY in production '
-            + '(dedicated key; do not reuse JWT_SECRET as the sole encryptor long term)'
-        );
-    }
-    if (config.auth.provider === 'directus' && !config.directus.url) {
-        throw new Error('FATAL: AUTH_PROVIDER=directus requires DIRECTUS_URL');
     }
     if (config.auth.provider === 'keycloak' && (!config.keycloak.url || !config.keycloak.clientSecret)) {
         throw new Error('FATAL: AUTH_PROVIDER=keycloak requires KEYCLOAK_URL and KEYCLOAK_CLIENT_SECRET');

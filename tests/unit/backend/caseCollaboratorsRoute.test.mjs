@@ -12,7 +12,13 @@ process.env.AUTH_PROVIDER = 'keycloak';
 
 let payloadClient = null;
 mock.module('../../../backend/src/payload/index.js', {
-    namedExports: { getPayloadClient: () => payloadClient }
+    namedExports: {
+        getPayloadClient: () => payloadClient,
+        // Same as the real middleware, over the fake client.
+        requirePayload: (req, res, next) => (payloadClient
+            ? next()
+            : res.status(503).json({ error: { message: 'Cases service not available' } })),
+    }
 });
 
 mock.module('../../../backend/src/middleware/authMiddleware.js', {

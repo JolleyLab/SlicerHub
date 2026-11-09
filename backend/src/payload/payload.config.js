@@ -1,6 +1,6 @@
 import { buildConfig } from 'payload'
 import { postgresAdapter } from '@payloadcms/db-postgres'
-import { Users, Cases, Attachments, CaseComments, CaseInvites, CaseGroupAccess, UserPreferences, RegistrationRequests, Groups, GroupMembers, UserNotifications } from './collections.js'
+import { Users, Cases, Attachments, CaseComments, CaseInvites, CaseGroupAccess, UserPreferences, RegistrationRequests, Groups, GroupMembers, UserNotifications, SiteAnnouncement } from './collections.js'
 import { resolvePayloadSecret } from './secret.js'
 
 export default buildConfig({
@@ -17,4 +17,5 @@ export default buildConfig({
     // Payload will try to DROP any column it doesn't recognise. Including Users
     // keeps the schema in sync and prevents the interactive migration prompt.
     collections: [Users, Cases, Attachments, CaseComments, CaseInvites, CaseGroupAccess, UserPreferences, RegistrationRequests, Groups, GroupMembers, UserNotifications],
+    globals: [SiteAnnouncement],
 })

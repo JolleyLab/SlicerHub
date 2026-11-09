@@ -13,9 +13,9 @@ import {
   writeAppViewToUrl
 } from './components/app-views.js';
 import { loadAppFeatures, areAppFeaturesLoaded } from './services/features.js';
-import { setReauthHandler, clearReauthHandler, requestReauth } from './services/reauth.js';
+import { setReauthHandler, clearReauthHandler } from './services/reauth.js';
 import { installAuthFetch, uninstallAuthFetch } from './services/authFetch.js';
-import { startActivityTracking, stopActivityTracking, setIdleExempt, markActive } from './services/sessionActivity.js';
+import { startActivityTracking, stopActivityTracking, setIdleExempt, markActive, recheckIdleIn } from './services/sessionActivity.js';
 import { getSessionState, setSessionState } from './services/sessionState.js';
 import './components/session-reauth-dialog.js';
 import './components/procedure-mode-dialog.js';
@@ -39,8 +39,7 @@ import {
 } from './utils/userPreferences.js';
 import { watchSystemColorScheme } from './components/theme.js';
 import './components/app-dialog.js';
-import './components/upload-tray.js';
-import { uploadManager } from './services/uploadManager.js';
+import { hasActiveUploads } from './services/cases.js';
 import {
   listOwnedGpuBillingSessions,
   stopProjectGpuBilling,
@@ -477,7 +476,7 @@ export class SlicerApp extends LitElement {
   /**
    * Session guards while signed in (docs/redirect-login-and-sessions-design.md, "Sessions"):
    *   - real use (page + same-origin viewer frames) is reported to the server; after the
-   *     idle limit the page is hidden behind the sign-in dialog (work stays in memory);
+   *     idle limit in every tab the page is hidden behind the sign-in dialog (work stays in memory);
    *   - any 401 opens that dialog and retries the request after signing in;
    *   - procedure mode: no idle timeout; signed out when it runs out.
    * (Replaces the old timer, which only saw the main page and signed people out mid-work.)
@@ -535,11 +534,20 @@ export class SlicerApp extends LitElement {
     this.refreshUserProfile();
   }
 
-  /** Idle limit reached: end the server session and hide the page until they sign in. */
-  _handleIdle() {
+  /**
+   * Idle in this tab. Tabs share one session and other tabs may be in use, so ask the
+   * server, which counts use from every tab, instead of signing out. If the session is
+   * idle there too, the server ends it and the 401 opens the sign-in dialog (authFetch.js).
+   * Otherwise check again in a minute.
+   */
+  async _handleIdle() {
     if (getSessionState().procedureMode?.active) return;
-    fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
-    requestReauth('idle').catch(() => {});
+    try {
+      const res = await fetch(`${API_URL}/api/auth/me`, { credentials: 'include' });
+      if (res.ok) recheckIdleIn(60 * 1000);
+    } catch (_) {
+      recheckIdleIn(60 * 1000); // offline: try again later
+    }
   }
 
   _clearProcedureTimer() {
@@ -612,7 +620,7 @@ export class SlicerApp extends LitElement {
   async handleLogout() {
     if (this.logoutBillingBusy || this.logoutBillingMode) return;
     if (!this.confirmLeaveCurrentView()) return;
-    if (uploadManager.hasActive() && !confirm(t('uploads.confirmLogout'))) return;
+    if (hasActiveUploads() && !confirm(t('uploads.confirmLogout'))) return;
 
     try {
       const data = await listOwnedGpuBillingSessions();
@@ -856,7 +864,6 @@ export class SlicerApp extends LitElement {
     // Guards off first: the sign-out calls below may hit an already-ended session, and
     // that must not pop up the "sign in again" dialog.
     this.stopInactivityTimer();
-    uploadManager.cancelAll();
     let keycloakLogoutUrl = null;
     try {
       // Stop any running containers before logout
@@ -1164,7 +1171,6 @@ export class SlicerApp extends LitElement {
         ></cases-page>
       ` : ''}
 
-      <upload-tray></upload-tray>
 
       <app-dialog
         id="logout-billing-dialog"

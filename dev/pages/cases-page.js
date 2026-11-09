@@ -9,7 +9,7 @@ import { friendlyCasesError } from '../services/cases.js';
 import { API_URL } from '../config.js';
 import { parseNodeIdsRepr } from '../services/slicerBridgeUtils.js';
 import {
-    listCases, createCase, updateCase, listAttachments, deleteAttachment,
+    listCases, getCaseAccess, createCase, updateCase, listAttachments, deleteAttachment,
     uploadCaseAttachment, openPayloadAttachmentFullSlicer, fetchPayloadAttachmentContent,
     listCollaborators, inviteCollaborator, proposeGroupCollaborator, updateCollaborators, lookupCaseUser,
     listComments, createComment,
@@ -19,7 +19,6 @@ import {
 import '../components/people-dialog.js';
 import '../components/list-filter-tools.js';
 import '../components/attachment-open-menu.js';
-import { uploadManager } from '../services/uploadManager.js';
 import { formatBytes } from '../utils/formatBytes.js';
 import { deepActiveElement } from '../utils/focus.js';
 import {
@@ -1231,10 +1230,16 @@ export class CasesPage extends LitElement {
         this.caseSortOrder = 'newest';
         this.caseSearchQuery = '';
         this.pendingInviteCount = 0;
+        // Access to the open case can end while it's on screen (removed from the case or
+        // from a group that had it): checked every minute and when the tab comes back.
+        this._accessWatchTimer = null;
+        this._onAccessWake = null;
+        this._lastAccessCheckAt = 0;
+        this._accessCheck = null;
     }
 
     get selectedCase() {
-        return this.cases.find((row) => row.id === this.selectedCaseId) || null;
+        return this.cases.find((row) => String(row.id) === String(this.selectedCaseId)) || null;
     }
 
     // â”€â”€ URL / history helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1321,13 +1326,8 @@ export class CasesPage extends LitElement {
         };
         window.addEventListener('beforeunload', this._handleBeforeUnload);
 
-        this._onUploadChange = () => this.syncUploadState();
-        this._onUploadAttached = (event) => this.handleAttachmentUploaded(event.detail);
-        uploadManager.addEventListener('change', this._onUploadChange);
-        uploadManager.addEventListener('attached', this._onUploadAttached);
-        this.syncUploadState();
-
         this.loadCases();
+        this._startCaseAccessWatch();
 
         // Peek for a new SlicerWeb build. If one is found, clone runs in the background
         // and a toast notifies when done. Features load async so we wait before checking.
@@ -1363,8 +1363,7 @@ export class CasesPage extends LitElement {
 
     disconnectedCallback() {
         if (this._toastTimeout) clearTimeout(this._toastTimeout);
-        uploadManager.removeEventListener('change', this._onUploadChange);
-        uploadManager.removeEventListener('attached', this._onUploadAttached);
+        this._stopCaseAccessWatch();
         window.removeEventListener('beforeunload', this._handleBeforeUnload);
         this._handleBeforeUnload = null;
         if (this._popStateHandler) {
@@ -1383,7 +1382,6 @@ export class CasesPage extends LitElement {
     }
 
     updated(changed) {
-        if (changed.has('selectedCaseId')) this.syncUploadState();
         if (changed.has('showIframe')) this.syncViewerFocus();
         if (changed.has('selectedCaseId') || this.selectedCaseId) {
             this.syncDetailLayoutObserver();
@@ -1434,7 +1432,78 @@ export class CasesPage extends LitElement {
     }
 
     userFacingError(err, fallback) {
+        // A 403/404 on the open case may mean access just ended: confirm and react.
+        if ((err?.status === 403 || err?.status === 404) && this.selectedCaseId) {
+            this._verifyCaseAccess({ force: true });
+        }
         return friendlyCasesError(err?.message, fallback, err?.status, err?.code);
+    }
+
+    _startCaseAccessWatch() {
+        this._stopCaseAccessWatch();
+        this._accessWatchTimer = setInterval(() => {
+            if (!document.hidden) this._verifyCaseAccess();
+        }, 60 * 1000);
+        this._onAccessWake = () => { if (!document.hidden) this._verifyCaseAccess(); };
+        window.addEventListener('focus', this._onAccessWake);
+        document.addEventListener('visibilitychange', this._onAccessWake);
+    }
+
+    _stopCaseAccessWatch() {
+        if (this._accessWatchTimer) clearInterval(this._accessWatchTimer);
+        this._accessWatchTimer = null;
+        if (this._onAccessWake) {
+            window.removeEventListener('focus', this._onAccessWake);
+            document.removeEventListener('visibilitychange', this._onAccessWake);
+            this._onAccessWake = null;
+        }
+    }
+
+    /** Ask the server whether the open case is still ours (throttled unless forced). */
+    async _verifyCaseAccess({ force = false } = {}) {
+        const caseId = String(this.selectedCaseId || '');
+        if (!caseId || this._accessCheck) return;
+        if (!force && Date.now() - this._lastAccessCheckAt < 10 * 1000) return;
+        this._lastAccessCheckAt = Date.now();
+        this._accessCheck = getCaseAccess(caseId);
+        try {
+            if (await this._accessCheck === 'lost' && String(this.selectedCaseId) === caseId) {
+                await this._handleCaseAccessLost([caseId]);
+            }
+        } finally {
+            this._accessCheck = null;
+        }
+    }
+
+    /**
+     * Access to these cases ended: close the viewer (the server has stopped a Full Slicer
+     * seat holding their files), leave the case if it's open, drop them from the list and
+     * say why. Data already on screen can't be recalled; the server refuses everything else.
+     */
+    async _handleCaseAccessLost(caseIds = []) {
+        const lost = new Set(caseIds.map(String));
+        if (!lost.size) return;
+        const openId = String(this.selectedCaseId || '');
+        const openRow = this.cases.find((row) => String(row.id) === openId);
+        const named = lost.has(openId) && openRow ? this.caseTitle(openRow) : '';
+
+        if (this.showIframe || this.viewerLoading || this._viewerSessionToken) {
+            this._viewerPushedState = false;
+            await this._doCloseViewer();
+        }
+        this.cases = this.cases.filter((row) => !lost.has(String(row.id)));
+        if (lost.has(openId)) {
+            this.closePeopleDialog();
+            this.editingCase = false;
+            this.pendingInviteCount = 0;
+            this.selectedCaseId = '';
+            history.replaceState({}, '', this._buildCaseUrl(''));
+        } else {
+            this._replaceUrlWithCase();
+        }
+        this.errorMessage = named
+            ? t('cases.accessLost', { title: `"${named}"` })
+            : t('cases.accessLostUntitled');
     }
 
     async loadCases() {
@@ -1445,10 +1514,10 @@ export class CasesPage extends LitElement {
             const data = await listCases({ limit: 50 });
             this.cases = Array.isArray(data.cases) ? data.cases : [];
             this.sessionMeta = data.meta || null;
-            if (keepSelected && !this.cases.some((row) => row.id === keepSelected)) {
+            if (keepSelected && !this.cases.some((row) => String(row.id) === String(keepSelected))) {
                 this.selectedCaseId = '';
             } else if (keepSelected) {
-                const openRow = this.cases.find((row) => row.id === keepSelected);
+                const openRow = this.cases.find((row) => String(row.id) === String(keepSelected));
                 if (openRow) this.markCaseCommentsSeen(openRow);
                 this.loadCaseAttachments(keepSelected);
                 this.loadCaseComments(keepSelected);
@@ -1466,7 +1535,7 @@ export class CasesPage extends LitElement {
     openCase(caseId) {
         this.selectedCaseId = caseId;
         this.errorMessage = '';
-        const caseRow = this.cases.find((row) => row.id === caseId);
+        const caseRow = this.cases.find((row) => String(row.id) === String(caseId));
         if (caseRow) this.markCaseCommentsSeen(caseRow);
         history.pushState({ caseId }, '', this._buildCaseUrl(caseId));
         this.refreshPendingInviteCount();
@@ -1645,7 +1714,7 @@ export class CasesPage extends LitElement {
             const data = await listAttachments(caseId);
             const normalized = (data.attachments || []).map((a) => this.normalizePayloadAttachment(a));
             this.cases = this.cases.map((row) =>
-                row.id === caseId ? { ...row, attachments: normalized } : row
+                String(row.id) === String(caseId) ? { ...row, attachments: normalized } : row
             );
         } catch {
             // non-fatal; files panel shows empty
@@ -1656,7 +1725,7 @@ export class CasesPage extends LitElement {
         try {
             const data = await listCollaborators(caseId);
             this.cases = this.cases.map((row) =>
-                row.id === caseId
+                String(row.id) === String(caseId)
                     ? { ...row, keycloakCollaborators: data.collaborators || [], _ownerInfo: data.owner || row._ownerInfo || null }
                     : row
             );
@@ -1677,7 +1746,7 @@ export class CasesPage extends LitElement {
                 mentions:  c.mentions || {},
             }));
             this.cases = this.cases.map((row) =>
-                row.id === caseId ? { ...row, comments } : row
+                String(row.id) === String(caseId) ? { ...row, comments } : row
             );
         } catch {
             // non-fatal; comment panel shows empty
@@ -1699,7 +1768,7 @@ export class CasesPage extends LitElement {
                 firstName: ownerInfo.firstName || '',
                 lastName: ownerInfo.lastName || '',
                 displayName: ownerInfo.displayName || [ownerInfo.firstName, ownerInfo.lastName].filter(Boolean).join(' ') || ownerInfo.email || '',
-                avatarUrl: ownerInfo.avatarUrl || `/api/users/${encodeURIComponent(caseRow.owner_id)}/avatar`,
+                avatarUrl: ownerInfo.avatarUrl || null,
                 role: 'admin',
                 locked: true,
             });
@@ -1726,7 +1795,7 @@ export class CasesPage extends LitElement {
                 firstName: entry.firstName || '',
                 lastName: entry.lastName || '',
                 displayName: entry.displayName || [entry.firstName, entry.lastName].filter(Boolean).join(' ') || entry.email || '',
-                avatarUrl: entry.avatarUrl || `/api/users/${encodeURIComponent(entry.id)}/avatar`,
+                avatarUrl: entry.avatarUrl || null,
                 role: entry.role || 'collaborator',
                 locked: false,
             });
@@ -1864,7 +1933,7 @@ export class CasesPage extends LitElement {
             }
         } catch (err) {
             const dialog = this.renderRoot?.querySelector('#case-people-dialog');
-            if (dialog) dialog.error = this.userFacingError(err, t('cases.approveInviteFailed'));
+            if (dialog) dialog.error = this.userFacingError(err, t('errors.approveInviteFailed'));
         } finally {
             this.savingCollaborators = false;
         }
@@ -1881,7 +1950,7 @@ export class CasesPage extends LitElement {
             await this.handlePeopleInvited({ detail: { status: 'rejected' } });
         } catch (err) {
             const dialog = this.renderRoot?.querySelector('#case-people-dialog');
-            if (dialog) dialog.error = this.userFacingError(err, t('cases.rejectInviteFailed'));
+            if (dialog) dialog.error = this.userFacingError(err, t('errors.rejectInviteFailed'));
         } finally {
             this.savingCollaborators = false;
         }
@@ -2158,9 +2227,8 @@ export class CasesPage extends LitElement {
     }
 
     /**
-     * Hand files to the background upload manager. Uploading continues if the user navigates away;
-     * progress and per-file controls live in the Uploads panel, and the attachment appears on the
-     * case when each file finishes.
+     * Upload files to the case one at a time (resumable TUS), with progress shown on the case.
+     * The server records each attachment when its upload finishes.
      */
     uploadFiles(caseRow, files) {
         if (!files.length || !caseRow?.id) return;
@@ -2205,20 +2273,6 @@ export class CasesPage extends LitElement {
         // after this page does, and a disabled control cannot take focus.
         requestAnimationFrame(() => {
             if (previous?.isConnected) previous.focus();
-        });
-    }
-
-    syncUploadState() {
-        // uploadFilesPayload manages progress directly; nothing to sync here
-    }
-
-    /** A background upload finished: show the new attachment without reloading the list. */
-    handleAttachmentUploaded({ caseId, attachment }) {
-        if (!attachment?.id) return;
-        this.cases = this.cases.map((row) => {
-            if (row.id !== caseId) return row;
-            const others = (row.attachments || []).filter((a) => a.id !== attachment.id);
-            return { ...row, attachments: [...others, attachment] };
         });
     }
 
@@ -2284,7 +2338,12 @@ export class CasesPage extends LitElement {
                 heartbeatUrl,
                 includeUserActive: false,
                 onIdleTimeout: () => this._handleViewerIdleTimeout()
-            }).catch(() => {});
+            }).catch((err) => {
+                // Removed from a case whose files this seat held: the server stopped it.
+                if (err?.code === 'CASE_ACCESS_LOST') {
+                    this._handleCaseAccessLost(err.caseIds?.length ? err.caseIds : [this.selectedCaseId]);
+                }
+            });
         };
         ping();
         this._heartbeatInterval = setInterval(ping, 20000);

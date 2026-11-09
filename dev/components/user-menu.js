@@ -163,7 +163,7 @@ export class UserMenu extends LitElement {
     static get properties() {
         return {
             username:    { type: String },
-            /** Preferred label: "First Last" or email (Directus-era accounts). */
+            /** Preferred label: "First Last", or the email if there is no name. */
             displayName: { type: String },
             avatarUrl:   { type: String },
             open:        { type: Boolean },

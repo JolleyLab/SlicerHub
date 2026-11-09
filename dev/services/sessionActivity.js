@@ -6,8 +6,9 @@
  * old timer couldn't see. Background polling and heartbeats don't count.
  *
  *   - activity is reported to the server (POST /api/auth/activity) at most once a minute;
- *   - after `idleMinutes` with none, onIdle() is called (the app hides the page behind the
- *     sign-in dialog; unsaved work stays in memory);
+ *   - after `idleMinutes` with none in this tab, onIdle() is called. The app then asks
+ *     the server, which counts use in every tab; if the session is idle there too, the
+ *     page is hidden behind the sign-in dialog (unsaved work stays in memory);
  *   - in procedure mode there is no idle timeout (setIdleExempt(true)).
  *
  * docs/redirect-login-and-sessions-design.md ("Normal sessions").
@@ -99,6 +100,11 @@ export function setIdleExempt(exempt) {
         state.exempt = Boolean(exempt);
         state.lastActivity = Date.now();
     }
+}
+
+/** Call onIdle again after `ms` unless there is activity first. */
+export function recheckIdleIn(ms) {
+    if (state) state.lastActivity = Date.now() - state.idleMs + ms;
 }
 
 /** Treat now as activity (e.g. right after signing in again). */

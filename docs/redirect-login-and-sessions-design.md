@@ -176,7 +176,7 @@ Kept:
 
 | Rule | Value | Notes |
 |---|---|---|
-| Idle timeout | 30 min | Only real use counts. Background polls and heartbeats send `X-Background: 1` and don't extend the session. The page reports real activity (keys, pointer, viewer interaction including the same-origin viewer iframes) at most once every few minutes. |
+| Idle timeout | 30 min | Only real use counts. Background polls and heartbeats send `X-Background: 1` and don't extend the session. The page reports real activity (keys, pointer, viewer interaction including the same-origin viewer iframes) at most once every few minutes. All tabs share the session: a tab that goes idle asks the server, which counts use from every tab, so an idle background tab never ends a session that is in use elsewhere. |
 | Absolute lifetime | 12 h | The app JWT and session row expire 12 h after password entry. The Keycloak SSO session max is the same, so the popup asks for the password again. |
 | Server-side | Enforced on every request | The browser timer only warns. The server decides. |
 | Ended elsewhere | Immediate | Back-channel logout, plus the 5-minute account re-check |
@@ -187,7 +187,7 @@ The 7-day token and "quiet renewal" go away: nobody stays signed in long enough 
 
 - A shared handler catches any 401 from `/api/*` (a `fetch` wrapper) and from TUS uploads.
 - It shows "Your session ended — sign in to continue". The button opens the Keycloak sign-in in a **popup**; because the user clicks, popup blockers allow it. The popup's callback page tells the opener and closes.
-- Within 30 min idle and 12 h max, Keycloak may still have a live sign-in. In that case the popup closes without a password.
+- When the app ends a session (sign-out, idle, 12 h, procedure mode over), the server also ends its Keycloak sign-in (`endSession` → Keycloak admin API). The popup, or a refresh, therefore always asks for the password: someone walking up to a timed-out screen can't get back in by refreshing. A new sign-in replacing the browser's old session (password change, re-sign-in) keeps the Keycloak sign-in.
 - The failed request is retried once. An unsaved scene stays in memory throughout.
 - If a **different** account signs in, the page reloads rather than mixing two users' data.
 - Failed saves are obvious regardless: the Save button returns to "unsaved" and the error stays until dismissed.

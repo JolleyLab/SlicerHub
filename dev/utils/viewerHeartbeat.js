@@ -45,8 +45,11 @@ export async function sendViewerHeartbeat({
     });
 
     if (!response.ok) {
-        const err = new Error('Heartbeat failed');
+        const data = await response.json().catch(() => null);
+        const err = new Error(data?.error?.message || 'Heartbeat failed');
         err.status = response.status;
+        err.code = data?.error?.code || null; // CASE_ACCESS_LOST: removed from the case
+        err.caseIds = data?.error?.caseIds || [];
         throw err;
     }
 

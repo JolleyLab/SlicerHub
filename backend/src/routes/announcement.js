@@ -1,42 +1,47 @@
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import { directusFetch } from '../services/directus.js';
+import { getPayloadClient } from '../payload/index.js';
 
-const CACHE_TTL_MS = 5 * 60 * 1000;
-let _cache = { announcement: null, fetchedAt: 0 };
+// Short, so a new notice (or switching one off) reaches everyone within a minute.
+const CACHE_TTL_MS = 60 * 1000;
+const SEVERITIES = ['info', 'warning', 'error'];
+let cache = { row: null, fetchedAt: 0 };
 
-async function fetchActiveAnnouncement() {
+/**
+ * The banner to show now, from the `site-announcement` global (Payload admin), or null.
+ * Shown while enabled and inside its optional window (starts_at … expires_at).
+ */
+export function activeAnnouncement(row, now = Date.now()) {
+    if (!row?.enabled || !String(row.message || '').trim()) return null;
+    const startsAt = row.starts_at ? Date.parse(row.starts_at) : null;
+    const expiresAt = row.expires_at ? Date.parse(row.expires_at) : null;
+    if (startsAt && startsAt > now) return null;
+    if (expiresAt && expiresAt <= now) return null;
+    return {
+        message: String(row.message).trim(),
+        severity: SEVERITIES.includes(row.severity) ? row.severity : 'info',
+    };
+}
+
+async function readAnnouncement() {
     const now = Date.now();
-    if (now - _cache.fetchedAt < CACHE_TTL_MS) {
-        return _cache.announcement;
-    }
-
-    let announcement = null;
+    if (now - cache.fetchedAt < CACHE_TTL_MS) return cache.row;
+    const payload = getPayloadClient();
+    if (!payload) return null;
     try {
-        const payload = await directusFetch('/items/site_announcement');
-        const row = payload?.data;
-        if (row?.enabled && row?.message) {
-            const expires = row.expires_at ? new Date(row.expires_at).getTime() : null;
-            if (!expires || expires > now) {
-                announcement = {
-                    message:  String(row.message),
-                    severity: ['info', 'warning', 'error'].includes(row.severity) ? row.severity : 'info'
-                };
-            }
-        }
+        const row = await payload.findGlobal({ slug: 'site-announcement', depth: 0 });
+        cache = { row, fetchedAt: now };
     } catch (err) {
-        // Directus unavailable — return whatever is cached (or null).
-        console.warn('[announcement] Could not fetch from Directus:', err?.message);
-        return _cache.announcement;
+        // Keep showing whatever was last read.
+        console.warn('[announcement] Could not read the site announcement:', err?.message);
     }
-
-    _cache = { announcement, fetchedAt: now };
-    return announcement;
+    return cache.row;
 }
 
 export default function announcementRoutes(app) {
     app.get('/api/announcement', authenticateToken, asyncHandler(async (_req, res) => {
-        const announcement = await fetchActiveAnnouncement();
-        res.json({ announcement });
+        // The window is checked on every request, so a cached notice still starts and
+        // ends on time.
+        res.json({ announcement: activeAnnouncement(await readAnnouncement()) });
     }));
 }

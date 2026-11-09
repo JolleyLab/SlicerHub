@@ -10,8 +10,8 @@
 
 import fs   from 'fs'
 import path from 'path'
-import readline from 'readline'
 import { fileURLToPath } from 'url'
+import { readEnvFile, upsertEnvVar, prompt, promptSecret } from './lib/env.mjs';
 
 const __dirname  = path.dirname(fileURLToPath(import.meta.url))
 const ENV_FILE   = path.join(__dirname, '..', '.env')
@@ -22,62 +22,9 @@ const ADMIN_BASE = `http://localhost:${ADMIN_PORT}`
 // .env helpers
 // ---------------------------------------------------------------------------
 
-function readEnvFile(filePath) {
-    if (!fs.existsSync(filePath)) return {};
-    return Object.fromEntries(
-        fs.readFileSync(filePath, 'utf8')
-            .split('\n')
-            .filter(line => line.includes('=') && !line.trim().startsWith('#'))
-            .map(line => {
-                const idx = line.indexOf('=');
-                return [line.slice(0, idx).trim(), line.slice(idx + 1).trim()];
-            })
-    );
-}
-
-function upsertEnvVar(filePath, key, value) {
-    const line = `${key}=${value}`;
-    if (!fs.existsSync(filePath)) {
-        fs.writeFileSync(filePath, `${line}\n`, 'utf8');
-        return;
-    }
-    const content = fs.readFileSync(filePath, 'utf8');
-    const lines = content.split('\n');
-    const idx = lines.findIndex(l => l.match(new RegExp(`^\\s*#?\\s*${key}\\s*=`)));
-    if (idx !== -1) {
-        lines[idx] = line;
-        fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
-    } else {
-        const sep = content.endsWith('\n') ? '' : '\n';
-        fs.appendFileSync(filePath, `${sep}${line}\n`, 'utf8');
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Interactive prompts
 // ---------------------------------------------------------------------------
-
-function prompt(question) {
-    return new Promise(resolve => {
-        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-        rl.question(`  ${question}`, answer => {
-            rl.close();
-            resolve(answer.trim());
-        });
-    });
-}
-
-function promptSecret(question) {
-    return new Promise(resolve => {
-        process.stdout.write(`  ${question}`);
-        const rl = readline.createInterface({ input: process.stdin, output: null });
-        rl.once('line', answer => {
-            process.stdout.write('\n');
-            rl.close();
-            resolve(answer.trim());
-        });
-    });
-}
 
 // ---------------------------------------------------------------------------
 // Service readiness

@@ -1,8 +1,8 @@
 /**
  * Role-based access middleware for Keycloak-authenticated users.
  *
- * Reads req.user.role (set at login from JWT claims; no live IdP call).
- * Drop-in replacement for requireDirectusRole when AUTH_PROVIDER=keycloak.
+ * Reads req.user.role: from the session token, re-checked against Keycloak at most every
+ * few minutes (auth/accountRefresh.js).
  */
 
 import { ForbiddenError, UnauthorizedError } from '../utils/errors.js';
@@ -29,9 +29,3 @@ export function requireRole(minimumRole) {
         next();
     };
 }
-
-/** Convenience: require admin */
-export const requireAdmin = requireRole('admin');
-
-/** Convenience: require org-admin or higher */
-export const requireOrgAdmin = requireRole('org-admin');

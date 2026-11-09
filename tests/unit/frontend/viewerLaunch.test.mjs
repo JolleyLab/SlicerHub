@@ -4,6 +4,7 @@ import {
     VIEWER_KINDS,
     VIEWER_SESSION_SCOPES,
     getViewerSessionEndpoints,
+    buildSlicerGuiLoaderUrl,
 } from '../../../dev/utils/viewerLaunch.js';
 
 const BASE = 'http://example.com';
@@ -46,30 +47,23 @@ describe('getViewerSessionEndpoints — CASES scope', () => {
     });
 });
 
-describe('getViewerSessionEndpoints — DIRECTUS scope still works', () => {
-    it('heartbeat still points at /api/directus/full-slicer-heartbeat', () => {
-        const { heartbeatUrl } = getViewerSessionEndpoints({
-            kind: VIEWER_KINDS.SLICER_GUI,
-            sessionScope: VIEWER_SESSION_SCOPES.DIRECTUS,
-            apiUrl: BASE,
-        });
-        assert.equal(heartbeatUrl, `${BASE}/api/directus/full-slicer-heartbeat`);
+describe('buildSlicerGuiLoaderUrl — the loader page learns its session scope', () => {
+    // Without it, a case's Full Slicer loader can't find its status/heartbeat endpoints.
+    it('carries sessionScope=cases for a case viewer', () => {
+        const url = new URL(buildSlicerGuiLoaderUrl({
+            fileId: 'f1', sessionToken: 't', sessionScope: VIEWER_SESSION_SCOPES.CASES, embed: true,
+            baseHref: `${BASE}/`,
+        }));
+        assert.equal(url.searchParams.get('sessionScope'), 'cases');
     });
-});
 
-describe('getViewerSessionEndpoints — CASES vs DIRECTUS are distinct', () => {
-    it('CASES and DIRECTUS produce different base URLs', () => {
-        const cases = getViewerSessionEndpoints({
-            kind: VIEWER_KINDS.SLICER_GUI,
-            sessionScope: VIEWER_SESSION_SCOPES.CASES,
-            apiUrl: BASE,
-        });
-        const directus = getViewerSessionEndpoints({
-            kind: VIEWER_KINDS.SLICER_GUI,
-            sessionScope: VIEWER_SESSION_SCOPES.DIRECTUS,
-            apiUrl: BASE,
-        });
-        assert.notEqual(cases.heartbeatUrl, directus.heartbeatUrl);
-        assert.notEqual(cases.stopUrl, directus.stopUrl);
+    it('leaves it out for a project viewer (found from projectId)', () => {
+        const url = new URL(buildSlicerGuiLoaderUrl({ projectId: 3, fileId: 'f1', baseHref: `${BASE}/` }));
+        assert.equal(url.searchParams.get('sessionScope'), null);
+        assert.equal(url.searchParams.get('projectId'), '3');
+    });
+
+    it('there is no Directus scope any more', () => {
+        assert.equal('DIRECTUS' in VIEWER_SESSION_SCOPES, false);
     });
 });

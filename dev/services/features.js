@@ -25,11 +25,6 @@ export function areAppFeaturesLoaded() {
     return featuresLoaded;
 }
 
-/** Case signup invite emails via SMTP (copy-link always available). */
-export function isInviteEmailEnabled() {
-    return features.inviteEmail === true;
-}
-
 /** Allow users to opt into the SlicerWeb latest channel from Settings. */
 export function isSlicerWebDevModeEnabled() {
     return features.slicerWebDevMode === true;

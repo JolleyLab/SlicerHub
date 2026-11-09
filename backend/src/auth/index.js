@@ -6,14 +6,9 @@
  *   - Product session = app JWT + httpOnly cookie (session.js).
  *   - Identity providers prove who the human is; they do not become the product session.
  *
- * Expand by adding providers/* and identityStore features — not by branching routes/UI.
- *
  * Sign-in is Keycloak's own page (OpenID Connect code flow + PKCE, auth/oidc.js);
- * the app never sees passwords. docs/redirect-login-and-sessions-design.md
- *
- * Default: Do not persist IdP tokens after login (identity mapping only).
- * Opt in with AUTH_STORE_PROVIDER_TOKENS=true when a feature must call the IdP as the end user
- * (e.g. Cases call-as-user).
+ * the app never sees passwords. Keycloak's access/refresh tokens are not kept.
+ * docs/redirect-login-and-sessions-design.md
  *
  * AUTH_DEV_RELAXED=true (non-production only): shows a dev banner; Keycloak still applies
  * its own lockout and MFA rules.
@@ -22,7 +17,6 @@
 import config from '../config/index.js';
 import { keycloakProvider } from './providers/keycloak.js';
 import { destroyAppSession, clearAuthCookie } from './session.js';
-import { clearProviderTokens, clearProviderTokensForUser } from './identityStore.js';
 import { deleteAllUserSessions } from '../middleware/authMiddleware.js';
 
 const PROVIDERS = {
@@ -66,25 +60,15 @@ export function getPublicAuthConfig() {
     };
 }
 
-/**
- * End this browser session (app JWT + session-scoped provider tokens).
- * Keeps the Directus link cookie so Cases call-as-user can re-attach on the next
- * request in this browser until logout-all or cookie expiry.
- */
+/** End this browser's app session. */
 export function logoutCurrentSession(req, res) {
-    const jti = destroyAppSession(req, res);
-    if (jti) {
-        clearProviderTokens(jti);
-    }
+    destroyAppSession(req, res);
     clearLegacyDeviceCookie(res);
 }
 
-/**
- * Drop all app sessions for this user (+ provider tokens).
- */
+/** End every app session of this user. */
 export function logoutAllSessions(userId, res) {
     deleteAllUserSessions(userId);
-    clearProviderTokensForUser(userId);
     clearAuthCookie(res);
     clearLegacyDeviceCookie(res);
 }

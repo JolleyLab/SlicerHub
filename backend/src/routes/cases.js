@@ -1,13 +1,14 @@
 import path from 'path';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import { getPayloadClient } from '../payload/index.js';
+import { getPayloadClient, requirePayload } from '../payload/index.js';
 import { ValidationError, NotFoundError, ForbiddenError } from '../utils/errors.js';
 import storage from '../storage/index.js';
 import { attachmentOpenFlags } from '../utils/attachmentFlags.js';
 import { assertCaseAccess, buildCaseRoleMap, getCaseRoleForSub } from '../utils/caseAccess.js';
 import { removeAllGroupAccessForCase } from '../services/caseGroupAccess.js';
 import { getKeycloakUser, kcDisplayName } from '../services/keycloakAdmin.js';
+import { avatarUrlFor } from '../services/avatars.js';
 import { listRecentActivityKC } from '../services/recentActivity.js';
 import { createNotification } from '../services/notifications.js';
 import { stageCachedFileForSlicerGui, readSlicerGuiBusyStatus } from '../slicerGui/stageFile.js';
@@ -24,6 +25,7 @@ import { SESSION_KINDS } from '../sessions/kinds.js';
 import { msg } from '../i18n/index.js';
 import { buildViewerFrontendUrl } from '../utils/viewerUrl.js';
 import { resolveUseSimplifiedViewer } from '../slicerGui/viewerPreferences.js';
+import { enforceCaseAccessOnAllSeats, enforceCaseAccessOnHeartbeat } from '../slicerGui/caseAccessGuard.js';
 
 const MENTION_RE = /(?:^|[^/\w])@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi;
 
@@ -65,15 +67,6 @@ function parseOptionalSeatId(raw) {
     return n;
 }
 
-function requirePayload(req, res, next) {
-    if (!getPayloadClient()) {
-        return res.status(503).json({
-            error: { message: 'Cases service not available — start with --profile payload to enable' }
-        });
-    }
-    next();
-}
-
 
 export default function casesRoutes(app) {
     const auth = [authenticateToken, requirePayload];
@@ -108,6 +101,15 @@ export default function casesRoutes(app) {
         if (!lease) {
             return res.status(404).json({
                 error: { message: msg('viewer.session_ended') },
+            });
+        }
+
+        // Removed from the case (or a group that had it) while the viewer is open.
+        const seat = lease.metadata?.seatId ?? parseOptionalSeatId(req.body?.seatId) ?? 1;
+        const lostCaseIds = await enforceCaseAccessOnHeartbeat(req.user, seat);
+        if (lostCaseIds.length) {
+            return res.status(403).json({
+                error: { code: 'CASE_ACCESS_LOST', message: msg('viewer.case_access_lost'), caseIds: lostCaseIds },
             });
         }
 
@@ -198,7 +200,6 @@ export default function casesRoutes(app) {
 
     /**
      * Recent invite activity (INVITE_SENT) on cases the current user owns or collaborates on.
-     * Keycloak path: no requireDirectusLink needed.
      */
     app.get('/api/cases/activity/recent', ...auth, asyncHandler(async (req, res) => {
         const payload = getPayloadClient();
@@ -404,16 +405,22 @@ export default function casesRoutes(app) {
             ...result.docs.flatMap(c => mentionedSubs(c.body)),
         ])];
         const nameMap = {};
+        const avatarMap = {};
+        const authorSubs = new Set(result.docs.map(c => c.author_id));
         await Promise.all(uniqueSubs.map(async (sub) => {
-            const user = await getKeycloakUser(sub);
+            const [user, avatarUrl] = await Promise.all([
+                getKeycloakUser(sub),
+                authorSubs.has(sub) ? avatarUrlFor(sub) : null,
+            ]);
             if (user) nameMap[sub] = kcDisplayName(user) || null;
+            avatarMap[sub] = avatarUrl;
         }));
 
         const comments = result.docs.map(c => {
             const isKcSub = c.author_id && !c.author_id.startsWith('sqlite:');
             const name = nameMap[c.author_id] || null;
             const author = (isKcSub || name)
-                ? { name, avatarUrl: isKcSub ? `/api/users/${encodeURIComponent(c.author_id)}/avatar` : null }
+                ? { name, avatarUrl: isKcSub ? avatarMap[c.author_id] || null : null }
                 : undefined;
             return { ...c, author, mentions: mentionNames(c.body, nameMap) };
         });
@@ -495,16 +502,15 @@ export default function casesRoutes(app) {
         res.status(201).json({
             comment: {
                 ...comment,
-                author: authorName ? { name: authorName, avatarUrl: `/api/users/${encodeURIComponent(authorId)}/avatar` } : undefined,
+                author: authorName ? { name: authorName, avatarUrl: await avatarUrlFor(authorId) } : undefined,
                 mentions: mentionNames(body, Object.fromEntries(uuidNameMap)),
             },
         });
     }));
 
     /**
-     * Stage a Payload attachment into a local Full Slicer seat and return viewer URL.
-     * Mirrors /api/directus/cases/:caseId/attachments/:attachmentId/open-local-full-slicer
-     * but reads the file from local FileStore (caseFiles/{uploadId}) instead of Directus.
+     * Stage a case attachment (stored under caseFiles/{uploadId}) into a local Full Slicer
+     * seat and return the viewer URL.
      */
     app.post('/api/cases/:id/attachments/:attachmentId/open-local-full-slicer', ...auth, asyncHandler(async (req, res) => {
         console.log(`[cases] open-local-full-slicer caseId=${req.params.id} attachmentId=${req.params.attachmentId} userId=${req.user?.id}`);
@@ -531,6 +537,8 @@ export default function casesRoutes(app) {
         const useSimplifiedViewer = resolveUseSimplifiedViewer({ body: req.body, userId: req.user.id });
         const launcherUserId = String(req.user.id);
         const seatId = parseOptionalSeatId(req.body?.seatId);
+        // Never reuse a seat (or its folder) holding copies from a case they've lost.
+        await enforceCaseAccessOnAllSeats(req.user);
 
         let session;
         try {

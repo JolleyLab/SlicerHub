@@ -161,6 +161,23 @@ export class AdminGroupsPage extends LitElement {
         }
     }
 
+    /**
+     * Refetch the open group after a change (member added/removed, details saved).
+     * _selectGroup() ignores the group that is already open, so it can't do this; this
+     * also keeps the current tab and doesn't blank the panel while loading.
+     */
+    async _reloadSelectedGroup() {
+        const id = this._selectedGroup?.id;
+        if (!id) return;
+        try {
+            const group = this.isOrgAdmin ? await getAdminGroup(id) : await getMyGroup(id);
+            if (this._selectedGroup?.id !== id) return; // another group was opened meanwhile
+            this._selectedGroup = group;
+        } catch (err) {
+            this._detailError = err?.message || t('errors.generic');
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────
 
     _defaultTab(entry) {
@@ -249,7 +266,7 @@ export class AdminGroupsPage extends LitElement {
                 });
             }
             await this._loadGroups();
-            await this._selectGroup(this._selectedGroup.id);
+            await this._reloadSelectedGroup();
             this._saved = true;
             setTimeout(() => { this._saved = false; }, 3000);
         } catch (err) {
@@ -283,7 +300,7 @@ export class AdminGroupsPage extends LitElement {
                 await addMyGroupMember(this._selectedGroup.id, { email: this._addEmail.trim() });
             }
             this._addEmail = '';
-            await this._selectGroup(this._selectedGroup.id);
+            await this._reloadSelectedGroup();
         } catch (err) {
             this._addError = err?.message || t('errors.generic');
         } finally {
@@ -300,7 +317,7 @@ export class AdminGroupsPage extends LitElement {
             } else {
                 await removeMyGroupMember(this._selectedGroup.id, memberId);
             }
-            await this._selectGroup(this._selectedGroup.id);
+            await this._reloadSelectedGroup();
         } catch (err) {
             this._addError = err?.message || t('errors.generic');
         }
@@ -323,7 +340,7 @@ export class AdminGroupsPage extends LitElement {
             }
         } catch (err) {
             this._addError = err?.message || t('errors.generic');
-            await this._selectGroup(this._selectedGroup.id);
+            await this._reloadSelectedGroup();
         }
     }
 

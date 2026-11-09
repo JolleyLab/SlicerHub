@@ -1,18 +1,8 @@
-/**
- * Product notifications API (BFF /api/notifications).
- * Generic inbox — not Cases/Directus-specific.
- */
+/** Product notifications API (BFF /api/notifications): the bell and Home "To do". */
 
 import { API_URL } from '../config.js';
 import { t } from '../i18n/index.js';
-
-async function parseJson(response) {
-    try {
-        return await response.json();
-    } catch (_) {
-        return {};
-    }
-}
+import { readJson as parseJson } from './apiResponse.js';
 
 function throwError(response, data, fallback) {
     const err = new Error(data?.error?.message || data?.message || fallback);
@@ -74,13 +64,6 @@ export async function dismissNotification(id) {
 /** Mention notifications only — convenience slice for home-page Recent activity. */
 export async function listMentionNotifications() {
     const data = await listNotifications();
-    const all = Array.isArray(data.notifications) ? data.notifications : [];
-    return all.filter((n) => n.type === 'mention');
-}
-
-/** Unread mention notifications only — used for the To Do section. */
-export async function listUnreadMentions() {
-    const data = await listNotifications({ unreadOnly: true });
     const all = Array.isArray(data.notifications) ? data.notifications : [];
     return all.filter((n) => n.type === 'mention');
 }

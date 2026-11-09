@@ -8,6 +8,7 @@ import { asyncHandler } from '../middleware/errorHandler.js';
 import { stopSlicerGuiSession } from '../slicerGui/sessionManager.js';
 import { msg } from '../i18n/index.js';
 import storage from '../storage/index.js';
+import { findAvatarKey } from '../services/avatars.js';
 
 const AVATAR_MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
 
@@ -52,9 +53,7 @@ export default function userRoutes(app) {
     app.get('/api/users/:sub/avatar', authenticateToken, asyncHandler(async (req, res) => {
         const sub = req.params.sub;
         if (!sub || sub.length > 128) return res.status(404).end();
-        const prefix = storage.avatarKeyForSub(sub, '').replace(/\.$/, '');
-        const keys = await storage.listByPrefix(prefix);
-        const key = keys.length > 0 ? keys[0] : null;
+        const key = await findAvatarKey(sub);
         if (!key) return res.status(404).end();
         const presigned = await storage.getPresignedReadUrl(key, 300);
         if (presigned) return res.redirect(302, presigned);

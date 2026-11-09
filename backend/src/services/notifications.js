@@ -141,16 +141,3 @@ export async function deleteNotificationForUser(userId, notificationId) {
     });
     return (result.docs || []).length > 0;
 }
-
-export async function deleteNotificationsForInviteIds(inviteIds) {
-    const ids = (Array.isArray(inviteIds) ? inviteIds : [inviteIds])
-        .map((id) => String(id ?? '').trim())
-        .filter(Boolean);
-    const payload = getPayloadClient();
-    if (!ids.length || !payload) return 0;
-    const result = await payload.delete({
-        collection: COLLECTION,
-        where: { invite_id: { in: ids } },
-    });
-    return (result.docs || []).length;
-}

@@ -1,5 +1,5 @@
 /**
- * File-type detection helpers shared by the Directus and Payload attachment paths.
+ * File-type detection helpers for case attachments.
  * Determines whether a file can be opened in Slicer or previewed in a browser.
  */
 

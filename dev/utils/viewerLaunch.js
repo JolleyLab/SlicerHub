@@ -15,7 +15,6 @@ export const VIEWER_KINDS = Object.freeze({
 export const VIEWER_SESSION_SCOPES = Object.freeze({
     PROJECT: 'project',
     CASES: 'cases',
-    DIRECTUS: 'directus',
     SHARE: 'share'
 });
 
@@ -59,9 +58,6 @@ export function getViewerSessionEndpoints({
     if (kind === VIEWER_KINDS.SLICER_GUI) {
         if (sessionScope === VIEWER_SESSION_SCOPES.CASES) {
             return slicerGuiEndpoints(`${apiUrl}/api/cases`, { status: true });
-        }
-        if (sessionScope === VIEWER_SESSION_SCOPES.DIRECTUS) {
-            return slicerGuiEndpoints(`${apiUrl}/api/directus`, { status: true });
         }
         if (sessionScope === VIEWER_SESSION_SCOPES.SHARE) {
             if (!shareToken) {
@@ -140,8 +136,10 @@ export function buildSlicerGuiLoaderUrl({
     if (fileName) {
         loader.searchParams.set('fileName', fileName);
     }
+    // The loader page needs the scope to find its session's status/heartbeat endpoints
+    // (project sessions are found from projectId instead).
     if (
-        sessionScope === VIEWER_SESSION_SCOPES.DIRECTUS
+        sessionScope === VIEWER_SESSION_SCOPES.CASES
         || sessionScope === VIEWER_SESSION_SCOPES.SHARE
     ) {
         loader.searchParams.set('sessionScope', sessionScope);

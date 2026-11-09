@@ -69,64 +69,6 @@ export const appShellStyles = css`
         max-width: 520px;
     }
 
-    .directus-reconnect-form {
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-        min-width: min(380px, 85vw);
-    }
-
-    .directus-reconnect-hint {
-        margin: 0;
-        line-height: 1.45;
-        color: var(--color-text-secondary, #555);
-        font-size: 0.93rem;
-    }
-
-    .directus-reconnect-field {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-    }
-
-    .directus-reconnect-field label {
-        font-size: 0.85rem;
-        font-weight: 600;
-        color: var(--color-text-primary, #333);
-    }
-
-    .directus-reconnect-field input {
-        border: 1px solid var(--color-border, #ddd);
-        border-radius: var(--radius-md);
-        padding: 8px 12px;
-        font: inherit;
-        font-size: 0.95rem;
-        background: var(--color-surface, var(--color-background, #fff));
-        color: var(--color-text-primary, #333);
-        min-height: 40px;
-        box-sizing: border-box;
-        width: 100%;
-    }
-
-    .directus-reconnect-field input:focus {
-        outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
-        outline-offset: var(--focus-ring-offset, 2px);
-        border-color: var(--color-primary);
-    }
-
-    .directus-reconnect-error {
-        margin: 0;
-        font-size: 0.88rem;
-        color: var(--color-status-error-fg, #c62828);
-    }
-
-    .directus-reconnect-actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 8px;
-        margin-top: 4px;
-    }
-
     .logout-billing-dialog p {
         margin: 0;
         line-height: 1.45;

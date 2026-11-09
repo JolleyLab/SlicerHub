@@ -10,10 +10,10 @@ import { t } from '../i18n/index.js';
  *   { id, body, createdAt, author?: { name } }
  *
  * Props:
- *   collaborators — [{ id: string (Directus uuid), name: string }]
+ *   collaborators — [{ id: string (user id, the Keycloak sub), name: string }]
  *     Pass the case's collaborator list so the @-mention picker can offer names.
- *     The posted text will contain @uuid (what Directus expects); the textarea
- *     shows @Name while the user is composing.
+ *     The posted text contains @id (the server resolves mentions from it); the
+ *     textarea shows @Name while the user is composing.
  *
  * Events:
  *   post-comment — detail: { text } (compose submit, mentions already resolved to @uuid)
@@ -553,7 +553,7 @@ export class CommentsPanel extends LitElement {
     handlePost() {
         const text = String(this.draft || '').trim();
         if (!text || this.posting || !this.allowCompose) return;
-        // Substitute each @DisplayName with @uuid before sending to Directus
+        // Substitute each @DisplayName with @id before sending
         let resolved = text;
         for (const [name, uuid] of Object.entries(this._mentionMap)) {
             resolved = resolved.split(`@${name}`).join(`@${uuid}`);
@@ -632,7 +632,9 @@ export class CommentsPanel extends LitElement {
                             class="mention-item"
                             role="option"
                             aria-selected=${i === this._mentionIndex ? 'true' : 'false'}
-                            @mousedown=${(e) => { e.preventDefault(); this._insertMention(c); }}
+                            @mousedown=${(e) => e.preventDefault() /* keep focus in the textarea */}
+                            @click=${() => this._insertMention(c) /* mouse, and Enter/Space after tabbing here */}
+                            @focus=${() => { this._mentionIndex = i; }}
                         >
                             <span class="mention-avatar ${c.avatarUrl ? '' : this.authorTone(c.name)}" aria-hidden="true">
                                 ${c.avatarUrl

@@ -1,104 +1,12 @@
 import { API_URL } from '../config.js';
 import { tusUpload } from './tusUpload.js';
 import { t } from '../i18n/index.js';
+import { parseApiResponse, apiError, readJson } from './apiResponse.js';
 
-/**
- * Map API errors to short user-facing copy.
- */
-export function friendlyCasesError(raw, fallback = 'Something went wrong. Please try again.', status = 0, code = null) {
-    const text = String(raw || '').trim();
-    const lower = text.toLowerCase();
+// Kept here too: callers have always imported the error wording from the cases service.
+export { friendlyCasesError } from './apiResponse.js';
 
-    if (
-        /sign in once with your email and password|account connection expired|connect to your account/i.test(lower)
-    ) {
-        return text;
-    }
-
-    if (code === 'UPLOAD_NETWORK_ERROR') {
-        return t('errors.serverUnreachable');
-    }
-
-    if (
-        code === 'CASE_COLLABORATORS_UPDATE_FAILED'
-        || code === 'CASE_OWNER_JUNCTION_MISSING'
-        || code === 'CASE_COLLABORATOR_JUNCTION_NOT_FOUND'
-    ) {
-        return t('errors.peopleSaveFailed');
-    }
-
-    if (
-        /only case admins can|collaborators can invite|pending invite|already on this case|already has a pending/i.test(lower)
-        && text.length <= 160
-        && !/directus|collection|case_directus|grant |token|probe|INTERNAL_SERVER/i.test(lower)
-    ) {
-        return text;
-    }
-
-    if (status === 401 || /unauthorized|session expired|jwt expired/i.test(lower)) {
-        return t('errors.sessionExpired');
-    }
-    if (
-        status === 403
-        || /permission|forbidden|access fields|access collection|not allowed to|denied|directus:/i.test(lower)
-    ) {
-        return t('errors.noPermission');
-    }
-    if (/no (directus )?user found with that email/i.test(lower)) {
-        return t('errors.noAccountWithEmail');
-    }
-    if (status === 404 || /\bnot found\b/i.test(lower)) {
-        return t('errors.itemNotFound');
-    }
-    if (status === 413 || /file too large|payload too large|entity too large/i.test(lower)) {
-        return t('errors.fileTooLarge');
-    }
-    if (/network|failed to fetch|load failed|econnrefused|timed out|timeout/i.test(lower)) {
-        return t('errors.serverUnreachable');
-    }
-    if (/slicer-gui|container|docker|image built|vnc|seat/i.test(lower)) {
-        return t('errors.viewerStartFailed');
-    }
-    if (/sessionToken|session not found|session.*expired|heartbeat/i.test(lower)) {
-        return t('errors.viewerSessionEnded');
-    }
-    if (/multipart|file field is required/i.test(lower)) {
-        return t('errors.chooseFile');
-    }
-    if (/title.*(required|empty)|case title is required/i.test(lower)) {
-        return t('errors.titleRequired');
-    }
-    if (/browser preview/i.test(lower)) {
-        return t('errors.browserPreviewUnavailable');
-    }
-    if (/cannot be opened in full slicer|file type cannot/i.test(lower)) {
-        return t('errors.fileTypeNotSupported');
-    }
-    if (/couldn't update people|could not update people/i.test(lower)) {
-        return t('errors.peopleSaveFailed');
-    }
-    if (/directus|collection |queried in|invalid payload|unknown field|filter\[|case_directus|INTERNAL_SERVER/i.test(lower)) {
-        return fallback;
-    }
-
-    if (text && text.length <= 140 && !/[`{}[\]<>]|_\w+_|\.\w+\./.test(text)) {
-        return text;
-    }
-
-    return fallback;
-}
-
-export { friendlyCasesError as friendlyError };
-
-async function parseResponse(res) {
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-        const err = new Error(data?.error?.message || `Request failed (${res.status})`);
-        err.status = res.status;
-        throw err;
-    }
-    return data;
-}
+const parseResponse = (res) => parseApiResponse(res);
 
 export async function listCases({ limit = 50 } = {}) {
     const res = await fetch(`${API_URL}/api/cases?limit=${limit}`, {
@@ -106,6 +14,24 @@ export async function listCases({ limit = 50 } = {}) {
         cache: 'no-store',
     });
     return parseResponse(res);
+}
+
+/**
+ * Can the signed-in user still open this case? 'ok', 'lost' (403/404: removed from the
+ * case or a group that had it, or the case was deleted) or 'unknown' (offline, signed out…).
+ */
+export async function getCaseAccess(caseId) {
+    try {
+        const res = await fetch(`${API_URL}/api/cases/${encodeURIComponent(caseId)}`, {
+            credentials: 'include',
+            cache: 'no-store',
+        });
+        if (res.ok) return 'ok';
+        if (res.status === 403 || res.status === 404) return 'lost';
+        return 'unknown';
+    } catch {
+        return 'unknown';
+    }
 }
 
 export async function createCase({ title, description, status } = {}) {
@@ -125,15 +51,6 @@ export async function updateCase(id, updates = {}) {
         credentials: 'include',
         body: JSON.stringify(updates),
     });
-    return parseResponse(res);
-}
-
-export async function deleteCase(id) {
-    const res = await fetch(`${API_URL}/api/cases/${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-        credentials: 'include',
-    });
-    if (res.status === 204) return { ok: true };
     return parseResponse(res);
 }
 
@@ -264,18 +181,6 @@ export async function updateCollaborators(caseId, collaborators) {
 }
 
 /**
- * Remove a single collaborator from a case.
- */
-export async function removeCollaborator(caseId, keycloakUserId) {
-    const res = await fetch(
-        `${API_URL}/api/cases/${encodeURIComponent(caseId)}/collaborators/${encodeURIComponent(keycloakUserId)}`,
-        { method: 'DELETE', credentials: 'include' }
-    );
-    if (res.status === 204) return { ok: true };
-    return parseResponse(res);
-}
-
-/**
  * List pending invites for a case.
  * Returns { invites: [{ id, kind, status, inviteeEmail, proposedRole }] }
  */
@@ -348,20 +253,46 @@ export async function createComment(caseId, text) {
 }
 
 export { approveCaseInvite as approveInvite, rejectCaseInvite as rejectInvite };
-export { listInvitesAwaitingMyApproval, listRecentActivity } from './directus.js';
+/** Invites across all cases that the signed-in user can approve or reject. */
+export async function listInvitesAwaitingMyApproval() {
+    const response = await fetch(`${API_URL}/api/cases/invites/pending-approval`, { credentials: 'include', cache: 'no-store' });
+    const data = await readJson(response);
+    if (!response.ok) throw apiError(response, data, t('errors.loadInvitesFailed'), { friendly: true });
+    return data.invites || [];
+}
+
+/** Recent invite activity (sent, approved) on the user's cases, newest first. */
+export async function listRecentActivity() {
+    const response = await fetch(`${API_URL}/api/cases/activity/recent`, { credentials: 'include', cache: 'no-store' });
+    const data = await readJson(response);
+    if (!response.ok) throw apiError(response, data, t('errors.loadActivityFailed'), { friendly: true });
+    return data.events || [];
+}
+
+let activeUploads = 0;
+
+/** True while any case upload is still sending (sign-out asks first: it would be lost). */
+export function hasActiveUploads() {
+    return activeUploads > 0;
+}
 
 export async function uploadCaseAttachment(caseId, file, { signal, onProgress } = {}) {
     const endpoint = `${API_URL}/api/cases/${encodeURIComponent(caseId)}/files/tus`;
-    await tusUpload({
-        file,
-        endpoint,
-        metadata: {
-            filename: file.name,
-            filetype: file.type || 'application/octet-stream',
-        },
-        signal,
-        onProgress,
-    });
+    activeUploads += 1;
+    try {
+        await tusUpload({
+            file,
+            endpoint,
+            metadata: {
+                filename: file.name,
+                filetype: file.type || 'application/octet-stream',
+            },
+            signal,
+            onProgress,
+        });
+    } finally {
+        activeUploads -= 1;
+    }
 }
 
 /**

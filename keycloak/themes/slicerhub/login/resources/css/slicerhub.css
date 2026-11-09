@@ -297,3 +297,11 @@ html.login-pf .kc-login-tooltip .kc-tooltip-text {
         animation: none !important;
     }
 }
+
+/* "Sign out from other devices" only makes sense when changing an existing password
+   (Settings, which has a Cancel button). Hide it when choosing a first password (account
+   setup, migration) or resetting one; it stays checked there, so a reset still signs
+   other devices out. */
+#kc-passwd-update-form:not(:has(button[name="cancel-aia"])) #kc-form-options {
+    display: none;
+}

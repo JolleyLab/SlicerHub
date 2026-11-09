@@ -4,19 +4,15 @@ export const DEFAULT_MENU_KEY = 'cases';
 
 /**
  * Build nav items from server feature flags.
- * Cases is shown first when enabled; My Files remains as secondary access. Home is reached from the
- * header link, so it has no entry here.
+ * Cases first, then My Files (when enabled) and My Groups. Home is reached from the header
+ * link, so it has no entry here.
  * Labels are resolved via t() so locale packs take effect at call time.
  */
-export function getAppMenuItems({
-    directusCasesEnabled = true,
-    filesEnabled = false
-} = {}) {
+export function getAppMenuItems({ filesEnabled = false } = {}) {
     const filesItem = Object.freeze({ key: 'my-files', label: t('nav.myFiles') });
     const casesItem = Object.freeze({ key: 'cases', label: t('nav.myCases') });
     const myGroupsItem = Object.freeze({ key: 'my-groups', label: t('nav.myGroups') });
-    const items = [];
-    if (directusCasesEnabled) items.push(casesItem);
+    const items = [casesItem];
     if (filesEnabled) items.push(filesItem);
     items.push(myGroupsItem);
     return Object.freeze(items);

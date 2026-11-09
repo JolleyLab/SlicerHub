@@ -141,7 +141,7 @@ AUTH_PROVIDER=keycloak
 KEYCLOAK_URL=http://keycloak:8080          # internal (backend → keycloak over trame-net)
 KEYCLOAK_REALM=slicer-web
 KEYCLOAK_CLIENT_ID=slicer-web-backend
-KEYCLOAK_CLIENT_SECRET=                    # set by setup-keycloak.mjs, stored in Infisical
+KEYCLOAK_CLIENT_SECRET=                    # written to .env by setup-keycloak.mjs
 # AUTH_LINK_POLICY=strict                  # default — no silent email takeover
 ```
 

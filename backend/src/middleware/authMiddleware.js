@@ -6,6 +6,7 @@ import { UnauthorizedError, ForbiddenError } from '../utils/errors.js';
 import { msg } from '../i18n/index.js';
 import { getCurrentAccount } from '../auth/accountRefresh.js';
 import { isAppUserGateReady } from '../services/appUserGate.js';
+import { endKeycloakSession } from '../services/keycloakAdmin.js';
 
 /**
  * What an account still waiting for approval may call: who am I (to show the
@@ -106,20 +107,20 @@ export async function authenticateToken(req, res, next) {
         const procedureUntilMs = session.procedure_until ? parseDbTime(session.procedure_until) : null;
         if (procedureUntilMs) {
             if (Date.now() >= procedureUntilMs) {
-                db.prepare('DELETE FROM sessions WHERE token_jti = ?').run(decoded.jti);
+                endSession(decoded.jti);
                 throw new UnauthorizedError(msg('auth.procedure_mode_ended'), 'PROCEDURE_MODE_ENDED', 'auth.procedure_mode_ended');
             }
         } else {
             const lastActivityMs = session.last_activity ? parseDbTime(session.last_activity) : 0;
             const idleLimitMs = SESSION_IDLE_MINUTES * 60 * 1000;
             if (!lastActivityMs || (Date.now() - lastActivityMs) > idleLimitMs) {
-                db.prepare('DELETE FROM sessions WHERE token_jti = ?').run(decoded.jti);
+                endSession(decoded.jti);
                 scheduleLocalViewerCleanup(decoded.userId, 'idle-timeout');
                 throw new UnauthorizedError(msg('auth.session_inactivity_timeout'), 'SESSION_IDLE', 'auth.session_inactivity_timeout');
             }
             // Also covers tokens issued before the 12 h limit (they carried 7 days).
             if (Number(decoded.iat) && (Date.now() / 1000 - Number(decoded.iat)) > SESSION_MAX_SECONDS) {
-                db.prepare('DELETE FROM sessions WHERE token_jti = ?').run(decoded.jti);
+                endSession(decoded.jti);
                 throw new UnauthorizedError(msg('auth.token_expired'), 'SESSION_MAX_AGE', 'auth.token_expired');
             }
         }
@@ -139,7 +140,7 @@ export async function authenticateToken(req, res, next) {
             // signed in before it are over. Both are whole seconds, so a session from the
             // same second counts as before (safer: at worst one extra sign-in).
             if (account.notBefore && Number(decoded.iat) <= account.notBefore) {
-                deleteSession(decoded.jti);
+                endSession(decoded.jti);
                 throw new UnauthorizedError(msg('auth.session_invalid'), null, 'auth.session_invalid');
             }
             if (account.active === true) {
@@ -186,7 +187,7 @@ export async function authenticateToken(req, res, next) {
             const rawToken = authHeader && authHeader.split(' ')[1] || req.cookies?.token;
             const decoded = decodeToken(rawToken);
             if (decoded?.jti) {
-                deleteSession(decoded.jti);
+                endSession(decoded.jti);
             }
             scheduleLocalViewerCleanup(decoded?.userId, 'token-expired');
             next(new UnauthorizedError(msg('auth.token_expired'), null, 'auth.token_expired'));
@@ -196,16 +197,6 @@ export async function authenticateToken(req, res, next) {
             next(error);
         }
     }
-}
-
-/**
- * Middleware to check if user is admin
- */
-export function requireAdmin(req, res, next) {
-    if (!req.user || req.user.role !== 'admin') {
-        return next(new ForbiddenError(msg('auth.admin_required'), null, 'auth.admin_required'));
-    }
-    next();
 }
 
 /**
@@ -268,10 +259,27 @@ export function deleteSessionsByKcSid(kcSid) {
 }
 
 /**
- * Delete session (logout)
+ * Delete a session row only. For a new sign-in replacing the browser's old session,
+ * which may share the same Keycloak sign-in; everything else uses endSession().
  */
 export function deleteSession(tokenJti) {
     db.prepare('DELETE FROM sessions WHERE token_jti = ?').run(tokenJti);
+}
+
+/**
+ * End a session: sign-out, idle, procedure mode over, 12 h limit, token expired.
+ * Its Keycloak sign-in ends too, so a refresh asks for the password instead of
+ * silently signing back in (someone walking up to a timed-out screen).
+ */
+export function endSession(tokenJti) {
+    if (!tokenJti) return;
+    const row = db.prepare('SELECT kc_sid FROM sessions WHERE token_jti = ?').get(tokenJti);
+    deleteSession(tokenJti);
+    if (row?.kc_sid) {
+        endKeycloakSession(row.kc_sid).catch((err) => {
+            console.warn('[auth] Could not end the Keycloak sign-in:', err?.message);
+        });
+    }
 }
 
 /**

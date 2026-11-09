@@ -309,3 +309,29 @@ export const UserNotifications = {
         { name: 'read_at',   type: 'date', index: true },
     ],
 };
+
+/**
+ * Site-wide banner (planned maintenance, outages, notices), edited in Payload admin.
+ * Shown to signed-in users while enabled and inside the optional time window
+ * (routes/announcement.js); each person can dismiss a message for their browser session.
+ */
+export const SiteAnnouncement = {
+    slug: 'site-announcement',
+    label: 'Site announcement',
+    fields: [
+        { name: 'enabled', type: 'checkbox', defaultValue: false, label: 'Show the banner' },
+        { name: 'message', type: 'textarea', label: 'Message', admin: { description: 'Plain text, one or two sentences. E.g. "SlicerHub will be unavailable Saturday 9:00–11:00 for maintenance."' } },
+        {
+            name: 'severity',
+            type: 'select',
+            defaultValue: 'info',
+            options: [
+                { label: 'Information', value: 'info' },
+                { label: 'Warning (e.g. planned maintenance)', value: 'warning' },
+                { label: 'Problem (e.g. outage)', value: 'error' },
+            ],
+        },
+        { name: 'starts_at', type: 'date', label: 'Show from', admin: { date: { pickerAppearance: 'dayAndTime' }, description: 'Optional. Leave empty to show straight away.' } },
+        { name: 'expires_at', type: 'date', label: 'Hide after', admin: { date: { pickerAppearance: 'dayAndTime' }, description: 'Optional. E.g. the end of the maintenance window.' } },
+    ],
+};

@@ -1,165 +1,66 @@
 # Secrets Management
 
-**Status:** Active  
-**Last updated:** October 2026
+**Status:** Active
+**Last updated:** November 2026
 
----
+## Where secrets live
 
-## Overview
+All secrets live in the repo's `.env` file, next to the other settings. Git ignores it. Docker Compose reads it, and the app reads secrets only from environment variables, so the place they're stored can change later without code changes.
 
-Application secrets (passwords, API keys, signing keys) are managed by **Infisical**, an open-source self-hosted secrets manager. Secrets are never stored in plaintext `.env` files — they live in Infisical and are injected as environment variables at runtime by `scripts/start.mjs`.
+`node scripts/bootstrap.mjs` creates `.env` if needed and generates every secret a setup needs, so no install runs on a known default:
 
-This architecture is designed to swap out Infisical for a cloud-native secrets manager (Azure Key Vault, AWS Secrets Manager) when the application moves to the cloud. Application code changes nothing — it reads `process.env.*` throughout.
-
----
-
-## Architecture
-
-```
-┌────────────────────────────────────────────────────────┐
-│  .env  (non-sensitive config + Infisical bootstrap)    │
-│  ● Service URLs, timeouts, feature flags               │
-│  ● INFISICAL_ENCRYPTION_KEY / AUTH_SECRET (bootstrap)  │
-│  ● INFISICAL_CLIENT_ID / CLIENT_SECRET (machine auth)  │
-└───────────────┬────────────────────────────────────────┘
-                │
-        scripts/start.mjs
-                │ authenticates with machine identity
-                ▼
-        Infisical (http://localhost:8888)
-                │ returns secrets as JSON
-                ▼
-        Injected as process.env vars
-                │
-        docker compose (reads ${VAR} from env)
-                │
-        ┌───────┴────────┐
-        │  backend       │  ← KEYCLOAK_ADMIN_PASSWORD, JWT_SECRET, etc.
-        │  payload-admin │  ← PAYLOAD_SECRET
-        │  keycloak      │  ← KEYCLOAK_DB_PASSWORD
-        └────────────────┘
-```
-
-### What lives where
-
-| Category | Location | Examples |
+| Secret | Set by | Used by |
 |---|---|---|
-| Application secrets | Infisical | `JWT_SECRET`, `KEYCLOAK_ADMIN_PASSWORD`, `PAYLOAD_SECRET`, `CLOUDFLARED_TUNNEL_TOKEN` |
-| Infisical bootstrap | `.env` only | `INFISICAL_ENCRYPTION_KEY`, `INFISICAL_AUTH_SECRET`, `INFISICAL_DB_PASSWORD` |
-| Machine identity | `.env` only | `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`, `INFISICAL_PROJECT_ID` |
-| Non-sensitive config | `.env` | URLs, timeouts, feature flags, `COMPOSE_PROFILES` |
-| User passwords | Nowhere (never stored) | Prompted at `bootstrap.mjs` runtime, used once, discarded |
+| `KEYCLOAK_DB_PASSWORD`, `PAYLOAD_DB_PASSWORD` | bootstrap | the two Postgres databases |
+| `KEYCLOAK_ADMIN_PASSWORD` | bootstrap | Keycloak's master admin; the backend and setup scripts use it for the admin API |
+| `PAYLOAD_SECRET` | bootstrap | Payload (backend and admin UI) |
+| `AUTH_TOKEN_KEY` | bootstrap | encrypts the ID token stored with each session |
+| `KEYCLOAK_CLIENT_SECRET` | `setup-keycloak.mjs` | the backend's sign-in client |
+| `JWT_SECRET` | you, in production | outside production, if unset, the backend generates one and keeps it in its data volume |
+| SMTP / Resend keys, `CLOUDFLARED_TUNNEL_TOKEN`, `GPU_CREDENTIALS_KEY`, `TRAME_SYNC_TOKEN`, `VNC_PASSWORD` | you, when you turn on that feature | see `.env.example` |
 
----
+The list bootstrap generates is in `scripts/lib/secrets.mjs`. To add a secret, add it to `.env.example`. If every install needs it, also add it to that list.
 
-## Initial Setup
+Database passwords only take effect when a database volume is first created. If bootstrap finds an existing database volume with no password in `.env`, it writes the old built-in default the database was created with, and warns that it's a public default.
 
-Run once after copying `.env.example → .env`:
+## Rules
 
-```bash
-# 1. Generate and add the Infisical bootstrap vars to .env
-#    INFISICAL_ENCRYPTION_KEY=$(openssl rand -hex 16)
-#    INFISICAL_AUTH_SECRET=$(openssl rand -base64 32)
+- Never commit `.env`, paste it into chat or tickets, or share it on screen.
+- On a server, only its owner should be able to read it: `chmod 600 .env` (bootstrap does this on Linux and macOS).
+- Each server has its own `.env` with its own values. Don't copy a laptop's `.env` to a server.
+- On a server others can reach, nothing should be on a public default. Bootstrap warns if a database or Keycloak admin password is. With `NODE_ENV=production`, the backend refuses to start without a strong `JWT_SECRET`, `GPU_CREDENTIALS_KEY` and `TRAME_SYNC_TOKEN`.
+- Back up a server's `.env` the same way as its database backups, and keep it as protected as they are. Without it, the databases can't be opened and existing sessions can't be decrypted.
 
-# 2. Run bootstrap (starts all services including Infisical, then runs setup-infisical.mjs)
-node scripts/bootstrap.mjs
-```
+## Changing a secret
 
-`setup-infisical.mjs` will:
-1. Wait for Infisical to be ready at `http://localhost:8888`
-2. Walk you through creating your admin account and machine identity (~2 min in the UI)
-3. Offer to migrate all secrets currently in `.env` into Infisical
+After any change, run `docker compose up -d` so the affected services are recreated with the new value.
 
-After migration, delete or blank the migrated secret values from `.env`. The file should contain only the non-sensitive config listed above.
+- **`AUTH_TOKEN_KEY`:** move the old value to `AUTH_TOKEN_KEY_PREVIOUS` and set a new one. Existing sessions keep working. Remove the previous key after the session lifetime has passed.
+- **Database passwords:** change the password in Postgres first, then in `.env`. For Payload, also update the password inside `PAYLOAD_DATABASE_URI`:
+  ```bash
+  docker exec -it payload-db psql -U payload -d payload -c "ALTER USER payload WITH PASSWORD 'new-value';"
+  docker exec -it keycloak-db psql -U keycloak -d keycloak -c "ALTER USER keycloak WITH PASSWORD 'new-value';"
+  ```
+- **`KEYCLOAK_ADMIN_PASSWORD`:** Keycloak only reads it when creating the master admin. Change the password in the Keycloak admin console (master realm → Users → admin), then put the same value in `.env`.
+- **`KEYCLOAK_CLIENT_SECRET`:** regenerate it in the Keycloak admin console (slicer-web realm → Clients → slicer-web → Credentials) and paste it into `.env`. Users stay signed in.
+- **`PAYLOAD_SECRET`:** set a new value. Payload admin users have to sign in again.
 
----
+## Why not a secrets manager (yet)
 
-## Daily Use
+Until November 2026 the stack ran Infisical, a self-hosted secrets manager, and `scripts/start.mjs` loaded secrets from it. It was removed because, on a single machine, it added three containers, a manual setup step, and license questions (its image includes enterprise-licensed code; its Redis is no longer open source since 7.4). It gave little protection in return: its own login sat in the same `.env` on the same machine, so anyone who could read `.env` could read every secret either way.
 
-Use `scripts/start.mjs` as a drop-in for `docker compose`:
+Revisit when any of these become true:
+- several people manage a deployment's secrets;
+- several servers need the same secrets;
+- an audit trail of who read or changed a secret is required.
 
-```bash
-# Start all services with secrets injected
-node scripts/start.mjs up -d
+At that point, use the cloud platform's own store (below). For self-hosted, an open-source option such as OpenBao (MPL-2.0) or Infisical with Valkey instead of Redis would also work.
 
-# With profiles
-node scripts/start.mjs up -d --profile keycloak
+## Moving to Azure or AWS
 
-# Logs, down, etc.
-node scripts/start.mjs logs -f backend
-node scripts/start.mjs down
-```
+The app only reads environment variables, so the platform injects them instead of `.env`:
 
-`start.mjs` fetches a short-lived access token from Infisical on each invocation (tokens expire in ~2 hours by default). No token is stored to disk.
+- **Azure:** put each secret in Azure Key Vault and give each Container App a managed identity. Reference the secrets in the app definition (`secretRef` → `keyVaultUrl`).
+- **AWS:** put each secret in Secrets Manager and reference it in the ECS task definition (`valueFrom` with the secret's ARN). The task's IAM role grants read access.
 
----
-
-## Adding a New Secret
-
-1. Add the secret to Infisical via the UI (`http://localhost:8888`) or using the API:
-   ```bash
-   # Via setup-infisical.mjs migration (edit SECRETS_TO_MIGRATE list and re-run)
-   # Or directly in the Infisical UI under the slicerweb project → dev environment
-   ```
-2. Reference it in `docker-compose.yml`:
-   ```yaml
-   environment:
-     - NEW_SECRET=${NEW_SECRET}
-   ```
-3. Read it in application code as `process.env.NEW_SECRET` — no change needed.
-
----
-
-## Infisical Environments
-
-Infisical supports multiple environments (`dev`, `staging`, `prod`). Currently only `dev` is used.
-
-When deploying to production on the physical server:
-- Use the same Infisical instance but a separate `prod` environment
-- Or run a separate Infisical instance isolated from dev
-
----
-
-## Migration Path to Azure / AWS
-
-When the application moves to the cloud:
-
-### Azure (preferred)
-
-1. Create an Azure Key Vault and add all secrets from Infisical
-2. Assign a Managed Identity to each Container App
-3. Reference secrets in the Container App definition:
-   ```yaml
-   secrets:
-     - name: jwt-secret
-       keyVaultUrl: https://your-vault.vault.azure.net/secrets/JWT_SECRET
-       identity: <managed-identity-id>
-   env:
-     - name: JWT_SECRET
-       secretRef: jwt-secret
-   ```
-4. Retire `scripts/start.mjs` — Azure injects secrets natively
-
-No application code changes. `process.env.JWT_SECRET` is set the same way.
-
-### AWS
-
-Replace `start.mjs` with ECS task definition secret references:
-```json
-{
-  "name": "JWT_SECRET",
-  "valueFrom": "arn:aws:secretsmanager:us-east-1:123:secret:jwt-secret"
-}
-```
-
-IAM task role grants the ECS task access to Secrets Manager. No application code changes.
-
----
-
-## Security Notes
-
-- **`.env` blast radius is minimal** — if `.env` is exposed, the attacker gets the Infisical machine identity (scoped read access to the project) and the Infisical bootstrap keys. Application secrets are not in `.env`.
-- **Machine identity is scoped** — the `slicerweb-bootstrap` identity has Developer role on the `slicerweb` project only. It cannot modify Infisical configuration or access other projects.
-- **Infisical data is encrypted at rest** using `INFISICAL_ENCRYPTION_KEY`. Without this key, the database is unreadable.
-- **Rotate the machine identity secret** if the `.env` file is compromised: Infisical → Access Control → Machine Identities → revoke the client secret and create a new one, then update `INFISICAL_CLIENT_SECRET` in `.env`.
-- **Production server**: Infisical is bound to `127.0.0.1:8888` (localhost only via Docker). It is not exposed through Cloudflare or nginx.
+No application code changes.

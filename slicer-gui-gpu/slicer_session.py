@@ -1300,7 +1300,9 @@ def load_mrb_scene(path: str) -> bool:
 
         log("[slicer_session] loadScene failed, trying ioManager.loadFile")
         try:
-            ok = bool(slicer.app.ioManager().loadFile(path, True))
+            # Slicer 5.10: loadFile(fileName[, userMessages]); the second argument must be a
+            # vtkMRMLMessageCollection, so a bool raises "method requires a VTK object".
+            ok = bool(slicer.app.ioManager().loadFile(path))
             if ok:
                 _last_load_error = ""
             return ok
@@ -1386,7 +1388,7 @@ def load_staged_file(path: str, defer_view_refresh: bool = False) -> bool:
             ok = _load_mimics_project(path)
         else:
             log(f"[slicer_session] Add Data via ioManager: {path}")
-            ok = bool(slicer.app.ioManager().loadFile(path, False))
+            ok = bool(slicer.app.ioManager().loadFile(path))  # one argument: see above
             if not ok:
                 log("[slicer_session] ioManager failed, trying loadVolume")
                 ok = slicer.util.loadVolume(path) is not None

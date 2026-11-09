@@ -33,7 +33,8 @@ export function attachViewerSessionLifecycle({
     heartbeatBody,
     releaseOnUnload = true,
     releaseMode = null,
-    onHeartbeatFailed
+    onHeartbeatFailed,
+    onAccessLost
 }) {
     if (!sessionToken || !heartbeatUrl || !stopUrl) {
         return { release: () => {}, stopHeartbeat: () => {} };
@@ -95,6 +96,17 @@ export function attachViewerSessionLifecycle({
                     heartbeatTimer = null;
                 }
                 onHeartbeatFailed?.();
+            } else if (response.status === 403) {
+                // Removed from the case: the server stopped the seat (CASE_ACCESS_LOST).
+                const data = await response.json().catch(() => null);
+                if (data?.error?.code === 'CASE_ACCESS_LOST') {
+                    if (heartbeatTimer) {
+                        clearInterval(heartbeatTimer);
+                        heartbeatTimer = null;
+                    }
+                    released = true; // nothing left to release
+                    onAccessLost?.(data.error.message);
+                }
             }
         } catch {
             /* retry on next interval */

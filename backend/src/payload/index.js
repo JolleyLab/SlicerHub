@@ -18,7 +18,7 @@ export async function initPayload() {
 
     try {
         _payload = await getPayload({ config })
-        console.log('Payload: initialized — Cases, UserPreferences, TaskGroups collections ready')
+        console.log('Payload: initialized')
     } catch (err) {
         console.warn('Payload: init failed —', err.message)
         console.warn('Payload: Cases will not be available. Is payload-db running? (docker compose --profile payload up -d)')
@@ -33,4 +33,12 @@ export async function initPayload() {
  */
 export function getPayloadClient() {
     return _payload
+}
+
+/** Route middleware: 503 when Payload (cases, invites, groups) isn't available. */
+export function requirePayload(req, res, next) {
+    if (!getPayloadClient()) {
+        return res.status(503).json({ error: { message: 'Cases service not available' } });
+    }
+    next();
 }

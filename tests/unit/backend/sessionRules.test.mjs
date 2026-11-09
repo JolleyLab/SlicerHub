@@ -31,6 +31,14 @@ mock.module('../../../backend/src/db/database.js', {
         },
     },
 });
+// Ending a session also ends its Keycloak sign-in (so a refresh asks for the password).
+const endedKcSessions = [];
+mock.module('../../../backend/src/services/keycloakAdmin.js', {
+    namedExports: {
+        endKeycloakSession: async (sid) => { endedKcSessions.push(sid); },
+        getUserAccountState: async () => ({ active: true }),
+    },
+});
 mock.module('../../../backend/src/services/appUserGate.js', {
     namedExports: { isAppUserGateReady: () => false },
 });
@@ -51,6 +59,7 @@ function session({ lastActivityMinutesAgo = 1, procedureUntil = null, signedInHo
     const token = jwt.sign({ userId: 'u1', username: 'u', role: 'user', iat }, process.env.JWT_SECRET, { expiresIn: '30d', jwtid: jti });
     rows.set(jti, {
         id: 7,
+        kc_sid: `kc-${jti}`,
         last_activity: dbTime(now() - lastActivityMinutesAgo * 60 * 1000),
         procedure_until: procedureUntil,
         procedure_open_ended: 0,
@@ -62,13 +71,14 @@ function run(token, path = '/api/cases') {
     return new Promise((resolve) => authenticateToken(req, {}, (err) => resolve({ err, req })));
 }
 
-test.beforeEach(() => { writes.length = 0; });
+test.beforeEach(() => { writes.length = 0; endedKcSessions.length = 0; });
 
 test('an active session passes, and an ordinary request does not count as activity', async () => {
     const { token } = session({ lastActivityMinutesAgo: 5 });
     const { err, req } = await run(token);
     assert.equal(err, undefined);
     assert.equal(req.user.id, 'u1');
+    assert.deepEqual(endedKcSessions, [], 'an active session keeps its Keycloak sign-in');
     assert.equal(writes.some((w) => /last_activity/.test(w.sql)), false); // polling can't keep it alive
 });
 
@@ -78,12 +88,14 @@ test('after 30 minutes without real use the session ends', async () => {
     assert.equal(err?.statusCode, 401);
     assert.equal(err?.code, 'SESSION_IDLE');
     assert.equal(rows.has(jti), false);
+    assert.deepEqual(endedKcSessions, [`kc-${jti}`], 'the Keycloak sign-in ends too: a refresh asks for the password');
 });
 
 test('12 hours after sign-in the session ends, even with recent activity', async () => {
-    const { token } = session({ lastActivityMinutesAgo: 1, signedInHoursAgo: 12.5 });
+    const { token, jti } = session({ lastActivityMinutesAgo: 1, signedInHoursAgo: 12.5 });
     const { err } = await run(token);
     assert.equal(err?.code, 'SESSION_MAX_AGE');
+    assert.deepEqual(endedKcSessions, [`kc-${jti}`]);
 });
 
 test('procedure mode: no idle timeout and no 12 h limit while it lasts', async () => {
@@ -99,6 +111,7 @@ test('when procedure mode runs out the session ends (the workstation is not left
     const { err } = await run(token);
     assert.equal(err?.code, 'PROCEDURE_MODE_ENDED');
     assert.equal(rows.has(jti), false);
+    assert.deepEqual(endedKcSessions, [`kc-${jti}`]);
 });
 
 test('procedure mode requires the acknowledgment and is capped at the site maximum (24 h hard cap)', () => {

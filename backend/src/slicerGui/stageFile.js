@@ -183,7 +183,7 @@ export function requestSlicerGuiModeApply({
 }
 
 /**
- * Stage an already-cached host file (e.g. Directus asset) into the per-seat
+ * Stage a file already on the host (e.g. a case attachment) into the per-seat
  * Full Slicer data directory and write open-request + busy markers.
  */
 export async function stageCachedFileForSlicerGui({

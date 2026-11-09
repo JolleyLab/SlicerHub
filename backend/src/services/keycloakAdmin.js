@@ -45,6 +45,20 @@ export async function getAdminToken() {
     return _cachedToken;
 }
 
+/**
+ * End one Keycloak sign-in (the browser's SSO session, by its sid). Without this, a
+ * refresh after the app ends a session would sign straight back in without a password.
+ * A sign-in that is already over is not an error.
+ */
+export async function endKeycloakSession(sid) {
+    if (!sid) return;
+    try {
+        await keycloakDelete(`/sessions/${encodeURIComponent(sid)}`);
+    } catch (err) {
+        if (!/\(404\)/.test(String(err?.message))) throw err;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -586,7 +600,6 @@ export async function listCaseCollaborators(caseId) {
             results.push({
                 ...shaped,
                 displayName: kcDisplayName(shaped),
-                avatarUrl:   `/api/users/${encodeURIComponent(m.id)}/avatar`,
                 role,
             });
         }

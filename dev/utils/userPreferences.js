@@ -6,6 +6,7 @@ import {
     normalizeLocalSlicerViewerOptions
 } from './localSlicerViewerOptions.js';
 import { DEFAULT_HOME_LAYOUT, normalizeHomeLayout } from './homeLayout.js';
+import { parseApiResponse } from '../services/apiResponse.js';
 
 export const ALL_ACTIVITY_CATEGORIES = Object.freeze(['collaboration', 'mention', 'comment', 'attachment']);
 
@@ -118,21 +119,7 @@ export function applyUserPreferences(preferences = {}) {
     return getCachedUserPreferences();
 }
 
-async function parseResponse(response) {
-    let data = {};
-    try {
-        data = await response.json();
-    } catch (_) {
-        data = {};
-    }
-    if (!response.ok) {
-        const message = data.error?.message || data.message || t('common.requestFailed');
-        const err = new Error(typeof message === 'string' ? message : t('common.requestFailed'));
-        err.status = response.status;
-        throw err;
-    }
-    return data;
-}
+const parseResponse = (response) => parseApiResponse(response, t('common.requestFailed'));
 
 /**
  * Apply preferences from login/me payload. Accounts still at the defaults get one-time migration of

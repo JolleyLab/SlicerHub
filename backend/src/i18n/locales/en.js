@@ -196,7 +196,8 @@ export default {
         start_failed: "Couldn't start the viewer. Please try again in a moment.",
         file_type_unsupported: "This file type can't be opened in the viewer yet.",
         session_token_missing: 'Viewer session is missing. Open the file again.',
-        session_ended: 'The viewer session ended. Open the file again to continue.'
+        session_ended: 'The viewer session ended. Open the file again to continue.',
+        case_access_lost: 'You no longer have access to this case, so the viewer was closed.'
     },
     gpu: {
         vast_billing_required_full_slicer: 'Start GPU billing before opening Full Slicer on Vast',

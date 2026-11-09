@@ -17,7 +17,7 @@ export function roleLabel(role) {
     return key ? t(key) : String(role || '');
 }
 
-/** Invite event from /api/directus/activity/recent → activity card shape. */
+/** Invite event from /api/cases/activity/recent → activity card shape. */
 export function eventToActivity(event) {
     const sent = event.type === 'invite_sent';
     return {

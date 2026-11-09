@@ -7,7 +7,7 @@
 
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import { getPayloadClient } from '../payload/index.js';
+import { getPayloadClient, requirePayload } from '../payload/index.js';
 import { NotFoundError, ValidationError } from '../utils/errors.js';
 import { assertCaseAccess, getCaseRole } from '../utils/caseAccess.js';
 import {
@@ -34,6 +34,7 @@ import {
 import { getGroup } from '../services/groupStore.js';
 import { removeUnusedInviteeAccount } from '../services/inviteExpiry.js';
 import config from '../config/index.js';
+import { avatarUrlFor } from '../services/avatars.js';
 
 const GROUP_ID_PREFIX = 'group:';
 
@@ -73,10 +74,10 @@ async function buildMergedCollaborators(caseId, req) {
         };
     }));
 
-    return [
-        ...userCollaborators.map(c => ({ ...c, type: 'user' })),
-        ...groupCollaborators,
-    ];
+    const withAvatars = await Promise.all(userCollaborators.map(async (c) => ({
+        ...c, type: 'user', avatarUrl: await avatarUrlFor(c.id),
+    })));
+    return [...withAvatars, ...groupCollaborators];
 }
 
 function isPlatformAdmin(req) {
@@ -144,15 +145,6 @@ function makeGroupMemberDescriber(req) {
     };
 }
 
-
-function requirePayload(req, res, next) {
-    if (!getPayloadClient()) {
-        return res.status(503).json({
-            error: { message: 'Cases service not available' }
-        });
-    }
-    next();
-}
 
 function requireKeycloak(req, res, next) {
     if (config.auth.provider !== 'keycloak') {
@@ -233,7 +225,6 @@ export default function caseCollaboratorsRoutes(app) {
 
     /**
      * All pending_approval invites across cases where the current user is an admin.
-     * Keycloak path: replaces /api/directus/invites/pending-approval for KC users.
      */
     app.get('/api/cases/invites/pending-approval', ...auth, asyncHandler(async (req, res) => {
         const payload = getPayloadClient();
@@ -338,7 +329,7 @@ export default function caseCollaboratorsRoutes(app) {
             lastName:    ownerKc.lastName    || '',
             preferredName: ownerKc.preferredName || '',
             displayName: ownerKc.displayName || '',
-            avatarUrl:   `/api/users/${encodeURIComponent(doc.owner_id)}/avatar`,
+            avatarUrl:   await avatarUrlFor(doc.owner_id),
         } : null;
 
         res.set('Cache-Control', 'no-store');

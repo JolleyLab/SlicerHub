@@ -1,10 +1,7 @@
 /**
  * In-app notifications (bell + Home "To do"), e.g. @mentions in case comments.
- *
- * These routes lived in routes/directus.js and went away with it (commit 9e9457f), while
- * the SPA kept polling them — every poll was a 404 and mentions never showed up.
- * Same responses as before. Notifications are keyed by the app user id (the Keycloak
- * sub) and stored in Payload (services/notifications.js).
+ * Notifications are keyed by the app user id (the Keycloak sub) and stored in Payload
+ * (services/notifications.js).
  */
 
 import { authenticateToken } from '../middleware/authMiddleware.js';

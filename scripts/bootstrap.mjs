@@ -1,38 +1,31 @@
 #!/usr/bin/env node
 /**
- * One-time dev environment bootstrap.
+ * One-step setup for a fresh clone (also safe to re-run on a running stack).
  *
  *   node scripts/bootstrap.mjs
  *
- * Requires: Docker Desktop running, .env present with at minimum:
- *   INFISICAL_ENCRYPTION_KEY=<hex>
- *   INFISICAL_AUTH_SECRET=<base64>
- *   COMPOSE_PROFILES=keycloak,payload
- *   AUTH_PROVIDER=keycloak
+ * Requires Docker. Creates .env if there isn't one.
  *
  * What it does:
- *   1. docker compose up -d           (starts all services including Infisical)
- *      + nginx reload                 (picks up nginx/*.conf changes after a pull)
- *   2. node scripts/setup-infisical.mjs (first-time Infisical setup + secrets migration)
- *   3. node scripts/setup-keycloak.mjs  (provisions realm + sign-in client settings — redirect
- *                                       sign-in only, password grant off — and writes
- *                                       KEYCLOAK_CLIENT_SECRET)
- *   4. node scripts/setup-payload.mjs   (waits for postgres, writes PAYLOAD_DATABASE_URI + PAYLOAD_SECRET)
- *   5. start.mjs up -d backend        (restarts backend with secrets injected from Infisical;
- *                                       on its first start against a realm the backend grants
- *                                       app-user to existing accounts — the approval gate's
- *                                       one-off rollout step, recorded in a realm attribute)
+ *   1. Generates any missing secrets into .env (lib/secrets.mjs) — DB passwords, the
+ *      Keycloak admin password, PAYLOAD_SECRET, AUTH_TOKEN_KEY. Nothing runs on a default.
+ *   2. docker compose up -d, then reloads nginx (picks up nginx/*.conf changes after a pull)
+ *   3. node scripts/setup-keycloak.mjs  (realm + sign-in client — redirect sign-in only,
+ *                                       password grant off — and writes KEYCLOAK_CLIENT_SECRET)
+ *   4. node scripts/setup-payload.mjs   (waits for postgres, writes PAYLOAD_DATABASE_URI)
+ *   5. Restarts the backend so it reads the new .env values. On its first start against
+ *      a realm the backend grants app-user to existing accounts (the approval gate's
+ *      one-off rollout step, recorded in a realm attribute).
  *
- * Idempotent — safe to re-run on an already-running stack.
- * After bootstrap: use  node scripts/start.mjs  instead of  docker compose.
+ * Afterwards, plain `docker compose` is all you need. Secrets: docs/secrets-management.md.
  */
 
-import { execSync, spawnSync } from 'child_process';
-import crypto from 'crypto';
+import { spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import readline from 'readline';
 import { fileURLToPath } from 'url';
+import { readEnvFile, prompt, promptSecret } from './lib/env.mjs';
+import { ensureSecrets, secretsOnKnownDefaults } from './lib/secrets.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT      = path.resolve(__dirname, '..');
@@ -55,14 +48,15 @@ function preflight() {
     step('Preflight checks');
 
     if (!fs.existsSync(ENV_FILE)) {
-        throw new Error(
-            '.env not found.\n' +
-            '  Copy .env.example → .env and set at minimum:\n' +
-            '    INFISICAL_ENCRYPTION_KEY=<hex>  (openssl rand -hex 16)\n' +
-            '    INFISICAL_AUTH_SECRET=<base64>  (openssl rand -base64 32)\n' +
-            '    COMPOSE_PROFILES=keycloak,payload\n' +
-            '    AUTH_PROVIDER=keycloak'
-        );
+        // A local setup needs only these; .env.example lists everything else (production
+        // settings, email, optional features).
+        fs.writeFileSync(ENV_FILE, [
+            '# Local settings and secrets. Never commit this file. Options: .env.example',
+            'COMPOSE_PROFILES=keycloak,payload',
+            'AUTH_PROVIDER=keycloak',
+            '',
+        ].join('\n'), 'utf8');
+        ok('.env created for a local setup (see .env.example for the other options)');
     }
 
     const env = readEnvFile(ENV_FILE);
@@ -85,59 +79,45 @@ function preflight() {
         warn(`PUBLIC_APP_URL should be a full origin like http://localhost:8000 (got "${env.PUBLIC_APP_URL}")`);
     }
 
-    ok('.env found');
-}
-
-function readEnvFile(filePath) {
-    if (!fs.existsSync(filePath)) return {};
-    return Object.fromEntries(
-        fs.readFileSync(filePath, 'utf8')
-            .split('\n')
-            .filter(line => line.includes('=') && !line.trim().startsWith('#'))
-            .map(line => {
-                const idx = line.indexOf('=');
-                return [line.slice(0, idx).trim(), line.slice(idx + 1).trim()];
-            })
-    );
+    ok('.env checked');
 }
 
 // ---------------------------------------------------------------------------
-// .env write helper
+// Secrets
 // ---------------------------------------------------------------------------
 
-function upsertEnvVar(filePath, key, value) {
-    const line = `${key}=${value}`;
-    if (!fs.existsSync(filePath)) { fs.writeFileSync(filePath, `${line}\n`, 'utf8'); return; }
-    const content = fs.readFileSync(filePath, 'utf8');
-    const lines = content.split('\n');
-    const idx = lines.findIndex(l => l.match(new RegExp(`^\\s*#?\\s*${key}\\s*=`)));
-    if (idx !== -1) {
-        lines[idx] = line;
-        fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
-    } else {
-        const sep = content.endsWith('\n') ? '' : '\n';
-        fs.appendFileSync(filePath, `${sep}${line}\n`, 'utf8');
+function composeProjectName() {
+    const env = readEnvFile(ENV_FILE);
+    return (process.env.COMPOSE_PROJECT_NAME || env.COMPOSE_PROJECT_NAME || path.basename(ROOT))
+        .toLowerCase().replace(/[^a-z0-9_-]/g, '');
+}
+
+function volumeExists(name) {
+    const out = spawnSync('docker', ['volume', 'ls', '-q',
+        '--filter', `label=com.docker.compose.project=${composeProjectName()}`,
+        '--filter', `label=com.docker.compose.volume=${name}`], { encoding: 'utf8' });
+    if (out.status !== 0) throw new Error('Could not list Docker volumes. Is Docker running?');
+    return out.stdout.trim() !== '';
+}
+
+function setUpSecrets() {
+    step('Secrets  (.env)');
+    const written = ensureSecrets(ENV_FILE, volumeExists);
+    if (!written.length) skip('All secrets already set');
+    for (const { key, how } of written) {
+        if (how === 'generated') ok(`${key} generated`);
+        else ok(`${key} set to the value the existing database was created with`);
+    }
+    const weak = secretsOnKnownDefaults(ENV_FILE);
+    if (weak.length) {
+        warn(`Still on a public default: ${weak.join(', ')}. Fine on your own machine; change them`);
+        warn('before others can reach this server (docs/secrets-management.md → Changing a secret).');
     }
 }
 
 // ---------------------------------------------------------------------------
 // Interactive prompts
 // ---------------------------------------------------------------------------
-
-function prompt(question) {
-    return new Promise(resolve => {
-        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-        rl.question(`  ${question}`, answer => { rl.close(); resolve(answer.trim()); });
-    });
-}
-
-function promptSecret(question) {
-    return new Promise(resolve => {
-        process.stdout.write(`  ${question}`);
-        const rl = readline.createInterface({ input: process.stdin, output: null });
-        rl.once('line', answer => { process.stdout.write('\n'); rl.close(); resolve(answer.trim()); });
-    });
-}
 
 /**
  * Collect the admin account's email/password once here, instead of separately in
@@ -206,24 +186,7 @@ async function main() {
 
     preflight();
 
-    // Generate Infisical bootstrap secrets before starting services — the
-    // Infisical container refuses to start if AUTH_SECRET or ENCRYPTION_KEY
-    // are missing, so these must exist in .env before `docker compose up`.
-    const env = readEnvFile(ENV_FILE);
-    if (!env.INFISICAL_ENCRYPTION_KEY) {
-        const key = crypto.randomBytes(16).toString('hex');
-        upsertEnvVar(ENV_FILE, 'INFISICAL_ENCRYPTION_KEY', key);
-        ok('INFISICAL_ENCRYPTION_KEY generated and written to .env');
-    } else {
-        skip('INFISICAL_ENCRYPTION_KEY already set');
-    }
-    if (!env.INFISICAL_AUTH_SECRET) {
-        const secret = crypto.randomBytes(32).toString('base64');
-        upsertEnvVar(ENV_FILE, 'INFISICAL_AUTH_SECRET', secret);
-        ok('INFISICAL_AUTH_SECRET generated and written to .env');
-    } else {
-        skip('INFISICAL_AUTH_SECRET already set');
-    }
+    setUpSecrets();
 
     step('Starting services  (docker compose up -d)');
     run('docker compose up', 'docker', ['compose', 'up', '-d']);
@@ -234,9 +197,6 @@ async function main() {
     const reload = spawnSync('docker', ['exec', 'nginx', 'nginx', '-s', 'reload'], { cwd: ROOT, stdio: 'pipe' });
     if (reload.status === 0) ok('nginx config reloaded');
     else warn('Could not reload nginx (is it running?) — run: docker exec nginx nginx -s reload');
-
-    step('Setting up Infisical secret manager');
-    runScript(path.join(__dirname, 'setup-infisical.mjs'));
 
     await collectAdminCredentials();
 
@@ -250,8 +210,8 @@ async function main() {
     run('npm install', 'docker', ['compose', 'run', '--rm', '--no-deps', 'backend', 'npm', 'install']);
     ok('backend/package-lock.json up to date');
 
-    step('Restarting backend  (picks up Infisical secrets + fresh node_modules)');
-    run('start.mjs up backend', process.execPath, [path.join(__dirname, 'start.mjs'), 'up', '-d', 'backend']);
+    step('Restarting backend  (picks up the new .env values + fresh node_modules)');
+    run('docker compose up backend', 'docker', ['compose', 'up', '-d', '--force-recreate', 'backend']);
     ok('Backend restarted');
 
     const finalEnv = readEnvFile(ENV_FILE);
@@ -275,7 +235,6 @@ async function main() {
 │                    Done!                    │
 ├─────────────────────────────────────────────┤
 │  App:           http://localhost:8000       │
-│  Infisical:     http://localhost:8888       │
 │  Keycloak admin: http://localhost:8082/admin│
 │  Sign-in pages: http://localhost:8000/sso/  │
 │  Payload admin: http://localhost:3001/admin │
@@ -283,8 +242,8 @@ async function main() {
 │   (Keycloak's verify / reset / account-     │
 │    setup emails — nothing leaves the PC)    │
 │                                             │
-│  Start services (with Infisical injection): │
-│    node scripts/start.mjs up -d             │
+│  Start / stop services:                     │
+│    docker compose up -d   /   down          │
 │                                             │
 │  Tail backend logs:                         │
 │    docker compose logs -f backend           │

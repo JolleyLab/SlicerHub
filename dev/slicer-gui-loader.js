@@ -42,13 +42,6 @@ function sessionEndpoints() {
             apiUrl: ''
         });
     }
-    if (sessionScope === VIEWER_SESSION_SCOPES.DIRECTUS) {
-        return getViewerSessionEndpoints({
-            kind: VIEWER_KINDS.SLICER_GUI,
-            sessionScope: VIEWER_SESSION_SCOPES.DIRECTUS,
-            apiUrl: ''
-        });
-    }
     if (!projectId) return null;
     return getViewerSessionEndpoints({
         kind: VIEWER_KINDS.SLICER_GUI,
@@ -101,6 +94,7 @@ let lifecycle = null;
 let vncWatchTimer = null;
 let reconnecting = false;
 let disconnectNotified = false;
+let accessLost = false; // removed from the case: the server stopped the seat; never reconnect
 
 function reveal() {
     if (revealed) return;
@@ -228,7 +222,7 @@ async function reconnectSession() {
 }
 
 async function ensureViewerSession() {
-    if (shareToken || sessionScope === VIEWER_SESSION_SCOPES.CASES || sessionScope === VIEWER_SESSION_SCOPES.DIRECTUS) {
+    if (shareToken || sessionScope === VIEWER_SESSION_SCOPES.CASES) {
         if (sessionToken && await heartbeatSession(sessionToken)) {
             return true;
         }
@@ -264,7 +258,9 @@ function startLifecycle() {
             sessionToken: token,
             ...(seatId ? { seatId: Number(seatId) } : {})
         }),
+        onAccessLost: (message) => showAccessLost(message),
         onHeartbeatFailed: async () => {
+            if (accessLost) return;
             const ok = await reconnectSession();
             if (ok) {
                 startLifecycle();
@@ -332,8 +328,22 @@ function notifyParentActivity() {
     notifyParent('slicer-viewer-activity');
 }
 
+/** Removed from the case while viewing: the server stopped the seat and removed its copies. */
+function showAccessLost(message) {
+    accessLost = true;
+    lifecycle?.stopHeartbeat?.();
+    revealed = false;
+    hideViewer();
+    setSplashMessage(
+        'No longer available',
+        message || 'You no longer have access to this case, so the viewer was closed.',
+        { error: true }
+    );
+    notifyParent('slicer-viewer-access-lost');
+}
+
 function handleVncDisconnected() {
-    if (reconnecting || disconnectNotified) return;
+    if (accessLost || reconnecting || disconnectNotified) return;
     disconnectNotified = true;
     revealed = false;
     hideViewer();
@@ -346,7 +356,7 @@ function handleVncDisconnected() {
 }
 
 async function reconnectViewer() {
-    if (reconnecting) return;
+    if (reconnecting || accessLost) return;
     reconnecting = true;
     disconnectNotified = false;
     sawVncConnected = false;
@@ -413,7 +423,7 @@ function installVncDisconnectWatch() {
 
 function installWakeHandlers() {
     const onWake = async () => {
-        if (document.hidden) return;
+        if (document.hidden || accessLost) return;
         notifyParentActivity();
         if (sessionToken) {
             await heartbeatSession(sessionToken).catch(() => false);

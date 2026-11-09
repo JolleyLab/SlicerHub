@@ -1,14 +1,9 @@
+import { readJson as parseJson, apiError } from './apiResponse.js';
+
 const API_URL = '';
 
-async function parseJson(res) {
-    try { return await res.json(); } catch { return {}; }
-}
-
 function throwApiError(res, data, fallback) {
-    const msg = data?.error?.message || data?.message || fallback;
-    const err = new Error(msg);
-    err.status = res.status;
-    throw err;
+    throw apiError(res, data, fallback);
 }
 
 /** Every group's { id, name } — for linking any group to a case. */
@@ -57,16 +52,6 @@ export async function updateMyGroup(groupId, updates) {
     const data = await parseJson(response);
     if (!response.ok) throwApiError(response, data, 'Failed to update group');
     return data.data;
-}
-
-export async function getMyGroupMembers(groupId) {
-    const response = await fetch(
-        `${API_URL}/api/my-groups/${encodeURIComponent(groupId)}/members`,
-        { credentials: 'include' }
-    );
-    const data = await parseJson(response);
-    if (!response.ok) throwApiError(response, data, 'Failed to load group members');
-    return data.data || [];
 }
 
 export async function addMyGroupMember(groupId, { email } = {}) {

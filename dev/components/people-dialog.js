@@ -20,11 +20,9 @@ const DEFAULT_ROLE_OPTIONS = Object.freeze([
     Object.freeze({ value: 'read_only', label: t('roles.readOnly') })
 ]);
 
+/** The server sends every invite's kind; anything else is treated as an existing account. */
 function inviteKind(invite) {
-    if (invite?.kind === 'signup' || invite?.kind === 'existing' || invite?.kind === 'group') return invite.kind;
-    if (invite?.status === 'pending_approval' || invite?.status === 'pending_signup') return 'signup';
-    if (!invite?.inviteeDirectusUserId && invite?.inviteeEmail) return 'signup';
-    return 'existing';
+    return ['signup', 'existing', 'group'].includes(invite?.kind) ? invite.kind : 'existing';
 }
 
 
@@ -141,11 +139,10 @@ export class PeopleDialog extends LitElement {
             inviting: { type: Boolean },
             lookupMessage: { type: String },
             matchedUser: { type: Object },
-            /** Email with no Directus user — offer signup invite */
+            /** Email with no account yet — offer a signup invite */
             unknownEmail: { type: String },
             inviteRole: { type: String },
-            /** Last minted signup invite URL (copy-link) */
-            /** Directus user id of the signed-in viewer (for "Me" label) */
+            /** User id of the signed-in viewer (for the "Me" label) */
             currentUserId: { type: String },
             /** SlicerHub groups the viewer can add as a collaborator: [{ id, name }] */
             availableGroups: { type: Array },
@@ -593,7 +590,7 @@ export class PeopleDialog extends LitElement {
             return html`
                     <div class="row">
                         <person-chip
-                            .name=${isGroup ? invite.groupName : (invite.inviteeEmail || invite.inviteeDirectusUserId)}
+                            .name=${isGroup ? invite.groupName : invite.inviteeEmail}
                             .secondaryLine=${statusLine}
                             title=${groupTitle}
                         ></person-chip>

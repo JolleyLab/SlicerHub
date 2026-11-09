@@ -6,6 +6,7 @@ import { ValidationError, NotFoundError, ConflictError, ForbiddenError } from '.
 import { msg } from '../i18n/index.js';
 import { getPayloadClient } from '../payload/index.js';
 import { findUserByEmail, getKeycloakUser, kcDisplayName } from '../services/keycloakAdmin.js';
+import { avatarUrlFor } from '../services/avatars.js';
 import { CAPABILITIES } from '../services/groupCapabilities.js';
 import { removeGroupFromAllCases } from '../services/caseGroupAccess.js';
 import {
@@ -36,7 +37,7 @@ async function enrichMember(m) {
         firstName: kcUser?.firstName || '',
         lastName: kcUser?.lastName || '',
         displayName: kcUser ? kcDisplayName(kcUser) : m.kcSub,
-        avatarUrl: kcUser ? `/api/users/${encodeURIComponent(m.kcSub)}/avatar` : null,
+        avatarUrl: kcUser ? await avatarUrlFor(m.kcSub) : null,
     };
 }
 

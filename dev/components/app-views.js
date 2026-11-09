@@ -53,7 +53,7 @@ export function readAppViewFromUrl(search = window.location.search) {
 /**
  * Write SPA view state into the URL without reloading.
  * Keeps unrelated query params (e.g. share) intact.
- * Clears Directus case deep-link params when not viewing Cases, and when
+ * Clears case deep-link params when not viewing Cases, and when
  * returning to Cases via the app shell (menu), so users land on the list.
  */
 export function writeAppViewToUrl({

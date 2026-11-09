@@ -7,7 +7,7 @@ import jwt from 'jsonwebtoken';
 import {
     generateToken,
     storeSession,
-    deleteSession,
+    endSession,
     decodeToken,
     getSessionOidc
 } from '../middleware/authMiddleware.js';
@@ -118,33 +118,10 @@ export function destroyAppSession(req, res) {
         const decoded = decodeToken(token);
         if (decoded?.jti) {
             jti = decoded.jti;
-            deleteSession(decoded.jti);
+            endSession(decoded.jti);
         }
     }
 
     clearAuthCookie(res);
     return jti;
-}
-
-/**
- * Replace current JWT (refresh) — drops old jti.
- * @returns {{ user: object, sessionPayload: object, previousJti: string|null }}
- */
-export function rotateAppSession(req, res, user) {
-    const authHeader = req.headers['authorization'];
-    const oldToken = (authHeader && authHeader.split(' ')[1]) || req.cookies?.token;
-    let previousJti = null;
-    let oidc = { kcSid: null, idTokenEnc: null };
-
-    if (oldToken) {
-        const oldDecoded = decodeToken(oldToken);
-        if (oldDecoded?.jti) {
-            previousJti = oldDecoded.jti;
-            oidc = { ...getSessionOidc(oldDecoded.jti), issuedAt: oldDecoded.iat || null };
-            deleteSession(oldDecoded.jti);
-        }
-    }
-
-    const { sessionPayload } = issueAppSession(req, res, user, oidc);
-    return { user, sessionPayload, previousJti };
 }

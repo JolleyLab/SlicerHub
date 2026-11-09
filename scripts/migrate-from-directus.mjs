@@ -3,13 +3,16 @@
  * Migrate data from Directus to Payload CMS + Keycloak.
  *
  * Prerequisites:
- *   - DIRECTUS_URL, DIRECTUS_ADMIN_TOKEN in .env (or environment)
- *   - PAYLOAD_DATABASE_URI pointing to the Payload Postgres instance
- *   - KEYCLOAK_URL, KEYCLOAK_REALM, KC_ADMIN_CLIENT_ID, KC_ADMIN_CLIENT_SECRET in .env
- *   - docker compose --profile payload up -d backend payload-db keycloak
+ *   - DIRECTUS_URL and DIRECTUS_ADMIN_TOKEN (or DIRECTUS_ADMIN_EMAIL + _PASSWORD) in the
+ *     environment; the Directus server must be reachable from where this runs
+ *   - the stack's own settings (PAYLOAD_DATABASE_URI, KEYCLOAK_URL, KEYCLOAK_ADMIN_USER/
+ *     _PASSWORD), which the backend container already has
  *
- * Run on a freshly set-up stack (node scripts/bootstrap.mjs), as the one migration step:
- *   node scripts/migrate-from-directus.mjs [--dry-run] [--send-setup-emails]
+ * Run on a freshly set-up stack (node scripts/bootstrap.mjs), as the one migration step,
+ * inside the backend container (it has the backend's packages and the Docker network):
+ *   docker cp scripts/migrate-from-directus.mjs backend:/app/migrate-from-directus.mjs
+ *   docker exec -it -e DIRECTUS_URL=… -e DIRECTUS_ADMIN_TOKEN=… backend \
+ *       node /app/migrate-from-directus.mjs [--dry-run] [--send-setup-emails]
  *
  *   --send-setup-emails  have Keycloak email every migrated person who still needs to
  *                        choose a password a "Set up your SlicerHub account" link (valid
@@ -50,11 +53,14 @@ import { fileURLToPath, pathToFileURL } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
-// In the Docker container the backend source is at /app/src (no backend/ subdir).
-// On the host it's at <repo-root>/backend/src.
-const BACKEND_ROOT = fs.existsSync(path.join(ROOT, 'src', 'payload', 'index.js'))
-    ? ROOT
-    : path.join(ROOT, 'backend');
+// The backend source: <repo-root>/backend on the host, /app in the backend container
+// (wherever this file was copied to there).
+const BACKEND_ROOT = [ROOT, path.join(ROOT, 'backend'), '/app']
+    .find((dir) => fs.existsSync(path.join(dir, 'src', 'payload', 'index.js')))
+    || path.join(ROOT, 'backend');
+// Storage keys (caseFiles/…) are relative to the working directory, and the backend runs
+// from its own folder: work from there so migrated files land where the backend reads them.
+process.chdir(BACKEND_ROOT);
 
 // Load .env from repo root (no dotenv dependency needed)
 const envFile = path.join(ROOT, '.env');

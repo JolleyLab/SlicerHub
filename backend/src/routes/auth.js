@@ -99,6 +99,7 @@ import heicConvert from 'heic-convert';
 import { isUserInCapabilityGroup, CAPABILITIES } from '../services/groupCapabilities.js';
 import { getPreferencesByKcSub, updatePreferencesByKcSub, hasCustomPreferences } from '../services/payloadPreferences.js';
 import storage from '../storage/index.js';
+import { findAvatarKey, forgetAvatar } from '../services/avatars.js';
 
 const avatarUpload = multer({
     storage: multer.memoryStorage(),
@@ -107,11 +108,6 @@ const avatarUpload = multer({
 
 const AVATAR_MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
 
-async function findKcAvatarKey(kcSub) {
-    const prefix = storage.avatarKeyForSub(kcSub, '').replace(/\.$/, '');
-    const keys = await storage.listByPrefix(prefix);
-    return keys.length > 0 ? keys[0] : null;
-}
 
 
 function publicUser(user) {
@@ -371,7 +367,7 @@ export default function authRoutes(app) {
         const [preferences, hasPrefs, avatarKey, kcProfile] = await Promise.all([
             getPreferencesByKcSub(kcSub),
             hasCustomPreferences(kcSub),
-            findKcAvatarKey(kcSub),
+            findAvatarKey(kcSub),
             kcSub ? getKeycloakUser(kcSub).catch(() => null) : null,
         ]);
         const isOrgAdmin = req.user.role === 'admin' || req.user.role === 'org-admin';
@@ -442,14 +438,9 @@ export default function authRoutes(app) {
                 preferences,
                 hasCustomPreferences: hasPrefs,
             },
-            identity: {
-                keycloakLinked: true,
-                directusLinked: false,
-                directusLinkRequired: false,
-            },
+            identity: { keycloakLinked: true },
             isOrgAdmin: accessPending ? false : isOrgAdmin,
             isRegistrationReviewer: accessPending ? false : isRegistrationReviewer,
-            directusUserId: null,
             keycloakSub: kcSub,
         });
     }));
@@ -487,7 +478,7 @@ export default function authRoutes(app) {
         res.json({ preferences });
     }));
 
-    /** Upload or replace the current user's avatar. KC users: stored on disk. Local-auth: Directus. */
+    /** Upload or replace the current user's avatar (object storage, keyed by Keycloak sub). */
     app.post('/api/auth/avatar', authenticateToken, avatarUpload.single('avatar'), asyncHandler(async (req, res) => {
         if (!req.file) throw new ValidationError(msg('avatar.required'), null, 'avatar.required');
         let { buffer, mimetype, originalname } = req.file;
@@ -499,16 +490,17 @@ export default function authRoutes(app) {
             originalname = originalname.replace(/\.(heic|heif)$/i, '.jpg');
         }
         const finalExt = (originalname || '').split('.').pop().toLowerCase() || 'jpg';
-        const existingKey = await findKcAvatarKey(req.user.keycloakSub);
+        const existingKey = await findAvatarKey(req.user.keycloakSub);
         if (existingKey) await storage.delete(existingKey);
         const key = storage.avatarKeyForSub(req.user.keycloakSub, finalExt);
         await storage.write({ key, buffer, contentType: AVATAR_MIME[finalExt] || 'application/octet-stream' });
+        forgetAvatar(req.user.keycloakSub);
         res.json({ ok: true, avatarUrl: `/api/auth/avatar?v=${Date.now()}` });
     }));
 
     /** Serve the current user's avatar. */
     app.get('/api/auth/avatar', authenticateToken, asyncHandler(async (req, res) => {
-        const key = await findKcAvatarKey(req.user.keycloakSub);
+        const key = await findAvatarKey(req.user.keycloakSub);
         if (!key) return res.status(404).end();
         const presigned = await storage.getPresignedReadUrl(key, 300);
         if (presigned) return res.redirect(302, presigned);
@@ -520,8 +512,9 @@ export default function authRoutes(app) {
 
     /** Remove the current user's avatar. */
     app.delete('/api/auth/avatar', authenticateToken, asyncHandler(async (req, res) => {
-        const key = await findKcAvatarKey(req.user.keycloakSub);
+        const key = await findAvatarKey(req.user.keycloakSub);
         if (key) await storage.delete(key);
+        forgetAvatar(req.user.keycloakSub);
         res.json({ ok: true });
     }));
 

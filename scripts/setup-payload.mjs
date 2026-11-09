@@ -28,6 +28,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import { readEnvFile, upsertEnvVar } from './lib/env.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT     = path.resolve(__dirname, '..');
@@ -45,37 +46,6 @@ function warn(msg) { console.warn(`  ⚠  ${msg}`); }
 // ---------------------------------------------------------------------------
 // .env helpers
 // ---------------------------------------------------------------------------
-
-function readEnvFile(filePath) {
-    if (!fs.existsSync(filePath)) return {};
-    return Object.fromEntries(
-        fs.readFileSync(filePath, 'utf8')
-            .split('\n')
-            .filter(line => line.includes('=') && !line.trim().startsWith('#'))
-            .map(line => {
-                const idx = line.indexOf('=');
-                return [line.slice(0, idx).trim(), line.slice(idx + 1).trim()];
-            })
-    );
-}
-
-function upsertEnvVar(filePath, key, value) {
-    const line = `${key}=${value}`;
-    if (!fs.existsSync(filePath)) {
-        fs.writeFileSync(filePath, `${line}\n`, 'utf8');
-        return;
-    }
-    const content = fs.readFileSync(filePath, 'utf8');
-    const lines = content.split('\n');
-    const idx = lines.findIndex(l => l.match(new RegExp(`^\\s*#?\\s*${key}\\s*=`)));
-    if (idx !== -1) {
-        lines[idx] = line;
-        fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
-    } else {
-        const sep = content.endsWith('\n') ? '' : '\n';
-        fs.appendFileSync(filePath, `${sep}${line}\n`, 'utf8');
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Wait for payload-db
@@ -212,13 +182,11 @@ async function main() {
     docker compose up -d backend
     docker compose logs -f backend
 
-  Watch for: "Payload: initialized — Cases, UserPreferences, TaskGroups collections ready"
+  Watch for: "Payload: initialized"
 
-  Collections (all auto-migrated by Payload on first backend start):
-    user-preferences      — per-user UI preferences (theme, viewer mode, SlicerWeb
-                            channel). Keyed by Keycloak sub.
-    task-groups           — task groups with canApproveRegistrations capability flag.
-    task-group-members    — group membership keyed by Keycloak sub.
+  Payload creates its tables on the backend's first start: cases and attachments,
+  case invites, groups, registration requests, notifications, user preferences, and
+  the site announcement (Payload admin → Globals → Site announcement).
 
   To enable the SlicerWeb developer channel (latest build) in the UI,
   add to .env (after credentials are configured):
