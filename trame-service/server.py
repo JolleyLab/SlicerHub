@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from contextlib import asynccontextmanager
 import uvicorn
 import os
+import platform
 import subprocess
 import json
 import time
@@ -57,8 +58,23 @@ PRUNE_EXITED_INTERVAL_SECONDS = int(os.getenv("PRUNE_EXITED_INTERVAL_SECONDS", "
 
 # GPU support - set USE_GPU=false to disable for local testing without NVIDIA container runtime
 USE_GPU = os.getenv('USE_GPU', 'true').lower() not in ('false', '0', 'no')
-# 'd3d12' = GPU OpenGL via Mesa D3D12 on Docker Desktop/WSL2 hosts; empty = image default
-CONTAINER_GL_MODE = (os.getenv('CONTAINER_GL_MODE') or '').strip().lower()
+
+
+def _container_gl_mode() -> str:
+    """OpenGL mode for session containers, from CONTAINER_GL_MODE:
+    unset or 'auto' = 'd3d12' on Windows hosts (WSL2 kernel), else 'default';
+    'd3d12' forces Mesa D3D12; any other value (e.g. 'off') keeps the image default."""
+    setting = (os.getenv('CONTAINER_GL_MODE') or '').strip().lower() or 'auto'
+    if setting == 'auto':
+        return 'd3d12' if 'microsoft' in platform.release().lower() else 'default'
+    return 'd3d12' if setting == 'd3d12' else 'default'
+
+
+CONTAINER_GL_MODE = _container_gl_mode()
+logger.info(
+    "Container GL mode %s (CONTAINER_GL_MODE=%s, kernel %s)",
+    CONTAINER_GL_MODE, os.getenv('CONTAINER_GL_MODE') or 'auto', platform.release(),
+)
 TRAME_IMAGE = (os.getenv('TRAME_IMAGE') or 'slicer-web-trame:local').strip() or 'slicer-web-trame:local'
 TRAME_SYNC_TOKEN = (os.getenv('TRAME_SYNC_TOKEN') or '').strip()
 
@@ -581,7 +597,7 @@ async def start_session(request: StartSessionRequest):
                 # Add GPU support if available (set USE_GPU=false for local testing without NVIDIA runtime)
                 if USE_GPU:
                     docker_cmd.extend(['--gpus', 'all'])
-                    # Docker Desktop on Windows (WSL2) has no NVIDIA EGL in containers; Mesa's D3D12
+                    # Windows hosts (WSL2) have no NVIDIA EGL in containers; Mesa's D3D12
                     # driver renders OpenGL on the GPU through /dev/dxg and the host's WSL libraries.
                     if CONTAINER_GL_MODE == 'd3d12':
                         docker_cmd.extend([

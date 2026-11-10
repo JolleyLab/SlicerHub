@@ -22,11 +22,7 @@ One script, `scripts/bootstrap.mjs`, sets all of this up and is safe to run agai
 
 ## What you need
 
-- **Docker** with Compose v2 (`docker compose version`). SlicerHub runs Linux containers. On Windows, use either:
-  - [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) with its default WSL2 backend. The installer sets up WSL2. Docker Desktop is free only for personal use, education, and companies with fewer than 250 employees and under $10M revenue; larger organizations need a paid Docker subscription.
-  - [Docker Engine](https://docs.docker.com/engine/install/ubuntu/) inside a WSL2 Linux distribution (`wsl --install`). This is free. Clone the repo inside WSL and follow the Linux steps from its shell.
-
-  For GPU rendering on Windows, see [the setup below](#gpu-rendering-on-windows).
+- **Docker** with Compose v2 (`docker compose version`).
 - **Node.js 20 or later** on the host (`node -v`). It runs only the setup scripts; the app itself runs in containers.
 - **Git.**
 - **For the viewers, an NVIDIA GPU** with drivers and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/). See [THIRD_PARTY_RUNTIME.md](THIRD_PARTY_RUNTIME.md) for the runtime license terms.
@@ -59,21 +55,17 @@ When it finishes:
 
 After that, `docker compose up -d` and `docker compose down` are all you need.
 
-### GPU rendering on Windows
+### Local viewer containers on Windows
 
-On Windows, containers can see the GPU through WSL2 but have no NVIDIA EGL driver, so the Trame and Full Slicer viewers fall back to CPU rendering and are very slow. To render on the GPU instead, add this to `.env`:
+On Windows, containers can see the GPU through WSL2 but have no NVIDIA EGL driver, so without extra setup the Trame and Full Slicer viewers would render on the CPU and be very slow. SlicerHub handles this automatically: when it detects the WSL2 kernel, viewer sessions mount the host's `/usr/lib/wsl` libraries and use Mesa's D3D12 driver, which renders through DirectX on the host GPU, preferring the adapter whose name contains `NVIDIA`. Nothing changes on Linux hosts.
 
-```bash
-CONTAINER_GL_MODE=d3d12
-```
-
-Then recreate the services that start viewer sessions:
+To override the detection, set `CONTAINER_GL_MODE` in `.env` to `d3d12` (always on) or `off`, then recreate the services that start viewer sessions:
 
 ```bash
 docker compose up -d --force-recreate backend trame-service
 ```
 
-Sessions started after that mount the host's `/usr/lib/wsl` libraries and use Mesa's D3D12 driver, which renders through DirectX on the host GPU. The setting selects the adapter whose name contains `NVIDIA`. Leave `CONTAINER_GL_MODE` unset on Linux hosts.
+To see which mode is in use, look for `GL mode` in `docker compose logs backend trame-service`.
 
 ## Fresh install: server
 
@@ -332,7 +324,7 @@ Once you're confident in the new version:
 - **Sign-in or email links point to `localhost`.** `PUBLIC_APP_URL` is wrong. Fix it, then run `node scripts/setup-keycloak.mjs --settings-only` and restart the backend.
 - **No emails arrive.** Check that `SMTP_*` and `SMTP_ENABLED=true` are set, then run `node scripts/setup-keycloak.mjs --settings-only`, which copies SMTP into Keycloak. Locally, look in Mailpit at http://localhost:8025.
 - **A viewer won't start.** Run `docker compose logs backend`, and check that `nvidia-smi` works inside Docker (`docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`).
-- **Viewers are very slow on Windows.** They are rendering on the CPU. Set `CONTAINER_GL_MODE=d3d12` as described in [GPU rendering on Windows](#gpu-rendering-on-windows).
+- **Viewers are very slow on Windows.** They are rendering on the CPU. Check the `GL mode` line in `docker compose logs backend trame-service`; if it says `default`, set `CONTAINER_GL_MODE=d3d12` as described in [Local viewer containers on Windows](#local-viewer-containers-on-windows).
 - **Logs:** `docker compose logs -f backend` and `docker compose logs -f keycloak`.
 
 ## More detail

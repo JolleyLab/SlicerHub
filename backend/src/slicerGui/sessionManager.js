@@ -1,6 +1,7 @@
 import Docker from 'dockerode';
 import http from 'http';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import {
     ensureSlicerGuiUserDir,
@@ -246,6 +247,22 @@ export function allocateSlicerGuiSeatId(safeUserId, {
     return sorted[0]?.[0] || 1;
 }
 
+/**
+ * OpenGL mode for session containers, from CONTAINER_GL_MODE:
+ * unset or 'auto' = 'd3d12' on Windows hosts (WSL2 kernel), else 'default';
+ * 'd3d12' forces Mesa D3D12; any other value (e.g. 'off') keeps the image default.
+ */
+function resolveContainerGlMode() {
+    const setting = String(process.env.CONTAINER_GL_MODE || '').trim().toLowerCase() || 'auto';
+    const mode = setting === 'auto'
+        ? (/microsoft/i.test(os.release()) ? 'd3d12' : 'default')
+        : (setting === 'd3d12' ? 'd3d12' : 'default');
+    console.log(`Full Slicer: container GL mode ${mode} (CONTAINER_GL_MODE=${setting}, kernel ${os.release()})`);
+    return mode;
+}
+
+const CONTAINER_GL_MODE = resolveContainerGlMode();
+
 async function startOrReuseSeat({
     safeUserId,
     seatId,
@@ -405,9 +422,9 @@ async function startOrReuseSeat({
     if (simplifiedLocal) {
         binds.push(`${toDockerBindPath(simplifiedLocal)}:/opt/slicer-modules/SimplifiedViewer:ro`);
     }
-    // Docker Desktop on Windows (WSL2) has no NVIDIA EGL in containers; Mesa's D3D12 driver
+    // Windows hosts (WSL2) have no NVIDIA EGL in containers; Mesa's D3D12 driver
     // renders OpenGL on the GPU through /dev/dxg and the host's WSL libraries instead.
-    if (String(process.env.CONTAINER_GL_MODE || '').trim().toLowerCase() === 'd3d12') {
+    if (CONTAINER_GL_MODE === 'd3d12') {
         binds.push('/usr/lib/wsl:/usr/lib/wsl:ro');
         env.push(
             'LD_LIBRARY_PATH=/usr/lib/wsl/lib',
