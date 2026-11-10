@@ -15,10 +15,10 @@ Some GPU deployment paths use NVIDIA container/runtime components with separate 
 
 ## Setup
 
-Install dependencies:
+See **[DEPLOYMENT.md](DEPLOYMENT.md)**, which covers a fresh install (local or server), updating, and migrating from the Directus version. The short version for local development:
 
 ```bash
-npm i
+node scripts/bootstrap.mjs
 ```
 
 ## Testing
