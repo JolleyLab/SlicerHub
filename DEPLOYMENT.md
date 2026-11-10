@@ -25,7 +25,7 @@ One script, `scripts/bootstrap.mjs`, sets all of this up and is safe to run agai
 - **Docker** with Compose v2 (`docker compose version`).
 - **Node.js 20 or later** on the host (`node -v`). It runs only the setup scripts; the app itself runs in containers.
 - **Git.**
-- **For the viewers, an NVIDIA GPU** with drivers and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/). See [THIRD_PARTY_RUNTIME.md](THIRD_PARTY_RUNTIME.md) for the runtime license terms.
+- **For the viewers, an NVIDIA GPU** with drivers and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/). See [THIRD_PARTY_RUNTIME.md](THIRD_PARTY_RUNTIME.md) for the runtime license terms. On Windows, see [Windows (Docker Desktop with WSL2)](#windows-docker-desktop-with-wsl2).
 - **Disk space:** about 30 GB for images, plus room for uploaded case files.
 
 ## Fresh install: local development
@@ -54,6 +54,22 @@ When it finishes:
 | Email sent by the app and Keycloak | http://localhost:8025 (Mailpit; nothing leaves your machine) |
 
 After that, `docker compose up -d` and `docker compose down` are all you need.
+
+### Windows (Docker Desktop with WSL2)
+
+Containers on Docker Desktop can see the GPU but have no NVIDIA EGL driver, so the Trame and Full Slicer viewers fall back to CPU rendering and are very slow. To render on the GPU instead, add this to `.env`:
+
+```bash
+CONTAINER_GL_MODE=d3d12
+```
+
+Then recreate the services that start viewer sessions:
+
+```bash
+docker compose up -d --force-recreate backend trame-service
+```
+
+Sessions started after that mount the host's `/usr/lib/wsl` libraries and use Mesa's D3D12 driver, which renders through DirectX on the host GPU. The setting selects the adapter whose name contains `NVIDIA`. Leave `CONTAINER_GL_MODE` unset on Linux hosts.
 
 ## Fresh install: server
 
@@ -312,6 +328,7 @@ Once you're confident in the new version:
 - **Sign-in or email links point to `localhost`.** `PUBLIC_APP_URL` is wrong. Fix it, then run `node scripts/setup-keycloak.mjs --settings-only` and restart the backend.
 - **No emails arrive.** Check that `SMTP_*` and `SMTP_ENABLED=true` are set, then run `node scripts/setup-keycloak.mjs --settings-only`, which copies SMTP into Keycloak. Locally, look in Mailpit at http://localhost:8025.
 - **A viewer won't start.** Run `docker compose logs backend`, and check that `nvidia-smi` works inside Docker (`docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`).
+- **Viewers are very slow on Windows.** They are rendering on the CPU. Set `CONTAINER_GL_MODE=d3d12` as described in [Windows (Docker Desktop with WSL2)](#windows-docker-desktop-with-wsl2).
 - **Logs:** `docker compose logs -f backend` and `docker compose logs -f keycloak`.
 
 ## More detail
