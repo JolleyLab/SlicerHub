@@ -25,7 +25,7 @@ One script, `scripts/bootstrap.mjs`, sets all of this up and is safe to run agai
 - **Docker** with Compose v2 (`docker compose version`).
 - **Node.js 20 or later** on the host (`node -v`). It runs only the setup scripts; the app itself runs in containers.
 - **Git.**
-- **For the viewers, an NVIDIA GPU** with drivers and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/). See [THIRD_PARTY_RUNTIME.md](THIRD_PARTY_RUNTIME.md) for the runtime license terms. On Windows, see [Windows (Docker Desktop with WSL2)](#windows-docker-desktop-with-wsl2).
+- **For the viewers, an NVIDIA GPU** with drivers and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/). On Windows, also see [Windows (Docker Desktop with WSL2)](#windows-docker-desktop-with-wsl2). See [THIRD_PARTY_RUNTIME.md](THIRD_PARTY_RUNTIME.md) for the runtime license terms.
 - **Disk space:** about 30 GB for images, plus room for uploaded case files.
 
 ## Fresh install: local development
