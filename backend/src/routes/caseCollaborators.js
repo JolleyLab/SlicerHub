@@ -9,7 +9,7 @@ import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { getPayloadClient, requirePayload } from '../payload/index.js';
 import { NotFoundError, ValidationError } from '../utils/errors.js';
-import { assertCaseAccess, getCaseRole } from '../utils/caseAccess.js';
+import { assertCaseAccess, getCaseRole, adminCaseIds } from '../utils/caseAccess.js';
 import {
     CASE_ROLES,
     findUserByEmail,
@@ -21,7 +21,6 @@ import {
     prepareAccountSetup,
     assignRealmRole,
     getKeycloakUser,
-    getUserCaseRoleMap,
     getUsersWithRealmRole,
     kcDisplayName,
 } from '../services/keycloakAdmin.js';
@@ -29,7 +28,6 @@ import {
     listGroupAccessForCase,
     setGroupAccessForCase,
     removeGroupAccessForCase,
-    getCaseRoleMapFromGroups,
 } from '../services/caseGroupAccess.js';
 import { getGroup } from '../services/groupStore.js';
 import { removeUnusedInviteeAccount } from '../services/inviteExpiry.js';
@@ -228,25 +226,7 @@ export default function caseCollaboratorsRoutes(app) {
      */
     app.get('/api/cases/invites/pending-approval', ...auth, asyncHandler(async (req, res) => {
         const payload = getPayloadClient();
-        const kcSub = req.user.keycloakSub;
-        if (!kcSub) return res.json({ invites: [] });
-
-        const [kcRoleMap, groupRoleMap] = await Promise.all([
-            getUserCaseRoleMap(kcSub),
-            getCaseRoleMapFromGroups(kcSub),
-        ]);
-        const adminCaseIds = [...new Set([
-            ...Object.entries(kcRoleMap).filter(([, role]) => role === 'admin').map(([id]) => id),
-            ...Object.entries(groupRoleMap).filter(([, role]) => role === 'admin').map(([id]) => id),
-        ])].map(String);
-
-        const ownedResult = await payload.find({
-            collection: 'cases',
-            where: { owner_id: { equals: kcSub } },
-            limit: 200,
-            depth: 0,
-        });
-        const allAdminIds = [...new Set([...adminCaseIds, ...ownedResult.docs.map(d => String(d.id))])];
+        const allAdminIds = await adminCaseIds(req);
         if (!allAdminIds.length) return res.json({ invites: [] });
 
         const result = await payload.find({

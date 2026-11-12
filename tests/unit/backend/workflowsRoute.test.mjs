@@ -3,35 +3,9 @@ import assert from 'node:assert/strict';
 import { mock } from 'node:test';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { makeApp, dispatch, fakePayload } from './helpers/routeHarness.mjs';
-
-// caseAccess.js only asks Keycloak for case roles under this provider (read when config.js loads).
-process.env.AUTH_PROVIDER = 'keycloak';
-
-let payloadClient = null;
-mock.module('../../../backend/src/payload/index.js', {
-    namedExports: {
-        getPayloadClient: () => payloadClient,
-        requirePayload: (req, res, next) => (payloadClient ? next() : res.status(503).json({})),
-    },
-});
-mock.module('../../../backend/src/middleware/authMiddleware.js', {
-    namedExports: { authenticateToken: (req, res, next) => next() },
-});
-// Case roles: owner → admin (real caseAccess.js); everyone else from this map.
-const caseRoles = {}; // `${sub}:${caseId}` -> role
-mock.module('../../../backend/src/services/keycloakAdmin.js', {
-    namedExports: {
-        getUserCaseRole: async (sub, caseId) => caseRoles[`${sub}:${caseId}`] ?? null,
-        getUserCaseRoleMap: async () => ({}),
-    },
-});
-mock.module('../../../backend/src/services/caseGroupAccess.js', {
-    namedExports: {
-        getCaseRoleFromGroups: async () => null,
-        getCaseRoleMapFromGroups: async () => ({}),
-    },
-});
+import { mocks } from './helpers/caseRouteMocks.mjs';
+import { makeApp, dispatch } from './helpers/routeHarness.mjs';
+import { ADMIN, MEMBER, STRANGER, seedWorkflows } from './helpers/workflowFixtures.mjs';
 
 // In-memory storage, and multer replaced by a stand-in that takes req.body.upload as the file.
 const stored = new Map(); // key -> Buffer
@@ -68,27 +42,10 @@ workflowRoutes(app);
 caseWorkflowRoutes(app);
 const call = (method, path, opts) => dispatch(app, method, path, opts);
 
-const ADMIN = { id: 1, role: 'user', keycloakSub: 'kc-admin' };   // owns case 1
-const MEMBER = { id: 2, role: 'user', keycloakSub: 'kc-member' }; // collaborator on case 1
-const STRANGER = { id: 3, role: 'user', keycloakSub: 'kc-stranger' };
-
-function workflow(id, owner, visibility, extensions = ['SlicerHeart']) {
-    return { id, name: `WF ${id}`, owner_id: owner, visibility, target: 'slicerweb', extensions, updatedAt: '2026-01-01T00:00:00.000Z' };
-}
-
 test.beforeEach(() => {
     stored.clear();
     upload.tooLarge = false;
-    payloadClient = fakePayload({
-        cases: [{ id: 1, title: 'Case', owner_id: 'kc-admin' }],
-        workflows: [
-            workflow(10, 'kc-member', 'private', ['SlicerIGT']),
-            workflow(11, 'kc-member', 'public', ['SlicerRT', 'SlicerHeart']),
-            workflow(12, 'kc-admin', 'private'),
-        ],
-    });
-    for (const k of Object.keys(caseRoles)) delete caseRoles[k];
-    caseRoles['kc-member:1'] = 'collaborator';
+    seedWorkflows();
 });
 
 // ── validation ──────────────────────────────────────────────────────────────
@@ -117,7 +74,7 @@ test('create stores the owner and SlicerWeb target; list shows only mine', async
     const created = await call('POST', '/api/workflows', { user: STRANGER, body: { name: 'Mine', extensions: ['SlicerIGT'] } });
     assert.equal(created.status, 201);
     assert.equal(created.body.workflow.isMine, true);
-    const row = payloadClient.rows.workflows.find((w) => w.name === 'Mine');
+    const row = mocks.payload.rows.workflows.find((w) => w.name === 'Mine');
     assert.equal(row.owner_id, 'kc-stranger');
     assert.equal(row.target, 'slicerweb');
 
@@ -145,7 +102,7 @@ test('only the owner can edit or delete', async () => {
     assert.equal(edited.body.workflow.visibility, 'private');
     assert.equal(edited.body.workflow.name, 'WF 11');
     assert.equal((await call('DELETE', '/api/workflows/11', { user: MEMBER })).status, 204);
-    assert.equal(payloadClient.rows.workflows.some((w) => w.id === 11), false);
+    assert.equal(mocks.payload.rows.workflows.some((w) => w.id === 11), false);
 });
 
 // ── case approvals ─────────────────────────────────────────────────────────
@@ -161,7 +118,7 @@ test('a case admin can approve a public workflow or their own private one, not s
 test('collaborators cannot approve or remove', async () => {
     assert.equal((await call('POST', '/api/cases/1/workflows', { user: MEMBER, body: { workflowId: 11 } })).status, 403);
     await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
-    const [row] = payloadClient.rows['case-workflows'];
+    const [row] = mocks.payload.rows['case-workflows'];
     assert.equal((await call('DELETE', `/api/cases/1/workflows/${row.id}`, { user: MEMBER })).status, 403);
 });
 
@@ -185,7 +142,7 @@ test('the approved copy survives source edits and deletion; re-approving refresh
 
     const again = await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
     assert.equal(again.status, 200);
-    assert.equal(payloadClient.rows['case-workflows'].length, 1);
+    assert.equal(mocks.payload.rows['case-workflows'].length, 1);
     approved = (await call('GET', '/api/cases/1/workflows', { user: ADMIN })).body.approved[0];
     assert.deepEqual(approved.extensions, ['SlicerIGT']);
     assert.equal(approved.updateAvailable, false);
@@ -196,18 +153,18 @@ test('the approved copy survives source edits and deletion; re-approving refresh
 });
 
 test('removing an approval only works within its own case', async () => {
-    payloadClient.rows.cases.push({ id: 2, title: 'Other', owner_id: 'kc-admin' });
+    mocks.payload.rows.cases.push({ id: 2, title: 'Other', owner_id: 'kc-admin' });
     await call('POST', '/api/cases/2/workflows', { user: ADMIN, body: { workflowId: 11 } });
-    const [row] = payloadClient.rows['case-workflows'];
+    const [row] = mocks.payload.rows['case-workflows'];
     assert.equal((await call('DELETE', `/api/cases/1/workflows/${row.id}`, { user: ADMIN })).status, 404);
     assert.equal((await call('DELETE', `/api/cases/2/workflows/${row.id}`, { user: ADMIN })).status, 204);
-    assert.equal(payloadClient.rows['case-workflows'].length, 0);
+    assert.equal(mocks.payload.rows['case-workflows'].length, 0);
 });
 
 test('approving copies what the menu needs and records the decision', async () => {
-    payloadClient.rows.workflows.find((w) => w.id === 11).file_types = ['mrb'];
+    mocks.payload.rows.workflows.find((w) => w.id === 11).file_types = ['mrb'];
     await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
-    const [row] = payloadClient.rows['case-workflows'];
+    const [row] = mocks.payload.rows['case-workflows'];
     assert.equal(row.status, 'approved');
     assert.equal(row.decided_by, 'kc-admin');
     assert.deepEqual(row.file_types, ['mrb']);
@@ -217,7 +174,7 @@ test('approving copies what the menu needs and records the decision', async () =
 });
 
 test('rows that are not approved are not offered; rows without a status count as approved', async () => {
-    payloadClient.rows['case-workflows'] = [
+    mocks.payload.rows['case-workflows'] = [
         { id: 1, case: 1, workflow: '11', name: 'Old row', extensions: [] },
         { id: 2, case: 1, workflow: '12', name: 'Pending', status: 'pending', extensions: [] },
         { id: 3, case: 1, workflow: '10', name: 'Declined', status: 'declined', extensions: [] },
@@ -264,7 +221,7 @@ test('removing an approval clears the defaults that used it', async () => {
         user: ADMIN, body: { defaults: { mrb: String(approval.id), blank: 'builtin:full' } },
     });
     await call('DELETE', `/api/cases/1/workflows/${approval.id}`, { user: ADMIN });
-    assert.deepEqual(payloadClient.rows.cases[0].workflow_defaults, { blank: 'builtin:full' });
+    assert.deepEqual(mocks.payload.rows.cases[0].workflow_defaults, { blank: 'builtin:full' });
 });
 
 // ── browsing and approving from a list ─────────────────────────────────────
@@ -290,7 +247,7 @@ test('admins get the workflows they could approve; members do not', async () => 
 test('the owner can upload an icon; it is stored and gets a versioned URL', async () => {
     const res = await call('PUT', '/api/workflows/11/icon', { user: MEMBER, body: { upload: PNG } });
     assert.equal(res.status, 200);
-    const key = payloadClient.rows.workflows.find((w) => w.id === 11).icon_key;
+    const key = mocks.payload.rows.workflows.find((w) => w.id === 11).icon_key;
     assert.match(key, /^workflowIcons\/11-[a-z0-9]+\.png$/);
     assert.deepEqual(stored.get(key), PNG);
     assert.equal(res.body.workflow.iconUrl, `/api/workflows/11/icon?v=${key.split('/').pop()}`);

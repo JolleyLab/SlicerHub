@@ -257,10 +257,10 @@ These follow the two patterns already in use: pending invites (a live count in t
 | `status` | select `pending` / `approved` / `declined` | existing rows are `approved` |
 | `requesters` | json (string[]) | Keycloak subs only. No names or emails are copied; they're looked up from Keycloak when shown, as the People dialog does. Cleared once the request is decided. |
 | `requested_at` | date | when the row last became pending; for "requested 3 days ago" |
-| `decline_reason` | text | optional, short, plain text; kept only until the next request or approval |
+| `decline_reason` | text | optional, short (500 characters), plain text; shown to the admin if the workflow is requested again, and cleared on approval |
 | `decided_by`, `decided_at` | text, date | replace `approved_by` / `approved_at` |
 
-`extensions`, `name` and `source_updated_at` are filled in on approval. Members' Open menus read only `approved` rows. Renaming `approved_by` / `approved_at` drops columns, so they go into `RETIRED_SCHEMA` first.
+`name`, `description`, `extensions`, `file_types` and `source_updated_at` are copied from the source on request and again on approval. Members' Open menus read only `approved` rows; rows with no `status` (made before requests existed) count as approved. Renaming `approved_by` / `approved_at` drops columns, so they go into `RETIRED_SCHEMA` first.
 
 **`cases`** gains:
 

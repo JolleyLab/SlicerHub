@@ -3,7 +3,8 @@
  * approving and removing them, and the case's workflow settings. An approval keeps a copy of
  * the workflow as approved.
  *
- *   GET    /api/cases/:id/workflows               members: approved, their own, defaults, settings (admins: + available)
+ *   GET    /api/cases/:id/workflows               members: approved, their own, their requests, defaults, settings
+ *                                                 (admins: + pending requests, available)
  *   POST   /api/cases/:id/workflows               admins: approve, or re-approve to refresh the copy
  *   DELETE /api/cases/:id/workflows/:approvalId   admins
  *   PATCH  /api/cases/:id/workflow-settings       admins: { defaults?, allowPersonal? }
@@ -12,14 +13,16 @@
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { getPayloadClient, requirePayload } from '../payload/index.js';
-import { NotFoundError, ValidationError } from '../utils/errors.js';
+import { ConflictError, ValidationError } from '../utils/errors.js';
 import { loadCaseWithAccess } from '../utils/caseAccess.js';
 import { requireOwnerId, canView, loadOwnedDoc } from '../utils/ownedDocs.js';
-import { isDocId } from '../utils/validation.js';
 import {
     WORKFLOWS, CASE_WORKFLOWS, BUILTIN_WORKFLOW_IDS, findAll, myWorkflows, publicWorkflows, toWorkflow,
     isApproved, toApproval, workflowCopy, sanitizeWorkflowDefaults, withoutDefault,
 } from '../services/workflows.js';
+import {
+    canRequest, isPending, requestersOf, loadCaseWorkflowRow, describeRequests, notifyRequesters,
+} from '../services/workflowRequests.js';
 
 const caseRows = (caseId) => findAll(CASE_WORKFLOWS, { case: { equals: Number(caseId) } }, 'name');
 
@@ -57,18 +60,24 @@ export default function caseWorkflowRoutes(app) {
                 .sort((a, b) => a.name.localeCompare(b.name))
                 .map((d) => toWorkflow(d, req))
             : undefined;
+        const me = requireOwnerId(req);
+        const pending = rows.filter(isPending);
         res.json({
             approved: approvals.map((a) => toApproval(a, sourceById.get(String(a.workflow)))),
             mine: settings.allowPersonal ? mine.map((d) => toWorkflow(d, req)) : [],
+            myRequests: pending.filter((r) => requestersOf(r).includes(me)).map((r) => ({ workflowId: r.workflow, name: r.name })),
             ...settings,
             canManage,
+            canRequest: canRequest(role),
+            ...(canManage ? { requests: await describeRequests(pending, new Map([[String(caseDoc.id), caseDoc]])) } : {}),
             ...(available ? { available } : {}),
         });
     }));
 
     // Approve (or re-approve, refreshing the copy) a public workflow or one of the admin's own.
+    // Approving a pending request tells its requesters.
     app.post('/api/cases/:id/workflows', ...auth, asyncHandler(async (req, res) => {
-        await loadCaseWithAccess(req.params.id, req, 'admin');
+        const { caseDoc } = await loadCaseWithAccess(req.params.id, req, 'admin');
         const source = await loadOwnedDoc(WORKFLOWS, String(req.body?.workflowId ?? ''), req, { write: false });
         const data = {
             case: Number(req.params.id),
@@ -84,20 +93,20 @@ export default function caseWorkflowRoutes(app) {
         const [existing] = await findAll(CASE_WORKFLOWS, {
             case: { equals: data.case }, workflow: { equals: data.workflow },
         });
+        if (existing && isPending(existing)) await notifyRequesters(existing, caseDoc, 'approved');
         const row = existing
             ? await payload.update({ collection: CASE_WORKFLOWS, id: existing.id, data })
             : await payload.create({ collection: CASE_WORKFLOWS, data });
         res.status(existing ? 200 : 201).json({ approval: toApproval(row) });
     }));
 
-    // Removing an approval also clears the defaults that used it.
+    // Removing an approval also clears the defaults that used it. A request is declined instead,
+    // so its requesters are told.
     app.delete('/api/cases/:id/workflows/:approvalId', ...auth, asyncHandler(async (req, res) => {
         const { caseDoc } = await loadCaseWithAccess(req.params.id, req, 'admin');
+        const row = await loadCaseWorkflowRow(req.params.id, req.params.approvalId);
+        if (isPending(row)) throw new ConflictError('Decline a pending request instead of removing it');
         const payload = getPayloadClient();
-        const row = isDocId(req.params.approvalId)
-            ? await payload.findByID({ collection: CASE_WORKFLOWS, id: req.params.approvalId, depth: 0, disableErrors: true })
-            : null;
-        if (!row || String(row.case) !== String(req.params.id)) throw new NotFoundError('Not found');
         await payload.delete({ collection: CASE_WORKFLOWS, id: row.id });
         const defaults = caseDoc.workflow_defaults || {};
         const remaining = withoutDefault(defaults, row.id);

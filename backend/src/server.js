@@ -43,6 +43,7 @@ import casesRoutes from "./routes/cases.js";
 import caseCollaboratorsRoutes from "./routes/caseCollaborators.js";
 import workflowRoutes from "./routes/workflows.js";
 import caseWorkflowRoutes from "./routes/caseWorkflows.js";
+import caseWorkflowRequestRoutes from "./routes/caseWorkflowRequests.js";
 import { registerCaseTusRoute } from "./routes/caseTus.js";
 
 async function seedRegistrationReviewersGroup() {
@@ -213,6 +214,7 @@ caseCollaboratorsRoutes(app);
 casesRoutes(app);
 workflowRoutes(app);     // /api/workflows
 caseWorkflowRoutes(app); // /api/cases/:id/workflows
+caseWorkflowRequestRoutes(app); // /api/cases/:id/workflows/requests…, /api/workflow-requests/pending
 
 // Register container routes
 containerRoutes(app);

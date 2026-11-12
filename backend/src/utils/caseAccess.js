@@ -123,3 +123,20 @@ export async function buildCaseRoleMap(req) {
     }
     return merged;
 }
+
+/**
+ * IDs (strings) of the cases the requester administers: owned, or admin through Keycloak or
+ * SlicerHub groups. For "awaiting my approval" lists (invites, workflow requests).
+ */
+export async function adminCaseIds(req) {
+    const keycloakSub = req.user.keycloakSub;
+    if (!keycloakSub) return [];
+    const [roleMap, owned] = await Promise.all([
+        buildCaseRoleMap(req),
+        getPayloadClient().find({ collection: 'cases', where: { owner_id: { equals: keycloakSub } }, limit: 200, depth: 0 }),
+    ]);
+    return [...new Set([
+        ...Object.entries(roleMap).filter(([, role]) => role === 'admin').map(([id]) => String(id)),
+        ...owned.docs.map((d) => String(d.id)),
+    ])];
+}
