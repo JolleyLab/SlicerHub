@@ -204,6 +204,69 @@ test('removing an approval only works within its own case', async () => {
     assert.equal(payloadClient.rows['case-workflows'].length, 0);
 });
 
+test('approving copies what the menu needs and records the decision', async () => {
+    payloadClient.rows.workflows.find((w) => w.id === 11).file_types = ['mrb'];
+    await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
+    const [row] = payloadClient.rows['case-workflows'];
+    assert.equal(row.status, 'approved');
+    assert.equal(row.decided_by, 'kc-admin');
+    assert.deepEqual(row.file_types, ['mrb']);
+    const [approved] = (await call('GET', '/api/cases/1/workflows', { user: MEMBER })).body.approved;
+    assert.deepEqual(approved.fileTypes, ['mrb']);
+    assert.equal('approved_by' in row, false);
+});
+
+test('rows that are not approved are not offered; rows without a status count as approved', async () => {
+    payloadClient.rows['case-workflows'] = [
+        { id: 1, case: 1, workflow: '11', name: 'Old row', extensions: [] },
+        { id: 2, case: 1, workflow: '12', name: 'Pending', status: 'pending', extensions: [] },
+        { id: 3, case: 1, workflow: '10', name: 'Declined', status: 'declined', extensions: [] },
+    ];
+    const res = await call('GET', '/api/cases/1/workflows', { user: MEMBER });
+    assert.deepEqual(res.body.approved.map((a) => a.name), ['Old row']);
+});
+
+// ── case settings ──────────────────────────────────────────────────────────
+
+test('members get the case defaults; personal workflows are on unless the case turns them off', async () => {
+    let res = await call('GET', '/api/cases/1/workflows', { user: MEMBER });
+    assert.deepEqual(res.body.defaults, {});
+    assert.equal(res.body.allowPersonal, true);
+
+    await call('PATCH', '/api/cases/1/workflow-settings', { user: ADMIN, body: { allowPersonal: false } });
+    res = await call('GET', '/api/cases/1/workflows', { user: MEMBER });
+    assert.equal(res.body.allowPersonal, false);
+    assert.deepEqual(res.body.mine, []);
+});
+
+test('only admins change settings; defaults must be approved rows or built-ins', async () => {
+    assert.equal((await call('PATCH', '/api/cases/1/workflow-settings', { user: MEMBER, body: { allowPersonal: false } })).status, 403);
+    const { body: { approval } } = await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
+
+    const res = await call('PATCH', '/api/cases/1/workflow-settings', {
+        user: ADMIN,
+        body: { defaults: { '.MRB': String(approval.id), blank: 'builtin:simplified', '*': '' } },
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.defaults, { mrb: String(approval.id), blank: 'builtin:simplified' });
+
+    const bad = (defaults) => call('PATCH', '/api/cases/1/workflow-settings', { user: ADMIN, body: { defaults } });
+    assert.equal((await bad({ mrb: '11' })).status, 400);            // a source workflow id, not an approval
+    assert.equal((await bad({ mrb: 'builtin:evil' })).status, 400);
+    assert.equal((await bad({ '../x': 'builtin:full' })).status, 400);
+    assert.equal((await bad(['builtin:full'])).status, 400);
+    assert.equal((await call('PATCH', '/api/cases/1/workflow-settings', { user: ADMIN, body: { allowPersonal: 'no' } })).status, 400);
+});
+
+test('removing an approval clears the defaults that used it', async () => {
+    const { body: { approval } } = await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
+    await call('PATCH', '/api/cases/1/workflow-settings', {
+        user: ADMIN, body: { defaults: { mrb: String(approval.id), blank: 'builtin:full' } },
+    });
+    await call('DELETE', `/api/cases/1/workflows/${approval.id}`, { user: ADMIN });
+    assert.deepEqual(payloadClient.rows.cases[0].workflow_defaults, { blank: 'builtin:full' });
+});
+
 // ── browsing and approving from a list ─────────────────────────────────────
 
 test('?scope=public lists everyone\'s public workflows, without owners', async () => {

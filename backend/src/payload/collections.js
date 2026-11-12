@@ -44,6 +44,10 @@ export const Cases = {
             defaultValue: 'active',
             required: true,
         },
+        // Case Settings › Workflows (docs/workflows-design.md). Defaults: { blank?, '*'?, <file type>? }
+        // → a case-workflows id or a built-in workflow id.
+        { name: 'workflow_defaults', type: 'json' },
+        { name: 'allow_personal_workflows', type: 'checkbox', defaultValue: true },
     ],
 };
 
@@ -373,8 +377,9 @@ export const Workflows = {
 };
 
 /**
- * A workflow approved for a case by a case admin. Holds a copy of the workflow as approved,
- * so later edits (or deletion) by its owner don't change the case until it is re-approved.
+ * A workflow on a case: requested by members, or approved by a case admin. One row per
+ * (case, workflow). An approved row holds a copy of the workflow as approved, so later edits
+ * (or deletion) by its owner don't change the case until it is re-approved.
  */
 export const CaseWorkflows = {
     slug: 'case-workflows',
@@ -382,12 +387,30 @@ export const CaseWorkflows = {
     fields: [
         { name: 'case', type: 'relationship', relationTo: 'cases', required: true, index: true },
         { name: 'workflow', type: 'text', label: 'Source workflow ID', required: true, index: true },
+        {
+            name: 'status',
+            type: 'select',
+            options: [
+                { label: 'Pending',  value: 'pending' },
+                { label: 'Approved', value: 'approved' },
+                { label: 'Declined', value: 'declined' },
+            ],
+            defaultValue: 'approved',
+            index: true,
+        },
+        // Copied from the source on request, and again on approval.
         { name: 'name', type: 'text', required: true },
+        { name: 'description', type: 'textarea' },
         { name: 'extensions', type: 'json' },
-        { name: 'approved_by', type: 'text', label: 'Approved by (Keycloak sub)', required: true },
-        { name: 'approved_at', type: 'date', required: true },
+        { name: 'file_types', type: 'json' },
         // The source's updatedAt when approved: a later one means "Update available".
         { name: 'source_updated_at', type: 'date' },
+        // Requests: Keycloak subs only (names are looked up when shown); cleared once decided.
+        { name: 'requesters', type: 'json' },
+        { name: 'requested_at', type: 'date' },
+        { name: 'decline_reason', type: 'text' }, // kept until the next request or approval
+        { name: 'decided_by', type: 'text', label: 'Decided by (Keycloak sub)' },
+        { name: 'decided_at', type: 'date' },
     ],
 };
 

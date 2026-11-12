@@ -140,6 +140,9 @@ const RETIRED_SCHEMA = [
     'ALTER TABLE IF EXISTS case_invites DROP COLUMN IF EXISTS token_hash',
     'ALTER TABLE IF EXISTS registration_requests DROP COLUMN IF EXISTS completion_token_hash',
     'ALTER TABLE IF EXISTS registration_requests DROP COLUMN IF EXISTS completion_token_expires_at',
+    // Workflow approvals became requests too: approved_* → decided_* (docs/workflows-design.md).
+    'ALTER TABLE IF EXISTS case_workflows DROP COLUMN IF EXISTS approved_by',
+    'ALTER TABLE IF EXISTS case_workflows DROP COLUMN IF EXISTS approved_at',
 ];
 
 function dropRetiredSchema(dbUser) {
@@ -150,7 +153,7 @@ function dropRetiredSchema(dbUser) {
             `docker compose exec -T payload-db psql -v ON_ERROR_STOP=1 -q -U ${dbUser} -d payload`,
             { cwd: ROOT, input: sql, stdio: ['pipe', 'pipe', 'pipe'] }
         );
-        ok('old password-reset table and invite/registration token columns are gone');
+        ok('tables and columns of retired features are gone');
     } catch (err) {
         const detail = String(err.stderr || err.message || '').trim().split(/\r?\n/)[0];
         warn(`Could not remove retired schema (${detail}). The backend may stop at startup asking about it.`);
