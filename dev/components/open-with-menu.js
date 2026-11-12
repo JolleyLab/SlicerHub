@@ -3,14 +3,14 @@ import { render } from 'lit-html';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
 
-const MENU_MIN_WIDTH = 220;
+const MENU_MIN_WIDTH = 240;
 const MENU_GAP_PX = 4;
 const VIEWPORT_PADDING_PX = 8;
-const PORTAL_STYLE_ID = 'attachment-open-menu-portal-styles';
-const APPROX_MENU_HEIGHT_PX = 136;
+const PORTAL_STYLE_ID = 'open-with-menu-portal-styles';
+const APPROX_MENU_HEIGHT_PX = 240;
 
 const PORTAL_CSS = `
-.attachment-open-menu-panel {
+.open-with-menu-panel {
   position: fixed;
   z-index: 10000;
   min-width: ${MENU_MIN_WIDTH}px;
@@ -25,7 +25,7 @@ const PORTAL_CSS = `
   border-radius: var(--radius-md, 6px);
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
 }
-.attachment-open-menu-panel .item {
+.open-with-menu-panel .item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -39,13 +39,13 @@ const PORTAL_CSS = `
   cursor: pointer;
   box-sizing: border-box;
 }
-.attachment-open-menu-panel .item:hover,
-.attachment-open-menu-panel .item:focus-visible {
+.open-with-menu-panel .item:hover,
+.open-with-menu-panel .item:focus-visible {
   background: color-mix(in srgb, var(--color-primary, #3366cc) 10%, transparent);
   outline: none;
 }
-.attachment-open-menu-panel .item-label { flex: 1; min-width: 0; }
-.attachment-open-menu-panel .check {
+.open-with-menu-panel .item-label { flex: 1; min-width: 0; }
+.open-with-menu-panel .check {
   flex: 0 0 14px;
   width: 14px;
   color: var(--color-primary, #3366cc);
@@ -53,21 +53,41 @@ const PORTAL_CSS = `
   line-height: 1;
   text-align: center;
 }
-.attachment-open-menu-panel .check.is-empty { visibility: hidden; }
-.attachment-open-menu-panel .hint {
+.open-with-menu-panel .check.is-empty { visibility: hidden; }
+.open-with-menu-panel .hint {
   display: block;
   margin-top: 2px;
   font-size: 0.72rem;
   color: var(--color-text-secondary, #666);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+.open-with-menu-panel .heading {
+  padding: 8px 12px 2px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-text-secondary, #666);
+}
+.open-with-menu-panel .divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--color-border, #ccc);
+}
+.open-with-menu-panel .more { color: var(--color-text-secondary, #666); }
+.open-with-menu-panel .more .caret { transition: transform 0.15s; }
+.open-with-menu-panel .more[aria-expanded='true'] .caret { transform: rotate(90deg); }
+.open-with-menu-panel .nested { padding-left: 12px; }
 `;
 
 /**
- * Open-with control for case attachments.
- * Emits `open-viewer` with { viewer: 'full' | 'simplified' | 'web' }.
- * Menu is portaled to document.body so scroll parents do not clip it.
+ * Open ▾ for a case file or the blank viewer (docs/workflows-design.md › Opening a file).
+ * `menu` comes from utils/caseWorkflowMenu.js workflowMenu(); `selectedKey` is what the main
+ * button opens. Built-in viewers sit under "Other ways to open", shown directly when there is
+ * nothing else. Emits `open-workflow` with { entry }.
+ * The menu is portaled to document.body so scroll parents do not clip it.
  */
-export class AttachmentOpenMenu extends LitElement {
+export class OpenWithMenu extends LitElement {
     static get styles() {
         return css`
             :host {
@@ -83,13 +103,24 @@ export class AttachmentOpenMenu extends LitElement {
                 border-radius: var(--radius-lg, 8px);
                 background: transparent;
                 color: var(--color-text-secondary);
-                width: 28px;
+                min-width: 28px;
+                max-width: 220px;
                 height: 28px;
-                padding: 0;
+                padding: 0 4px;
+                gap: 2px;
                 display: inline-flex;
                 align-items: center;
                 justify-content: center;
                 cursor: pointer;
+                font: inherit;
+                font-size: 0.78rem;
+            }
+
+            .trigger-label {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                padding-left: 4px;
             }
 
             .trigger:hover:not(:disabled),
@@ -113,6 +144,7 @@ export class AttachmentOpenMenu extends LitElement {
                 width: 16px;
                 height: 16px;
                 display: block;
+                flex-shrink: 0;
             }
         `;
     }
@@ -123,8 +155,13 @@ export class AttachmentOpenMenu extends LitElement {
             /** The attachment this menu belongs to; makes the button's accessible name specific. */
             fileName: { type: String },
             disabled: { type: Boolean },
-            /** Which viewer is the account default: 'web' | 'full' | 'simplified' */
-            defaultViewer: { type: String }
+            /** { recommended, yours, builtins } from workflowMenu() */
+            menu: { attribute: false },
+            /** Key of the entry the main button opens (checked in the menu). */
+            selectedKey: { type: String },
+            /** Shown next to the chevron, e.g. the workflow's name when it isn't the person's own default. */
+            label: { type: String },
+            showMore: { state: true }
         };
     }
 
@@ -134,7 +171,10 @@ export class AttachmentOpenMenu extends LitElement {
         this.open = false;
         this.fileName = '';
         this.disabled = false;
-        this.defaultViewer = 'web';
+        this.menu = null;
+        this.selectedKey = '';
+        this.label = '';
+        this.showMore = false;
         this._portalHost = null;
         this._onDocumentPointerDown = (event) => this.closeIfOutside(event);
         this._repositionIfOpen = () => {
@@ -158,12 +198,15 @@ export class AttachmentOpenMenu extends LitElement {
     }
 
     updated(changed) {
-        if (changed.has('open') || (this.open && changed.has('defaultViewer'))) {
+        const contentChanged = ['menu', 'selectedKey', 'showMore'].some((key) => changed.has(key));
+        if (changed.has('open') || (this.open && contentChanged)) {
             if (this.open) this.renderMenuPortal();
             else this.destroyMenuPortal();
         }
-        // Opening the menu moves keyboard focus into it (it is rendered at the end of the page).
+        // Opening the menu moves keyboard focus into it (it is rendered at the end of the page);
+        // expanding "Other ways to open" keeps focus on that item.
         if (changed.has('open') && this.open) this.focusMenuItem(0);
+        else if (this.open && changed.has('showMore')) this._portalHost?.querySelector('.more')?.focus();
     }
 
     menuItems() {
@@ -232,7 +275,7 @@ export class AttachmentOpenMenu extends LitElement {
         if (this._portalHost) return this._portalHost;
         this.ensurePortalStyles();
         const host = document.createElement('div');
-        host.setAttribute('data-attachment-open-menu', '');
+        host.setAttribute('data-open-with-menu', '');
         document.body.appendChild(host);
         this._portalHost = host;
         return host;
@@ -268,54 +311,70 @@ export class AttachmentOpenMenu extends LitElement {
         return { top: Math.round(top), left: Math.round(left) };
     }
 
-    menuItemTemplate({ label, viewer, isDefault, hint = '' }) {
+    entryName(entry) {
+        return entry.nameKey ? t(entry.nameKey) : entry.name;
+    }
+
+    /** Second line: the description's first line, else where it opens. */
+    entryHint(entry) {
+        if (entry.hintKey) return t(entry.hintKey);
+        return (entry.description || '').split('\n')[0].trim() || t('viewers.opensInBrowser');
+    }
+
+    itemTemplate(entry) {
+        const selected = entry.key === this.selectedKey;
         return html`
-            <button
-                class="item"
-                type="button"
-                role="menuitem"
-                tabindex="-1"
-                @click=${() => this.selectViewer(viewer)}
-            >
-                <span class="check ${isDefault ? '' : 'is-empty'}" aria-hidden="true">✓</span>
+            <button class="item" type="button" role="menuitem" tabindex="-1" @click=${() => this.select(entry)}>
+                <span class="check ${selected ? '' : 'is-empty'}" aria-hidden="true">✓</span>
                 <span class="item-label">
-                    ${label}
-                    ${hint ? html`<span class="hint">${hint}</span>` : ''}
-                    ${isDefault ? html`<span class="hint">${t('viewers.defaultHint')}</span>` : ''}
+                    ${this.entryName(entry)}
+                    <span class="hint">${this.entryHint(entry)}</span>
                 </span>
             </button>
         `;
     }
 
+    /** The sections to show; the selected entry is always listed, even if made for another file type. */
+    sections() {
+        const { recommended = [], yours = [], builtins = [], all = [] } = this.menu || {};
+        const listed = [...recommended, ...yours, ...builtins];
+        const selected = all.find((e) => e.key === this.selectedKey);
+        const extra = selected && !listed.includes(selected) ? [selected] : [];
+        return { recommended: [...extra, ...recommended], yours, builtins };
+    }
+
     renderMenuPortal() {
         const { top, left } = this.menuAnchorPosition();
-        const dv = this.defaultViewer || 'web';
         const host = this.ensurePortalHost();
+        const { recommended, yours, builtins } = this.sections();
+        const hasWorkflows = recommended.length + yours.length > 0;
+        const section = (headingKey, entries) => (entries.length ? html`
+            <div role="group" aria-label=${t(headingKey)}>
+                <div class="heading" aria-hidden="true">${t(headingKey)}</div>
+                ${entries.map((e) => this.itemTemplate(e))}
+            </div>
+        ` : '');
 
         render(html`
             <div
-                class="attachment-open-menu-panel"
+                class="open-with-menu-panel"
                 role="menu"
                 aria-label=${t('viewers.openWith')}
                 @keydown=${(e) => this.onMenuKeydown(e)}
                 style="top:${top}px;left:${left}px;"
             >
-                ${this.menuItemTemplate({
-                    label: t('viewers.slicerWeb'),
-                    viewer: 'web',
-                    isDefault: dv === 'web',
-                    hint: t('viewers.slicerWebHint')
-                })}
-                ${this.menuItemTemplate({
-                    label: t('viewers.fullSlicer'),
-                    viewer: 'full',
-                    isDefault: dv === 'full'
-                })}
-                ${this.menuItemTemplate({
-                    label: t('viewers.simplified'),
-                    viewer: 'simplified',
-                    isDefault: dv === 'simplified'
-                })}
+                ${section('viewers.recommended', recommended)}
+                ${section('viewers.yours', yours)}
+                ${hasWorkflows ? html`
+                    <div class="divider" role="separator"></div>
+                    <button class="item more" type="button" role="menuitem" tabindex="-1"
+                        aria-expanded=${this.showMore ? 'true' : 'false'}
+                        @click=${() => { this.showMore = !this.showMore; }}>
+                        <span class="check caret" aria-hidden="true">›</span>
+                        <span class="item-label">${t('viewers.otherWays')}</span>
+                    </button>
+                    ${this.showMore ? html`<div class="nested">${builtins.map((e) => this.itemTemplate(e))}</div>` : ''}
+                ` : builtins.map((e) => this.itemTemplate(e))}
             </div>
         `, host);
     }
@@ -330,15 +389,17 @@ export class AttachmentOpenMenu extends LitElement {
     toggleMenu(event) {
         event?.stopPropagation?.();
         if (this.disabled) return;
+        // Built-ins start expanded when one of them is what the button opens.
+        if (!this.open) this.showMore = (this.menu?.builtins || []).some((e) => e.key === this.selectedKey);
         this.open = !this.open;
     }
 
-    selectViewer(viewer) {
+    select(entry) {
         // Focus goes back to the button first, so whatever opens next knows where to return to.
         this.shadowRoot?.querySelector('.trigger')?.focus();
         this.open = false;
-        this.dispatchEvent(new CustomEvent('open-viewer', {
-            detail: { viewer },
+        this.dispatchEvent(new CustomEvent('open-workflow', {
+            detail: { entry },
             bubbles: true,
             composed: true
         }));
@@ -355,7 +416,7 @@ export class AttachmentOpenMenu extends LitElement {
             <button
                 class="trigger"
                 type="button"
-                title=${this.triggerLabel()}
+                title=${this.label ? `${this.triggerLabel()} (${this.label})` : this.triggerLabel()}
                 aria-label=${this.triggerLabel()}
                 aria-expanded=${this.open ? 'true' : 'false'}
                 aria-haspopup="menu"
@@ -363,6 +424,7 @@ export class AttachmentOpenMenu extends LitElement {
                 @click=${(e) => this.toggleMenu(e)}
                 @keydown=${(e) => this.onTriggerKeydown(e)}
             >
+                ${this.label ? html`<span class="trigger-label">${this.label}</span>` : ''}
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path
                         fill="currentColor"
@@ -374,4 +436,4 @@ export class AttachmentOpenMenu extends LitElement {
     }
 }
 
-customElements.define('attachment-open-menu', AttachmentOpenMenu);
+customElements.define('open-with-menu', OpenWithMenu);
