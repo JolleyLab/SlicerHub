@@ -4,7 +4,7 @@
  * the workflow as approved.
  *
  *   GET    /api/cases/:id/workflows               members: approved, their own, their requests, defaults, settings
- *                                                 (admins: + pending requests, available)
+ *                                                 (admins: + pending requests)
  *   POST   /api/cases/:id/workflows               admins: approve, or re-approve to refresh the copy
  *   DELETE /api/cases/:id/workflows/:approvalId   admins
  *   PATCH  /api/cases/:id/workflow-settings       admins: { defaults?, allowPersonal? }
@@ -17,7 +17,7 @@ import { ConflictError, ValidationError } from '../utils/errors.js';
 import { loadCaseWithAccess } from '../utils/caseAccess.js';
 import { requireOwnerId, canView, loadOwnedDoc } from '../utils/ownedDocs.js';
 import {
-    WORKFLOWS, CASE_WORKFLOWS, BUILTIN_WORKFLOW_IDS, findAll, myWorkflows, publicWorkflows, toWorkflow,
+    WORKFLOWS, CASE_WORKFLOWS, BUILTIN_WORKFLOW_IDS, findAll, myWorkflows, toWorkflow,
     isApproved, toApproval, workflowCopy, sanitizeWorkflowDefaults, withoutDefault,
 } from '../services/workflows.js';
 import {
@@ -36,30 +36,19 @@ export default function caseWorkflowRoutes(app) {
     const auth = [authenticateToken, requirePayload];
 
     // What a member can launch on this case: the approved workflows, and their own (unless the
-    // case turns those off), plus the case's defaults. Admins also get `available`: what they
-    // could approve (their own and public ones, not yet approved).
+    // case turns those off), plus the case's defaults and their own pending requests. Admins also
+    // get every pending request. ("Find more…" lists what could be added: routes/caseWorkflowRequests.js.)
     app.get('/api/cases/:id/workflows', ...auth, asyncHandler(async (req, res) => {
         const { caseDoc, role } = await loadCaseWithAccess(req.params.id, req);
         const canManage = role === 'admin';
         const settings = caseSettings(caseDoc);
-        const [rows, mine, everyonePublic] = await Promise.all([
-            caseRows(req.params.id),
-            myWorkflows(req),
-            canManage ? publicWorkflows() : [],
-        ]);
+        const [rows, mine] = await Promise.all([caseRows(req.params.id), myWorkflows(req)]);
         const approvals = rows.filter(isApproved);
         const sourceIds = [...new Set(approvals.map((a) => a.workflow))];
         const sources = sourceIds.length
             ? (await findAll(WORKFLOWS, { id: { in: sourceIds } })).filter((d) => canView(d, req))
             : [];
         const sourceById = new Map(sources.map((d) => [String(d.id), d]));
-        const approvedIds = new Set(approvals.map((a) => String(a.workflow)));
-        const available = canManage
-            ? [...new Map([...mine, ...everyonePublic].map((d) => [String(d.id), d])).values()]
-                .filter((d) => !approvedIds.has(String(d.id)))
-                .sort((a, b) => a.name.localeCompare(b.name))
-                .map((d) => toWorkflow(d, req))
-            : undefined;
         const me = requireOwnerId(req);
         const pending = rows.filter(isPending);
         res.json({
@@ -70,7 +59,6 @@ export default function caseWorkflowRoutes(app) {
             canManage,
             canRequest: canRequest(role),
             ...(canManage ? { requests: await describeRequests(pending, new Map([[String(caseDoc.id), caseDoc]])) } : {}),
-            ...(available ? { available } : {}),
         });
     }));
 

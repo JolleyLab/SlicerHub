@@ -1,6 +1,6 @@
 import { css } from 'lit-element';
 
-/** Styles for case-workflows (the picker and approvals on a case page). */
+/** Styles for workflow lists on a case: Case Settings and "Find more…". */
 export const workflowStyles = css`
     :host { display: block; font-size: 0.9rem; color: var(--color-text-primary); }
     .stack { display: flex; flex-direction: column; gap: 10px; }

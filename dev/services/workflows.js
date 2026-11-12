@@ -40,6 +40,11 @@ export function listAvailableCaseWorkflows(caseId, { q = '', fileTypes = [] } = 
 }
 export const requestCaseWorkflow = (caseId, workflowId) =>
     apiRequest(`/api/cases/${enc(caseId)}/workflows/requests`, { method: 'POST', body: { workflowId } });
+export const declineCaseWorkflowRequest = (caseId, rowId, reason = '') =>
+    apiRequest(`/api/cases/${enc(caseId)}/workflows/${enc(rowId)}/decline`, { method: 'POST', body: { reason } });
+/** Case Settings: { defaults?, allowPersonal? } → the saved { defaults, allowPersonal }. */
+export const updateCaseWorkflowSettings = (caseId, settings) =>
+    apiRequest(`/api/cases/${enc(caseId)}/workflow-settings`, { method: 'PATCH', body: settings });
 export const cancelCaseWorkflowRequest = (caseId, workflowId) =>
     apiRequest(`/api/cases/${enc(caseId)}/workflows/requests/${enc(workflowId)}`, { method: 'DELETE' });
 export const approveCaseWorkflow = (caseId, workflowId) =>

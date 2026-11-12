@@ -233,15 +233,6 @@ test('?scope=public lists everyone\'s public workflows, without owners', async (
     assert.equal('owner_id' in res.body.workflows[0], false);
 });
 
-test('admins get the workflows they could approve; members do not', async () => {
-    let res = await call('GET', '/api/cases/1/workflows', { user: ADMIN });
-    assert.deepEqual(res.body.available.map((w) => w.id), [11, 12]); // public + own private, not member's private 10
-    await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
-    res = await call('GET', '/api/cases/1/workflows', { user: ADMIN });
-    assert.deepEqual(res.body.available.map((w) => w.id), [12]);
-    assert.equal('available' in (await call('GET', '/api/cases/1/workflows', { user: MEMBER })).body, false);
-});
-
 // ── icons ──────────────────────────────────────────────────────────────────
 
 test('the owner can upload an icon; it is stored and gets a versioned URL', async () => {

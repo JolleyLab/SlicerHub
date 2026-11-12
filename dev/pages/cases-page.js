@@ -21,11 +21,11 @@ import {
 import '../components/people-dialog.js';
 import '../components/list-filter-tools.js';
 import '../components/open-with-menu.js';
-import '../components/case-workflows.js';
+import '../components/case-settings.js';
 import '../components/find-workflows-dialog.js';
 import { listCaseWorkflows } from '../services/workflows.js';
 import {
-    workflowMenu, caseDefaultKey, resolveWorkflow, builtinForViewer, readWorkflowChoice, saveWorkflowChoice,
+    workflowMenu, caseDefaultKey, resolveWorkflow, builtinForViewer, readWorkflowChoice, saveWorkflowChoice, fileTypesOf,
 } from '../utils/caseWorkflowMenu.js';
 import { formatBytes } from '../utils/formatBytes.js';
 import { deepActiveElement } from '../utils/focus.js';
@@ -595,6 +595,8 @@ export class CasesPage extends LitElement {
             viewerKind: { type: String },
             /** { caseId, data } from GET /api/cases/:id/workflows, for the Open ▾ menus */
             caseWorkflows: { state: true },
+            /** Case Settings (admins) instead of the case's files and comments */
+            showCaseSettings: { state: true },
             viewerClosing: { type: Boolean },
             currentFileName: { type: String },
             // New Case form
@@ -664,6 +666,7 @@ export class CasesPage extends LitElement {
         this._viewerSeatId = null;
         this.viewerKind = VIEWER_KINDS.SLICER_GUI;
         this.caseWorkflows = null;
+        this.showCaseSettings = false;
         this.viewerClosing = false;
         this._viewerOpenId = 0;
         this._focusBeforeViewer = null;
@@ -878,7 +881,10 @@ export class CasesPage extends LitElement {
 
     updated(changed) {
         if (changed.has('showIframe')) this.syncViewerFocus();
-        if (changed.has('selectedCaseId')) this.loadCaseWorkflows();
+        if (changed.has('selectedCaseId')) {
+            this.showCaseSettings = false;
+            this.loadCaseWorkflows();
+        }
         if (changed.has('selectedCaseId') || this.selectedCaseId) {
             this.syncDetailLayoutObserver();
         }
@@ -2127,13 +2133,18 @@ export class CasesPage extends LitElement {
                 .label=${openWith.label}
                 ?disabled=${!!this.openingAttachmentId || this.viewerLoading}
                 @open-workflow=${(e) => this.openWithWorkflow(caseRow, attachment, e.detail.entry, { remember: true })}
-                @find-workflows=${() => this.renderRoot.querySelector('find-workflows-dialog')?.open({
-                    caseId: caseRow.id,
-                    fileName: attachment ? attachmentFileName(attachment) : null,
-                    canManage: this.caseWorkflowsFor(caseRow)?.canManage === true,
-                })}
+                @find-workflows=${() => this.openFindWorkflows(caseRow, attachment)}
             ></open-with-menu>
         `;
+    }
+
+    /** "Find more…" (attachment null: not for a particular file). */
+    openFindWorkflows(caseRow, attachment = null) {
+        this.renderRoot.querySelector('find-workflows-dialog')?.open({
+            caseId: caseRow.id,
+            fileName: attachment ? attachmentFileName(attachment) : null,
+            canManage: this.caseWorkflowsFor(caseRow)?.canManage === true,
+        });
     }
 
     renderBlankViewerButton(caseRow) {
@@ -2904,18 +2915,7 @@ export class CasesPage extends LitElement {
         const peopleLabel = peopleCount
             ? t('cases.people', { n: peopleCount })
             : t('cases.peopleLabel');
-        return html`
-            <page-layout-template
-                ?inert=${this.showIframe}
-                .username=${this.username}
-                .avatarUrl=${this.avatarUrl}
-                .isOrgAdmin=${this.isOrgAdmin || false}
-                .isRegistrationReviewer=${this.isRegistrationReviewer || false}
-                selectedMenuKey="cases"
-                homeHref="/file-manager"
-                homeLabel="Home"
-                @menu-selection-change=${this.handleMenuSelectionChange}
-            >
+        return this.renderCaseShell(html`
                 <div slot="content" class="case-detail">
                     <div class="detail-toolbar">
                         <button class="back-link" type="button" @click=${() => this.backToCaseList()}>
@@ -2939,6 +2939,11 @@ export class CasesPage extends LitElement {
                                     ?disabled=${this.archivingCase}
                                     @click=${() => this.startEditCase(caseRow)}
                                 >${t('cases.editDetails')}</button>
+                            ` : ''}
+                            ${canManage ? html`
+                                <button class="quiet-button" type="button" @click=${() => { this.showCaseSettings = true; }}>
+                                    ${t('caseSettings.open')}
+                                </button>
                             ` : ''}
                         </div>
                     </div>
@@ -3005,14 +3010,6 @@ export class CasesPage extends LitElement {
                         ></page-content-message>
                     ` : ''}
 
-                    <case-workflows
-                        .caseId=${String(caseRow.id)}
-                        .data=${this.caseWorkflowsFor(caseRow)}
-                        @workflows-changed=${() => this.loadCaseWorkflows({ refresh: true })}
-                    ></case-workflows>
-                    <find-workflows-dialog
-                        @workflows-changed=${() => this.loadCaseWorkflows({ refresh: true })}
-                    ></find-workflows-dialog>
 
                     <div class="case-detail-grid">
                         <div class="list-panel">
@@ -3178,8 +3175,50 @@ export class CasesPage extends LitElement {
                         ></comments-panel>
                     </div>
                 </div>
-            </page-layout-template>
+        `);
+    }
+
+    /** The signed-in page around a case or its settings. */
+    renderCaseShell(content) {
+        return html`
+            <page-layout-template
+                ?inert=${this.showIframe}
+                .username=${this.username}
+                .avatarUrl=${this.avatarUrl}
+                .isOrgAdmin=${this.isOrgAdmin || false}
+                .isRegistrationReviewer=${this.isRegistrationReviewer || false}
+                selectedMenuKey="cases"
+                homeHref="/file-manager"
+                homeLabel="Home"
+                @menu-selection-change=${this.handleMenuSelectionChange}
+            >${content}</page-layout-template>
         `;
+    }
+
+    renderCaseSettings(caseRow) {
+        const attachmentTypes = (caseRow.attachments || [])
+            .map((a) => fileTypesOf(attachmentFileName(a))[0])
+            .filter(Boolean);
+        return this.renderCaseShell(html`
+            <div slot="content" class="case-detail">
+                <div class="detail-toolbar">
+                    <button class="back-link" type="button" @click=${() => { this.showCaseSettings = false; }}>
+                        ${t('caseSettings.backToCase')}
+                    </button>
+                </div>
+                <div class="detail-header">
+                    <h2 class="detail-title">${t('caseSettings.title')}</h2>
+                    <p class="detail-desc">${caseRow.title || t('cases.untitledCase')}</p>
+                </div>
+                <case-settings
+                    .caseId=${String(caseRow.id)}
+                    .data=${this.caseWorkflowsFor(caseRow)}
+                    .fileTypes=${[...new Set(attachmentTypes)]}
+                    @workflows-changed=${() => this.loadCaseWorkflows({ refresh: true })}
+                    @find-workflows=${() => this.openFindWorkflows(caseRow)}
+                ></case-settings>
+            </div>
+        `);
     }
 
     renderViewerOverlay() {
@@ -3313,8 +3352,11 @@ export class CasesPage extends LitElement {
     render() {
         const detail = this.selectedCase;
         return html`
-            ${detail ? this.renderCaseDetail(detail) : this.renderLanding()}
+            ${!detail ? this.renderLanding() : this.showCaseSettings ? this.renderCaseSettings(detail) : this.renderCaseDetail(detail)}
             ${this.renderViewerOverlay()}
+            <find-workflows-dialog
+                @workflows-changed=${() => this.loadCaseWorkflows({ refresh: true })}
+            ></find-workflows-dialog>
             ${this.toastMessage ? html`<div class="toast" role="status">${this.toastMessage}</div>` : ''}
             <people-dialog
                 id="case-people-dialog"
