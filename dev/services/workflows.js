@@ -24,8 +24,24 @@ export const uploadWorkflowIcon = (id, file) => {
 };
 export const removeWorkflowIcon = (id) => apiRequest(`/api/workflows/${enc(id)}/icon`, { method: 'DELETE' }).then((d) => d.workflow);
 
-/** { approved, mine, canManage, available? } for a case (`available`: what an admin could approve). */
+/**
+ * A case's workflows: { approved, mine, myRequests, defaults, allowPersonal, canManage, canRequest },
+ * plus for admins `requests` (pending) and `available` (what they could approve).
+ */
 export const listCaseWorkflows = (caseId) => apiRequest(`/api/cases/${enc(caseId)}/workflows`);
+
+/** "Find more…": public workflows not yet approved, each with `requested` and `requestedByMe`. */
+export function listAvailableCaseWorkflows(caseId, { q = '', fileTypes = [] } = {}) {
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (fileTypes.length) params.set('fileTypes', fileTypes.join(','));
+    const query = params.toString();
+    return apiRequest(`/api/cases/${enc(caseId)}/workflows/available${query ? `?${query}` : ''}`).then((d) => d.workflows);
+}
+export const requestCaseWorkflow = (caseId, workflowId) =>
+    apiRequest(`/api/cases/${enc(caseId)}/workflows/requests`, { method: 'POST', body: { workflowId } });
+export const cancelCaseWorkflowRequest = (caseId, workflowId) =>
+    apiRequest(`/api/cases/${enc(caseId)}/workflows/requests/${enc(workflowId)}`, { method: 'DELETE' });
 export const approveCaseWorkflow = (caseId, workflowId) =>
     apiRequest(`/api/cases/${enc(caseId)}/workflows`, { method: 'POST', body: { workflowId } }).then((d) => d.approval);
 export const removeCaseWorkflow = (caseId, approvalId) =>

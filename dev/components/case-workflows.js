@@ -2,18 +2,19 @@ import { LitElement, html, css } from 'lit-element';
 import { t } from '../i18n/index.js';
 import { buttonStyles } from '../styles/buttons.js';
 import { workflowStyles } from '../styles/workflows.js';
-import { listCaseWorkflows, approveCaseWorkflow, removeCaseWorkflow } from '../services/workflows.js';
+import { approveCaseWorkflow, removeCaseWorkflow } from '../services/workflows.js';
 
 /**
  * Case page, for case admins: approving and removing workflows. (Choosing one to open with is
  * the Open ▾ menu; this moves to Case Settings.) Shows nothing to other members.
- * Emits `workflows-changed` after a change, so the Open ▾ menus reload.
+ * `data` is the case page's GET /api/cases/:id/workflows; emits `workflows-changed` after a
+ * change, and the page reloads it.
  */
 export class CaseWorkflows extends LitElement {
     static get properties() {
         return {
             caseId: { type: String },
-            data: { state: true },
+            data: { attribute: false },
             approveId: { state: true },
             busy: { state: true },
             error: { state: true },
@@ -37,31 +38,11 @@ export class CaseWorkflows extends LitElement {
         this.error = '';
     }
 
-    updated(changed) {
-        if (changed.has('caseId') && this.caseId) this._load();
-    }
-
-    /** `refresh` (after a change) keeps what is on screen until the new list arrives. */
-    async _load({ refresh = false } = {}) {
-        const caseId = this.caseId;
-        if (!refresh) {
-            this.data = null;
-            this.error = '';
-        }
-        try {
-            const data = await listCaseWorkflows(caseId);
-            if (caseId === this.caseId) this.data = data;
-        } catch (err) {
-            if (caseId === this.caseId) this.error = err?.message || t('workflows.loadFailed');
-        }
-    }
-
     async _manage(action) {
         this.busy = true;
         this.error = '';
         try {
             await action();
-            await this._load({ refresh: true });
             this.dispatchEvent(new CustomEvent('workflows-changed', { bubbles: true, composed: true }));
         } catch (err) {
             this.error = err?.message || t('common.somethingWentWrong');

@@ -78,13 +78,16 @@ const PORTAL_CSS = `
 .open-with-menu-panel .more .caret { transition: transform 0.15s; }
 .open-with-menu-panel .more[aria-expanded='true'] .caret { transform: rotate(90deg); }
 .open-with-menu-panel .nested { padding-left: 12px; }
+.open-with-menu-panel .item.is-pending { opacity: 0.6; cursor: default; }
+.open-with-menu-panel .item.is-pending:hover { background: transparent; }
 `;
 
 /**
  * Open ▾ for a case file or the blank viewer (docs/workflows-design.md › Opening a file).
  * `menu` comes from utils/caseWorkflowMenu.js workflowMenu(); `selectedKey` is what the main
  * button opens. Built-in viewers sit under "Other ways to open", shown directly when there is
- * nothing else. Emits `open-workflow` with { entry }.
+ * nothing else; the person's pending requests are listed greyed out.
+ * Emits `open-workflow` with { entry }, and `find-workflows` for "Find more…".
  * The menu is portaled to document.body so scroll parents do not clip it.
  */
 export class OpenWithMenu extends LitElement {
@@ -206,7 +209,7 @@ export class OpenWithMenu extends LitElement {
         // Opening the menu moves keyboard focus into it (it is rendered at the end of the page);
         // expanding "Other ways to open" keeps focus on that item.
         if (changed.has('open') && this.open) this.focusMenuItem(0);
-        else if (this.open && changed.has('showMore')) this._portalHost?.querySelector('.more')?.focus();
+        else if (this.open && changed.has('showMore')) this._portalHost?.querySelector('.more[aria-expanded]')?.focus();
     }
 
     menuItems() {
@@ -334,6 +337,18 @@ export class OpenWithMenu extends LitElement {
         `;
     }
 
+    pendingTemplate(request) {
+        return html`
+            <div class="item is-pending" role="menuitem" aria-disabled="true" tabindex="-1">
+                <span class="check is-empty" aria-hidden="true">✓</span>
+                <span class="item-label">
+                    ${request.name}
+                    <span class="hint">${t('viewers.pendingApproval')}</span>
+                </span>
+            </div>
+        `;
+    }
+
     /** The sections to show; the selected entry is always listed, even if made for another file type. */
     sections() {
         const { recommended = [], yours = [], builtins = [], all = [] } = this.menu || {};
@@ -347,11 +362,13 @@ export class OpenWithMenu extends LitElement {
         const { top, left } = this.menuAnchorPosition();
         const host = this.ensurePortalHost();
         const { recommended, yours, builtins } = this.sections();
-        const hasWorkflows = recommended.length + yours.length > 0;
-        const section = (headingKey, entries) => (entries.length ? html`
+        const pending = this.menu?.pending || [];
+        const hasWorkflows = recommended.length + yours.length + pending.length > 0;
+        const section = (headingKey, entries, requests = []) => (entries.length + requests.length ? html`
             <div role="group" aria-label=${t(headingKey)}>
                 <div class="heading" aria-hidden="true">${t(headingKey)}</div>
                 ${entries.map((e) => this.itemTemplate(e))}
+                ${requests.map((r) => this.pendingTemplate(r))}
             </div>
         ` : '');
 
@@ -363,7 +380,7 @@ export class OpenWithMenu extends LitElement {
                 @keydown=${(e) => this.onMenuKeydown(e)}
                 style="top:${top}px;left:${left}px;"
             >
-                ${section('viewers.recommended', recommended)}
+                ${section('viewers.recommended', recommended, pending)}
                 ${section('viewers.yours', yours)}
                 ${hasWorkflows ? html`
                     <div class="divider" role="separator"></div>
@@ -375,6 +392,13 @@ export class OpenWithMenu extends LitElement {
                     </button>
                     ${this.showMore ? html`<div class="nested">${builtins.map((e) => this.itemTemplate(e))}</div>` : ''}
                 ` : builtins.map((e) => this.itemTemplate(e))}
+                ${this.menu?.canFindMore ? html`
+                    <div class="divider" role="separator"></div>
+                    <button class="item more" type="button" role="menuitem" tabindex="-1" @click=${() => this.findMore()}>
+                        <span class="check is-empty" aria-hidden="true">✓</span>
+                        <span class="item-label">${t('viewers.findMore')}</span>
+                    </button>
+                ` : ''}
             </div>
         `, host);
     }
@@ -394,15 +418,19 @@ export class OpenWithMenu extends LitElement {
         this.open = !this.open;
     }
 
-    select(entry) {
-        // Focus goes back to the button first, so whatever opens next knows where to return to.
+    /** Close, then emit. Focus goes back to the button first, so whatever opens next knows where to return to. */
+    closeAndEmit(type, detail = {}) {
         this.shadowRoot?.querySelector('.trigger')?.focus();
         this.open = false;
-        this.dispatchEvent(new CustomEvent('open-workflow', {
-            detail: { entry },
-            bubbles: true,
-            composed: true
-        }));
+        this.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
+    }
+
+    select(entry) {
+        this.closeAndEmit('open-workflow', { entry });
+    }
+
+    findMore() {
+        this.closeAndEmit('find-workflows');
     }
 
     triggerLabel() {

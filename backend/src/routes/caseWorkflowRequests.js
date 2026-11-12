@@ -2,7 +2,7 @@
  * Requesting public workflows for a case (docs/workflows-design.md › Requests). Approving is
  * POST /api/cases/:id/workflows (routes/caseWorkflows.js), for requests and direct adds alike.
  *
- *   GET    /api/cases/:id/workflows/available?q=&fileType=   members above read_only: what "Find more…" offers
+ *   GET    /api/cases/:id/workflows/available?q=&fileTypes=  members above read_only: what "Find more…" offers
  *   POST   /api/cases/:id/workflows/requests                  members above read_only: { workflowId }
  *   DELETE /api/cases/:id/workflows/requests/:workflowId      a requester cancels their own request
  *   POST   /api/cases/:id/workflows/:rowId/decline            admins: { reason? }
@@ -29,8 +29,9 @@ const rowFor = async (caseId, workflowId) => (await findAll(CASE_WORKFLOWS, {
 
 const matchesQuery = (doc, q) => !q
     || `${doc.name} ${doc.description || ''}`.toLowerCase().includes(q);
-const matchesFileType = (doc, fileType) => !fileType
-    || !(doc.file_types || []).length || doc.file_types.includes(fileType);
+/** For a file whose name could match any of `fileTypes` ("seg.nrrd", "nrrd"); workflows for any type always match. */
+const matchesFileTypes = (doc, fileTypes) => !fileTypes.length
+    || !(doc.file_types || []).length || fileTypes.some((ext) => doc.file_types.includes(ext));
 
 export default function caseWorkflowRequestRoutes(app) {
     const auth = [authenticateToken, requirePayload];
@@ -40,7 +41,8 @@ export default function caseWorkflowRequestRoutes(app) {
     app.get('/api/cases/:id/workflows/available', ...auth, asyncHandler(async (req, res) => {
         const { role } = await loadCaseWithAccess(req.params.id, req, REQUEST_MIN_ROLE);
         const q = String(req.query.q || '').trim().toLowerCase().slice(0, 100);
-        const fileType = String(req.query.fileType || '').trim().toLowerCase().replace(/^\*?\./, '').slice(0, 40);
+        const fileTypes = String(req.query.fileTypes || '').toLowerCase().split(',')
+            .map((ext) => ext.trim().replace(/^\*?\./, '')).filter(Boolean).slice(0, 8);
         const [rows, everyonePublic, mine] = await Promise.all([
             findAll(CASE_WORKFLOWS, { case: { equals: Number(req.params.id) } }),
             publicWorkflows(),
@@ -50,7 +52,7 @@ export default function caseWorkflowRequestRoutes(app) {
         const me = requireOwnerId(req);
         const workflows = [...new Map([...everyonePublic, ...mine].map((d) => [String(d.id), d])).values()]
             .filter((d) => !(rowByWorkflow.has(String(d.id)) && isApproved(rowByWorkflow.get(String(d.id)))))
-            .filter((d) => matchesQuery(d, q) && matchesFileType(d, fileType))
+            .filter((d) => matchesQuery(d, q) && matchesFileTypes(d, fileTypes))
             .sort((a, b) => a.name.localeCompare(b.name))
             .map((d) => {
                 const row = rowByWorkflow.get(String(d.id));

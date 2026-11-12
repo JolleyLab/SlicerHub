@@ -22,6 +22,7 @@ import '../components/people-dialog.js';
 import '../components/list-filter-tools.js';
 import '../components/open-with-menu.js';
 import '../components/case-workflows.js';
+import '../components/find-workflows-dialog.js';
 import { listCaseWorkflows } from '../services/workflows.js';
 import {
     workflowMenu, caseDefaultKey, resolveWorkflow, builtinForViewer, readWorkflowChoice, saveWorkflowChoice,
@@ -2083,9 +2084,9 @@ export class CasesPage extends LitElement {
     }
 
     /** The selected case's workflows (GET /api/cases/:id/workflows), for the Open ▾ menus. */
-    async loadCaseWorkflows() {
+    async loadCaseWorkflows({ refresh = false } = {}) {
         const caseId = this.selectedCaseId;
-        this.caseWorkflows = null;
+        if (!refresh) this.caseWorkflows = null;
         if (!caseId) return;
         try {
             const data = await listCaseWorkflows(caseId);
@@ -2097,8 +2098,12 @@ export class CasesPage extends LitElement {
      * Open ▾ for a file (attachment null: the blank viewer): the menu, the workflow the main
      * button opens, and its name, shown on the button unless it's the person's own default viewer.
      */
+    caseWorkflowsFor(caseRow) {
+        return this.caseWorkflows?.caseId === String(caseRow.id) ? this.caseWorkflows.data : null;
+    }
+
     openWithFor(caseRow, attachment = null) {
-        const data = this.caseWorkflows?.caseId === String(caseRow.id) ? this.caseWorkflows.data : null;
+        const data = this.caseWorkflowsFor(caseRow);
         const fileName = attachment ? attachmentFileName(attachment) : null;
         const menu = workflowMenu(data, { fileName });
         const accountDefault = builtinForViewer(this.accountDefaultViewer());
@@ -2122,6 +2127,11 @@ export class CasesPage extends LitElement {
                 .label=${openWith.label}
                 ?disabled=${!!this.openingAttachmentId || this.viewerLoading}
                 @open-workflow=${(e) => this.openWithWorkflow(caseRow, attachment, e.detail.entry, { remember: true })}
+                @find-workflows=${() => this.renderRoot.querySelector('find-workflows-dialog')?.open({
+                    caseId: caseRow.id,
+                    fileName: attachment ? attachmentFileName(attachment) : null,
+                    canManage: this.caseWorkflowsFor(caseRow)?.canManage === true,
+                })}
             ></open-with-menu>
         `;
     }
@@ -2997,8 +3007,12 @@ export class CasesPage extends LitElement {
 
                     <case-workflows
                         .caseId=${String(caseRow.id)}
-                        @workflows-changed=${() => this.loadCaseWorkflows()}
+                        .data=${this.caseWorkflowsFor(caseRow)}
+                        @workflows-changed=${() => this.loadCaseWorkflows({ refresh: true })}
                     ></case-workflows>
+                    <find-workflows-dialog
+                        @workflows-changed=${() => this.loadCaseWorkflows({ refresh: true })}
+                    ></find-workflows-dialog>
 
                     <div class="case-detail-grid">
                         <div class="list-panel">

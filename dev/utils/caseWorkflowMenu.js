@@ -48,7 +48,9 @@ const defaultKey = (raw) => (raw ? (String(raw).startsWith('builtin:') ? String(
 /**
  * What the menu lists for `fileName` (null: the blank viewer), from GET /api/cases/:id/workflows.
  * Workflows for other file types are left out; the blank viewer only offers SlicerWeb.
- * Returns { recommended, yours, builtins, all } — `all` is every usable entry, unfiltered by type.
+ * Returns { recommended, yours, builtins, all, pending, canFindMore } — `all` is every usable
+ * entry, unfiltered by type; `pending` the person's own requests awaiting approval (shown, not
+ * usable); `canFindMore` whether they can request (or, as admins, add) more.
  */
 export function workflowMenu(data, { fileName = null } = {}) {
     const blank = fileName == null;
@@ -62,6 +64,8 @@ export function workflowMenu(data, { fileName = null } = {}) {
         yours: mine.filter(fits),
         builtins,
         all: [...approved, ...mine, ...builtins],
+        pending: (data?.myRequests || []).map((r) => ({ key: `pending:${r.workflowId}`, name: r.name })),
+        canFindMore: data?.canRequest === true,
     };
 }
 

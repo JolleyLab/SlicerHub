@@ -47,6 +47,14 @@ describe('workflowMenu', () => {
         assert.equal(menu.all.some((e) => e.key === 'mine:11'), false);
     });
 
+    it('lists my pending requests, which cannot be opened, and whether I can find more', () => {
+        const menu = workflowMenu({ ...DATA, myRequests: [{ workflowId: '13', name: 'Valve' }], canRequest: true });
+        assert.deepEqual(menu.pending, [{ key: 'pending:13', name: 'Valve' }]);
+        assert.equal(menu.all.some((e) => e.key === 'pending:13'), false);
+        assert.equal(menu.canFindMore, true);
+        assert.equal(workflowMenu(DATA).canFindMore, false);
+    });
+
     it('works before the case data has loaded', () => {
         const menu = workflowMenu(null, { fileName: 'x.mrb' });
         assert.deepEqual(menu.recommended, []);

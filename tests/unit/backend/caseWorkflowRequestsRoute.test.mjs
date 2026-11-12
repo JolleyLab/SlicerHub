@@ -177,8 +177,10 @@ test('"Find more" offers unapproved public workflows, marking requests; admins a
 
     res = await available(MEMBER, { q: 'valve' });
     assert.deepEqual(res.body.workflows.map((w) => w.id), [13]);
-    res = await available(MEMBER, { fileType: '.MRB' });
+    res = await available(MEMBER, { fileTypes: '.MRB' });
     assert.deepEqual(res.body.workflows.map((w) => w.id), [11]); // 13 is for nrrd only; 11 is for any type
+    res = await available(MEMBER, { fileTypes: 'seg.nrrd,nrrd' });
+    assert.deepEqual(res.body.workflows.map((w) => w.id), [13, 11]);
 
     await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
     assert.deepEqual((await available(MEMBER)).body.workflows.map((w) => w.id), [13]);

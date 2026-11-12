@@ -274,7 +274,7 @@ These follow the two patterns already in use: pending invites (a live count in t
 | Route | Who |
 |---|---|
 | `GET /api/cases/:id/workflows` | Members get `approved`, `mine` (empty when personal workflows are off), their own pending requests and the case's `defaults`. Admins also get `requests` and `settings`. |
-| `GET /api/cases/:id/workflows/available?q=&fileType=` | Members: public workflows not approved for the case, for "Find more…" |
+| `GET /api/cases/:id/workflows/available?q=&fileTypes=` | Members: public workflows not approved for the case, for "Find more…" |
 | `POST /api/cases/:id/workflows/requests` with `{ workflowId }` | Members above `read_only`: request, or join a pending request. The source must be public. |
 | `GET /api/workflow-requests/pending` | Requests awaiting the signed-in user's decision across the cases they admin, for To do and the bell count (like `listInvitesAwaitingMyApproval`) |
 | `DELETE /api/cases/:id/workflows/requests/:workflowId` | A requester, to cancel their own request |
