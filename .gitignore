@@ -84,6 +84,8 @@ docs/network-gated-enrichment.md
 docs/user-provisioning-patterns.md
 docs/sqlite-to-directus.md
 docs/directus-role-migration.md
+# Local clickable UX prototypes (e.g. workflows-ux-poc.html for docs/workflows-design.md)
+docs/prototypes/
 backend/collab-roles-backup.json
 users-live.db
 users-remote.db

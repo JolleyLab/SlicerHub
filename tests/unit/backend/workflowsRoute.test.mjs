@@ -53,7 +53,7 @@ test.beforeEach(() => {
 test('workflowFields validates and normalizes', () => {
     assert.deepEqual(
         workflowFields({ name: '  Cardiac ', extensions: ['SlicerHeart', 'SlicerHeart', ' SlicerRT '] }),
-        { name: 'Cardiac', description: '', visibility: 'private', extensions: ['SlicerHeart', 'SlicerRT'], file_types: [] },
+        { name: 'Cardiac', description: '', visibility: 'private', extensions: ['SlicerHeart', 'SlicerRT'], file_types: [], startup_config: {} },
     );
     assert.deepEqual(workflowFields({ visibility: 'public' }, { partial: true }), { visibility: 'public' });
     assert.throws(() => workflowFields({ name: '' }), /Name is required/);
@@ -68,15 +68,36 @@ test('workflowFields validates and normalizes', () => {
     assert.throws(() => workflowFields({ fileTypes: ['m r b'] }, { partial: true }), /invalid name/);
 });
 
+test('the startup configuration only takes known keys', () => {
+    assert.deepEqual(workflowFields({ startupConfig: { module: ' SimplifiedViewer ' } }, { partial: true }), { startup_config: { module: 'SimplifiedViewer' } });
+    assert.deepEqual(workflowFields({ startupConfig: { module: '' } }, { partial: true }), { startup_config: {} });
+    assert.deepEqual(workflowFields({ startupConfig: null }, { partial: true }), { startup_config: {} });
+    assert.equal('startup_config' in workflowFields({ name: 'x' }), true); // a new workflow always has one
+    assert.throws(() => workflowFields({ startupConfig: { script: 'import os' } }, { partial: true }),
+        (err) => err.messageKey === 'workflow.startup_config_key' && /include "script"/.test(err.message));
+    assert.throws(() => workflowFields({ startupConfig: { module: 'Segment Editor' } }, { partial: true }), /invalid module/);
+    assert.throws(() => workflowFields({ startupConfig: { module: '../x' } }, { partial: true }), /invalid module/);
+    assert.throws(() => workflowFields({ startupConfig: ['module'] }, { partial: true }), /must be an object/);
+});
+
+test('approving copies the startup configuration; members see it', async () => {
+    await call('PATCH', '/api/workflows/11', { user: MEMBER, body: { startupConfig: { module: 'SimplifiedViewer' } } });
+    await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
+    assert.deepEqual(mocks.payload.rows['case-workflows'][0].startup_config, { module: 'SimplifiedViewer' });
+    const [approved] = (await call('GET', '/api/cases/1/workflows', { user: MEMBER })).body.approved;
+    assert.deepEqual(approved.startupConfig, { module: 'SimplifiedViewer' });
+    assert.deepEqual((await call('GET', '/api/workflows/11', { user: STRANGER })).body.workflow.startupConfig, { module: 'SimplifiedViewer' });
+});
+
 // ── own workflows ──────────────────────────────────────────────────────────
 
-test('create stores the owner and SlicerWeb target; list shows only mine', async () => {
+test('create stores the owner and no viewer; list shows only mine', async () => {
     const created = await call('POST', '/api/workflows', { user: STRANGER, body: { name: 'Mine', extensions: ['SlicerIGT'] } });
     assert.equal(created.status, 201);
     assert.equal(created.body.workflow.isMine, true);
     const row = mocks.payload.rows.workflows.find((w) => w.name === 'Mine');
     assert.equal(row.owner_id, 'kc-stranger');
-    assert.equal(row.target, 'slicerweb');
+    assert.equal('target' in row, false);
 
     const list = await call('GET', '/api/workflows', { user: STRANGER });
     assert.deepEqual(list.body.workflows.map((w) => w.name), ['Mine']);

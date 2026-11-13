@@ -362,17 +362,12 @@ export const Workflows = {
             required: true,
             index: true,
         },
-        {
-            // Only SlicerWeb for now; kept so Full Slicer can be added without a schema change.
-            name: 'target',
-            type: 'select',
-            options: [{ label: 'SlicerWeb', value: 'slicerweb' }],
-            defaultValue: 'slicerweb',
-            required: true,
-        },
+        // A workflow doesn't name a viewer: which viewers can run it follows from its extensions
+        // and startup keys (docs/workflows-design.md › Viewers and workflows).
         { name: 'extensions', type: 'json' }, // string[] of extension names
         { name: 'icon_key', type: 'text' },   // storage key of an uploaded icon (routes/workflows.js)
         { name: 'file_types', type: 'json' }, // string[]: data file extensions it's for ("mrb", "nii.gz"); empty = any
+        { name: 'startup_config', type: 'json' }, // { module? }: known keys only (services/workflows.js)
     ],
 };
 
@@ -403,6 +398,7 @@ export const CaseWorkflows = {
         { name: 'description', type: 'textarea' },
         { name: 'extensions', type: 'json' },
         { name: 'file_types', type: 'json' },
+        { name: 'startup_config', type: 'json' },
         // The source's updatedAt when approved: a later one means "Update available".
         { name: 'source_updated_at', type: 'date' },
         // Requests: Keycloak subs only (names are looked up when shown); cleared once decided.

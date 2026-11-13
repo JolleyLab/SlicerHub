@@ -13,7 +13,7 @@ export const STRANGER = { id: 3, role: 'user', keycloakSub: 'kc-stranger' };
 export const READER = { id: 4, role: 'user', keycloakSub: 'kc-reader' };
 
 export function workflow(id, owner, visibility, extensions = ['SlicerHeart']) {
-    return { id, name: `WF ${id}`, owner_id: owner, visibility, target: 'slicerweb', extensions, updatedAt: '2026-01-01T00:00:00.000Z' };
+    return { id, name: `WF ${id}`, owner_id: owner, visibility, extensions, updatedAt: '2026-01-01T00:00:00.000Z' };
 }
 
 /** Fresh in-memory data and roles; call from beforeEach. */

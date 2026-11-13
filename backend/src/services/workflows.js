@@ -14,6 +14,31 @@ export const CASE_WORKFLOWS = 'case-workflows';
 /** The plain viewers, as workflows defined in code (the SPA's utils/builtinWorkflows.js launches them). */
 export const BUILTIN_WORKFLOW_IDS = Object.freeze(['builtin:slicerweb', 'builtin:full', 'builtin:simplified']);
 
+/**
+ * A workflow's startup configuration: what's passed to the viewer once it has started. Only
+ * these keys are accepted, so a public workflow can't make a viewer do anything we haven't
+ * chosen to support (docs/workflows-design.md › Startup configuration).
+ */
+export const STARTUP_CONFIG_KEYS = Object.freeze({
+    module: /^[A-Za-z][A-Za-z0-9_]{0,99}$/, // a Slicer module name, e.g. SimplifiedViewer
+});
+
+/** Validated startup configuration; empty values are dropped, unknown keys refused. */
+export function sanitizeStartupConfig(value) {
+    if (value == null) return {};
+    if (typeof value !== 'object' || Array.isArray(value)) throw ValidationError.fromKey('workflow.startup_config_object');
+    const out = {};
+    for (const [key, raw] of Object.entries(value)) {
+        const pattern = STARTUP_CONFIG_KEYS[key];
+        if (!pattern) throw ValidationError.fromKey('workflow.startup_config_key', { key: String(key).slice(0, 40) });
+        const text = String(raw ?? '').trim();
+        if (!text) continue;
+        if (!pattern.test(text)) throw ValidationError.fromKey('workflow.startup_config_value', { key });
+        out[key] = text;
+    }
+    return out;
+}
+
 /** Rows from before requests existed have no status; they were approvals. */
 export const isApproved = (row) => !row.status || row.status === 'approved';
 
@@ -25,6 +50,7 @@ export const toApproval = (row, source = null) => ({
     description: row.description || '',
     extensions: row.extensions || [],
     fileTypes: row.file_types || [],
+    startupConfig: row.startup_config || {},
     approvedAt: row.decided_at ?? null,
     updateAvailable: Boolean(source) && Date.parse(source.updatedAt) > Date.parse(row.source_updated_at),
 });
@@ -36,6 +62,7 @@ export const workflowCopy = (source) => ({
     description: source.description || '',
     extensions: source.extensions || [],
     file_types: source.file_types || [],
+    startup_config: source.startup_config || {},
     source_updated_at: source.updatedAt,
 });
 
@@ -87,6 +114,7 @@ export const toWorkflow = (doc, req) => ({
     visibility: doc.visibility,
     extensions: doc.extensions || [],
     fileTypes: doc.file_types || [],
+    startupConfig: doc.startup_config || {},
     isMine: isOwner(doc, req),
     // The key changes with each upload, so it versions the URL: a new icon is never hidden by a
     // cached old one, and editing anything else doesn't make browsers fetch the icon again.

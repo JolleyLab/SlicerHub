@@ -10,18 +10,20 @@ Today every SlicerWeb launch hardcodes `extensions=SlicerHeart`. Workflows repla
 
 | | First pass | Later |
 |---|---|---|
-| Viewer | SlicerWeb | Full Slicer (needs per-seat module loading and seat reuse keyed on workflow; see the end of this doc) |
-| Contents | Extensions | Start module (see [Later: start module](#later-start-module)), layout, favourite modules, sample data or template scene |
-| Discovery | An "All workflows" tab on the Workflows page; case admins pick from a list | Search across all public workflows, authors, ratings |
+| Viewer | SlicerWeb; Full Slicer for workflows whose extensions are all in its add-ons manifest | Full Slicer loading only a workflow's own extensions, with seat reuse keyed on workflow (see the end of this doc) |
+| Contents | Extensions, then a startup configuration ("Start in" module; see [Startup configuration](#startup-configuration)) | More startup keys (layout, placeholders such as the input file), favourite modules, sample data or template scene |
+| Discovery | An "All workflows" tab on the Workflows page; the case's Workflows panel to request or add | Authors, ratings, sorting by use |
 
 ## Decisions
 
 - **Anyone can create a workflow.** Its visibility is `private` (just me) or `public`.
 - **Only a case admin can approve a workflow for their case.** They can approve their own workflows or any public one.
-- **Launching in a case:** a member can pick one of their own workflows (private or public) or any workflow the case admin approved. A case admin can turn off members' own workflows for a case (see [Workflows in cases](#workflows-in-cases-next-pass)).
+- **Launching in a case:** a member can open a file with any workflow approved for the case, or one of their own (private or public). A case admin can turn off members' own workflows for a case.
 - **Members above `read_only` can request a public workflow for a case;** the case admin approves or declines. Letting admins choose which roles may request is part of a possible later move of case permissions into Case Settings; not needed now.
-- **A viewer and a workflow are different things.** The viewer is where it runs (SlicerWeb, Full Slicer, Simplified Viewer); a workflow is what's installed on top, and only applies to the viewer it targets (SlicerWeb, for now). The person's own viewer choice is respected: a per-file pick, or their account setting, comes before a case's default workflow.
-- **SlicerHeart is an ordinary workflow,** pre-seeded as a public workflow. Plain SlicerWeb opens with no extensions. Existing cases get SlicerHeart approved and set as their default, so nothing changes for them; new cases start with no workflows, and admins add SlicerHeart if they want it.
+- **A viewer and a workflow are different things.** The viewer is where it runs (SlicerWeb or Full Slicer); a workflow is installed on top, if that viewer can run it. The person's own viewer choice is respected.
+- **Each case can have one default workflow,** used unless someone picks something else for a file. There are no per-file-type defaults.
+- **SlicerHeart is an ordinary workflow,** and so is Simplified Viewer: two pre-seeded public workflows, "SlicerHeart" and "SlicerHeart – Simplified" (SlicerHeart, starting in its SimplifiedViewer module). Neither is special in code, and admins approve each separately. Plain SlicerWeb opens with no extensions.
+- **Existing cases** get both seeded workflows approved, with SlicerHeart as the default, so nothing changes for them. **New cases** start with no workflows; admins add what they want. People whose account viewer setting was Simplified Viewer become Full Slicer users and pick "SlicerHeart – Simplified" from the menu.
 - **Approval takes a copy.** The case keeps a copy of the extension list as it was when approved. If the owner later edits, unpublishes or deletes the workflow, the case keeps working with the approved copy. The case page shows "Update available" when the source was edited after the approval; the admin re-approves to take the change.
 - **Workflows are data, not code.** SlicerWeb only loads extensions listed in the deployed `extensions/index.json` and ignores unknown names. A workflow can therefore only name extensions we already ship, so it can't add new code to SlicerWeb.
 
@@ -98,9 +100,9 @@ Icons: `PUT` / `DELETE /api/workflows/:id/icon` (owner; multipart field `icon`) 
 
 ## Launch
 
-Each openable file, and the blank viewer, has an Open ▾ menu (`<open-with-menu>`, `dev/components/open-with-menu.js`); see [Opening a file](#opening-a-file-open-). What it lists, which workflow the main button opens and the per-file choice (stored under `slicerweb.hub.workflowChoices`, so sign-out clears it with SlicerWeb's own state) are in `dev/utils/caseWorkflowMenu.js`. `cases-page.js` loads the case's workflows once per case, and `openWithWorkflow()` sends a choice to SlicerWeb (with its `extensions`, through `_slicerWebUrl()` and `buildSlicerWebUrl`) or to Full Slicer. Case admins manage workflows in Case Settings (`<case-settings>`, `dev/components/case-settings.js`), opened from the case toolbar: requests, approved workflows (add through the same "Find more…" dialog, `dev/components/find-workflows-dialog.js`; update; remove), the defaults table and the personal-workflows switch. The case page loads the case's workflows once and hands them to the menus and to Case Settings, which reload them after a change.
+Each openable file, and the blank viewer, has an Open ▾ menu (`<open-with-menu>`, `dev/components/open-with-menu.js`); see [Workflows in cases](#workflows-in-cases). What it lists, which workflow the main button opens and the per-file choice (stored under `slicerweb.hub.workflowChoices`, so sign-out clears it with SlicerWeb's own state) are in `dev/utils/caseWorkflowMenu.js`. `cases-page.js` loads the case's workflows once per case, hands them to the menus and to Case Settings (`dev/components/case-settings.js`), and reloads them after a change. `openWithWorkflow()` sends a choice to SlicerWeb (through `_slicerWebUrl()` and `buildSlicerWebUrl`) or to Full Slicer. Parts of this change in the next pass; see [Build status](#build-status).
 
-The **Workflows** page in the sidebar (`dev/pages/workflows-page.js`) is laid out like My Cases. It has two tabs of cards with search and sort: "My workflows", split into "Just me" and "Public" sections, and "All workflows" (everyone's public ones). It also has a detail view that lists the extensions with their descriptions, and a form to create or edit, with the checklist in `dev/components/extension-picker.js`. From someone else's public workflow you can make a private copy. Approving a workflow for a case happens on the case page only; how workflows get into cases needs its own design pass (see the "Open" section below). Extensions show their icons. Most icons live on GitHub, and a browser loading them there would reveal who is browsing, so the backend serves its own copies at `GET /api/slicerweb/extension-icon/:channel/:name` (`backend/src/services/extensionIcons.js`). It fetches only the exact `https` URL the build's `index.json` lists, accepts only PNG, JPEG, GIF or WebP up to 512 KB (no SVG, which can carry script), caches copies on disk (`SLICERWEB_ICON_CACHE_DIR`, default the system temp folder), and waits an hour before retrying a failed fetch. Icons shipped inside the build are served from it directly. With no icon, the tile shows the name's first letter. Public workflows don't show their author.
+The **Workflows** page in the sidebar (`dev/pages/workflows-page.js`) is laid out like My Cases. It has two tabs of cards with search and sort: "My workflows", split into "Just me" and "Public" sections, and "All workflows" (everyone's public ones). It also has a detail view that lists the extensions with their descriptions, and a form to create or edit, with the checklist in `dev/components/extension-picker.js`. From someone else's public workflow you can make a private copy. Workflows get into a case only from that case's Workflows panel; the Workflows page has no "Add to case" action. Extensions show their icons. Most icons live on GitHub, and a browser loading them there would reveal who is browsing, so the backend serves its own copies at `GET /api/slicerweb/extension-icon/:channel/:name` (`backend/src/services/extensionIcons.js`). It fetches only the exact `https` URL the build's `index.json` lists, accepts only PNG, JPEG, GIF or WebP up to 512 KB (no SVG, which can carry script), caches copies on disk (`SLICERWEB_ICON_CACHE_DIR`, default the system temp folder), and waits an hour before retrying a failed fetch. Icons shipped inside the build are served from it directly. With no icon, the tile shows the name's first letter. Public workflows don't show their author.
 
 ## Code style for this feature: concise and reusable
 
@@ -125,107 +127,119 @@ Patterns that this feature repeats go into shared utils. Existing callers move o
 
 **Tests:** `tests/unit/backend/workflowsRoute.test.mjs` and `tests/unit/frontend/workflowsService.test.mjs`. `tests/unit/backend/helpers/routeHarness.mjs` (`makeApp`, `dispatch`, `fakePayload`) replaces the copies of these helpers in older route tests when those tests are next touched.
 
-## Workflows in cases (next pass)
+## Workflows in cases
 
-**Status:** mostly built (bell and Home To do, server-side search and the viewer/workflow split below are still to do). This replaces the first-pass `<case-workflows>` picker above the file list, which acts as a hidden mode: nothing on a file shows which workflow it will open with.
+Agreed on 12 Nov 2026 after a clickable prototype. It replaces the first-pass `<case-workflows>` picker above the file list, which acted as a hidden mode: nothing on a file showed which workflow it would open with. What's already built and what changes is under [Build status](#build-status).
 
-Workflows are brought into a case only from within that case. The Workflows page stays about creating and browsing workflows; it has no "Add to case" or "Request for a case" action, to keep it uncluttered.
+Workflows are brought into a case only from within that case. The Workflows page stays about creating and browsing workflows.
 
 ### Opening a file: "Open ▾"
 
-Each openable attachment, and the blank viewer, gets a split button. It replaced the old `<attachment-open-menu>` (which offered SlicerWeb, Full Slicer and Simplified Viewer) rather than adding a second menu. The main part opens with the workflow chosen as described below; the chevron opens a menu.
-
-**Most people should never need the menu.** For non-technical users the main button is the interface, so case defaults carry most of the weight. Case Settings should nudge admins to set them (a hint when a case has approved workflows but no defaults).
+Each openable file, and the blank viewer, has a split button. The main part opens the file as described in [Which workflow opens](#which-workflow-opens); the chevron opens a menu for picking something else. **Most people should never need the menu.**
 
 ```
- heart_scan.mrb     12 MB   [ Open · Cardiac segmentation ▾ ]
+ heart_scan.mrb     12 MB   [ Open · SlicerHeart – Simplified ▾ ]
 
  ┌───────────────────────────────────┐
- │ Recommended for this case         │
- │ ✓ Cardiac segmentation            │
- │     Opens in your browser         │
- │   Valve planning                  │
- │     For aortic valve measurements │
+ │ Open in                           │
+ │ [ SlicerWeb ] [ Full Slicer ]     │
+ │ ───────────────────────────────── │
+ │ ✓ No workflow                     │
+ │     Just SlicerWeb                │
+ │ This case                         │
+ │   SlicerHeart                     │
+ │   SlicerHeart – Simplified        │
+ │   Cardiac segmentation            │
  │ Yours                             │
  │   My TAVR setup                   │
- │ ───────────────────────────────── │
- │   Other ways to open            ▸ │
- │   Find more…                      │
+ │   More workflows… (4 more)        │
  └───────────────────────────────────┘
-
- Other ways to open ▸
-   In your browser (SlicerWeb)
-   Full Slicer          slower to start, more tools
-   Simplified Viewer
 ```
 
-- **Grouped by who chose it, not by viewer.** "Recommended for this case" is the approved workflows; "Yours" is the user's own (unless the case turns them off). Empty sections aren't shown. No "built-in", "(case)" or "only you" tags; the headers say it.
-- **Second line:** the workflow's description, cut to one line, or else where it opens in plain words ("Opens in your browser", "Opens in Full Slicer"). Extension lists stay on the detail view; they mean little to most clinicians.
-- **"Other ways to open ▸"** holds the plain viewers, with no workflow (see [Viewers and workflows](#viewers-and-workflows)). Viewers the user can't use (Full Slicer feature off or no access) are left out.
-- **File types:** for a file, only workflows whose `file_types` match, plus those with no file types, are listed; the blank viewer lists them all.
-- **Label:** the button shows the workflow (or viewer) it will use when that isn't the person's own plain viewer.
-- **No choices, no chevron.** If the menu would only hold the submenu and the user can't request more (`read_only`), the button is a plain "Open". People who don't use workflows never see the feature.
-- **"Find more…"** (not shown to `read_only` members) opens a searchable picker of public workflows not yet approved for the case, filtered by the file's type when opened from a file. Each result lists its extensions. Members get **Request**; admins get **Add** (approves directly). Workflows already requested show "Requested", with **Cancel request** for one's own.
-- **Pending requests** appear in the requester's Open menu, greyed out, as "Pending approval". Only the requester sees them.
+- **"Open in"** switches the viewer for this file; it starts on the person's own viewer. The blank viewer is SlicerWeb only, so it has no switch.
+- **"No workflow" comes first:** the one entry every menu has, in a fixed place. Then "This case" (approved workflows) and "Yours" (the person's own, unless the case turns them off).
+- **Only what you can use now.** Workflows the chosen viewer can't run, or made for other file types, are left out, not greyed. Pending requests aren't listed. Requesting and adding are in the [Workflows panel](#workflows-panel), not here.
+- **Second line:** the workflow's description, cut to one line, or "Starts in <module>".
+- **Overflow:** after 5 workflows the menu shows **"More workflows… (n more)"**, a searchable list of the same usable workflows; picking one opens the file. The current choice always stays in the short list.
+- **Label:** next to the chevron, what's different from the person's own viewer with no workflow: the workflow's name, and the viewer when it isn't theirs ("SlicerHeart · Full Slicer").
 
 ### Which workflow opens
 
-1. **The person's choice for this file:** whatever they last picked from that file's Open menu, a workflow or a plain viewer. Picking the case default from the menu is also a choice.
-2. **The person's viewer:** their account setting (today's `use_full_slicer` / `use_simplified_viewer`), which counts as an explicit choice. If it's Full Slicer or Simplified Viewer, the file opens there and the case's SlicerWeb workflow defaults are skipped. No warning for now: workflows are meant to come to Full Slicer.
-3. **The case's default workflow** (only when the person's viewer is SlicerWeb): the default for the file's type, then for all other files (or the blank viewer's default).
-4. **The plain viewer**, with no workflow.
+A launch is a **viewer** plus, optionally, a **workflow** installed on top.
 
-A saved choice or case default that isn't usable is skipped: removed from the case, a personal workflow when the case turns them off, or a viewer the person can't use. Choices are kept in the browser, keyed by case and attachment, under the `slicerweb.hub.` prefix so sign-out clears them. If an admin changes a default while someone is mid-way through a file, that file keeps whatever the person picked; files they haven't picked for follow the new default. This edge case is acceptable.
+**Viewer:** the person's pick for this file (the menu's "Open in"), else their account setting (`use_full_slicer`), which counts as an explicit choice. The blank viewer is always SlicerWeb.
 
-The account viewer setting may go away later, if the Open ▾ menu makes the viewer choice clear enough on its own.
+**Workflow:**
+1. The person's pick for this file, a workflow or "No workflow".
+2. The case's default workflow, if it can be used for this file (its file types) in this viewer.
+3. None.
+
+A pick or default that isn't usable is skipped: removed from the case, a personal workflow when the case turns them off, made for other file types, or not runnable in the chosen viewer. No warning for now.
+
+Picks are kept in the browser, keyed by case and file, under the `slicerweb.hub.` prefix so sign-out clears them: per person, per file, per browser. If an admin changes the default while someone is mid-way through a file, that file keeps whatever the person picked; acceptable.
+
+The account viewer setting could go away if "Open in" is clear enough on its own, but only once picks are stored on the server: today a sign-out forgets them, so a Full Slicer user would re-pick every file after every sign-in.
+
+### When a file needs an extension
+
+"No workflow" is the fallback when nothing else applies, even though some files can only be read with an extension (`.mcs` and `.mxp` need SlicerHeart's `MimicsProject` reader). There's no table of which file types need which extensions: it would have to be known in advance and kept up to date. Instead, a failed load is recognised when it happens.
+
+Tested in SlicerWeb without SlicerHeart: opening an `.mcs` file doesn't report "no reader". Slicer falls back to its general volume reader, and ITK fails with `vtkITKArchetypeImageSeriesReader::ExecuteInformation: Cannot open <file>. ITK exception info: … Could not create IO object for reading file <file>`. So a check before loading ("is there a reader?") doesn't work; the failure has to be read afterwards.
+
+- **Only that signature gets the targeted message.** When a load fails with ITK's "Could not create IO object for reading file" (the format wasn't recognised), the case page says: *"This file's format wasn't recognised. It may need an extension that isn't included. Try one of this case's workflows, or ask a case admin."* If the case has workflows the chosen viewer can run, they're offered as buttons ("Open with SlicerHeart").
+- **Every other failure shows the real error**, as today. No general "file not supported" message: it would hide the real cause and mislead debugging.
+- The match is on error text, so it could change between Slicer versions. If it stops matching, people simply see the real error again, which is safe; a unit test on the matcher with the message above catches the change.
+- SlicerWeb's errors arrive through its `alert`, which `cases-page.js` already replaces inside the viewer iframe (`_slicerAlertMessage`), so the case page can show its own message instead of the browser's popup. Check that this path is caught: the test above showed the browser's native popup.
+
 
 ### Viewers and workflows
 
-The plain viewers are code constants, listed under "Other ways to open":
+There are two viewers, SlicerWeb and Full Slicer. Whether a viewer can run a workflow follows one rule, with no workflow-specific code: **every extension the workflow needs is available in that viewer, and its startup configuration only uses keys that viewer supports.**
 
-| ID | Viewer | Launches |
+| Viewer | Extensions available | Startup keys |
 |---|---|---|
-| `builtin:slicerweb` | SlicerWeb | no extensions |
-| `builtin:full` | Full Slicer | as today |
-| `builtin:simplified` | Full Slicer | as today, with `useSimplifiedViewer: true` |
+| SlicerWeb | the build's `extensions/index.json` (per channel) | `module` (latest channel) |
+| Full Slicer | the add-ons manifest, `slicer-gui-gpu/slicer-addons.json` (today Sandbox and SlicerHeart, plus the SimplifiedViewer module), which every seat loads | `module` |
 
-They need no approval, have no owner, and aren't affected by the "Members can use their own workflows" switch. They are never case defaults: a case's defaults are always workflows. `openWithWorkflow(caseRow, attachment, entry)` routes by the entry's `target`.
+So today Full Slicer can run SlicerHeart, SlicerHeart – Simplified and "No workflow". Adding an extension to the manifest (a config change plus the daily add-ons sync) makes workflows that use it available in Full Slicer, with no code change. Until seats load only a workflow's own extensions, "No workflow" and SlicerHeart behave the same in Full Slicer, since SlicerHeart is always loaded.
 
-**SlicerHeart** stops being hardcoded into SlicerWeb launches (`buildSlicerWebUrl`'s `extensions = ['SlicerHeart']`). Instead a public "SlicerHeart" workflow (extensions: SlicerHeart; any file type) is created at setup if missing, owned by a fixed system owner (`owner_id: 'system'`) so no user can edit or delete it.
+**Seeded workflows.** SlicerHeart stops being hardcoded into SlicerWeb launches (`buildSlicerWebUrl`'s `extensions = ['SlicerHeart']`). At setup, two public workflows are created if missing, owned by a fixed system owner (`owner_id: 'system'`) so no user can edit or delete them:
 
-**Existing cases** keep what they expect: a one-off step at setup approves the seeded SlicerHeart workflow on every case that existed before this change and makes it the default for all other files and for the blank viewer. It runs once per case (a per-case marker, so an admin who later removes SlicerHeart doesn't get it back). **New cases** start with no workflows; admins add SlicerHeart, or anything else, from Case Settings. Later, creating a case could offer to import workflows, with SlicerHeart suggested.
+| Name | Extensions | Startup configuration | File types |
+|---|---|---|---|
+| SlicerHeart | SlicerHeart | none | any |
+| SlicerHeart – Simplified | SlicerHeart | `{ "module": "SimplifiedViewer" }` | any |
 
-Simplified Viewer becomes a workflow in the full sense only with Full Slicer workflows (see the end of this doc). Simplified Viewer **share links** (`routes/files.js`) stay hardcoded for now.
+**Existing cases** keep what they expect: a one-off step at setup approves both on every case that existed before this change and makes SlicerHeart the default workflow. It runs once per case (a per-case marker, `workflows_seeded`, so an admin who later changes this doesn't get it back). **New cases** start with no workflows. Later, creating a case could offer to import workflows, with SlicerHeart suggested.
+
+**Account setting.** Simplified Viewer is no longer a viewer, so `use_simplified_viewer` goes away (its column into `RETIRED_SCHEMA` first); people who had it on keep Full Slicer and pick "SlicerHeart – Simplified" from the menu. Simplified Viewer **share links** (`routes/files.js`) stay hardcoded for now.
+
+### Workflows panel
+
+A **Workflows** button in the case toolbar, next to People, for everyone (with a count badge for admins when requests are waiting). Like People, members see what's there and admins manage it. Tabs:
+
+- **In this case:** the approved workflows, each with its description, file types, where it runs ("SlicerWeb and Full Slicer", or "SlicerWeb (not Full Slicer yet)") and "starts in …". Admins can **remove** one here; removing the default workflow clears the default. Members also see **their own pending requests**, with Cancel.
+- **Request workflows** (members above `read_only`) / **Add workflows** (admins): browse public workflows not yet in the case (admins also see their own private ones) with search. Members get **Request**, or **Request too** when someone already asked; admins get **Add** (approves directly). Same "runs in" line as above. Searching and paging happen on the server (see [Build status](#build-status)).
+- **Requests** (admins): Approve, or Decline with an optional reason. The panel opens on this tab when requests are waiting.
 
 ### Case Settings (admins only)
 
-A **Settings** button in the case detail toolbar, next to People, opens a settings view. Only case admins see it. Role-based sections, as on GitHub, may come later. Moving the title and description edit here is optional.
+A **Settings** button in the case toolbar, for case admins only, opens a settings view. Role-based sections, as on GitHub, may come later.
 
 ```
- Case settings › Workflows
+ Case settings
  ─────────────────────────────────────────────
- Requests (1)
-   Valve planning · requested by A. Smith and 2 others
-   Previously declined on 3 Nov: "Use Cardiac instead"
-                                  [ Approve ] [ Decline ]
+ Default workflow
+   What files in this case open with, unless someone picks something
+   else for a file.                        [ SlicerHeart        ▾ ]
 
- Approved workflows                                   [ Add… ]
-   Cardiac segmentation  .mrb      (●) Default for .mrb    Update ✕
-   Valve planning        .nii.gz   ( ) Default for .nii.gz        ✕
-   SlicerHeart           Any                                      ✕
-
- Everything else
-   Files with no default open with each person's own viewer.
-   All other files open with   [ SlicerHeart          ▾ ]
-   Blank viewer opens with     [ No workflow          ▾ ]
-
- [■] Members can use their own workflows
+ Personal workflows
+   [■] Members can use their own workflows
 ```
 
-- **Approved workflows:** add (same picker as "Find more…"), re-approve when an update is available, remove. A workflow made for particular file types has a **"Default for …"** switch: on makes it the default for each of its types (replacing whatever was the default for them), off clears them. Workflows for any file type have no switch; they can be chosen for all other files or the blank viewer.
-- **Everything else:** "All other files" offers no workflow or an approved workflow for any file type; "Blank viewer" offers no workflow or any approved workflow. A line says that files with no default open with each person's own viewer, and that the most specific match wins (`.seg.nrrd` before `.nrrd`, a file type before all other files). Admins never type file types: they come from the workflows.
-- Removing an approved workflow clears the defaults that used it. `workflow_defaults` maps `blank`, `*` and file types to approval ids only.
-- **Members can use their own workflows:** on by default. When off, Open menus list only approved workflows and the plain viewers. This is a consistency setting for studies, not a security boundary: it's applied in the browser, and users can still install extensions by hand in SlicerWeb. The settings text should say so.
+- **Default workflow:** "No workflow" or any approved workflow. It only applies where it can: files of its type, in viewers that can run it. There is no per-file-type table and no list of always-included extensions: one default keeps a launch's extensions coming from one place, the workflow.
+- **Members can use their own workflows:** on by default. When off, Open menus list only the case's workflows. This is a consistency setting for studies, not a security boundary: it's applied in the browser, and users can still install extensions by hand in SlicerWeb. The settings text should say so.
+- Adding and removing workflows is in the Workflows panel, with a link from here.
 
 ### Requests
 
@@ -234,19 +248,18 @@ There is at most **one request row per (case, workflow)**, however many people a
 - **Request:** creates a pending row, or adds the requester to an existing pending one. The admin gets a bell notification and sees one line ("requested by A. Smith and 2 others").
 - **Cancel:** a requester removes themselves. When nobody is left, the row is deleted and the admin's notification cleared.
 - **Decline:** the admin may give an optional short reason. Every requester gets a bell notification ("Valve planning wasn't added to Case X"), with the reason if given.
-- **Approve:** copies the extension list as approval does today; requesters get a notification ("now available in Case X").
+- **Approve:** copies the workflow as approval does; requesters get a notification ("now available in Case X").
 - **Request again after a decline:** the row goes back to pending with only the new requester. The admin sees the earlier decline date and reason.
 - **Source no longer public** while pending: Approve is disabled and the line reads "No longer public". The admin declines it so requesters are told.
-- **Requester leaves the case or is deleted:** they're dropped from the request; an empty request is deleted. The simplest version filters out non-members whenever requests are read.
-- Requests reuse the collaborator-invite approval pattern; see Notifications below.
+- **Requester leaves the case or is deleted:** they're dropped from the request; an empty request is deleted.
 
 ### Notifications
 
 These follow the two patterns already in use: pending invites (a live count in the bell, plus cards in Home's To do that act on the live data) and mentions (stored rows in `user-notifications`).
 
 **Case admins: pending requests (live, not stored).**
-- **Bell:** the count of pending workflow requests on cases they admin is added next to `pendingInviteCount` in `notificationStore`.
-- **Home To do:** one card per pending request, built like `inviteToTodo`: "A. Smith and 2 others requested Valve planning for Case X". It has **Approve** and **Decline** (decline asks for the optional reason), and clicking the card opens Case Settings › Workflows.
+- **Bell:** the count of pending workflow requests on cases they admin, next to `pendingInviteCount` in `notificationStore`. A plain count, with no Keycloak lookups.
+- **Home To do:** one card per pending request, built like `inviteToTodo`: "A. Smith and 2 others requested Valve planning for Case X", with **Approve** and **Decline** (decline asks for the optional reason). Clicking the card opens the case's Workflows panel on Requests.
 - Because both come from the pending rows, a request that is cancelled, or decided by another admin, disappears for every admin with nothing to clean up.
 
 **Requesters: outcomes (stored).**
@@ -254,39 +267,68 @@ These follow the two patterns already in use: pending invites (a live count in t
 - It shows in the bell, and in To do while unread, like mentions. Clicking opens the case.
 - The decline reason copied into a notification is kept under the notifications' normal retention (`services/dataRetention.js`), not the request row's.
 
-### Data model changes
+### Data model
 
-**`case-workflows`** gains:
+**`workflows`** gains `startup_config` (json, see [Startup configuration](#startup-configuration)).
+
+**`case-workflows`** (one row per case and workflow; a request or an approval):
 
 | Field | Type | Notes |
 |---|---|---|
-| `status` | select `pending` / `approved` / `declined` | existing rows are `approved` |
-| `requesters` | json (string[]) | Keycloak subs only. No names or emails are copied; they're looked up from Keycloak when shown, as the People dialog does. Cleared once the request is decided. |
-| `requested_at` | date | when the row last became pending; for "requested 3 days ago" |
-| `decline_reason` | text | optional, short (500 characters), plain text; shown to the admin if the workflow is requested again, and cleared on approval |
-| `decided_by`, `decided_at` | text, date | replace `approved_by` / `approved_at` |
+| `status` | select `pending` / `approved` / `declined` | rows with no status (from before requests) count as approved |
+| `requested_at` | date | when the row last became pending |
+| `decline_reason` | text | optional, up to 500 characters, plain text; shown to the admin if the workflow is requested again, cleared on approval |
+| `decided_by`, `decided_at` | text, date | replaced `approved_by` / `approved_at` |
 
-`name`, `description`, `extensions`, `file_types` and `source_updated_at` are copied from the source on request and again on approval. Members' Open menus read only `approved` rows; rows with no `status` (made before requests existed) count as approved. Renaming `approved_by` / `approved_at` drops columns, so they go into `RETIRED_SCHEMA` first.
+`name`, `description`, `extensions`, `file_types`, `startup_config` and `source_updated_at` are copied from the source on request and again on approval. A unique index on (case, workflow) enforces one row each. Requesters are rows in a small `case-workflow-requesters` collection (one per request and person, Keycloak sub only, unique), so joining and cancelling are an insert and a delete rather than rewriting an array. Names are looked up from Keycloak when shown, as the People dialog does.
 
 **`cases`** gains:
 
 | Field | Type | Notes |
 |---|---|---|
-| `workflow_defaults` | json | `{ blank?, "*"?, <file type>? }` mapping to `case-workflows` IDs. A map on the case keeps each key to one value. |
+| `default_workflow` | text | a `case-workflows` id, or empty |
 | `allow_personal_workflows` | checkbox | default true |
+| `workflows_seeded` | checkbox | set once the existing-case step has run |
 
-### API changes
+Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approved_by` / `approved_at` (done), `case_workflows.requesters` (json array, replaced by the collection), `cases.workflow_defaults`, `user_preferences.use_simplified_viewer`.
+
+### API
 
 | Route | Who |
 |---|---|
-| `GET /api/cases/:id/workflows` | Members get `approved`, `mine` (empty when personal workflows are off), their own pending requests and the case's `defaults`. Admins also get `requests` and `settings`. |
-| `GET /api/cases/:id/workflows/available?q=&fileTypes=` | Members: public workflows not approved for the case, for "Find more…" |
+| `GET /api/cases/:id/workflows` | Members: `approved`, `mine` (empty when personal workflows are off), their own pending requests, `defaultWorkflow`, `allowPersonal`, `canRequest`. Admins also get `requests`. |
+| `GET /api/cases/:id/workflows/available?q=&page=` | Members above `read_only`: public workflows not in the case (admins: plus their own), searched and paged on the server, for the Workflows panel |
 | `POST /api/cases/:id/workflows/requests` with `{ workflowId }` | Members above `read_only`: request, or join a pending request. The source must be public. |
-| `GET /api/workflow-requests/pending` | Requests awaiting the signed-in user's decision across the cases they admin, for To do and the bell count (like `listInvitesAwaitingMyApproval`) |
 | `DELETE /api/cases/:id/workflows/requests/:workflowId` | A requester, to cancel their own request |
+| `POST /api/cases/:id/workflows` with `{ workflowId }` | Case admin: add directly, approve a request, or re-approve to take an update |
 | `POST /api/cases/:id/workflows/:rowId/decline` with `{ reason? }` | Case admin |
-| `POST /api/cases/:id/workflows` with `{ workflowId }` | Case admin: approve directly, or approve a pending request |
-| `PATCH /api/cases/:id/workflow-settings` with `{ defaults?, allowPersonal? }` | Case admin |
+| `DELETE /api/cases/:id/workflows/:rowId` | Case admin: remove an approved workflow (clears the default if it was the default) |
+| `PATCH /api/cases/:id/workflow-settings` with `{ defaultWorkflow?, allowPersonal? }` | Case admin |
+| `GET /api/workflow-requests/pending` | Requests awaiting the signed-in user's decision across the cases they admin, for To do |
+| `GET /api/workflow-requests/pending-count` | The bell's count, with no Keycloak lookups |
+
+### Build status
+
+**Built (commits on `rhisey/wip/workflows-in-cases`):** the requests lifecycle and its tests; `status` and decided fields on `case-workflows`; `allow_personal_workflows`; an Open ▾ menu with "Recommended / Yours / Other ways to open" and "Find more…"; a "Find more…" dialog; Case Settings with requests, approved workflows, a per-file-type defaults table and the personal switch.
+
+**To change to match this design:**
+1. **Menu** (`open-with-menu.js`, `caseWorkflowMenu.js`): "Open in" switch; "No workflow" first; hide what can't be used; overflow after 5; drop "Other ways to open", "Find more…" and pending items; built-in viewer entries go.
+2. **Which workflow opens:** viewer + workflow as above; single default.
+3. **Viewers and workflows:** the one "can run" rule; the backend exposes Full Slicer's manifest extensions; Full Slicer's open request carries the startup configuration instead of `useSimplifiedViewer`, and its seat reuse compares workflow and configuration.
+4. **Startup configuration:** `startup_config` on workflows, the "Start in" field on the Workflows page, `module=` for SlicerWeb.
+5. **Seeding and migration:** the two SlicerHeart workflows; the existing-case step; `buildSlicerWebUrl` no longer adds SlicerHeart; retire `use_simplified_viewer`.
+6. **Workflows panel** replaces the "Find more…" dialog and moves requests and approved workflows out of Case Settings.
+7. **Case Settings:** single default workflow and the personal switch only; `workflow_defaults` becomes `default_workflow`.
+8. **Failed loads:** the targeted ITK message (see [When a file needs an extension](#when-a-file-needs-an-extension)).
+9. **Bell and Home To do** for requests (not started).
+10. **Server-side search and paging** for public workflows, shared by the Workflows panel and the Workflows page's "All workflows" tab (both stop at 200 today).
+
+**Cleanup agreed before merging:**
+- Requests: unique index on (case, workflow); requesters as rows; no writes inside GETs (ex-members filtered on read); a cooldown before re-requesting a declined workflow; a cap on pending requests per member per case; optionally a per-user rate limit on request and cancel.
+- Backend error messages for workflows go through `msg()` and the backend `en.js`, with keys.
+- `loadCaseWorkflows()` in `cases-page.js`: log failures and show them in Case Settings with "Try again", instead of "Loading…" forever.
+- Bare strings in the new code become frozen constants (`WORKFLOW_TARGET`, `REQUEST_STATUS`, menu-key helpers).
+- Optional: `psql -1` and stop on failure for the `RETIRED_SCHEMA` step in `scripts/setup-payload.mjs`.
 
 ## To think about later
 
@@ -298,30 +340,35 @@ These follow the two patterns already in use: pending invites (a live count in t
 - showing who published a workflow, which needs the same opt-in as names elsewhere (`share_name_in_groups`); today public workflows show no author, by design;
 - a sort that isn't just alphabetical (recent, or most used), so the first page can't be claimed by naming.
 
+**Workflow variants.** "SlicerHeart" and "SlicerHeart – Simplified" share an extension list and differ only in where they start, and admins approve each. If such variants become common, a workflow could be approved together with the variants based on it (parent/child), or carry several starting points. Not worth the complexity yet.
+
+**Server-side picks.** Per-file picks live in the browser and are cleared on sign-out. Storing them per user on the server would let them follow people between browsers, and would let the account viewer setting go away.
+
 **Extension icon fetcher: DNS rebinding.** `services/extensionIcons.js` checks that every hop is https to a public address before requesting it. The address is looked up for the check and then again by `fetch`, so a host that changes its DNS answer between the two could still reach an internal address. Exploiting this needs control of a listed icon URL, and the response is discarded unless it's an image. Closing the gap fully means connecting to the checked address itself (a custom `undici` dispatcher with a pinned `lookup`), which isn't worth it for 16 icons from a build we control. Revisit if icons ever come from user input.
 
 **Profile pictures uploaded before content checks.** Avatars are now checked by their contents on upload (`routes/auth.js`), as workflow icons are. Pictures uploaded earlier were stored under whatever extension their file name had. They're served with `nosniff`, so a disguised file can't run, but a one-off scan of `avatars/` with `sniffImageType` would find any that aren't really images.
 
-## Later: start module
+## Startup configuration
 
-A workflow could name the module to open in, so a file opens straight into the tool people need. Deferred: the next pass covers extensions only.
+A workflow can carry one **startup configuration**: what's passed to the viewer once it has started. For now that's a single key, the module to open:
 
-What's already in place:
+```json
+{ "module": "SimplifiedViewer" }
+```
 
-- SlicerWeb **latest** reads `?module=<name>`, matches it against loaded modules ignoring case, and logs a console warning for unknown names. **Stable** doesn't read it yet (it reads `layout`, `favoriteModules` and `sample`), so on stable the setting would be ignored until stable catches up.
-- `extensions/index.json` lists each extension's `modules` (for example ExtraMarkups: `Label`, `Shape`), so the editor can offer a dropdown rather than free text.
+**Authors pick from lists; they never write code.** On the Workflows page, an optional **"Start in"** dropdown lists the modules of the ticked extensions (each extension's `modules` in the build's `extensions/index.json`; SlicerHeart lists SimplifiedViewer, and `SlicerHeartSimVascularPrivate` on stable lists ConduitPlanner) plus a short list of core modules kept in code. Untick the extension and a module that came from it is flagged. Modules a channel doesn't ship are flagged like extensions are ("Not in this SlicerWeb build").
 
-What it would take:
+**Data, not code.** The configuration is checked on save against known keys only; anything else is refused, so a public workflow can't make a viewer do something we haven't chosen to support. Adding a key (`layout`, module options, placeholders such as `{inputFile}` filled in by the host at launch) is a deliberate change: the key goes on the allowed list and each viewer learns to apply it.
 
-- A `start_module` text field on `workflows` (`/^\w{1,100}$/`), copied into `case-workflows` on approval like `extensions`.
-- `buildSlicerWebUrl` adds `module=<name>`.
-- An optional "Start in" dropdown in the editor, listing the selected extensions' modules plus a short list of core modules kept in code (core modules aren't in `index.json`). Removing the extension that provides the chosen module clears it.
-- "Starts in Segment Editor" can serve as the Open menu's second line when a workflow has no description.
+**How each viewer receives it:**
 
-To check: whether loading a file (especially an MRB) switches modules after SlicerWeb applies `module=`, and whether to hide the field or label it "latest only" while stable lacks it. For Full Slicer, `startModule` would go into the open request and `slicer_session.py` would call `slicer.util.selectModule()` after loading, after checking the name.
+- **SlicerWeb:** `module` becomes `?module=<name>`. The **latest** channel reads it (matching loaded modules, ignoring case; unknown names log a warning). **Stable** doesn't yet, so there the workflow opens on SlicerWeb's normal first screen, and the menu says "Starts in X on the latest channel only" until stable catches up. Keys beyond the URL parameters would go through one `?config=` parameter or the `slicerWeb` bridge the case page already uses to load files.
+- **Full Slicer:** the configuration goes in the open request that `slicer_session.py` already reads (where `useSimplifiedViewer` goes today), and it calls `slicer.util.selectModule()` after loading the file, after checking the name. SimplifiedViewer keeps the interface tidying seats apply today (`apply_simplified_viewer_ui`).
+
+**To check:** whether loading a file (especially an MRB) switches modules after SlicerWeb applies `module=`.
 
 ## Later: Full Slicer
 
 Full Slicer seats mount one shared add-ons snapshot (`data/slicer-addons`). The plan is to keep that single snapshot, containing every catalog extension, and have the workflow choose which modules load (via an environment variable read by `slicer_session.py`, or `--modules-to-ignore`). The workflow ID and version must then be part of the seat reuse check (where `priorUseSimplifiedViewer` is checked in `slicerGui/sessionManager.js`).
 
-Simplified Viewer is already Full Slicer plus the `SimplifiedViewer` module, which `slicer_session.py` loads and switches to. Once workflows gain a "start module" field, `builtin:simplified` becomes `{ target: full_slicer, startModule: 'SimplifiedViewer' }`, launched through the same Full Slicer workflow path as any other, and the `useSimplifiedViewer` flag goes away. It stays built-in rather than a stored public workflow, so no owner can edit or unpublish it. The account preference's two checkboxes (`use_full_slicer`, `use_simplified_viewer`) may go away if the Open ▾ menu makes the viewer choice clear on its own (see [Which workflow opens](#which-workflow-opens)); their columns would go into `RETIRED_SCHEMA` first.
+Full Slicer already runs workflows whose extensions are all in the add-ons manifest (see [Viewers and workflows](#viewers-and-workflows)). Loading only a workflow's own extensions per seat, and reusing seats per workflow, makes Full Slicer do exactly what a workflow says rather than load everything; it doesn't change the UX.

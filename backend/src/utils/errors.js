@@ -2,6 +2,8 @@
  * Custom error classes for consistent error handling
  */
 
+import { msg } from '../i18n/index.js';
+
 /**
  * Base class for application errors
  */
@@ -14,6 +16,15 @@ export class AppError extends Error {
         /** Optional i18n catalog key (see backend/src/i18n). */
         this.messageKey = messageKey || null;
         Error.captureStackTrace(this, this.constructor);
+    }
+
+    /**
+     * An error with a catalog message (backend/src/i18n) and its key, e.g.
+     * ValidationError.fromKey('workflow.startup_config_key', { key }). For the subclasses below,
+     * which all take (message, code, messageKey).
+     */
+    static fromKey(key, vars) {
+        return new this(msg(key, vars), null, key);
     }
 }
 

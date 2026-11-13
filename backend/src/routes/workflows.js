@@ -13,7 +13,7 @@ import { NotFoundError, ValidationError } from '../utils/errors.js';
 import { IMAGE_MIME, sniffImageType, sendStoredImage } from '../utils/storedImage.js';
 import { requireOwnerId, loadOwnedDoc } from '../utils/ownedDocs.js';
 import { sanitizeNameList, sanitizeFileExtensions, sanitizeText, sanitizeChoice } from '../utils/validation.js';
-import { WORKFLOWS, myWorkflows, publicWorkflows, toWorkflow } from '../services/workflows.js';
+import { WORKFLOWS, myWorkflows, publicWorkflows, toWorkflow, sanitizeStartupConfig } from '../services/workflows.js';
 
 export const VISIBILITIES = ['private', 'public'];
 export const ICON_MAX_BYTES = 256 * 1024;
@@ -33,6 +33,7 @@ export function workflowFields(body = {}, { partial = false } = {}) {
     if (has('visibility')) out.visibility = sanitizeChoice(body.visibility ?? 'private', VISIBILITIES, { label: 'Visibility' });
     if (has('extensions')) out.extensions = sanitizeNameList(body.extensions, { label: 'Extensions' });
     if (has('fileTypes')) out.file_types = sanitizeFileExtensions(body.fileTypes);
+    if (has('startupConfig')) out.startup_config = sanitizeStartupConfig(body.startupConfig);
     return out;
 }
 
@@ -50,7 +51,7 @@ export default function workflowRoutes(app) {
     }));
 
     app.post('/api/workflows', ...auth, asyncHandler(async (req, res) => {
-        const data = { ...workflowFields(req.body), owner_id: requireOwnerId(req), target: 'slicerweb' };
+        const data = { ...workflowFields(req.body), owner_id: requireOwnerId(req) };
         const doc = await getPayloadClient().create({ collection: WORKFLOWS, data });
         res.status(201).json({ workflow: toWorkflow(doc, req) });
     }));

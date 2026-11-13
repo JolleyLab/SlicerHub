@@ -143,6 +143,9 @@ const RETIRED_SCHEMA = [
     // Workflow approvals became requests too: approved_* → decided_* (docs/workflows-design.md).
     'ALTER TABLE IF EXISTS case_workflows DROP COLUMN IF EXISTS approved_by',
     'ALTER TABLE IF EXISTS case_workflows DROP COLUMN IF EXISTS approved_at',
+    // Workflows no longer name a viewer; viewers are matched by extensions and startup keys.
+    'ALTER TABLE IF EXISTS workflows DROP COLUMN IF EXISTS target',
+    'DROP TYPE IF EXISTS enum_workflows_target',
 ];
 
 function dropRetiredSchema(dbUser) {

@@ -247,6 +247,11 @@ export default {
         lastMember: 'Cannot remove the last member of a capability group.',
         cannotDeleteCapabilityGroup: 'Cannot delete a capability group that still has members. Remove all members first.',
     },
+    workflow: {
+        startup_config_object: 'Startup configuration must be an object',
+        startup_config_key: 'Startup configuration can’t include "{key}"',
+        startup_config_value: 'Startup configuration has an invalid {key}',
+    },
     registration: {
         not_found: 'Registration request not found',
         legacy_request: 'This request was made before sign-up moved to the sign-in page. Reject it and ask the person to request access again.',
