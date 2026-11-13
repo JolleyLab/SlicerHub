@@ -3,7 +3,8 @@
  * approving and removing them, and the case's workflow settings. An approval keeps a copy of
  * the workflow as approved.
  *
- *   GET    /api/cases/:id/workflows               members: approved, their own, their requests, default, settings
+ *   GET    /api/cases/:id/workflows               members: approved, their own, their requests, default, settings,
+ *                                                 and what each viewer can run (services/viewerCapabilities.js)
  *                                                 (admins: + pending requests)
  *   POST   /api/cases/:id/workflows               admins: approve, or re-approve to refresh the copy
  *   DELETE /api/cases/:id/workflows/:approvalId   admins
@@ -22,6 +23,7 @@ import {
 import {
     canRequest, isPending, requestersOf, loadCaseWorkflowRow, describeRequests, notifyRequesters,
 } from '../services/workflowRequests.js';
+import { viewerCapabilities } from '../services/viewerCapabilities.js';
 
 const caseRows = (caseId) => findAll(CASE_WORKFLOWS, { case: { equals: Number(caseId) } }, 'name');
 
@@ -60,6 +62,7 @@ export default function caseWorkflowRoutes(app) {
             ...settings,
             canManage,
             canRequest: canRequest(role),
+            viewers: viewerCapabilities(),
             ...(canManage ? { requests: await describeRequests(pending, new Map([[String(caseDoc.id), caseDoc]])) } : {}),
         });
     }));

@@ -149,6 +149,7 @@ test('members see approved workflows plus their own; non-members are refused', a
     assert.deepEqual(res.body.approved.map((a) => a.name), ['WF 11']);
     assert.deepEqual(res.body.mine.map((w) => w.id), [10, 11]);
     assert.equal(res.body.canManage, false);
+    assert.deepEqual(Object.keys(res.body.viewers), ['slicerweb', 'full']); // what each viewer can run
     assert.equal((await call('GET', '/api/cases/1/workflows', { user: ADMIN })).body.canManage, true);
     assert.equal((await call('GET', '/api/cases/1/workflows', { user: STRANGER })).status, 403);
 });
