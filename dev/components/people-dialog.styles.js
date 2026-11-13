@@ -171,4 +171,5 @@ export const peopleDialogStyles = css`
         font-size: 0.85rem;
         color: var(--color-text-secondary);
     }
+    icon-button svg { width: 14px; height: 14px; }
 `;

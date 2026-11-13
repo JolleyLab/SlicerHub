@@ -332,6 +332,7 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
 - Bare strings in the new code become frozen constants (`WORKFLOW_TARGET`, `REQUEST_STATUS`, menu-key helpers).
 - Retire the `use_simplified_viewer` preference and its "Use simplified viewer" checkbox (cases ignore it since the Open ▾ menu rework; Projects, their GPU route, share links and the seat loader still read it), together with Projects' move off SQLite. Then `accountDefaultViewer()` returns a `VIEWER` directly and `viewerFromAccount()` goes.
 - Once every installation has run `setup-payload.mjs` with workflows: delete `seedExistingCases` from `backend/src/setup/workflowSeed.js` and retire `cases.workflows_seeded` (via `RETIRED_SCHEMA`, and stop setting it in case creation). Creating the two built-in workflows stays, for new installations.
+- "Update available" now compares the copied fields (name, description, extensions, file types, startup configuration) instead of timestamps, so edits a case doesn't copy (visibility, icon) aren't an update. `case_workflows.source_updated_at` is no longer read: stop writing it in `workflowCopy` and retire the column via `RETIRED_SCHEMA`.
 - Optional: `psql -1` and stop on failure for the `RETIRED_SCHEMA` step in `scripts/setup-payload.mjs`.
 
 ## To think about later

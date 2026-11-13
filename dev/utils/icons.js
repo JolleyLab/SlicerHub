@@ -13,6 +13,12 @@ export const ICON_PENCIL = html`
         <path fill="currentColor" d="M3 17.25V21h3.75l11-11.03-3.75-3.75L3 17.25zm14.81-9.06 1.83-1.83a1 1 0 0 0 0-1.41l-1.41-1.41a1 1 0 0 0-1.41 0l-1.83 1.83 2.82 2.82z"></path>
     </svg>`;
 
+/** Trash can: remove or delete. */
+export const ICON_TRASH = html`
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"></path>
+    </svg>`;
+
 /** Circled "i": more information. */
 export const ICON_INFO = html`
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">

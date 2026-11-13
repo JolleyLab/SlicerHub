@@ -7,8 +7,8 @@ import './app-dialog.js';
 
 /**
  * "More workflows…" from an Open ▾ menu: every workflow that can open this file in this viewer
- * (the same \`usable\` list the menu shortens), with a search box. Choosing one opens the file.
- * Call open({ title, usable, selectedKey }); emits \`open-workflow\` with { key }.
+ * (the same `usable` list the menu shortens), with a search box. Choosing one opens the file.
+ * Call open({ title, usable, selectedKey }); emits `open-workflow` with { key }.
  */
 export class MoreWorkflowsDialog extends LitElement {
     static get properties() {
@@ -28,7 +28,7 @@ export class MoreWorkflowsDialog extends LitElement {
                 text-align: left; background: transparent; border: 1px solid var(--color-border);
                 border-radius: var(--radius-sm, 6px); padding: 8px 10px; cursor: pointer; font: inherit; color: inherit; }
             .pick:hover, .pick:focus-visible { background: color-mix(in srgb, var(--color-primary) 10%, transparent); }
-            .pick[aria-current='true'] { border-color: var(--color-primary); }
+            .pick[aria-current='true'] { border-color: var(--color-focus); }
         `];
     }
 

@@ -1,5 +1,6 @@
 import { LitElement, html } from 'lit-element';
 import { peopleDialogStyles } from './people-dialog.styles.js';
+import { ICON_TRASH } from '../utils/icons.js';
 import './person-chip.js';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
@@ -458,9 +459,7 @@ export class PeopleDialog extends LitElement {
                             ?disabled=${this.saving}
                             @click=${() => this.handleRemove(member.id)}
                         >
-                            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
-                                <path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
-                            </svg>
+                            ${ICON_TRASH}
                         </icon-button>
                     ` : html`
                         <badge-pill>${roleLabel(member.role)}</badge-pill>

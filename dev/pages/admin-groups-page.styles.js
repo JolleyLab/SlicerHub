@@ -340,4 +340,5 @@ export const adminGroupsStyles = css`
         color: var(--color-text-secondary);
         text-align: center;
     }
+    .danger-button svg { width: 15px; height: 15px; }
 `;

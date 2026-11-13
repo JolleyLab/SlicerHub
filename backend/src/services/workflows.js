@@ -51,8 +51,23 @@ export const toApproval = (row, source = null) => ({
     fileTypes: row.file_types || [],
     startupConfig: row.startup_config || {},
     approvedAt: row.decided_at ?? null,
-    updateAvailable: Boolean(source) && Date.parse(source.updatedAt) > Date.parse(row.source_updated_at),
+    updateAvailable: Boolean(source) && copyDiffers(row, source),
 });
+
+/** The parts of a workflow a case copies, in a form that compares equal when they match. */
+const COPIED_FIELDS = ['name', 'description', 'extensions', 'file_types', 'startup_config'];
+const comparable = (doc) => JSON.stringify(COPIED_FIELDS.map((field) => {
+    const value = doc[field];
+    if (field === 'startup_config') return value || {};
+    if (field === 'extensions' || field === 'file_types') return value || [];
+    return value || '';
+}));
+
+/**
+ * Whether the source workflow has changed since the case copied it, in anything the case uses.
+ * Edits that don't affect the copy (visibility, icon) aren't an update.
+ */
+export const copyDiffers = (row, source) => comparable(row) !== comparable(source);
 
 /** What a case keeps of a workflow: copied on request and again on approval. */
 export const workflowCopy = (source) => ({

@@ -1,5 +1,6 @@
-import { LitElement, html, css } from 'lit-element';
+import { LitElement, html } from 'lit-element';
 import { listPageStyles } from '../styles/listPage.js';
+import { casesPageStyles } from './cases-page.styles.js';
 import { LIST_SORT_OPTIONS, filterByText, sortRows } from '../utils/listSort.js';
 import { t } from '../i18n/index.js';
 import '../components/page-layout-template.js';
@@ -20,14 +21,11 @@ import {
 } from '../services/cases.js';
 import '../components/people-dialog.js';
 import '../components/list-filter-tools.js';
-import '../components/open-with-menu.js';
+import '../components/overflow-menu.js';
 import '../components/case-settings.js';
-import '../components/find-workflows-dialog.js';
-import '../components/more-workflows-dialog.js';
-import { listCaseWorkflows, loadExtensionCatalog } from '../services/workflows.js';
-import {
-    VIEWER, NO_WORKFLOW, SIMPLIFIED_VIEWER_MODULE, viewerFromAccount, usableWorkflows, resolveOpen, readOpenPick, saveOpenPick,
-} from '../utils/openWith.js';
+import { VIEWER, SIMPLIFIED_VIEWER_MODULE } from '../utils/openWith.js';
+import { CaseWorkflowsController } from '../controllers/caseWorkflowsController.js';
+import { ICON_TRASH } from '../utils/icons.js';
 import { formatBytes } from '../utils/formatBytes.js';
 import { deepActiveElement } from '../utils/focus.js';
 import {
@@ -94,475 +92,7 @@ function writeCaseCommentSeenMap(map) {
  */
 export class CasesPage extends LitElement {
     static get styles() {
-        return [listPageStyles, css`
-            :host {
-                display: block;
-                width: 100%;
-                min-width: 0;
-                box-sizing: border-box;
-            }
-
-            /* â”€â”€â”€ Detail: layout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-            .case-detail {
-                display: flex;
-                flex-direction: column;
-                gap: 18px;
-                width: 100%;
-                min-width: 0;
-                max-width: 100%;
-                box-sizing: border-box;
-            }
-
-            .case-detail-grid {
-                display: grid;
-                grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
-                gap: 16px;
-                align-items: stretch;
-                width: 100%;
-                min-width: 0;
-                /* Shared pane height: both panels fill and scroll internally. */
-                height: min(560px, 60vh);
-                min-height: 380px;
-            }
-
-            .case-detail-grid .list-panel {
-                order: 1;
-                min-width: 0;
-                min-height: 0;
-                height: 100%;
-                max-height: 100%;
-            }
-
-            .case-detail-grid comments-panel {
-                --comments-panel-height: 100%;
-                --comments-panel-max-height: 100%;
-                min-height: 0;
-                height: 100%;
-                order: 2;
-                min-width: 0;
-            }
-
-            /* Stacked when content column is narrow (tablet / DevTools), set via ResizeObserver */
-            .case-detail[data-stack] .case-detail-grid {
-                grid-template-columns: 1fr;
-                align-items: start;
-                height: auto;
-                min-height: 0;
-            }
-
-            .case-detail[data-stack] .case-detail-grid .list-panel {
-                height: auto;
-                max-height: none;
-                min-height: 0;
-                width: 100%;
-            }
-
-            .case-detail[data-stack] .case-detail-grid comments-panel {
-                --comments-panel-height: auto;
-                --comments-panel-max-height: min(420px, 55vh);
-                height: auto;
-                min-height: 260px;
-                width: 100%;
-            }
-
-            @media (max-width: 1100px) {
-                .case-detail-grid {
-                    grid-template-columns: 1fr;
-                    align-items: start;
-                    height: auto;
-                    min-height: 0;
-                }
-
-                .case-detail-grid .list-panel {
-                    height: auto;
-                    max-height: none;
-                    min-height: 0;
-                    width: 100%;
-                }
-
-                .case-detail-grid comments-panel {
-                    --comments-panel-height: auto;
-                    --comments-panel-max-height: min(420px, 55vh);
-                    height: auto;
-                    min-height: 260px;
-                    width: 100%;
-                }
-            }
-
-            /* â”€â”€â”€ Detail: toolbar + header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-            .quiet-button {
-                border: 1px solid var(--color-border);
-                border-radius: 6px;
-                padding: 6px 12px;
-                font: inherit;
-                font-size: 0.8rem;
-                font-weight: 600;
-                background: var(--color-panel, #fff);
-                color: var(--color-text-primary);
-                cursor: pointer;
-            }
-
-            .quiet-button:hover:not(:disabled),
-            .quiet-button:focus-visible {
-                color: var(--color-on-secondary);
-                background: var(--color-secondary);
-                border-color: var(--color-secondary);
-            }
-
-            .quiet-button:focus-visible {
-                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
-                outline-offset: var(--focus-ring-offset, 2px);
-            }
-
-            .quiet-button:disabled {
-                opacity: 0.55;
-                cursor: not-allowed;
-            }
-
-            .people-pending-badge {
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                min-width: 1.25rem;
-                height: 1.25rem;
-                margin-left: 6px;
-                padding: 0 5px;
-                border-radius: 999px;
-                background: var(--color-primary);
-                color: var(--color-on-primary);
-                font-size: 0.7rem;
-                font-weight: 700;
-                line-height: 1;
-                vertical-align: middle;
-            }
-
-            /* â”€â”€â”€ File upload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-            .upload-action-row {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 12px;
-                min-height: 56px;
-                margin: 0 -16px -12px;
-                padding: 10px 16px;
-                border-top: 1px solid var(--color-border);
-                background: var(--color-panel, #fff);
-                box-sizing: border-box;
-                flex-shrink: 0;
-            }
-
-            .upload-action-row .secondary-button {
-                min-height: 36px;
-            }
-
-            .upload-action-buttons {
-                display: flex;
-                gap: 8px;
-                flex-shrink: 0;
-            }
-
-
-            .upload-status {
-                color: var(--color-text-secondary);
-                font-size: 0.85rem;
-                flex: 1;
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-
-            .upload-progress {
-                flex: 1;
-                min-width: 0;
-                display: flex;
-                flex-direction: column;
-                gap: 4px;
-            }
-
-            .upload-progress progress {
-                width: 100%;
-                height: 8px;
-                accent-color: var(--color-focus, var(--color-primary));
-            }
-
-            .upload-error {
-                color: var(--color-status-error-fg, #8a1212);
-                font-size: 0.85rem;
-                flex: 1;
-            }
-
-            /* Download button: a spinner while the access check runs (still, if reduced motion is asked for) */
-            .download-spinner {
-                width: 14px;
-                height: 14px;
-                box-sizing: border-box;
-                border: 2px solid currentColor;
-                border-right-color: transparent;
-                border-radius: 50%;
-                animation: download-spin 0.8s linear infinite;
-            }
-
-            @keyframes download-spin {
-                to { transform: rotate(360deg); }
-            }
-
-            @media (prefers-reduced-motion: reduce) {
-                .download-spinner {
-                    animation: none;
-                    border-right-color: currentColor;
-                }
-            }
-
-            /* Read by screen readers only */
-            .visually-hidden {
-                position: absolute;
-                width: 1px;
-                height: 1px;
-                margin: -1px;
-                padding: 0;
-                overflow: hidden;
-                clip: rect(0 0 0 0);
-                white-space: nowrap;
-                border: 0;
-            }
-
-            /* Drag-and-drop attach */
-            .list-panel-body.drag-over {
-                outline: 2px dashed var(--color-focus, var(--color-primary));
-                outline-offset: -6px;
-            }
-
-            .drop-hint {
-                position: absolute;
-                inset: 0;
-                z-index: 1;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                /* text-primary on a lightly tinted panel keeps AA contrast in both themes */
-                background: color-mix(in srgb, var(--color-focus, var(--color-primary)) 14%, var(--color-panel, #fff));
-                color: var(--color-text-primary);
-                font-weight: 600;
-                pointer-events: none;
-            }
-
-            /* â”€â”€â”€ Buttons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-            .primary-button,
-            .secondary-button {
-                border-radius: 6px;
-                padding: 8px 18px;
-                font: inherit;
-                font-size: 0.875rem;
-                font-weight: 600;
-                cursor: pointer;
-                transition: opacity 0.14s, box-shadow 0.14s, background 0.14s;
-                display: inline-flex;
-                align-items: center;
-                line-height: 1.2;
-                white-space: nowrap;
-            }
-
-            .primary-button {
-                background: var(--color-primary);
-                color: var(--color-on-primary);
-                border: 1px solid transparent;
-            }
-
-            .primary-button:hover:not(:disabled) {
-                opacity: 0.87;
-                box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 32%, transparent);
-            }
-
-            .secondary-button {
-                background: transparent;
-                color: var(--color-text-primary);
-                border: 1px solid var(--color-border);
-            }
-
-            .secondary-button:hover:not(:disabled) {
-                background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface, var(--color-background)));
-                border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
-            }
-
-            .primary-button:focus-visible,
-            .secondary-button:focus-visible {
-                outline: 2px solid var(--color-primary);
-                outline-offset: 2px;
-            }
-
-            .primary-button:disabled,
-            .secondary-button:disabled {
-                opacity: 0.42;
-                cursor: not-allowed;
-            }
-
-            /* â”€â”€â”€ Dark mode overrides â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-
-            :host-context([data-theme='dark']) .upload-action-row {
-                background: var(--color-panel);
-                border-top-color: var(--color-border);
-            }
-
-            :host-context([data-theme='dark']) .quiet-button {
-                color: var(--color-text-primary);
-                border-color: var(--color-border);
-                background: var(--color-panel);
-            }
-
-            :host-context([data-theme='dark']) .quiet-button:hover:not(:disabled),
-            :host-context([data-theme='dark']) .quiet-button:focus-visible {
-                color: var(--color-on-secondary);
-                background: var(--color-accent);
-                border-color: var(--color-accent);
-            }
-
-            /* Primary button: use the brighter accent so it doesn't vanish */
-            :host-context([data-theme='dark']) .primary-button {
-                background: var(--color-secondary);
-                color: var(--color-on-primary);
-            }
-
-            :host-context([data-theme='dark']) .primary-button:hover:not(:disabled) {
-                opacity: 0.85;
-                box-shadow: 0 2px 10px color-mix(in srgb, var(--color-accent) 30%, transparent);
-            }
-
-            /* Secondary button: visible ghost on dark panel */
-            :host-context([data-theme='dark']) .secondary-button {
-                color: var(--color-text-primary);
-                border-color: var(--color-border);
-            }
-
-            :host-context([data-theme='dark']) .secondary-button:hover:not(:disabled) {
-                background: color-mix(in srgb, var(--color-accent) 10%, var(--color-panel));
-                border-color: color-mix(in srgb, var(--color-accent) 50%, var(--color-border));
-            }
-
-            /* Detail header separator */
-            :host-context([data-theme='dark']) .detail-header {
-                border-bottom-color: var(--color-border);
-            }
-
-            /* Upload row separator */
-            :host-context([data-theme='dark']) .upload-action-row {
-                border-top-color: var(--color-border);
-            }
-
-            /* â”€â”€â”€ Viewer overlay (edge-to-edge; header is the only chrome) â”€â”€ */
-            .iframe-overlay {
-                position: fixed;
-                inset: 0;
-                z-index: 1000;
-                display: flex;
-                flex-direction: column;
-                gap: 0;
-                padding: 0;
-                box-sizing: border-box;
-                background: #090b14;
-                color: var(--color-text-primary);
-                font-family: var(--font-family-base);
-                font-feature-settings: var(--font-feature-defaults);
-            }
-
-            .iframe-header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                gap: 16px;
-                flex-shrink: 0;
-                padding: 10px 14px;
-                border: none;
-                border-bottom: 1px solid var(--color-border);
-                border-radius: 0;
-                background: var(--color-surface, var(--color-background));
-                color: var(--color-text-primary);
-                box-shadow: none;
-            }
-
-            .iframe-title {
-                min-width: 0;
-                font-size: 0.925rem;
-                font-weight: 600;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-                color: var(--color-text-primary);
-            }
-
-            .iframe-header-actions {
-                display: flex;
-                flex-shrink: 0;
-                gap: 10px;
-                align-items: center;
-            }
-
-            .iframe-container {
-                flex: 1;
-                display: flex;
-                position: relative;
-                min-height: 0;
-                overflow: hidden;
-                border: none;
-                border-radius: 0;
-                background: #090b14;
-            }
-
-            .viewer-iframe {
-                flex: 1;
-                width: 100%;
-                height: 100%;
-                border: 0;
-                background: #090b14;
-            }
-
-            .loading-overlay {
-                position: absolute;
-                inset: 0;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                background: color-mix(in srgb, var(--color-background) 80%, transparent);
-                pointer-events: none;
-            }
-
-            .viewer-loading {
-                text-align: center;
-                padding: 16px;
-                color: var(--color-text-secondary);
-                font-size: 0.9rem;
-            }
-
-            .toast {
-                position: fixed;
-                right: 20px;
-                bottom: 20px;
-                z-index: 1200;
-                background: var(--color-success, #2e7d32);
-                color: #fff;
-                border-radius: var(--radius-md, 6px);
-                padding: 10px 16px;
-                box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
-                max-width: min(380px, calc(100vw - 40px));
-                font-weight: 500;
-                font-size: 0.9rem;
-                line-height: 1.4;
-            }
-
-            .save-indicator {
-                font-size: 0.85rem;
-                color: var(--color-text-secondary);
-                white-space: nowrap;
-            }
-
-            .viewer-error-message {
-                font-size: 0.85rem;
-                color: var(--color-status-error-fg, #8a1212);
-                white-space: nowrap;
-                max-width: 220px;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-        `];
+        return [listPageStyles, casesPageStyles];
     }
 
     static get properties() {
@@ -588,8 +118,6 @@ export class CasesPage extends LitElement {
             toastMessage: { type: String },
             viewerSimplified: { type: Boolean },
             viewerKind: { type: String },
-            /** { caseId, data } from GET /api/cases/:id/workflows, for the Open ▾ menus */
-            caseWorkflows: { state: true },
             /** Case Settings (admins) instead of the case's files and comments */
             showCaseSettings: { state: true },
             viewerClosing: { type: Boolean },
@@ -660,7 +188,14 @@ export class CasesPage extends LitElement {
         this._viewerSessionToken = null;
         this._viewerSeatId = null;
         this.viewerKind = VIEWER_KINDS.SLICER_GUI;
-        this.caseWorkflows = null;
+        this.workflows = new CaseWorkflowsController(this, {
+            channel: () => this.slicerWebChannel(),
+            accountViewer: () => this.accountDefaultViewer(),
+            fileName: attachmentFileName,
+            fileTitle: (attachment) => this.attachmentTitle(attachment),
+            isBusy: () => Boolean(this.openingAttachmentId) || this.viewerLoading,
+            launch: (caseRow, attachment, open) => this.openWith(caseRow, attachment, open),
+        });
         this.showCaseSettings = false;
         this.viewerClosing = false;
         this._viewerOpenId = 0;
@@ -878,7 +413,7 @@ export class CasesPage extends LitElement {
         if (changed.has('showIframe')) this.syncViewerFocus();
         if (changed.has('selectedCaseId')) {
             this.showCaseSettings = false;
-            this.loadCaseWorkflows();
+            this.workflows.load(this.selectedCaseId);
         }
         if (changed.has('selectedCaseId') || this.selectedCaseId) {
             this.syncDetailLayoutObserver();
@@ -939,9 +474,9 @@ export class CasesPage extends LitElement {
     _startCaseAccessWatch() {
         this._stopCaseAccessWatch();
         this._accessWatchTimer = setInterval(() => {
-            if (!document.hidden) this._verifyCaseAccess();
+            if (!document.hidden) this._refreshOpenCase();
         }, 60 * 1000);
-        this._onAccessWake = () => { if (!document.hidden) this._verifyCaseAccess(); };
+        this._onAccessWake = () => { if (!document.hidden) this._refreshOpenCase(); };
         window.addEventListener('focus', this._onAccessWake);
         document.addEventListener('visibilitychange', this._onAccessWake);
     }
@@ -954,6 +489,12 @@ export class CasesPage extends LitElement {
             document.removeEventListener('visibilitychange', this._onAccessWake);
             this._onAccessWake = null;
         }
+    }
+
+    /** On the minute and on returning to the tab: is the open case still ours, and what's new in its workflows. */
+    _refreshOpenCase() {
+        this._verifyCaseAccess();
+        this.workflows.refreshIfStale(this.selectedCaseId);
     }
 
     /** Ask the server whether the open case is still ours (throttled unless forced). */
@@ -2091,109 +1632,21 @@ export class CasesPage extends LitElement {
     }
 
     /**
-     * The selected case's workflows (GET /api/cases/:id/workflows) and the extensions in the
-     * SlicerWeb build this person launches, for the Open ▾ menus.
+     * The case toolbar's ⋯ menu: Workflows (everyone; with the count of requests waiting for
+     * admins), Edit details (editors) and Settings (admins). People keeps its own button.
      */
-    async loadCaseWorkflows({ refresh = false } = {}) {
-        const caseId = this.selectedCaseId;
-        if (!refresh) this.caseWorkflows = null;
-        if (!caseId) return;
-        try {
-            const [data, catalog] = await Promise.all([
-                listCaseWorkflows(caseId),
-                loadExtensionCatalog(this.slicerWebChannel()).catch(() => null), // unknown: SlicerWeb counts as having everything
-            ]);
-            if (caseId !== this.selectedCaseId) return;
-            this.caseWorkflows = { caseId: String(caseId), data, slicerWebExtensions: catalog ? catalog.map((e) => e.name) : null };
-        } catch (err) {
-            console.warn('[cases] workflows load failed; files open with no workflow:', err);
-        }
+    caseActions(caseRow, { canEdit, canManage }) {
+        return [
+            this.workflows.actionItem(caseRow),
+            ...(canEdit && !this.editingCase && !this.archivingCase ? [{ key: 'edit', label: t('cases.editDetails') }] : []),
+            ...(canManage ? [{ key: 'settings', label: t('caseSettings.open') }] : []),
+        ];
     }
 
-    caseWorkflowsFor(caseRow) {
-        return this.caseWorkflows?.caseId === String(caseRow.id) ? this.caseWorkflows.data : null;
-    }
-
-    /**
-     * What opening a file does (attachment null: the blank viewer), and what its Open ▾ menu
-     * offers: { viewer, workflow, usable, selectedKey, name, label }. `label` is what differs from
-     * the person's own viewer with no workflow; `name` describes the whole thing. The blank viewer
-     * remembers no pick: it starts on the case default each time, chosen from its menu.
-     */
-    openWithFor(caseRow, attachment = null) {
-        const loaded = this.caseWorkflows?.caseId === String(caseRow.id) ? this.caseWorkflows : null;
-        const accountViewer = this.accountDefaultViewer();
-        const options = { fileName: attachment ? attachmentFileName(attachment) : null, slicerWebExtensions: loaded?.slicerWebExtensions ?? null };
-        const pick = attachment ? readOpenPick(caseRow.id, attachment.id) : null;
-        const open = resolveOpen(loaded?.data, { ...options, accountViewer, pick });
-        const viewerName = t(open.viewer === VIEWER.FULL ? 'viewers.fullSlicer' : 'viewers.slicerWeb');
-        const otherViewer = attachment && open.viewer !== viewerFromAccount(accountViewer);
-        return {
-            ...open,
-            usable: usableWorkflows(loaded?.data, { ...options, viewer: open.viewer }),
-            selectedKey: open.workflow?.key ?? NO_WORKFLOW,
-            name: open.workflow ? `${open.workflow.name} · ${viewerName}` : viewerName,
-            label: [open.workflow?.name, otherViewer ? viewerName : null].filter(Boolean).join(' · '),
-        };
-    }
-
-    /** The Open ▾ chevron for a file (attachment null: the blank viewer). */
-    renderOpenWithMenu(caseRow, attachment, openWith, { slot = '', buttonLabel = '' } = {}) {
-        const fileId = attachment?.id ?? null;
-        return html`
-            <open-with-menu
-                slot=${slot}
-                .buttonLabel=${buttonLabel}
-                .fileName=${attachment ? this.attachmentTitle(attachment) : t('cases.openBlankViewer')}
-                .viewer=${openWith.viewer}
-                ?canSwitchViewer=${Boolean(attachment)}
-                .usable=${openWith.usable}
-                .selectedKey=${openWith.selectedKey}
-                .label=${openWith.label}
-                ?disabled=${!!this.openingAttachmentId || this.viewerLoading}
-                @switch-viewer=${(e) => { saveOpenPick(caseRow.id, fileId, { viewer: e.detail.viewer }); this.requestUpdate(); }}
-                @open-workflow=${(e) => this.pickAndOpen(caseRow, attachment, e.detail.key)}
-                @more-workflows=${() => this.openMoreWorkflows(caseRow, attachment, openWith)}
-            ></open-with-menu>
-        `;
-    }
-
-    /** "More workflows…": the full list of what the menu shortened. */
-    openMoreWorkflows(caseRow, attachment, openWith) {
-        this._moreWorkflowsFor = { caseRow, attachment };
-        this.renderRoot.querySelector('more-workflows-dialog')?.open({
-            title: t('viewers.moreWorkflowsTitle', { name: attachment ? this.attachmentTitle(attachment) : t('cases.openBlankViewer') }),
-            usable: openWith.usable,
-            selectedKey: openWith.selectedKey,
-        });
-    }
-
-    /** "Find more…" (attachment null: not for a particular file). */
-    openFindWorkflows(caseRow, attachment = null) {
-        this.renderRoot.querySelector('find-workflows-dialog')?.open({
-            caseId: caseRow.id,
-            fileName: attachment ? attachmentFileName(attachment) : null,
-            canManage: this.caseWorkflowsFor(caseRow)?.canManage === true,
-        });
-    }
-
-    /** "Open blank viewer ▾": a button that opens the menu, with the case default checked. */
-    renderBlankViewerButton(caseRow) {
-        return this.renderOpenWithMenu(caseRow, null, this.openWithFor(caseRow), { buttonLabel: t('cases.openBlankViewer') });
-    }
-
-    /**
-     * A pick from the menu (a workflow key or NO_WORKFLOW): for a file, remember it and open;
-     * for the blank viewer, just open with it.
-     */
-    pickAndOpen(caseRow, attachment, key) {
-        if (attachment) {
-            saveOpenPick(caseRow.id, attachment.id, { workflow: key });
-            return this.openWith(caseRow, attachment, this.openWithFor(caseRow, attachment));
-        }
-        const usable = this.openWithFor(caseRow).usable;
-        const workflow = [...usable.caseWorkflows, ...usable.mine].find((e) => e.key === key) || null;
-        return this.openWith(caseRow, null, { viewer: VIEWER.SLICERWEB, workflow });
+    onCaseAction(caseRow, key) {
+        if (key === 'workflows') this.workflows.openPanel(caseRow);
+        else if (key === 'edit') this.startEditCase(caseRow);
+        else if (key === 'settings') this.showCaseSettings = true;
     }
 
     /** Launch a file (attachment null: the blank viewer) in its viewer, with its workflow on top. */
@@ -2960,19 +2413,11 @@ export class CasesPage extends LitElement {
                                     ? html` <span class="people-pending-badge" title=${t('people.pendingInvites')}>${pendingInvites}</span>`
                                     : ''}
                             </button>
-                            ${canEdit && !this.editingCase ? html`
-                                <button
-                                    class="quiet-button"
-                                    type="button"
-                                    ?disabled=${this.archivingCase}
-                                    @click=${() => this.startEditCase(caseRow)}
-                                >${t('cases.editDetails')}</button>
-                            ` : ''}
-                            ${canManage ? html`
-                                <button class="quiet-button" type="button" @click=${() => { this.showCaseSettings = true; }}>
-                                    ${t('caseSettings.open')}
-                                </button>
-                            ` : ''}
+                            <overflow-menu
+                                label=${t('cases.moreActions')}
+                                .items=${this.caseActions(caseRow, { canEdit, canManage })}
+                                @menu-select=${(e) => this.onCaseAction(caseRow, e.detail.key)}
+                            ></overflow-menu>
                         </div>
                     </div>
 
@@ -3084,7 +2529,7 @@ export class CasesPage extends LitElement {
                                 ` : html`
                                     <div class="list-panel-items">
                                         ${attachments.map((attachment) => {
-                                            const openWith = this.openWithFor(caseRow, attachment);
+                                            const openWith = this.workflows.openWithFor(caseRow, attachment);
                                             return html`
                                             <file-list-row
                                                 .fileName=${this.attachmentTitle(attachment)}
@@ -3096,7 +2541,7 @@ export class CasesPage extends LitElement {
                                                 @name-click=${() => this.openWith(caseRow, attachment, openWith)}
                                             >
                                                 ${attachment?.canOpenInSlicer
-                                                    ? this.renderOpenWithMenu(caseRow, attachment, openWith, { slot: 'title-trailing' })
+                                                    ? this.workflows.renderMenu(caseRow, attachment, openWith, { slot: 'title-trailing' })
                                                     : ''}
                                                 ${canEdit ? html`
                                                     <button
@@ -3128,9 +2573,7 @@ export class CasesPage extends LitElement {
                                                         ?disabled=${!!this.deletingAttachmentId}
                                                         @click=${() => this.handleDeleteAttachment(caseRow, attachment)}
                                                     >
-                                                        <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
-                                                            <path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
-                                                        </svg>
+                                                        ${ICON_TRASH}
                                                     </button>
                                                 ` : ''}
                                             </file-list-row>
@@ -3174,7 +2617,7 @@ export class CasesPage extends LitElement {
                                             >
                                                 ${t('cases.addFile')}
                                             </button>
-                                            ${this.renderBlankViewerButton(caseRow)}
+                                            ${this.workflows.renderBlankViewerButton(caseRow)}
                                         </div>
                                     </div>
                                 ` : ''}
@@ -3226,20 +2669,13 @@ export class CasesPage extends LitElement {
     renderCaseSettings(caseRow) {
         return this.renderCaseShell(html`
             <div slot="content" class="case-detail">
-                <div class="detail-toolbar">
-                    <button class="back-link" type="button" @click=${() => { this.showCaseSettings = false; }}>
-                        ${t('caseSettings.backToCase')}
-                    </button>
-                </div>
-                <div class="detail-header">
-                    <h2 class="detail-title">${t('caseSettings.title')}</h2>
-                    <p class="detail-desc">${caseRow.title || t('cases.untitledCase')}</p>
-                </div>
                 <case-settings
                     .caseId=${String(caseRow.id)}
-                    .data=${this.caseWorkflowsFor(caseRow)}
-                    @workflows-changed=${() => this.loadCaseWorkflows({ refresh: true })}
-                    @find-workflows=${() => this.openFindWorkflows(caseRow)}
+                    .caseTitle=${caseRow.title || ''}
+                    .data=${this.workflows.dataFor(caseRow.id)}
+                    @back=${() => { this.showCaseSettings = false; }}
+                    @workflows-changed=${() => this.workflows.load(caseRow.id, { refresh: true })}
+                    @open-workflows=${() => this.workflows.openPanel(caseRow)}
                 ></case-settings>
             </div>
         `);
@@ -3378,12 +2814,7 @@ export class CasesPage extends LitElement {
         return html`
             ${!detail ? this.renderLanding() : this.showCaseSettings ? this.renderCaseSettings(detail) : this.renderCaseDetail(detail)}
             ${this.renderViewerOverlay()}
-            <find-workflows-dialog
-                @workflows-changed=${() => this.loadCaseWorkflows({ refresh: true })}
-            ></find-workflows-dialog>
-            <more-workflows-dialog
-                @open-workflow=${(e) => this._moreWorkflowsFor && this.pickAndOpen(this._moreWorkflowsFor.caseRow, this._moreWorkflowsFor.attachment, e.detail.key)}
-            ></more-workflows-dialog>
+            ${this.workflows.renderDialogs(detail)}
             ${this.toastMessage ? html`<div class="toast" role="status">${this.toastMessage}</div>` : ''}
             <people-dialog
                 id="case-people-dialog"

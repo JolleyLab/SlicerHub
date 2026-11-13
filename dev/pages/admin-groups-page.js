@@ -2,6 +2,7 @@ import { LitElement, html } from 'lit-element';
 import { panelStyles } from '../styles/panel.js';
 import { buttonStyles } from '../styles/buttons.js';
 import { adminGroupsStyles } from './admin-groups-page.styles.js';
+import { ICON_TRASH } from '../utils/icons.js';
 import '../components/person-chip.js';
 import { t } from '../i18n/index.js';
 import '../components/page-layout-template.js';
@@ -582,9 +583,7 @@ export class AdminGroupsPage extends LitElement {
                                     title="Remove ${m.displayName || `${m.firstName} ${m.lastName}`}"
                                     aria-label="Remove ${m.displayName || `${m.firstName} ${m.lastName}`}"
                                     @click=${() => this._removeMember(m.id)}>
-                                    <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
-                                        <path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
-                                    </svg>
+                                    ${ICON_TRASH}
                                 </button>
                             ` : html`
                                 <span class="role-badge ${m.canManageGroup ? 'manager' : ''}">

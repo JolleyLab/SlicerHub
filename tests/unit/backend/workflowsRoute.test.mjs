@@ -174,6 +174,22 @@ test('the approved copy survives source edits and deletion; re-approving refresh
     assert.deepEqual(approved.extensions, ['SlicerIGT']);
 });
 
+test("edits the case doesn't copy aren't an update: visibility, or a copy from before startup configuration", async () => {
+    await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
+    await call('PATCH', '/api/workflows/11', { user: MEMBER, body: { visibility: 'private' } });
+    await call('PATCH', '/api/workflows/11', { user: MEMBER, body: { visibility: 'public' } });
+    let [approved] = (await call('GET', '/api/cases/1/workflows', { user: ADMIN })).body.approved;
+    assert.equal(approved.updateAvailable, false);
+
+    delete mocks.payload.rows['case-workflows'][0].startup_config; // approved before the field existed
+    [approved] = (await call('GET', '/api/cases/1/workflows', { user: ADMIN })).body.approved;
+    assert.equal(approved.updateAvailable, false);
+
+    await call('PATCH', '/api/workflows/11', { user: MEMBER, body: { startupConfig: { module: 'SimplifiedViewer' } } });
+    [approved] = (await call('GET', '/api/cases/1/workflows', { user: ADMIN })).body.approved;
+    assert.equal(approved.updateAvailable, true);
+});
+
 test('removing an approval only works within its own case', async () => {
     mocks.payload.rows.cases.push({ id: 2, title: 'Other', owner_id: 'kc-admin' });
     await call('POST', '/api/cases/2/workflows', { user: ADMIN, body: { workflowId: 11 } });

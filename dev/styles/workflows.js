@@ -23,7 +23,7 @@ export const workflowStyles = css`
         padding: 6px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm, 4px);
         background: var(--color-panel, var(--color-surface, var(--color-background)));
     }
-    input[type='checkbox'], input[type='radio'] { accent-color: var(--color-primary); }
+    input[type='checkbox'], input[type='radio'] { accent-color: var(--color-focus); }
     label.field { display: flex; flex-direction: column; gap: 4px; font-weight: 600; }
     label.field > :not(span) { font-weight: normal; }
 `;
