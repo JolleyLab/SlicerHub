@@ -19,6 +19,9 @@ export const STARTUP_CONFIG_KEYS = Object.freeze({
     module: /^[A-Za-z][A-Za-z0-9_]{0,99}$/, // a Slicer module name, e.g. SimplifiedViewer
 });
 
+/** SlicerHeart's simplified viewer: Full Slicer seats start it through their own simplified mode. */
+export const SIMPLIFIED_VIEWER_MODULE = 'SimplifiedViewer';
+
 /** Validated startup configuration; empty values are dropped, unknown keys refused. */
 export function sanitizeStartupConfig(value) {
     if (value == null) return {};

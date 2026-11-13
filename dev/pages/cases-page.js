@@ -26,7 +26,7 @@ import '../components/find-workflows-dialog.js';
 import '../components/more-workflows-dialog.js';
 import { listCaseWorkflows, loadExtensionCatalog } from '../services/workflows.js';
 import {
-    VIEWER, NO_WORKFLOW, viewerFromAccount, usableWorkflows, resolveOpen, readOpenPick, saveOpenPick,
+    VIEWER, NO_WORKFLOW, SIMPLIFIED_VIEWER_MODULE, viewerFromAccount, usableWorkflows, resolveOpen, readOpenPick, saveOpenPick,
 } from '../utils/openWith.js';
 import { formatBytes } from '../utils/formatBytes.js';
 import { deepActiveElement } from '../utils/focus.js';
@@ -42,7 +42,6 @@ import {
     viewerDisplayName
 } from '../utils/viewerLaunch.js';
 import { getCachedLocalSlicerViewerOptions, getCachedUserPreferences } from '../utils/userPreferences.js';
-import { resolveSimplifiedViewerChoice } from '../utils/localSlicerViewerOptions.js';
 import { isSlicerWebDevModeEnabled, loadAppFeatures } from '../services/features.js';
 import { listAllGroups } from '../services/groups.js';
 import { sendViewerHeartbeat } from '../utils/viewerHeartbeat.js';
@@ -2010,7 +2009,8 @@ export class CasesPage extends LitElement {
         this._mcsSaveDefaultName = '';
     }
 
-    async handleOpenAttachment(caseRow, attachment, { simplified } = {}) {
+    /** Open a file in Full Slicer, with the chosen workflow's startup configuration ({}: none). */
+    async handleOpenAttachment(caseRow, attachment, { startupConfig = {} } = {}) {
         if (this.openingAttachmentId) return;
 
         if (attachment?.canPreviewInBrowser && !attachment?.canOpenInSlicer) {
@@ -2019,7 +2019,7 @@ export class CasesPage extends LitElement {
         }
         if (!attachment?.canOpenInSlicer) return;
 
-        const useSimplified = resolveSimplifiedViewerChoice(simplified);
+        const useSimplified = startupConfig.module === SIMPLIFIED_VIEWER_MODULE;
         const viewerLabel = viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified: useSimplified });
 
         this._focusBeforeViewer = deepActiveElement();
@@ -2043,7 +2043,7 @@ export class CasesPage extends LitElement {
         try {
             this.stopHeartbeat();
             const data = await openPayloadAttachmentFullSlicer(caseRow.id, attachment.id, {
-                useSimplifiedViewer: useSimplified
+                startupConfig
             });
             if (isSuperseded()) {
                 if (data.sessionToken) {
@@ -2198,7 +2198,7 @@ export class CasesPage extends LitElement {
 
     /** Launch a file (attachment null: the blank viewer) in its viewer, with its workflow on top. */
     openWith(caseRow, attachment, { viewer, workflow }) {
-        if (viewer === VIEWER.FULL) return this.handleOpenAttachment(caseRow, attachment, { simplified: false });
+        if (viewer === VIEWER.FULL) return this.handleOpenAttachment(caseRow, attachment, { startupConfig: workflow?.startupConfig || {} });
         const params = workflow ? { extensions: workflow.extensions, module: workflow.startupConfig.module } : {};
         return attachment ? this.handleOpenSlicerWeb(caseRow, attachment, params) : this.handleOpenBlankSlicerWeb(caseRow, params);
     }

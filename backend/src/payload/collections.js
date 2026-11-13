@@ -48,6 +48,9 @@ export const Cases = {
         // else, as a case-workflows id (empty: no workflow).
         { name: 'default_workflow', type: 'text' },
         { name: 'allow_personal_workflows', type: 'checkbox', defaultValue: true },
+        // Set once a case has its workflows set up (setup/workflowSeed.js): new cases at creation,
+        // cases from before workflows by the one-off step. No default, so existing rows stay empty.
+        { name: 'workflows_seeded', type: 'checkbox' },
     ],
 };
 

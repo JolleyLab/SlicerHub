@@ -192,6 +192,7 @@ export async function stageCachedFileForSlicerGui({
     fileName,
     launcherUserId,
     useSimplifiedViewer = false,
+    startModule = null, // a workflow's start module, selected once the file has loaded
     seatId = 1
 }) {
     const src = String(sourcePath || '').trim();
@@ -233,6 +234,7 @@ export async function stageCachedFileForSlicerGui({
         stagedName,
         containerPath,
         useSimplifiedViewer: useSimplifiedViewer === true,
+        ...(startModule ? { startModule } : {}),
         requestedAt: new Date().toISOString()
     };
 

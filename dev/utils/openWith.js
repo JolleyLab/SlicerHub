@@ -6,6 +6,8 @@
  */
 
 export const VIEWER = Object.freeze({ SLICERWEB: 'slicerweb', FULL: 'full' });
+/** SlicerHeart's simplified viewer: Full Slicer starts it through its own simplified mode. */
+export const SIMPLIFIED_VIEWER_MODULE = 'SimplifiedViewer';
 /** The menu's "No workflow" pick. */
 export const NO_WORKFLOW = 'none';
 /** Workflows shown in the menu before "More workflows…". */
@@ -40,8 +42,9 @@ const toEntry = (w, section) => ({
 });
 
 /**
- * Whether a viewer can run a workflow: every extension it needs is available there, and its
- * startup configuration only uses keys the viewer supports. SlicerWeb's extensions come from the
+ * Whether a viewer can run a workflow: every extension it needs is available there, its
+ * startup configuration only uses keys the viewer supports, and it doesn't start in a module
+ * the viewer can't start in (`unsupportedModules`, e.g. SimplifiedViewer in SlicerWeb). SlicerWeb's extensions come from the
  * build's index.json (`slicerWebExtensions`; null while unknown counts as all); Full Slicer's
  * from the server (`viewers.full.extensions`). Before the case's data loads, only SlicerWeb.
  */
@@ -49,8 +52,10 @@ export function canRun(workflow, viewer, { viewers = null, slicerWebExtensions =
     const caps = viewers?.[viewer];
     if (!caps) return viewer === VIEWER.SLICERWEB;
     const available = viewer === VIEWER.SLICERWEB ? slicerWebExtensions : caps.extensions || [];
+    const startModule = workflow.startupConfig?.module;
     return (!available || (workflow.extensions || []).every((ext) => available.includes(ext)))
-        && Object.keys(workflow.startupConfig || {}).every((key) => (caps.startupKeys || []).includes(key));
+        && Object.keys(workflow.startupConfig || {}).every((key) => (caps.startupKeys || []).includes(key))
+        && !(startModule && (caps.unsupportedModules || []).includes(startModule));
 }
 
 /**

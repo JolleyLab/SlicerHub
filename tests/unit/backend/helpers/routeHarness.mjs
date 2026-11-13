@@ -62,6 +62,7 @@ export function fakePayload(initial = {}) {
         if (key === 'or') return cond.some((c) => matches(row, c));
         if ('equals' in cond) return String(row[key]) === String(cond.equals);
         if ('in' in cond) return cond.in.map(String).includes(String(row[key]));
+        if ('exists' in cond) return (row[key] != null) === cond.exists;
         return false;
     });
     const byId = (c, id) => rows(c).find((d) => String(d.id) === String(id)) || null;

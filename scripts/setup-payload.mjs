@@ -20,6 +20,9 @@
  *   5. Creates or updates Payload's tables. Payload only syncs its schema outside
  *      production (NODE_ENV=production skips it, and there are no migration files), so
  *      a one-off backend container does it in development mode, then exits.
+ *   6. In the same container, seeds the data the app needs: the built-in SlicerHeart
+ *      workflows, and sets up cases from before workflows existed
+ *      (backend/src/setup/workflowSeed.js). Safe to repeat: it only adds what's missing.
  *
  * After running this script:
  *   docker compose up -d backend
@@ -168,24 +171,31 @@ function dropRetiredSchema(dbUser) {
 /**
  * Payload's schema sync (dev push) is skipped when NODE_ENV=production, so on a
  * production server the backend would never create or update its tables. Do it here in
- * a one-off backend container, in development mode, with the backend's own config.
+ * a one-off backend container, in development mode, with the backend's own config, then
+ * seed the data the app needs in the same container (one start instead of two).
  */
 function syncPayloadSchema() {
-    step('Creating / updating Payload tables');
-    const js = "import('/app/src/payload/index.js').then(async (m) => { await m.initPayload(); process.exit(0); })"
+    step('Creating / updating Payload tables, and seeding built-in data');
+    const js = "import('/app/src/payload/index.js').then(async (m) => { await m.initPayload();"
+        + " const seed = await import('/app/src/setup/workflowSeed.js');"
+        + " console.log('WORKFLOW_SEED ' + JSON.stringify(await seed.seedWorkflows())); process.exit(0); })"
         + ".catch((e) => { console.error(e?.message || e); process.exit(1); })";
     const result = spawnSync('docker', [
         'compose', 'run', '--rm', '--no-deps', '-T', '-e', 'NODE_ENV=development', 'backend',
         'sh', '-c', `test -d node_modules/payload || npm ci >/dev/null; node -e "${js}"`,
     ], { cwd: ROOT, encoding: 'utf8' });
     const out = `${result.stdout || ''}${result.stderr || ''}`;
-    if (result.status === 0 && out.includes('Payload: initialized')) {
+    const seedLine = out.split(/\r?\n/).find((line) => line.startsWith('WORKFLOW_SEED '));
+    if (result.status === 0 && out.includes('Payload: initialized') && seedLine) {
         ok('Payload tables match the backend collections');
+        const { workflows, cases } = JSON.parse(seedLine.slice('WORKFLOW_SEED '.length));
+        ok(`built-in workflows in place: ${workflows.join(', ')}`);
+        if (cases) ok(`set up ${cases} case(s) from before workflows with SlicerHeart`);
         return;
     }
     // Payload exits on its own if a change would drop data and no one can confirm it.
     const tail = out.trim().split(/\r?\n/).slice(-15).join('\n');
-    throw new Error(`Payload schema sync failed:\n${tail}`);
+    throw new Error(`Payload schema sync or seeding failed:\n${tail}`);
 }
 
 // ---------------------------------------------------------------------------

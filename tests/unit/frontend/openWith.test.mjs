@@ -18,8 +18,8 @@ const DATA = {
     allowPersonal: true,
     defaultWorkflow: '1',
     viewers: {
-        slicerweb: { startupKeys: ['module'] },
-        full: { extensions: ['Sandbox', 'SlicerHeart'], startupKeys: [] },
+        slicerweb: { startupKeys: ['module'], unsupportedModules: ['SimplifiedViewer'] },
+        full: { extensions: ['Sandbox', 'SlicerHeart'], startupKeys: ['module'], unsupportedModules: [] },
     },
 };
 const keys = (list) => list.map((e) => e.key);
@@ -45,18 +45,23 @@ describe('canRun', () => {
     const [heart, simplified, cardiac] = DATA.approved;
     it('SlicerWeb runs what its build has, with the startup keys it supports', () => {
         assert.equal(canRun(heart, VIEWER.SLICERWEB, opts), true);
-        assert.equal(canRun(simplified, VIEWER.SLICERWEB, opts), true);
+        assert.equal(canRun(cardiac, VIEWER.SLICERWEB, opts), true);
         assert.equal(canRun(W(9, 'x', ['NotInBuild']), VIEWER.SLICERWEB, opts), false);
+    });
+    it("leaves out a start module the viewer can't start in (SimplifiedViewer in SlicerWeb)", () => {
+        assert.equal(canRun(simplified, VIEWER.SLICERWEB, opts), false);
+        const fixed = { ...DATA.viewers, slicerweb: { startupKeys: ['module'], unsupportedModules: [] } };
+        assert.equal(canRun(simplified, VIEWER.SLICERWEB, { ...opts, viewers: fixed }), true);
     });
     it('while the build list is unknown, SlicerWeb counts as having everything', () => {
         assert.equal(canRun(W(9, 'x', ['NotInBuild']), VIEWER.SLICERWEB, { viewers: DATA.viewers }), true);
     });
-    it('Full Slicer runs what its manifest has, and no startup keys yet', () => {
+    it('Full Slicer runs what its manifest has, with a start module', () => {
         assert.equal(canRun(heart, VIEWER.FULL, opts), true);
-        assert.equal(canRun(cardiac, VIEWER.FULL, opts), false);    // SegmentEditorExtraEffects isn't in the manifest
-        assert.equal(canRun(simplified, VIEWER.FULL, opts), false); // needs `module`
-        const later = { ...DATA.viewers, full: { extensions: ['SlicerHeart'], startupKeys: ['module'] } };
-        assert.equal(canRun(simplified, VIEWER.FULL, { viewers: later }), true);
+        assert.equal(canRun(simplified, VIEWER.FULL, opts), true);
+        assert.equal(canRun(cardiac, VIEWER.FULL, opts), false); // SegmentEditorExtraEffects isn't in the manifest
+        const noKeys = { ...DATA.viewers, full: { extensions: ['SlicerHeart'], startupKeys: [] } };
+        assert.equal(canRun(simplified, VIEWER.FULL, { viewers: noKeys }), false);
     });
     it('without viewer data, only SlicerWeb', () => {
         assert.equal(canRun(heart, VIEWER.SLICERWEB), true);
@@ -67,16 +72,16 @@ describe('canRun', () => {
 describe('usableWorkflows', () => {
     it('lists the case\'s workflows then mine, for this file type, in this viewer', () => {
         const mrb = usableWorkflows(DATA, { fileName: 'heart.mrb' });
-        assert.deepEqual(keys(mrb.caseWorkflows), ['case:1', 'case:2', 'case:3']);
+        assert.deepEqual(keys(mrb.caseWorkflows), ['case:1', 'case:3']); // 2 starts in SimplifiedViewer
         assert.deepEqual(keys(mrb.mine), []);
-        assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'a.seg.nrrd' }).caseWorkflows), ['case:1', 'case:2', 'case:4']);
+        assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'a.seg.nrrd' }).caseWorkflows), ['case:1', 'case:4']);
         assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'brain.nii.gz' }).mine), ['mine:11']);
     });
     it('hides what the viewer can\'t run', () => {
-        assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'heart.mrb', viewer: VIEWER.FULL }).caseWorkflows), ['case:1']);
+        assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'heart.mrb', viewer: VIEWER.FULL }).caseWorkflows), ['case:1', 'case:2']);
     });
     it('the blank viewer lists every workflow', () => {
-        assert.equal(usableWorkflows(DATA).caseWorkflows.length, 4);
+        assert.equal(usableWorkflows(DATA).caseWorkflows.length, 3); // all but the SimplifiedViewer one
     });
     it("one of mine the case has approved is listed only as the case's", () => {
         const data = { ...DATA, approved: [...DATA.approved, { ...W(7, 'My TAVR setup (approved)', ['SlicerRT'], ['nii.gz']), workflowId: 11 }] };

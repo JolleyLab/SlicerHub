@@ -200,7 +200,8 @@ export function buildSlicerGuiLoaderUrl({
  * In-browser SlicerWeb build, served same-origin by nginx (see scripts/fetch-slicerweb.*).
  * channel: 'stable' (default) or 'latest' (developer mode).
  */
-export function buildSlicerWebUrl({ layout = 'FourUp', channel = 'stable', sha, extensions = ['SlicerHeart'], module } = {}) {
+/** `extensions` and `module` come from the workflow; with none, SlicerWeb starts with no extensions. */
+export function buildSlicerWebUrl({ layout = 'FourUp', channel = 'stable', sha, extensions = [], module } = {}) {
     const ch = channel === 'latest' ? 'latest' : 'stable';
     const v = sha ? `&v=${encodeURIComponent(sha.slice(0, 8))}` : '';
     const ext = extensions.length ? `&extensions=${extensions.map(encodeURIComponent).join(',')}` : '';

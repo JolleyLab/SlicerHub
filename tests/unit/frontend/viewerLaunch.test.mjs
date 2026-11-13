@@ -13,8 +13,8 @@ describe('buildSlicerWebUrl', () => {
         const url = buildSlicerWebUrl({ channel: 'latest', extensions: ['SlicerHeart', 'SlicerRT'], module: 'SimplifiedViewer' });
         assert.equal(url, '/slicerweb/latest/?layout=FourUp&extensions=SlicerHeart,SlicerRT&module=SimplifiedViewer&sample=');
     });
-    it('leaves module out when there is none, and keeps the default extensions', () => {
-        assert.equal(buildSlicerWebUrl({ sha: 'abcdef123456' }), '/slicerweb/stable/?layout=FourUp&extensions=SlicerHeart&sample=&v=abcdef12');
+    it('with no workflow, starts with no extensions and no module', () => {
+        assert.equal(buildSlicerWebUrl({ sha: 'abcdef123456' }), '/slicerweb/stable/?layout=FourUp&sample=&v=abcdef12');
     });
 });
 

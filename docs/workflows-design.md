@@ -204,14 +204,14 @@ There are two viewers, SlicerWeb and Full Slicer. Whether a viewer can run a wor
 
 So today Full Slicer can run SlicerHeart, SlicerHeart – Simplified and "No workflow". Adding an extension to the manifest (a config change plus the daily add-ons sync) makes workflows that use it available in Full Slicer, with no code change. Until seats load only a workflow's own extensions, "No workflow" and SlicerHeart behave the same in Full Slicer, since SlicerHeart is always loaded.
 
-**Seeded workflows.** SlicerHeart stops being hardcoded into SlicerWeb launches (`buildSlicerWebUrl`'s `extensions = ['SlicerHeart']`). At setup, two public workflows are created if missing, owned by a fixed system owner (`owner_id: 'system'`) so no user can edit or delete them:
+**Seeded workflows.** SlicerHeart stops being hardcoded into SlicerWeb launches (`buildSlicerWebUrl`'s `extensions = ['SlicerHeart']`). `scripts/setup-payload.mjs` (run on every update) creates two public workflows if missing (`backend/src/setup/workflowSeed.js`), owned by a fixed system owner (`owner_id: 'system'`) so no user can edit or delete them:
 
 | Name | Extensions | Startup configuration | File types |
 |---|---|---|---|
 | SlicerHeart | SlicerHeart | none | any |
 | SlicerHeart – Simplified | SlicerHeart | `{ "module": "SimplifiedViewer" }` | any |
 
-**Existing cases** keep what they expect: a one-off step at setup approves both on every case that existed before this change and makes SlicerHeart the default workflow. It runs once per case (a per-case marker, `workflows_seeded`, so an admin who later changes this doesn't get it back). **New cases** start with no workflows. Later, creating a case could offer to import workflows, with SlicerHeart suggested.
+**Existing cases** keep what they expect: the same setup step approves both on every case that existed before this change and makes SlicerHeart the default workflow. It's a migration, not part of the running server. It runs once per case (a per-case marker, `workflows_seeded`, so an admin who later changes this doesn't get it back). **New cases** start with no workflows. Later, creating a case could offer to import workflows, with SlicerHeart suggested.
 
 **Account setting.** Simplified Viewer is no longer a viewer, so `use_simplified_viewer` goes away (its column into `RETIRED_SCHEMA` first); people who had it on keep Full Slicer and pick "SlicerHeart – Simplified" from the menu. Simplified Viewer **share links** (`routes/files.js`) stay hardcoded for now.
 
@@ -330,6 +330,8 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
 - Translate API errors in the browser: the SPA maps `error.key` to text from its own catalog (an `api.` section in `dev/i18n/locales/en.js`), keeping the backend's English message only as a fallback for logs and non-browser clients. Then a new language only touches `dev/i18n`, and the backend catalog stays English as the source of keys. Move existing API messages over key by key, starting with the workflow ones.
 - `loadCaseWorkflows()` in `cases-page.js`: log failures and show them in Case Settings with "Try again", instead of "Loading…" forever.
 - Bare strings in the new code become frozen constants (`WORKFLOW_TARGET`, `REQUEST_STATUS`, menu-key helpers).
+- Retire the `use_simplified_viewer` preference and its "Use simplified viewer" checkbox (cases ignore it since the Open ▾ menu rework; Projects, their GPU route, share links and the seat loader still read it), together with Projects' move off SQLite. Then `accountDefaultViewer()` returns a `VIEWER` directly and `viewerFromAccount()` goes.
+- Once every installation has run `setup-payload.mjs` with workflows: delete `seedExistingCases` from `backend/src/setup/workflowSeed.js` and retire `cases.workflows_seeded` (via `RETIRED_SCHEMA`, and stop setting it in case creation). Creating the two built-in workflows stays, for new installations.
 - Optional: `psql -1` and stop on failure for the `RETIRED_SCHEMA` step in `scripts/setup-payload.mjs`.
 
 ## To think about later

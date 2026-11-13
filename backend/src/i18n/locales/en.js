@@ -253,6 +253,11 @@ export default {
         startup_config_value: 'Startup configuration has an invalid {key}',
         default_not_in_case: 'The default workflow must be one of this case’s workflows',
         allow_personal_boolean: 'allowPersonal must be true or false',
+        // The workflows every SlicerHub starts with (setup/workflowSeed.js)
+        seed_slicerheart_name: 'SlicerHeart',
+        seed_slicerheart_description: 'Cardiac tools: valves, chambers, devices and imaging formats such as Mimics projects.',
+        seed_simplified_name: 'SlicerHeart – Simplified',
+        seed_simplified_description: 'SlicerHeart, opening in its simplified viewer for reviewing.',
     },
     registration: {
         not_found: 'Registration request not found',

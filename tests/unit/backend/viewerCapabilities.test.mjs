@@ -50,11 +50,11 @@ describe('fullSlicerExtensions', () => {
 });
 
 describe('viewerCapabilities', () => {
-    it('SlicerWeb takes the module key; Full Slicer has its manifest and no startup keys yet', () => {
+    it("both take a start module; SlicerWeb can't start in SimplifiedViewer; Full Slicer has its manifest", () => {
         write(bundled, { extensions: ['SlicerHeart'] });
         assert.deepEqual(viewerCapabilities(), {
-            slicerweb: { startupKeys: ['module'] },
-            full: { extensions: ['SlicerHeart'], startupKeys: [] },
+            slicerweb: { startupKeys: ['module'], unsupportedModules: ['SimplifiedViewer'] },
+            full: { extensions: ['SlicerHeart'], startupKeys: ['module'], unsupportedModules: [] },
         });
     });
 });

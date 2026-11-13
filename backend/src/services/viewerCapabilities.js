@@ -10,7 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import { slicerAddonsHostDir, slicerAddonsSyncReady } from '../slicerGui/paths.js';
-import { STARTUP_CONFIG_KEYS } from './workflows.js';
+import { STARTUP_CONFIG_KEYS, SIMPLIFIED_VIEWER_MODULE } from './workflows.js';
 
 /** The manifest Full Slicer seats are built from, mounted read-only (docker-compose.yml). */
 const bundledManifest = () => process.env.SLICER_ADDONS_MANIFEST || '/etc/slicer-addons.json';
@@ -36,10 +36,11 @@ export function fullSlicerExtensions() {
 }
 
 /**
- * For GET /api/cases/:id/workflows: what each viewer offers. Full Slicer gets `module` once its
- * open request carries the startup configuration (it only knows useSimplifiedViewer today).
+ * For GET /api/cases/:id/workflows: what each viewer offers. `unsupportedModules`: modules a
+ * viewer can't start in, though it has them. SimplifiedViewer needs Full Slicer's main window
+ * (in SlicerWeb its widget fails on fullSlicerInterfaceAction); remove it here once it doesn't.
  */
 export const viewerCapabilities = () => ({
-    slicerweb: { startupKeys: Object.keys(STARTUP_CONFIG_KEYS) },
-    full: { extensions: fullSlicerExtensions(), startupKeys: [] },
+    slicerweb: { startupKeys: Object.keys(STARTUP_CONFIG_KEYS), unsupportedModules: [SIMPLIFIED_VIEWER_MODULE] },
+    full: { extensions: fullSlicerExtensions(), startupKeys: ['module'], unsupportedModules: [] },
 });

@@ -85,9 +85,9 @@ export async function fetchPayloadAttachmentContent(caseId, attachmentId) {
     return res.blob();
 }
 
-export async function openPayloadAttachmentFullSlicer(caseId, attachmentId, { useSimplifiedViewer, seatId } = {}) {
-    const body = {};
-    if (useSimplifiedViewer !== undefined) body.useSimplifiedViewer = useSimplifiedViewer === true;
+/** Open a case file in Full Slicer; `startupConfig` is the chosen workflow's ({}: no workflow). */
+export async function openPayloadAttachmentFullSlicer(caseId, attachmentId, { startupConfig = {}, seatId } = {}) {
+    const body = { startupConfig };
     if (seatId != null && seatId !== '') body.seatId = Number(seatId);
 
     const res = await fetch(

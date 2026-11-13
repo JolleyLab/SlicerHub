@@ -24,7 +24,7 @@ import { normalizeViewerReleaseMode } from '../sessions/config.js';
 import { SESSION_KINDS } from '../sessions/kinds.js';
 import { msg } from '../i18n/index.js';
 import { buildViewerFrontendUrl } from '../utils/viewerUrl.js';
-import { resolveUseSimplifiedViewer } from '../slicerGui/viewerPreferences.js';
+import { sanitizeStartupConfig, SIMPLIFIED_VIEWER_MODULE } from '../services/workflows.js';
 import { enforceCaseAccessOnAllSeats, enforceCaseAccessOnHeartbeat } from '../slicerGui/caseAccessGuard.js';
 
 const MENTION_RE = /(?:^|[^/\w])@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi;
@@ -245,6 +245,8 @@ export default function casesRoutes(app) {
                 description: String(req.body?.description || '').trim() || undefined,
                 status:      req.body?.status || 'active',
                 owner_id:    ownerSub,
+                // New cases start with no workflows; only cases from before workflows get SlicerHeart.
+                workflows_seeded: true,
             },
         });
 
@@ -534,7 +536,11 @@ export default function casesRoutes(app) {
         const sourcePath = path.resolve(att.storage_key);
         const fileName = att.original_filename;
 
-        const useSimplifiedViewer = resolveUseSimplifiedViewer({ body: req.body, userId: req.user.id });
+        // The workflow's startup configuration, checked like a saved workflow's. SimplifiedViewer
+        // starts through the seat's own simplified mode; any other module is selected after loading.
+        const startupConfig = sanitizeStartupConfig(req.body?.startupConfig);
+        const useSimplifiedViewer = startupConfig.module === SIMPLIFIED_VIEWER_MODULE;
+        const startModule = useSimplifiedViewer ? null : startupConfig.module || null;
         const launcherUserId = String(req.user.id);
         const seatId = parseOptionalSeatId(req.body?.seatId);
         // Never reuse a seat (or its folder) holding copies from a case they've lost.
@@ -560,6 +566,7 @@ export default function casesRoutes(app) {
             fileName,
             launcherUserId,
             useSimplifiedViewer,
+            startModule,
             seatId: session.seatId,
         });
         patchSessionMetadata(SESSION_KINDS.SLICER_GUI, session.sessionKey, {
