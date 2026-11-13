@@ -12,8 +12,9 @@ import '../components/more-workflows-dialog.js';
 const REFRESH_MIN_MS = 15 * 1000;
 
 /**
- * Workflows on the case page (docs/workflows-design.md › Workflows in cases), as a Lit reactive
- * controller: the open case's workflows (GET /api/cases/:id/workflows) and the SlicerWeb build's
+ * Workflows on the case page (docs/workflows-design.md › Workflows in cases), as a helper object
+ * the page owns (lit-element 2 has no reactive controllers; it calls host.requestUpdate() itself):
+ * the open case's workflows (GET /api/cases/:id/workflows) and the SlicerWeb build's
  * extensions; what opening a file does and the person's picks; the Open ▾ menus and "Open blank
  * viewer ▾"; and the Workflows panel and "More workflows…" dialog.
  *
@@ -32,7 +33,6 @@ export class CaseWorkflowsController {
         this._loadingCaseId = null;
         this._loadedAt = 0;
         this._moreFor = null; // the file "More workflows…" was opened for
-        host.addController(this);
     }
 
     // ── The case's workflows ──────────────────────────────────────────────

@@ -310,19 +310,26 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
 
 ### Build status
 
-**Built (commits on `rhisey/wip/workflows-in-cases`):** the requests lifecycle and its tests; `status` and decided fields on `case-workflows`; `allow_personal_workflows`; an Open ▾ menu with "Recommended / Yours / Other ways to open" and "Find more…"; a "Find more…" dialog; Case Settings with requests, approved workflows, a per-file-type defaults table and the personal switch.
+**Built on `rhisey/wip/workflows-in-cases` (as of 13 Nov 2026; the latest pieces are uncommitted, for review):**
+- The Open ▾ menu ("Open in" switch, "No workflow" first, only usable items, "More workflows…" after 5) and which workflow opens (per-file pick, else the case default, else none).
+- Viewers and workflows: the one "can run" rule, Full Slicer's extensions from `slicer-addons.json`, start modules in Full Slicer's open request.
+- Startup configuration: `startup_config`, the "Start in" field on the Workflows page, `module=` plus the after-load workaround for SlicerWeb (see [Startup configuration](#startup-configuration)).
+- Seeding: the two SlicerHeart workflows and the existing-case step, run by `setup-payload.mjs`.
+- The Workflows panel (In this case / Request or Add / Requests), opened from the case's ⋯ menu; Case Settings with the single default workflow and the personal switch.
+- `cases-page.js` split: workflow code in `dev/controllers/caseWorkflowsController.js`, styles in `cases-page.styles.js`, Case Settings draws its own header.
 
-**To change to match this design:**
-1. **Menu** (`open-with-menu.js`, `caseWorkflowMenu.js`): "Open in" switch; "No workflow" first; hide what can't be used; overflow after 5; drop "Other ways to open", "Find more…" and pending items; built-in viewer entries go.
-2. **Which workflow opens:** viewer + workflow as above; single default.
-3. **Viewers and workflows:** the one "can run" rule; the backend exposes Full Slicer's manifest extensions; Full Slicer's open request carries the startup configuration instead of `useSimplifiedViewer`, and its seat reuse compares workflow and configuration.
-4. **Startup configuration:** `startup_config` on workflows, the "Start in" field on the Workflows page, `module=` for SlicerWeb.
-5. **Seeding and migration:** the two SlicerHeart workflows; the existing-case step; `buildSlicerWebUrl` no longer adds SlicerHeart; retire `use_simplified_viewer`.
-6. **Workflows panel** replaces the "Find more…" dialog and moves requests and approved workflows out of Case Settings.
-7. **Case Settings:** single default workflow and the personal switch only; `workflow_defaults` becomes `default_workflow`.
-8. **Failed loads:** the targeted ITK message (see [When a file needs an extension](#when-a-file-needs-an-extension)).
-9. **Bell and Home To do** for requests (not started).
-10. **Server-side search and paging** for public workflows, shared by the Workflows panel and the Workflows page's "All workflows" tab (both stop at 200 today).
+**Next, in order:**
+1. **Failed loads:** the targeted ITK message (see [When a file needs an extension](#when-a-file-needs-an-extension)).
+2. **Bell and Home To do** for requests.
+3. **Server-side search and paging** for public workflows, shared by the Workflows panel and the Workflows page's "All workflows" tab (both stop at 200 today).
+4. The cleanup below.
+
+**Open questions and follow-ups:**
+- "Start in" shows module names (`SegmentEditor`), not the titles Slicer users know ("Segment Editor"); decide together with the core module list once users have said where they start.
+- Report to SlicerWeb: `?module=` should accept its built-in panels and apply after data loads; then remove the workaround.
+- Move the remaining inline icons (download, search, `homeIcons.js`) into `dev/utils/icons.js`.
+- Extract the viewer code (about 900 lines) from `cases-page.js`.
+- A Docker 409 ("removal already in progress") when starting a Full Slicer seat right after a backend restart.
 
 **Cleanup agreed before merging:**
 - Requests: unique index on (case, workflow); requesters as rows; no writes inside GETs (ex-members filtered on read); a cooldown before re-requesting a declined workflow; a cap on pending requests per member per case; optionally a per-user rate limit on request and cancel.
@@ -365,14 +372,18 @@ A workflow can carry one **startup configuration**: what's passed to the viewer 
 
 **Authors pick from lists; they never write code.** On the Workflows page, an optional **"Start in"** dropdown lists the modules of the ticked extensions (each extension's `modules` in the build's `extensions/index.json`; SlicerHeart lists SimplifiedViewer, and `SlicerHeartSimVascularPrivate` on stable lists ConduitPlanner) plus a short list of core modules kept in code. Untick the extension and a module that came from it is flagged. Modules a channel doesn't ship are flagged like extensions are ("Not in this SlicerWeb build").
 
+As built (`dev/utils/startModules.js`): the core list is `CORE_MODULES`, a provisional guess (Data, Volumes, VolumeRendering, Models, Markups, Segmentations, SegmentEditor, Transforms) to replace once users say where they start; alternatives are every core module the build ships (with a search box, if the build publishes that list) or what saved workflows actually pick; extension modules come from both SlicerWeb channels' lists, so one only latest ships is marked "latest SlicerWeb only", and SimplifiedViewer is marked "Full Slicer only". A saved module whose extension has been unticked stays selected, with a note, until the author changes it. Full Slicer's own module list isn't consulted.
+
 **Data, not code.** The configuration is checked on save against known keys only; anything else is refused, so a public workflow can't make a viewer do something we haven't chosen to support. Adding a key (`layout`, module options, placeholders such as `{inputFile}` filled in by the host at launch) is a deliberate change: the key goes on the allowed list and each viewer learns to apply it.
 
 **How each viewer receives it:**
 
-- **SlicerWeb:** `module` becomes `?module=<name>`. The **latest** channel reads it (matching loaded modules, ignoring case; unknown names log a warning). **Stable** doesn't yet, so there the workflow opens on SlicerWeb's normal first screen, and the menu says "Starts in X on the latest channel only" until stable catches up. Keys beyond the URL parameters would go through one `?config=` parameter or the `slicerWeb` bridge the case page already uses to load files.
+- **SlicerWeb:** `module` becomes `?module=<name>`, and the case page also selects it once the file has loaded (or, for the blank viewer, once SlicerWeb is ready), on both channels; see below for why both. Keys beyond the URL parameters would go through one `?config=` parameter or the `slicerWeb` bridge the case page already uses to load files.
 - **Full Slicer:** the configuration goes in the open request that `slicer_session.py` already reads (where `useSimplifiedViewer` goes today), and it calls `slicer.util.selectModule()` after loading the file, after checking the name. SimplifiedViewer keeps the interface tidying seats apply today (`apply_simplified_viewer_ui`).
 
-**To check:** whether loading a file (especially an MRB) switches modules after SlicerWeb applies `module=`.
+**Found in testing (Nov 2026):** SlicerWeb applies `?module=` once at startup, before our file loads, and only for real Slicer modules: only the latest channel reads it, and it ignores SlicerWeb's built-in panels. `?module=Volumes` works on latest; `?module=SegmentEditor` doesn't, because Segment Editor is a panel built into SlicerWeb's page rather than a Slicer module, so SlicerWeb reports "Unknown module". Its own paintbrush button opens it fine.
+
+**Workaround (in place):** after the file loads, `cases-page.js` runs `selectModulePython()` (`dev/services/slicerBridgeUtils.js`) through the bridge. It sends the `select-module` message SlicerWeb's `selectModule()` sends, without the "is it loaded" check, so built-in panels open and the module is selected after loading rather than before. Both channels have that message. It is a SlicerWeb internal (`slicerweb.host`): if it changes, the module just isn't selected and a warning is logged. **To fix in SlicerWeb, then remove the workaround:** `?module=` should accept its built-in panels and apply after the page has loaded data.
 
 ## Later: Full Slicer
 

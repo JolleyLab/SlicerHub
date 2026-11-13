@@ -10,7 +10,7 @@ import '../components/comments-panel.js';
 import '../components/app-dialog.js';
 import { friendlyCasesError } from '../services/cases.js';
 import { API_URL } from '../config.js';
-import { parseNodeIdsRepr } from '../services/slicerBridgeUtils.js';
+import { parseNodeIdsRepr, selectModulePython } from '../services/slicerBridgeUtils.js';
 import {
     listCases, getCaseAccess, createCase, updateCase, listAttachments, deleteAttachment,
     uploadCaseAttachment, openPayloadAttachmentFullSlicer, fetchPayloadAttachmentContent,
@@ -1694,7 +1694,7 @@ export class CasesPage extends LitElement {
         // Download while the runtime starts; both are awaited in loadPendingIntoSlicerWeb.
         const download = fetchPayloadAttachmentContent(caseRow.id, attachment.id);
         download.catch(() => {}); // surfaced when awaited
-        this._slicerWebPending = { download, fileName: this.currentFileName };
+        this._slicerWebPending = { download, fileName: this.currentFileName, module: slicerWebParams?.module };
 
         this.iframeUrl = await this._slicerWebUrl(slicerWebParams);
 
@@ -1744,6 +1744,7 @@ export class CasesPage extends LitElement {
             // Blank mode: SlicerWeb is ready with no file to load.
             if (pending.blank) {
                 if (cancelled()) return;
+                await this._selectStartModule(slicer, pending.module);
                 this._slicerWebPending = null;
                 this.viewerLoading = false;
                 this.viewerLoadingDetail = '';
@@ -1851,6 +1852,7 @@ export class CasesPage extends LitElement {
                         console.warn('[SlicerWeb] fitSlicesToBackground failed:', e2);
                     }
                 }
+                await this._selectStartModule(slicer, pending.module);
             }
 
             this._slicerWebPending = null;
@@ -1869,6 +1871,17 @@ export class CasesPage extends LitElement {
             await this._doCloseViewer();
             this._replaceUrlWithCase();
             this.showErrorDialog(errorInfo);
+        }
+    }
+
+    /** The workflow's start module, shown once the file has loaded (see selectModulePython). Never fails the open. */
+    async _selectStartModule(slicer, module) {
+        const code = selectModulePython(module);
+        if (!code) return;
+        try {
+            await slicer.bridge.call('evalPython', [code, 'exec']);
+        } catch (err) {
+            console.warn(`[SlicerWeb] could not open the start module ${module}:`, err);
         }
     }
 
@@ -2203,7 +2216,7 @@ export class CasesPage extends LitElement {
 
         this.viewerLoadingDetail = t('cases.openingSlicerWeb');
         this._slicerWebRun += 1;
-        this._slicerWebPending = { blank: true };
+        this._slicerWebPending = { blank: true, module: slicerWebParams?.module };
 
         this.iframeUrl = await this._slicerWebUrl(slicerWebParams);
 

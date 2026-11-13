@@ -70,15 +70,15 @@ describe('apiRequest', () => {
 });
 
 describe('loadExtensionCatalog', () => {
-    it('keeps name/description/category, strips markup and icons, sorts, and caches per channel', async () => {
+    it('keeps name/description/category/modules, strips markup and icons, sorts, and caches per channel', async () => {
         respond = () => ({ status: 200, body: { extensions: [
-            { name: 'SlicerRT', description: 'Radiation', category: 'Radiotherapy', icon: 'https://example.com/i.png' },
+            { name: 'SlicerRT', description: 'Radiation', category: 'Radiotherapy', icon: 'https://example.com/i.png', modules: ['Isodose', 7] },
             { name: 'ExtraMarkups', description: 'A <i>Label</i> node' },
         ] } });
         const catalog = await loadExtensionCatalog('stable');
         assert.deepEqual(catalog, [
-            { name: 'ExtraMarkups', description: 'A Label node', category: '' },
-            { name: 'SlicerRT', description: 'Radiation', category: 'Radiotherapy' },
+            { name: 'ExtraMarkups', description: 'A Label node', category: '', modules: [] },
+            { name: 'SlicerRT', description: 'Radiation', category: 'Radiotherapy', modules: ['Isodose'] },
         ]);
         assert.equal(calls[0].url, '/slicerweb/stable/extensions/index.json');
         await loadExtensionCatalog('stable');

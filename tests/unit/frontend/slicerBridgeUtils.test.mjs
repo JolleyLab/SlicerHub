@@ -35,3 +35,18 @@ test('node IDs containing underscores and digits parse correctly', () => {
         'vtkMRMLSegmentationNode42',
     ]);
 });
+
+// ── selectModulePython ─────────────────────────────────────────────────────────
+
+test('selectModulePython: emits select-module for a module name', async () => {
+    const { selectModulePython } = await import('../../../dev/services/slicerBridgeUtils.js');
+    assert.equal(selectModulePython('SegmentEditor'),
+        "from slicerweb import host\nhost.emit('select-module', {'name': 'SegmentEditor'})");
+});
+
+test('selectModulePython: null for no name or anything that is not a module name', async () => {
+    const { selectModulePython } = await import('../../../dev/services/slicerBridgeUtils.js');
+    for (const name of [undefined, null, '', '1Volumes', "x'}); import os #", 'Segment Editor']) {
+        assert.equal(selectModulePython(name), null, String(name));
+    }
+});

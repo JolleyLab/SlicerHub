@@ -20,9 +20,10 @@ import '../components/toggle-switch.js';
 import '../components/tag-input.js';
 import '../components/info-tip.js';
 import { normalizeFileExtension, formatFileExtension } from '../utils/fileTypes.js';
+import { startModuleGroups, isStartModuleMissing } from '../utils/startModules.js';
 
 const TABS = ['mine', 'public'];
-const blankForm = () => ({ id: null, name: '', description: '', visibility: 'private', extensions: [], fileTypes: [] });
+const blankForm = () => ({ id: null, name: '', description: '', visibility: 'private', extensions: [], fileTypes: [], startupConfig: {} });
 const VISIBILITY_ICONS = { public: EYE_PATH, private: EYE_OFF_PATH };
 
 /** Eye (public) or eye-off (just me) and its label; hovering explains who can use it. */
@@ -52,6 +53,7 @@ export class WorkflowsPage extends LitElement {
             form: { state: true },       // draft being created or edited
             nameEditing: { state: true }, // the form's title is an input
             catalog: { state: true },
+            startCatalogs: { state: true }, // { stable, latest } for "Start in", or null while loading
             busy: { state: true },
             error: { state: true },
         };
@@ -166,6 +168,7 @@ export class WorkflowsPage extends LitElement {
         this.form = null;
         this.nameEditing = false;
         this.catalog = null;
+        this.startCatalogs = null;
         this.busy = false;
         this.error = '';
     }
@@ -194,8 +197,8 @@ export class WorkflowsPage extends LitElement {
     // ── Unsaved changes ──────────────────────────────────────────
 
     _formFields(form) {
-        const { name, description, visibility, extensions, fileTypes } = form;
-        return { name, description, visibility, extensions, fileTypes };
+        const { name, description, visibility, extensions, fileTypes, startupConfig } = form;
+        return { name, description, visibility, extensions, fileTypes, startupConfig };
     }
 
     _isDirty() {
@@ -331,12 +334,26 @@ export class WorkflowsPage extends LitElement {
     _startForm(workflow) {
         this._releaseIconPreview();
         this.form = workflow
-            ? { ...workflow, extensions: [...workflow.extensions], fileTypes: [...workflow.fileTypes] }
+            ? { ...workflow, extensions: [...workflow.extensions], fileTypes: [...workflow.fileTypes], startupConfig: { ...workflow.startupConfig } }
             : blankForm();
+        this._loadStartCatalogs();
         this._formSnapshot = JSON.stringify(this._formFields(this.form));
         this._formHref = location.href;
         this.nameEditing = !workflow; // a new workflow starts by naming it
         this.error = '';
+    }
+
+    /** Both SlicerWeb channels' extension lists, for the modules "Start in" offers (a failed one counts as empty). */
+    _loadStartCatalogs() {
+        if (this.startCatalogs) return;
+        const load = (channel) => loadExtensionCatalog(channel).catch(() => []);
+        Promise.all([load('stable'), load('latest')]).then(([stable, latest]) => { this.startCatalogs = { stable, latest }; });
+    }
+
+    /** Set or clear the module a workflow starts in, keeping any other startup keys. */
+    _setStartModule(module) {
+        const { module: _old, ...rest } = this.form.startupConfig || {};
+        this._setForm('startupConfig', module ? { ...rest, module } : rest);
     }
 
     _releaseIconPreview() {
@@ -469,6 +486,7 @@ export class WorkflowsPage extends LitElement {
             visibility: 'private',
             extensions: workflow.extensions,
             fileTypes: workflow.fileTypes,
+            startupConfig: workflow.startupConfig,
         }));
         if (!saved) return;
         this._selectTab('mine');
@@ -638,6 +656,11 @@ export class WorkflowsPage extends LitElement {
                                     ? w.fileTypes.map((ext) => html`<span class="type-chip">${formatFileExtension(ext)}</span>`)
                                     : html`<span class="hint">${t('workflows.anyFileType')}</span>`}
                             </div>
+                            ${w.startupConfig?.module ? html`
+                                <div class="file-types">
+                                    <span class="file-types-label">${t('workflows.startIn')}</span>
+                                    <span class="type-chip">${w.startupConfig.module}</span>
+                                </div>` : ''}
                             <div class="card-meta-row detail-meta">
                                 ${visibilityBadge(w.isMine ? w.visibility : 'public', 'card-meta-item')}
                             </div>
@@ -665,6 +688,31 @@ export class WorkflowsPage extends LitElement {
                 </div>
             </div>
         `);
+    }
+
+    /** "Start in": Slicer's usual first screen, or a module of Slicer's or of a ticked extension. */
+    _renderStartIn(f) {
+        const module = f.startupConfig?.module || '';
+        const groups = startModuleGroups(f.extensions, this.startCatalogs || {});
+        const missing = this.startCatalogs !== null && isStartModuleMissing(module, groups);
+        const optionLabel = (m) => (m.fullSlicerOnly ? t('workflows.startInFullSlicerOnly', { module: m.name })
+            : m.latestOnly ? t('workflows.startInLatestOnly', { module: m.name }) : m.name);
+        return html`
+            <div class="form-group">
+                <span class="form-label"><label for="wf-start">${t('workflows.startIn')}</label>
+                    <info-tip .text=${t('workflows.startInHint')} .label=${t('workflows.startInInfo')}></info-tip></span>
+                <select id="wf-start" class="form-input" .value=${module} @change=${(e) => this._setStartModule(e.target.value)}>
+                    <option value="" ?selected=${!module}>${t('workflows.startInDefault')}</option>
+                    ${missing || (module && this.startCatalogs === null)
+                        ? html`<option value=${module} selected>${module}</option>` : ''}
+                    ${groups.map((g) => html`
+                        <optgroup label=${g.extension || t('workflows.startInCore')}>
+                            ${g.modules.map((m) => html`<option value=${m.name} ?selected=${m.name === module}>${optionLabel(m)}</option>`)}
+                        </optgroup>`)}
+                </select>
+                ${missing ? html`<p class="hint" role="status">${t('workflows.startInMissing', { module })}</p>` : ''}
+            </div>
+        `;
     }
 
     _renderForm(f) {
@@ -724,6 +772,7 @@ export class WorkflowsPage extends LitElement {
                     <extension-picker .selected=${f.extensions}
                         @extensions-change=${(e) => this._setForm('extensions', e.detail.extensions)}></extension-picker>
                 </div>
+                ${this._renderStartIn(f)}
                 ${this.error ? html`<div class="form-error-msg" role="alert">${this.error}</div>` : ''}
                 <div class="form-actions is-sticky">
                     ${f.id ? html`<button class="secondary-button" type="button" @click=${cancel}>${t('common.cancel')}</button>` : ''}

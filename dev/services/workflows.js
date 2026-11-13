@@ -64,10 +64,11 @@ export function loadExtensionCatalog(channel = 'stable') {
         const request = fetch(`/slicerweb/${channel === 'latest' ? 'latest' : 'stable'}/extensions/index.json`)
             .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`Extension list unavailable (${r.status})`))))
             .then((index) => (index.extensions || [])
-                .map(({ name, description = '', category = '' }) => ({
+                .map(({ name, description = '', category = '', modules }) => ({
                     name,
                     description: String(description).replace(/<[^>]*>/g, ''), // index text has <i> etc.
                     category,
+                    modules: Array.isArray(modules) ? modules.filter((m) => typeof m === 'string') : [],
                 }))
                 .sort((a, b) => a.name.localeCompare(b.name)));
         request.catch(() => catalogs.delete(channel)); // retry next time
