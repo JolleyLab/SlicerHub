@@ -6,7 +6,7 @@ import './app-dialog.js';
 import {
     listAvailableCaseWorkflows, requestCaseWorkflow, cancelCaseWorkflowRequest, approveCaseWorkflow,
 } from '../services/workflows.js';
-import { fileTypesOf } from '../utils/caseWorkflowMenu.js';
+import { fileTypesOf } from '../utils/openWith.js';
 import { formatFileExtension } from '../utils/fileTypes.js';
 
 const SEARCH_DELAY_MS = 250;

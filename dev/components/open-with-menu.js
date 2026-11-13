@@ -2,12 +2,14 @@ import { LitElement, html, css } from 'lit-element';
 import { render } from 'lit-html';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
+import { VIEWER, NO_WORKFLOW, shortList } from '../utils/openWith.js';
 
 const MENU_MIN_WIDTH = 240;
 const MENU_GAP_PX = 4;
 const VIEWPORT_PADDING_PX = 8;
 const PORTAL_STYLE_ID = 'open-with-menu-portal-styles';
-const APPROX_MENU_HEIGHT_PX = 240;
+/** Everything the arrow keys move between: choices are radios, "More workflows…" a plain item. */
+const MENU_ITEMS = '[role="menuitem"], [role="menuitemradio"]';
 
 const PORTAL_CSS = `
 .open-with-menu-panel {
@@ -75,19 +77,31 @@ const PORTAL_CSS = `
   background: var(--color-border, #ccc);
 }
 .open-with-menu-panel .more { color: var(--color-text-secondary, #666); }
-.open-with-menu-panel .more .caret { transition: transform 0.15s; }
-.open-with-menu-panel .more[aria-expanded='true'] .caret { transform: rotate(90deg); }
-.open-with-menu-panel .nested { padding-left: 12px; }
-.open-with-menu-panel .item.is-pending { opacity: 0.6; cursor: default; }
-.open-with-menu-panel .item.is-pending:hover { background: transparent; }
+.open-with-menu-panel .viewer-switch {
+  display: flex;
+  margin: 2px 12px 6px;
+  border: 1px solid var(--color-border, #ccc);
+  border-radius: var(--radius-md, 6px);
+  overflow: hidden;
+}
+.open-with-menu-panel .viewer-switch .item {
+  flex: 1;
+  justify-content: center;
+  padding: 5px 8px;
+}
+.open-with-menu-panel .viewer-switch .item[aria-checked='true'] {
+  background: var(--color-primary, #3366cc);
+  color: var(--color-on-primary, #fff);
+}
 `;
 
 /**
- * Open ▾ for a case file or the blank viewer (docs/workflows-design.md › Opening a file).
- * `menu` comes from utils/caseWorkflowMenu.js workflowMenu(); `selectedKey` is what the main
- * button opens. Built-in viewers sit under "Other ways to open", shown directly when there is
- * nothing else; the person's pending requests are listed greyed out.
- * Emits `open-workflow` with { entry }, and `find-workflows` for "Find more…".
+ * Open ▾ for a case file or the blank viewer (docs/workflows-design.md › Opening a file):
+ * "Open in" (the viewer, for files), "No workflow", then this case's workflows and mine, and
+ * "More workflows…" when there are more than fit. Only what can be used right now is listed;
+ * the page works that out with utils/openWith.js and passes it in as `usable`.
+ * Emits `switch-viewer` with { viewer } (the menu stays open), `open-workflow` with { key }
+ * (a workflow key or NO_WORKFLOW), and `more-workflows`.
  * The menu is portaled to document.body so scroll parents do not clip it.
  */
 export class OpenWithMenu extends LitElement {
@@ -149,22 +163,47 @@ export class OpenWithMenu extends LitElement {
                 display: block;
                 flex-shrink: 0;
             }
+
+            /* With buttonLabel: a whole secondary button (styles/buttons.js) that opens the menu. */
+            .trigger.as-button {
+                height: auto;
+                max-width: none;
+                gap: 6px;
+                padding: 8px 12px 8px 18px;
+                color: var(--color-text-primary);
+                border: 1px solid var(--color-border);
+                border-radius: 6px;
+                font-size: 0.875rem;
+                font-weight: 600;
+                line-height: 1.2;
+                white-space: nowrap;
+            }
+
+            .trigger.as-button:hover:not(:disabled),
+            .trigger.as-button[aria-expanded='true'] {
+                background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface, var(--color-background)));
+                border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+            }
         `;
     }
 
     static get properties() {
         return {
             open: { type: Boolean },
+            /** Show as a labelled button that only opens the menu (the blank viewer), instead of a bare chevron (file rows). */
+            buttonLabel: { type: String },
             /** The attachment this menu belongs to; makes the button's accessible name specific. */
             fileName: { type: String },
             disabled: { type: Boolean },
-            /** { recommended, yours, builtins } from workflowMenu() */
-            menu: { attribute: false },
-            /** Key of the entry the main button opens (checked in the menu). */
+            /** The viewer this file opens in (VIEWER); `canSwitchViewer` shows "Open in" (files, not the blank viewer). */
+            viewer: { type: String },
+            canSwitchViewer: { type: Boolean },
+            /** { caseWorkflows, mine } from usableWorkflows(): what can open it in that viewer. */
+            usable: { attribute: false },
+            /** What the main button opens: a workflow key, or NO_WORKFLOW (checked in the menu). */
             selectedKey: { type: String },
-            /** Shown next to the chevron, e.g. the workflow's name when it isn't the person's own default. */
-            label: { type: String },
-            showMore: { state: true }
+            /** Shown next to the chevron: what differs from the person's own viewer with no workflow. */
+            label: { type: String }
         };
     }
 
@@ -174,10 +213,12 @@ export class OpenWithMenu extends LitElement {
         this.open = false;
         this.fileName = '';
         this.disabled = false;
-        this.menu = null;
-        this.selectedKey = '';
+        this.buttonLabel = '';
+        this.viewer = VIEWER.SLICERWEB;
+        this.canSwitchViewer = false;
+        this.usable = null;
+        this.selectedKey = NO_WORKFLOW;
         this.label = '';
-        this.showMore = false;
         this._portalHost = null;
         this._onDocumentPointerDown = (event) => this.closeIfOutside(event);
         this._repositionIfOpen = () => {
@@ -201,19 +242,26 @@ export class OpenWithMenu extends LitElement {
     }
 
     updated(changed) {
-        const contentChanged = ['menu', 'selectedKey', 'showMore'].some((key) => changed.has(key));
+        const contentChanged = ['viewer', 'usable', 'selectedKey'].some((key) => changed.has(key));
         if (changed.has('open') || (this.open && contentChanged)) {
             if (this.open) this.renderMenuPortal();
             else this.destroyMenuPortal();
         }
         // Opening the menu moves keyboard focus into it (it is rendered at the end of the page);
-        // expanding "Other ways to open" keeps focus on that item.
-        if (changed.has('open') && this.open) this.focusMenuItem(0);
-        else if (this.open && changed.has('showMore')) this._portalHost?.querySelector('.more[aria-expanded]')?.focus();
+        // switching the viewer keeps focus on the viewer now chosen.
+        if (changed.has('open') && this.open) this.focusSelected();
+        else if (this.open && changed.has('viewer')) this._portalHost?.querySelector('[aria-checked="true"]')?.focus();
+    }
+
+    /** Focus the checked workflow choice (so Enter opens with it), else the first item. */
+    focusSelected() {
+        const checked = this._portalHost?.querySelector('[data-choice][aria-checked="true"]');
+        if (checked) checked.focus();
+        else this.focusMenuItem(0);
     }
 
     menuItems() {
-        return Array.from(this._portalHost?.querySelectorAll('[role="menuitem"]') || []);
+        return Array.from(this._portalHost?.querySelectorAll(MENU_ITEMS) || []);
     }
 
     focusMenuItem(index) {
@@ -229,7 +277,7 @@ export class OpenWithMenu extends LitElement {
 
     onMenuKeydown(event) {
         const items = this.menuItems();
-        const current = items.indexOf(event.target.closest?.('[role="menuitem"]'));
+        const current = items.indexOf(event.target.closest?.(MENU_ITEMS));
         switch (event.key) {
             case 'ArrowDown':
                 event.preventDefault();
@@ -291,84 +339,71 @@ export class OpenWithMenu extends LitElement {
         this._portalHost = null;
     }
 
-    menuAnchorPosition() {
-        const trigger = this.shadowRoot?.querySelector('.trigger');
-        const rect = trigger?.getBoundingClientRect?.() || { left: 0, right: 0, top: 0, bottom: 0 };
+    /**
+     * Place the rendered menu: just below the button, or just above when it doesn't fit below.
+     */
+    positionMenu() {
+        const panel = this._portalHost?.firstElementChild;
+        const anchor = this.shadowRoot?.querySelector('.trigger');
+        if (!panel || !anchor) return;
+        const rect = anchor.getBoundingClientRect();
+        const { width, height } = panel.getBoundingClientRect();
         const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
         const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-        const menuWidth = Math.min(MENU_MIN_WIDTH, viewportWidth - VIEWPORT_PADDING_PX * 2);
-
-        let left = rect.left;
-        if (left + menuWidth > viewportWidth - VIEWPORT_PADDING_PX) {
-            left = Math.max(VIEWPORT_PADDING_PX, rect.right - menuWidth);
-        }
-        if (left < VIEWPORT_PADDING_PX) left = VIEWPORT_PADDING_PX;
-
-        let top = rect.bottom + MENU_GAP_PX;
-        const spaceBelow = viewportHeight - VIEWPORT_PADDING_PX - top;
-        if (spaceBelow < APPROX_MENU_HEIGHT_PX) {
-            const above = rect.top - MENU_GAP_PX - APPROX_MENU_HEIGHT_PX;
-            if (above > VIEWPORT_PADDING_PX) top = above;
-        }
-
-        return { top: Math.round(top), left: Math.round(left) };
+        const maxLeft = viewportWidth - VIEWPORT_PADDING_PX - width;
+        const left = Math.max(VIEWPORT_PADDING_PX, Math.min(rect.left, maxLeft));
+        const below = rect.bottom + MENU_GAP_PX;
+        const above = rect.top - MENU_GAP_PX - height;
+        const fitsBelow = below + height <= viewportHeight - VIEWPORT_PADDING_PX;
+        const top = fitsBelow || above < VIEWPORT_PADDING_PX ? below : above;
+        Object.assign(panel.style, { left: `${Math.round(left)}px`, top: `${Math.round(top)}px` });
     }
 
-    entryName(entry) {
-        return entry.nameKey ? t(entry.nameKey) : entry.name;
-    }
-
-    /** Second line: the description's first line, else where it opens. */
+    /** Second line: the description's first line, else where it starts. */
     entryHint(entry) {
-        if (entry.hintKey) return t(entry.hintKey);
-        return (entry.description || '').split('\n')[0].trim() || t('viewers.opensInBrowser');
+        const description = (entry.description || '').split('\n')[0].trim();
+        if (description) return description;
+        return entry.startupConfig?.module ? t('viewers.startsIn', { module: entry.startupConfig.module }) : '';
     }
 
-    itemTemplate(entry) {
-        const selected = entry.key === this.selectedKey;
+    itemTemplate(key, name, hint) {
+        const selected = key === this.selectedKey;
         return html`
-            <button class="item" type="button" role="menuitem" tabindex="-1" @click=${() => this.select(entry)}>
+            <button class="item" type="button" role="menuitemradio" data-choice aria-checked=${selected ? 'true' : 'false'} tabindex="-1"
+                @click=${() => this.closeAndEmit('open-workflow', { key })}>
                 <span class="check ${selected ? '' : 'is-empty'}" aria-hidden="true">✓</span>
                 <span class="item-label">
-                    ${this.entryName(entry)}
-                    <span class="hint">${this.entryHint(entry)}</span>
+                    ${name}
+                    ${hint ? html`<span class="hint">${hint}</span>` : ''}
                 </span>
             </button>
         `;
     }
 
-    pendingTemplate(request) {
+    viewerSwitchTemplate() {
+        const option = (viewer, nameKey) => html`
+            <button class="item" type="button" role="menuitemradio" tabindex="-1"
+                aria-checked=${this.viewer === viewer ? 'true' : 'false'}
+                @click=${() => this.emit('switch-viewer', { viewer })}>${t(nameKey)}</button>
+        `;
         return html`
-            <div class="item is-pending" role="menuitem" aria-disabled="true" tabindex="-1">
-                <span class="check is-empty" aria-hidden="true">✓</span>
-                <span class="item-label">
-                    ${request.name}
-                    <span class="hint">${t('viewers.pendingApproval')}</span>
-                </span>
+            <div class="heading" id="open-in-heading">${t('viewers.openIn')}</div>
+            <div class="viewer-switch" role="group" aria-labelledby="open-in-heading">
+                ${option(VIEWER.SLICERWEB, 'viewers.slicerWeb')}
+                ${option(VIEWER.FULL, 'viewers.fullSlicer')}
             </div>
+            <div class="divider" role="separator"></div>
         `;
     }
 
-    /** The sections to show; the selected entry is always listed, even if made for another file type. */
-    sections() {
-        const { recommended = [], yours = [], builtins = [], all = [] } = this.menu || {};
-        const listed = [...recommended, ...yours, ...builtins];
-        const selected = all.find((e) => e.key === this.selectedKey);
-        const extra = selected && !listed.includes(selected) ? [selected] : [];
-        return { recommended: [...extra, ...recommended], yours, builtins };
-    }
-
     renderMenuPortal() {
-        const { top, left } = this.menuAnchorPosition();
         const host = this.ensurePortalHost();
-        const { recommended, yours, builtins } = this.sections();
-        const pending = this.menu?.pending || [];
-        const hasWorkflows = recommended.length + yours.length + pending.length > 0;
-        const section = (headingKey, entries, requests = []) => (entries.length + requests.length ? html`
+        const list = shortList(this.usable || { caseWorkflows: [], mine: [] }, this.selectedKey);
+        const viewerName = t(this.viewer === VIEWER.FULL ? 'viewers.fullSlicer' : 'viewers.slicerWeb');
+        const section = (headingKey, entries) => (entries.length ? html`
             <div role="group" aria-label=${t(headingKey)}>
                 <div class="heading" aria-hidden="true">${t(headingKey)}</div>
-                ${entries.map((e) => this.itemTemplate(e))}
-                ${requests.map((r) => this.pendingTemplate(r))}
+                ${entries.map((e) => this.itemTemplate(e.key, e.name, this.entryHint(e)))}
             </div>
         ` : '');
 
@@ -378,29 +413,20 @@ export class OpenWithMenu extends LitElement {
                 role="menu"
                 aria-label=${t('viewers.openWith')}
                 @keydown=${(e) => this.onMenuKeydown(e)}
-                style="top:${top}px;left:${left}px;"
             >
-                ${section('viewers.recommended', recommended, pending)}
-                ${section('viewers.yours', yours)}
-                ${hasWorkflows ? html`
-                    <div class="divider" role="separator"></div>
-                    <button class="item more" type="button" role="menuitem" tabindex="-1"
-                        aria-expanded=${this.showMore ? 'true' : 'false'}
-                        @click=${() => { this.showMore = !this.showMore; }}>
-                        <span class="check caret" aria-hidden="true">›</span>
-                        <span class="item-label">${t('viewers.otherWays')}</span>
-                    </button>
-                    ${this.showMore ? html`<div class="nested">${builtins.map((e) => this.itemTemplate(e))}</div>` : ''}
-                ` : builtins.map((e) => this.itemTemplate(e))}
-                ${this.menu?.canFindMore ? html`
-                    <div class="divider" role="separator"></div>
-                    <button class="item more" type="button" role="menuitem" tabindex="-1" @click=${() => this.findMore()}>
+                ${this.canSwitchViewer ? this.viewerSwitchTemplate() : ''}
+                ${this.itemTemplate(NO_WORKFLOW, t('viewers.noWorkflow'), t('viewers.justViewer', { viewer: viewerName }))}
+                ${section('viewers.thisCase', list.caseWorkflows)}
+                ${section('viewers.mine', list.mine)}
+                ${list.hidden ? html`
+                    <button class="item more" type="button" role="menuitem" tabindex="-1" @click=${() => this.closeAndEmit('more-workflows')}>
                         <span class="check is-empty" aria-hidden="true">✓</span>
-                        <span class="item-label">${t('viewers.findMore')}</span>
+                        <span class="item-label">${t('viewers.moreWorkflows', { count: list.hidden })}</span>
                     </button>
                 ` : ''}
             </div>
         `, host);
+        this.positionMenu();
     }
 
     closeIfOutside(event) {
@@ -413,24 +439,18 @@ export class OpenWithMenu extends LitElement {
     toggleMenu(event) {
         event?.stopPropagation?.();
         if (this.disabled) return;
-        // Built-ins start expanded when one of them is what the button opens.
-        if (!this.open) this.showMore = (this.menu?.builtins || []).some((e) => e.key === this.selectedKey);
         this.open = !this.open;
+    }
+
+    emit(type, detail = {}) {
+        this.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
     }
 
     /** Close, then emit. Focus goes back to the button first, so whatever opens next knows where to return to. */
     closeAndEmit(type, detail = {}) {
         this.shadowRoot?.querySelector('.trigger')?.focus();
         this.open = false;
-        this.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
-    }
-
-    select(entry) {
-        this.closeAndEmit('open-workflow', { entry });
-    }
-
-    findMore() {
-        this.closeAndEmit('find-workflows');
+        this.emit(type, detail);
     }
 
     triggerLabel() {
@@ -442,17 +462,17 @@ export class OpenWithMenu extends LitElement {
     render() {
         return html`
             <button
-                class="trigger"
+                class="trigger ${this.buttonLabel ? 'as-button' : ''}"
                 type="button"
                 title=${this.label ? `${this.triggerLabel()} (${this.label})` : this.triggerLabel()}
-                aria-label=${this.triggerLabel()}
+                aria-label=${this.buttonLabel || this.triggerLabel()}
                 aria-expanded=${this.open ? 'true' : 'false'}
                 aria-haspopup="menu"
                 ?disabled=${this.disabled}
                 @click=${(e) => this.toggleMenu(e)}
                 @keydown=${(e) => this.onTriggerKeydown(e)}
             >
-                ${this.label ? html`<span class="trigger-label">${this.label}</span>` : ''}
+                ${this.buttonLabel ? this.buttonLabel : this.label ? html`<span class="trigger-label">${this.label}</span>` : ''}
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path
                         fill="currentColor"

@@ -150,14 +150,15 @@ Each openable file, and the blank viewer, has a split button. The main part open
  │   SlicerHeart                     │
  │   SlicerHeart – Simplified        │
  │   Cardiac segmentation            │
- │ Yours                             │
+ │ Mine                              │
  │   My TAVR setup                   │
  │   More workflows… (4 more)        │
  └───────────────────────────────────┘
 ```
 
 - **"Open in"** switches the viewer for this file; it starts on the person's own viewer. The blank viewer is SlicerWeb only, so it has no switch.
-- **"No workflow" comes first:** the one entry every menu has, in a fixed place. Then "This case" (approved workflows) and "Yours" (the person's own, unless the case turns them off).
+- **The blank viewer** is a plain "Open blank viewer ▾" button that only opens the menu: it's a starting point for any number of files, so nothing is assumed or remembered. The case default (or "No workflow") is checked and focused, so Enter opens with it.
+- **"No workflow" comes first:** the one entry every menu has, in a fixed place. Then "This case" (approved workflows) and "Mine" (the person's own, unless the case turns them off; named like My Cases and My Groups). One of the person's own that the case has approved is listed only under This case, since its approved copy is what everyone in the case gets.
 - **Only what you can use now.** Workflows the chosen viewer can't run, or made for other file types, are left out, not greyed. Pending requests aren't listed. Requesting and adding are in the [Workflows panel](#workflows-panel), not here.
 - **Second line:** the workflow's description, cut to one line, or "Starts in <module>".
 - **Overflow:** after 5 workflows the menu shows **"More workflows… (n more)"**, a searchable list of the same usable workflows; picking one opens the file. The current choice always stays in the short list.
@@ -340,6 +341,8 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
 - a way to report a workflow, and to hide or unpublish it (for example from the Payload admin);
 - showing who published a workflow, which needs the same opt-in as names elsewhere (`share_name_in_groups`); today public workflows show no author, by design;
 - a sort that isn't just alphabetical (recent, or most used), so the first page can't be claimed by naming.
+
+**Stacking: always-included extensions.** A launch is one viewer plus at most one workflow; workflows don't stack, because extensions combine but start modules don't (only one module can open first). For now, a case that always wants an extension (e.g. SlicerHeart in a cardiac case) gets it by including it in each of its workflows. If that becomes common, Case Settings could gain **"Always include these extensions"**: installed on every launch in the case, with or without a workflow, and never setting a start module, so the chosen workflow's startup configuration still decides where Slicer opens. The launch then merges two lists (the case's and the workflow's), each viewer checks the case's extensions too (one it lacks is left out, and the launch says so), and nothing about workflows or the menu changes. Free multi-select of workflows is not planned: it would need a "primary" workflow whenever two set a start module, and it makes the menu much harder for non-technical users.
 
 **Workflow variants.** "SlicerHeart" and "SlicerHeart – Simplified" share an extension list and differ only in where they start, and admins approve each. If such variants become common, a workflow could be approved together with the variants based on it (parent/child), or carry several starting points. Not worth the complexity yet.
 

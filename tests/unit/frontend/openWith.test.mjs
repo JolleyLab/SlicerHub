@@ -65,12 +65,12 @@ describe('canRun', () => {
 });
 
 describe('usableWorkflows', () => {
-    it('lists the case\'s workflows then yours, for this file type, in this viewer', () => {
+    it('lists the case\'s workflows then mine, for this file type, in this viewer', () => {
         const mrb = usableWorkflows(DATA, { fileName: 'heart.mrb' });
         assert.deepEqual(keys(mrb.caseWorkflows), ['case:1', 'case:2', 'case:3']);
-        assert.deepEqual(keys(mrb.yours), []);
+        assert.deepEqual(keys(mrb.mine), []);
         assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'a.seg.nrrd' }).caseWorkflows), ['case:1', 'case:2', 'case:4']);
-        assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'brain.nii.gz' }).yours), ['mine:11']);
+        assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'brain.nii.gz' }).mine), ['mine:11']);
     });
     it('hides what the viewer can\'t run', () => {
         assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'heart.mrb', viewer: VIEWER.FULL }).caseWorkflows), ['case:1']);
@@ -78,11 +78,20 @@ describe('usableWorkflows', () => {
     it('the blank viewer lists every workflow', () => {
         assert.equal(usableWorkflows(DATA).caseWorkflows.length, 4);
     });
+    it("one of mine the case has approved is listed only as the case's", () => {
+        const data = { ...DATA, approved: [...DATA.approved, { ...W(7, 'My TAVR setup (approved)', ['SlicerRT'], ['nii.gz']), workflowId: 11 }] };
+        const usable = usableWorkflows(data, { fileName: 'brain.nii.gz' });
+        assert.deepEqual(keys(usable.caseWorkflows).includes('case:7'), true);
+        assert.deepEqual(usable.mine, []);
+    });
+    it('a public workflow of mine that the case has not approved stays under Mine', () => {
+        assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'brain.nii.gz' }).mine), ['mine:11']);
+    });
     it('personal workflows disappear when the case turns them off', () => {
-        assert.deepEqual(usableWorkflows({ ...DATA, allowPersonal: false }, { fileName: 'b.nii.gz' }).yours, []);
+        assert.deepEqual(usableWorkflows({ ...DATA, allowPersonal: false }, { fileName: 'b.nii.gz' }).mine, []);
     });
     it('works before the case data has loaded', () => {
-        assert.deepEqual(usableWorkflows(null, { fileName: 'x.mrb' }), { caseWorkflows: [], yours: [] });
+        assert.deepEqual(usableWorkflows(null, { fileName: 'x.mrb' }), { caseWorkflows: [], mine: [] });
     });
 });
 
@@ -120,22 +129,22 @@ describe('resolveOpen', () => {
 describe('shortList', () => {
     const many = {
         caseWorkflows: Array.from({ length: 6 }, (_, i) => ({ key: `case:${i}` })),
-        yours: [{ key: 'mine:1' }],
+        mine: [{ key: 'mine:1' }],
     };
     it('shows the first five and counts the rest', () => {
         const list = shortList(many);
         assert.deepEqual(keys(list.caseWorkflows), ['case:0', 'case:1', 'case:2', 'case:3', 'case:4']);
-        assert.deepEqual(list.yours, []);
+        assert.deepEqual(list.mine, []);
         assert.equal(list.hidden, 2);
     });
     it('keeps the selected one visible', () => {
         const list = shortList(many, 'mine:1');
-        assert.deepEqual(keys(list.yours), ['mine:1']);
+        assert.deepEqual(keys(list.mine), ['mine:1']);
         assert.equal(list.caseWorkflows.length, 4);
         assert.equal(list.hidden, 2);
     });
     it('nothing hidden when it fits', () => {
-        assert.equal(shortList({ caseWorkflows: [{ key: 'case:1' }], yours: [] }).hidden, 0);
+        assert.equal(shortList({ caseWorkflows: [{ key: 'case:1' }], mine: [] }).hidden, 0);
     });
 });
 

@@ -24,10 +24,14 @@ export function fileTypesOf(fileName) {
     return parts.map((_, i) => parts.slice(i).join('.')).filter((ext) => ext.split('.').length <= 4);
 }
 
-/** A workflow as the menu lists it. `key` is what picks store: "case:<approval id>" or "mine:<workflow id>". */
+/**
+ * A workflow as the menu lists it. `key` is what picks store: "case:<approval id>" or
+ * "mine:<workflow id>"; `workflowId` is the source workflow either way.
+ */
 const toEntry = (w, section) => ({
     key: `${section}:${w.id}`,
     section,
+    workflowId: String(section === 'case' ? w.workflowId : w.id),
     name: w.name,
     description: w.description || '',
     extensions: w.extensions || [],
@@ -52,15 +56,19 @@ export function canRun(workflow, viewer, { viewers = null, slicerWebExtensions =
 /**
  * What can open this file (fileName null: the blank viewer) in this viewer, right now: the
  * case's workflows, then the person's own (unless the case turns them off). Workflows for other
- * file types, or that the viewer can't run, are left out.
+ * file types, or that the viewer can't run, are left out. One of your own that the case has
+ * approved is listed only as the case's: its approved copy is what everyone in the case gets.
  */
 export function usableWorkflows(data, { fileName = null, viewer = VIEWER.SLICERWEB, slicerWebExtensions = null } = {}) {
     const types = fileName == null ? [] : fileTypesOf(fileName);
     const fits = (w) => fileName == null || !w.fileTypes.length || w.fileTypes.some((t) => types.includes(t));
     const usable = (w) => fits(w) && canRun(w, viewer, { viewers: data?.viewers, slicerWebExtensions });
+    const caseWorkflows = (data?.approved || []).map((a) => toEntry(a, 'case'));
+    const inCase = new Set(caseWorkflows.map((e) => e.workflowId));
+    const mine = data?.allowPersonal === false ? [] : (data?.mine || []).map((w) => toEntry(w, 'mine'));
     return {
-        caseWorkflows: (data?.approved || []).map((a) => toEntry(a, 'case')).filter(usable),
-        yours: data?.allowPersonal === false ? [] : (data?.mine || []).map((w) => toEntry(w, 'mine')).filter(usable),
+        caseWorkflows: caseWorkflows.filter(usable),
+        mine: mine.filter((e) => !inCase.has(e.workflowId) && usable(e)),
     };
 }
 
@@ -76,7 +84,7 @@ export function resolveOpen(data, { fileName = null, pick = null, accountViewer 
     const viewer = blank ? VIEWER.SLICERWEB : pickedViewer || viewerFromAccount(accountViewer);
     if (pick?.workflow === NO_WORKFLOW) return { viewer, workflow: null, from: 'pick' };
     const usable = usableWorkflows(data, { fileName, viewer, slicerWebExtensions });
-    const picked = pick?.workflow && [...usable.caseWorkflows, ...usable.yours].find((e) => e.key === pick.workflow);
+    const picked = pick?.workflow && [...usable.caseWorkflows, ...usable.mine].find((e) => e.key === pick.workflow);
     if (picked) return { viewer, workflow: picked, from: 'pick' };
     const byDefault = data?.defaultWorkflow && usable.caseWorkflows.find((e) => e.key === `case:${data.defaultWorkflow}`);
     if (byDefault) return { viewer, workflow: byDefault, from: 'default' };
@@ -85,17 +93,17 @@ export function resolveOpen(data, { fileName = null, pick = null, accountViewer 
 
 /**
  * The menu's short list: the first MENU_LIMIT workflows across both sections, keeping the
- * selected one visible. Returns { caseWorkflows, yours, hidden } (hidden: how many are left for
+ * selected one visible. Returns { caseWorkflows, mine, hidden } (hidden: how many are left for
  * "More workflows…").
  */
 export function shortList(usable, selectedKey = null, limit = MENU_LIMIT) {
-    const all = [...usable.caseWorkflows, ...usable.yours];
+    const all = [...usable.caseWorkflows, ...usable.mine];
     let shown = all.slice(0, limit);
     const selected = all.find((e) => e.key === selectedKey);
     if (selected && !shown.includes(selected)) shown = [...shown.slice(0, limit - 1), selected];
     return {
         caseWorkflows: usable.caseWorkflows.filter((e) => shown.includes(e)),
-        yours: usable.yours.filter((e) => shown.includes(e)),
+        mine: usable.mine.filter((e) => shown.includes(e)),
         hidden: all.length - shown.length,
     };
 }

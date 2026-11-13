@@ -23,10 +23,11 @@ import '../components/list-filter-tools.js';
 import '../components/open-with-menu.js';
 import '../components/case-settings.js';
 import '../components/find-workflows-dialog.js';
-import { listCaseWorkflows } from '../services/workflows.js';
+import '../components/more-workflows-dialog.js';
+import { listCaseWorkflows, loadExtensionCatalog } from '../services/workflows.js';
 import {
-    workflowMenu, caseDefaultKey, resolveWorkflow, builtinForViewer, readWorkflowChoice, saveWorkflowChoice,
-} from '../utils/caseWorkflowMenu.js';
+    VIEWER, NO_WORKFLOW, viewerFromAccount, usableWorkflows, resolveOpen, readOpenPick, saveOpenPick,
+} from '../utils/openWith.js';
 import { formatBytes } from '../utils/formatBytes.js';
 import { deepActiveElement } from '../utils/focus.js';
 import {
@@ -261,11 +262,6 @@ export class CasesPage extends LitElement {
                 flex-shrink: 0;
             }
 
-            .split-button {
-                display: inline-flex;
-                align-items: center;
-                gap: 2px;
-            }
 
             .upload-status {
                 color: var(--color-text-secondary);
@@ -2089,53 +2085,87 @@ export class CasesPage extends LitElement {
         }
     }
 
-    /** The selected case's workflows (GET /api/cases/:id/workflows), for the Open ▾ menus. */
+    /** The SlicerWeb channel this person launches: latest only in developer mode. */
+    slicerWebChannel() {
+        return isSlicerWebDevModeEnabled() && getCachedUserPreferences().slicerWebChannel === 'latest' ? 'latest' : 'stable';
+    }
+
+    /**
+     * The selected case's workflows (GET /api/cases/:id/workflows) and the extensions in the
+     * SlicerWeb build this person launches, for the Open ▾ menus.
+     */
     async loadCaseWorkflows({ refresh = false } = {}) {
         const caseId = this.selectedCaseId;
         if (!refresh) this.caseWorkflows = null;
         if (!caseId) return;
         try {
-            const data = await listCaseWorkflows(caseId);
-            if (caseId === this.selectedCaseId) this.caseWorkflows = { caseId: String(caseId), data };
-        } catch { /* the menus fall back to the built-in viewers */ }
+            const [data, catalog] = await Promise.all([
+                listCaseWorkflows(caseId),
+                loadExtensionCatalog(this.slicerWebChannel()).catch(() => null), // unknown: SlicerWeb counts as having everything
+            ]);
+            if (caseId !== this.selectedCaseId) return;
+            this.caseWorkflows = { caseId: String(caseId), data, slicerWebExtensions: catalog ? catalog.map((e) => e.name) : null };
+        } catch (err) {
+            console.warn('[cases] workflows load failed; files open with no workflow:', err);
+        }
     }
 
-    /**
-     * Open ▾ for a file (attachment null: the blank viewer): the menu, the workflow the main
-     * button opens, and its name, shown on the button unless it's the person's own default viewer.
-     */
     caseWorkflowsFor(caseRow) {
         return this.caseWorkflows?.caseId === String(caseRow.id) ? this.caseWorkflows.data : null;
     }
 
+    /**
+     * What opening a file does (attachment null: the blank viewer), and what its Open ▾ menu
+     * offers: { viewer, workflow, usable, selectedKey, name, label }. `label` is what differs from
+     * the person's own viewer with no workflow; `name` describes the whole thing. The blank viewer
+     * remembers no pick: it starts on the case default each time, chosen from its menu.
+     */
     openWithFor(caseRow, attachment = null) {
-        const data = this.caseWorkflowsFor(caseRow);
-        const fileName = attachment ? attachmentFileName(attachment) : null;
-        const menu = workflowMenu(data, { fileName });
-        const accountDefault = builtinForViewer(this.accountDefaultViewer());
-        const entry = resolveWorkflow(menu, {
-            saved: readWorkflowChoice(caseRow.id, attachment?.id ?? null),
-            caseDefault: caseDefaultKey(data),
-            accountDefault,
-        });
-        const name = entry.nameKey ? t(entry.nameKey) : entry.name;
-        return { menu, entry, name, label: entry.key === accountDefault ? '' : name };
+        const loaded = this.caseWorkflows?.caseId === String(caseRow.id) ? this.caseWorkflows : null;
+        const accountViewer = this.accountDefaultViewer();
+        const options = { fileName: attachment ? attachmentFileName(attachment) : null, slicerWebExtensions: loaded?.slicerWebExtensions ?? null };
+        const pick = attachment ? readOpenPick(caseRow.id, attachment.id) : null;
+        const open = resolveOpen(loaded?.data, { ...options, accountViewer, pick });
+        const viewerName = t(open.viewer === VIEWER.FULL ? 'viewers.fullSlicer' : 'viewers.slicerWeb');
+        const otherViewer = attachment && open.viewer !== viewerFromAccount(accountViewer);
+        return {
+            ...open,
+            usable: usableWorkflows(loaded?.data, { ...options, viewer: open.viewer }),
+            selectedKey: open.workflow?.key ?? NO_WORKFLOW,
+            name: open.workflow ? `${open.workflow.name} · ${viewerName}` : viewerName,
+            label: [open.workflow?.name, otherViewer ? viewerName : null].filter(Boolean).join(' · '),
+        };
     }
 
-    /** The Open ▾ chevron (with the workflow's name when it isn't the person's default viewer). */
-    renderOpenWithMenu(caseRow, attachment, openWith, { slot = '' } = {}) {
+    /** The Open ▾ chevron for a file (attachment null: the blank viewer). */
+    renderOpenWithMenu(caseRow, attachment, openWith, { slot = '', buttonLabel = '' } = {}) {
+        const fileId = attachment?.id ?? null;
         return html`
             <open-with-menu
                 slot=${slot}
+                .buttonLabel=${buttonLabel}
                 .fileName=${attachment ? this.attachmentTitle(attachment) : t('cases.openBlankViewer')}
-                .menu=${openWith.menu}
-                .selectedKey=${openWith.entry.key}
+                .viewer=${openWith.viewer}
+                ?canSwitchViewer=${Boolean(attachment)}
+                .usable=${openWith.usable}
+                .selectedKey=${openWith.selectedKey}
                 .label=${openWith.label}
                 ?disabled=${!!this.openingAttachmentId || this.viewerLoading}
-                @open-workflow=${(e) => this.openWithWorkflow(caseRow, attachment, e.detail.entry, { remember: true })}
-                @find-workflows=${() => this.openFindWorkflows(caseRow, attachment)}
+                @switch-viewer=${(e) => { saveOpenPick(caseRow.id, fileId, { viewer: e.detail.viewer }); this.requestUpdate(); }}
+                @open-workflow=${(e) => this.pickAndOpen(caseRow, attachment, e.detail.key)}
+                @more-workflows=${() => this.openMoreWorkflows(caseRow, attachment, openWith)}
             ></open-with-menu>
         `;
+    }
+
+    /** "More workflows…": the full list of what the menu shortened. */
+    openMoreWorkflows(caseRow, attachment, openWith) {
+        this._moreWorkflowsFor = { caseRow, attachment };
+        this.renderRoot.querySelector('more-workflows-dialog')?.open({
+            title: t('viewers.moreWorkflowsTitle', { name: attachment ? this.attachmentTitle(attachment) : t('cases.openBlankViewer') }),
+            usable: openWith.usable,
+            selectedKey: openWith.selectedKey,
+        });
     }
 
     /** "Find more…" (attachment null: not for a particular file). */
@@ -2147,49 +2177,47 @@ export class CasesPage extends LitElement {
         });
     }
 
+    /** "Open blank viewer ▾": a button that opens the menu, with the case default checked. */
     renderBlankViewerButton(caseRow) {
-        const openWith = this.openWithFor(caseRow);
-        return html`
-            <span class="split-button">
-                <button
-                    class="secondary-button"
-                    type="button"
-                    title=${t('cases.openWithWorkflow', { name: openWith.name })}
-                    ?disabled=${this.viewerLoading || !!this.openingAttachmentId}
-                    @click=${() => this.openWithWorkflow(caseRow, null, openWith.entry)}
-                >${t('cases.openBlankViewer')}</button>
-                ${this.renderOpenWithMenu(caseRow, null, openWith)}
-            </span>
-        `;
-    }
-
-    /** Open with a workflow; `remember` (a pick from the menu) makes it this file's choice. */
-    openWithWorkflow(caseRow, attachment, entry, { remember = false } = {}) {
-        if (remember) saveWorkflowChoice(caseRow.id, attachment?.id ?? null, entry.key);
-        const extensions = entry.builtin ? undefined : entry.extensions;
-        if (!attachment) return this.handleOpenBlankSlicerWeb(caseRow, extensions);
-        if (entry.target === 'full_slicer') {
-            return this.handleOpenAttachment(caseRow, attachment, { simplified: entry.simplified === true });
-        }
-        return this.handleOpenSlicerWeb(caseRow, attachment, extensions);
+        return this.renderOpenWithMenu(caseRow, null, this.openWithFor(caseRow), { buttonLabel: t('cases.openBlankViewer') });
     }
 
     /**
-     * SlicerWeb URL for the chosen channel and workflow's extensions (undefined: SlicerWeb's
-     * defaults). The installed build's SHA goes in as ?v= so a new build skips any stale
-     * service-worker cache.
+     * A pick from the menu (a workflow key or NO_WORKFLOW): for a file, remember it and open;
+     * for the blank viewer, just open with it.
      */
-    async _slicerWebUrl(extensions) {
-        const channel = (isSlicerWebDevModeEnabled() && getCachedUserPreferences().slicerWebChannel === 'latest')
-            ? 'latest' : 'stable';
+    pickAndOpen(caseRow, attachment, key) {
+        if (attachment) {
+            saveOpenPick(caseRow.id, attachment.id, { workflow: key });
+            return this.openWith(caseRow, attachment, this.openWithFor(caseRow, attachment));
+        }
+        const usable = this.openWithFor(caseRow).usable;
+        const workflow = [...usable.caseWorkflows, ...usable.mine].find((e) => e.key === key) || null;
+        return this.openWith(caseRow, null, { viewer: VIEWER.SLICERWEB, workflow });
+    }
+
+    /** Launch a file (attachment null: the blank viewer) in its viewer, with its workflow on top. */
+    openWith(caseRow, attachment, { viewer, workflow }) {
+        if (viewer === VIEWER.FULL) return this.handleOpenAttachment(caseRow, attachment, { simplified: false });
+        const params = workflow ? { extensions: workflow.extensions, module: workflow.startupConfig.module } : {};
+        return attachment ? this.handleOpenSlicerWeb(caseRow, attachment, params) : this.handleOpenBlankSlicerWeb(caseRow, params);
+    }
+
+    /**
+     * SlicerWeb URL for this person's channel, with a workflow's extensions and start module ({}:
+     * SlicerWeb's defaults). The installed build's SHA goes in as ?v= so a new build skips any
+     * stale service-worker cache.
+     */
+    async _slicerWebUrl(params = {}) {
+        const channel = this.slicerWebChannel();
         const statusData = await fetch('/api/slicerweb/status', { credentials: 'include' })
             .then((r) => r.ok ? r.json() : null)
             .catch(() => null);
         const sha = statusData?.[channel] ?? null;
-        return buildSlicerWebUrl({ channel, sha, ...(extensions ? { extensions } : {}) });
+        return buildSlicerWebUrl({ channel, sha, ...params });
     }
 
-    async handleOpenSlicerWeb(caseRow, attachment, extensions) {
+    async handleOpenSlicerWeb(caseRow, attachment, slicerWebParams) {
         if (this.openingAttachmentId || !attachment?.canOpenInSlicer) return;
 
         this._viewerOpenId += 1;
@@ -2215,7 +2243,7 @@ export class CasesPage extends LitElement {
         download.catch(() => {}); // surfaced when awaited
         this._slicerWebPending = { download, fileName: this.currentFileName };
 
-        this.iframeUrl = await this._slicerWebUrl(extensions);
+        this.iframeUrl = await this._slicerWebUrl(slicerWebParams);
 
         this._pushViewerHistory(caseRow.id);
 
@@ -2706,7 +2734,7 @@ export class CasesPage extends LitElement {
         } catch (_) {}
     }
 
-    async handleOpenBlankSlicerWeb(caseRow, extensions) {
+    async handleOpenBlankSlicerWeb(caseRow, slicerWebParams) {
         if (this.viewerLoading || this.openingAttachmentId) return;
 
         this._viewerOpenId += 1;
@@ -2724,7 +2752,7 @@ export class CasesPage extends LitElement {
         this._slicerWebRun += 1;
         this._slicerWebPending = { blank: true };
 
-        this.iframeUrl = await this._slicerWebUrl(extensions);
+        this.iframeUrl = await this._slicerWebUrl(slicerWebParams);
 
         this._pushViewerHistory(caseRow.id);
     }
@@ -3065,7 +3093,7 @@ export class CasesPage extends LitElement {
                                                     || !!this.openingAttachmentId
                                                     || this.viewerLoading}
                                                 .nameButtonTitle=${this.attachmentOpenTitle(attachment, openWith)}
-                                                @name-click=${() => this.openWithWorkflow(caseRow, attachment, openWith.entry)}
+                                                @name-click=${() => this.openWith(caseRow, attachment, openWith)}
                                             >
                                                 ${attachment?.canOpenInSlicer
                                                     ? this.renderOpenWithMenu(caseRow, attachment, openWith, { slot: 'title-trailing' })
@@ -3353,6 +3381,9 @@ export class CasesPage extends LitElement {
             <find-workflows-dialog
                 @workflows-changed=${() => this.loadCaseWorkflows({ refresh: true })}
             ></find-workflows-dialog>
+            <more-workflows-dialog
+                @open-workflow=${(e) => this._moreWorkflowsFor && this.pickAndOpen(this._moreWorkflowsFor.caseRow, this._moreWorkflowsFor.attachment, e.detail.key)}
+            ></more-workflows-dialog>
             ${this.toastMessage ? html`<div class="toast" role="status">${this.toastMessage}</div>` : ''}
             <people-dialog
                 id="case-people-dialog"

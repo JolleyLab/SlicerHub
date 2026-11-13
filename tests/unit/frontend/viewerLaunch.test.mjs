@@ -5,7 +5,18 @@ import {
     VIEWER_SESSION_SCOPES,
     getViewerSessionEndpoints,
     buildSlicerGuiLoaderUrl,
+    buildSlicerWebUrl,
 } from '../../../dev/utils/viewerLaunch.js';
+
+describe('buildSlicerWebUrl', () => {
+    it("passes a workflow's extensions and start module", () => {
+        const url = buildSlicerWebUrl({ channel: 'latest', extensions: ['SlicerHeart', 'SlicerRT'], module: 'SimplifiedViewer' });
+        assert.equal(url, '/slicerweb/latest/?layout=FourUp&extensions=SlicerHeart,SlicerRT&module=SimplifiedViewer&sample=');
+    });
+    it('leaves module out when there is none, and keeps the default extensions', () => {
+        assert.equal(buildSlicerWebUrl({ sha: 'abcdef123456' }), '/slicerweb/stable/?layout=FourUp&extensions=SlicerHeart&sample=&v=abcdef12');
+    });
+});
 
 const BASE = 'http://example.com';
 
