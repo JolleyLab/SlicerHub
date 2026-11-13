@@ -206,9 +206,9 @@ test('rows that are not approved are not offered; rows without a status count as
 
 // ── case settings ──────────────────────────────────────────────────────────
 
-test('members get the case defaults; personal workflows are on unless the case turns them off', async () => {
+test('members get the default workflow; personal workflows are on unless the case turns them off', async () => {
     let res = await call('GET', '/api/cases/1/workflows', { user: MEMBER });
-    assert.deepEqual(res.body.defaults, {});
+    assert.equal(res.body.defaultWorkflow, null);
     assert.equal(res.body.allowPersonal, true);
 
     await call('PATCH', '/api/cases/1/workflow-settings', { user: ADMIN, body: { allowPersonal: false } });
@@ -217,32 +217,40 @@ test('members get the case defaults; personal workflows are on unless the case t
     assert.deepEqual(res.body.mine, []);
 });
 
-test('only admins change settings; defaults must be approved rows or built-ins', async () => {
+test('only admins change settings; the default must be one of the case\'s approved workflows', async () => {
     assert.equal((await call('PATCH', '/api/cases/1/workflow-settings', { user: MEMBER, body: { allowPersonal: false } })).status, 403);
     const { body: { approval } } = await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
+    const patch = (body) => call('PATCH', '/api/cases/1/workflow-settings', { user: ADMIN, body });
 
-    const res = await call('PATCH', '/api/cases/1/workflow-settings', {
-        user: ADMIN,
-        body: { defaults: { '.MRB': String(approval.id), blank: 'builtin:simplified', '*': '' } },
-    });
+    let res = await patch({ defaultWorkflow: approval.id });
     assert.equal(res.status, 200);
-    assert.deepEqual(res.body.defaults, { mrb: String(approval.id), blank: 'builtin:simplified' });
+    assert.equal(res.body.defaultWorkflow, String(approval.id));
+    assert.equal((await call('GET', '/api/cases/1/workflows', { user: MEMBER })).body.defaultWorkflow, String(approval.id));
 
-    const bad = (defaults) => call('PATCH', '/api/cases/1/workflow-settings', { user: ADMIN, body: { defaults } });
-    assert.equal((await bad({ mrb: '11' })).status, 400);            // a source workflow id, not an approval
-    assert.equal((await bad({ mrb: 'builtin:evil' })).status, 400);
-    assert.equal((await bad({ '../x': 'builtin:full' })).status, 400);
-    assert.equal((await bad(['builtin:full'])).status, 400);
-    assert.equal((await call('PATCH', '/api/cases/1/workflow-settings', { user: ADMIN, body: { allowPersonal: 'no' } })).status, 400);
+    res = await patch({ defaultWorkflow: '' });
+    assert.equal(res.body.defaultWorkflow, null);
+
+    const notInCase = await patch({ defaultWorkflow: '11' }); // a source workflow id, not this case's approval
+    assert.equal(notInCase.status, 400);
+    assert.equal(notInCase.error.messageKey, 'workflow.default_not_in_case');
+    assert.equal((await patch({ defaultWorkflow: 'builtin:simplified' })).status, 400);
+    assert.equal((await patch({ allowPersonal: 'no' })).error.messageKey, 'workflow.allow_personal_boolean');
 });
 
-test('removing an approval clears the defaults that used it', async () => {
-    const { body: { approval } } = await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
-    await call('PATCH', '/api/cases/1/workflow-settings', {
-        user: ADMIN, body: { defaults: { mrb: String(approval.id), blank: 'builtin:full' } },
-    });
-    await call('DELETE', `/api/cases/1/workflows/${approval.id}`, { user: ADMIN });
-    assert.deepEqual(mocks.payload.rows.cases[0].workflow_defaults, { blank: 'builtin:full' });
+test('a pending request cannot be the default', async () => {
+    mocks.payload.rows['case-workflows'] = [{ id: 7, case: 1, workflow: '11', name: 'Pending', status: 'pending', extensions: [] }];
+    assert.equal((await call('PATCH', '/api/cases/1/workflow-settings', { user: ADMIN, body: { defaultWorkflow: 7 } })).status, 400);
+});
+
+test('removing the default workflow clears the default; removing another leaves it', async () => {
+    const { body: { approval: a } } = await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
+    const { body: { approval: b } } = await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 12 } });
+    await call('PATCH', '/api/cases/1/workflow-settings', { user: ADMIN, body: { defaultWorkflow: a.id } });
+
+    await call('DELETE', `/api/cases/1/workflows/${b.id}`, { user: ADMIN });
+    assert.equal(mocks.payload.rows.cases[0].default_workflow, String(a.id));
+    await call('DELETE', `/api/cases/1/workflows/${a.id}`, { user: ADMIN });
+    assert.equal(mocks.payload.rows.cases[0].default_workflow, null);
 });
 
 // ── browsing and approving from a list ─────────────────────────────────────

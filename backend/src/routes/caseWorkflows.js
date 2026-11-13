@@ -3,11 +3,11 @@
  * approving and removing them, and the case's workflow settings. An approval keeps a copy of
  * the workflow as approved.
  *
- *   GET    /api/cases/:id/workflows               members: approved, their own, their requests, defaults, settings
+ *   GET    /api/cases/:id/workflows               members: approved, their own, their requests, default, settings
  *                                                 (admins: + pending requests)
  *   POST   /api/cases/:id/workflows               admins: approve, or re-approve to refresh the copy
  *   DELETE /api/cases/:id/workflows/:approvalId   admins
- *   PATCH  /api/cases/:id/workflow-settings       admins: { defaults?, allowPersonal? }
+ *   PATCH  /api/cases/:id/workflow-settings       admins: { defaultWorkflow?, allowPersonal? }
  */
 
 import { authenticateToken } from '../middleware/authMiddleware.js';
@@ -17,8 +17,7 @@ import { ConflictError, ValidationError } from '../utils/errors.js';
 import { loadCaseWithAccess } from '../utils/caseAccess.js';
 import { requireOwnerId, canView, loadOwnedDoc } from '../utils/ownedDocs.js';
 import {
-    WORKFLOWS, CASE_WORKFLOWS, BUILTIN_WORKFLOW_IDS, findAll, myWorkflows, toWorkflow,
-    isApproved, toApproval, workflowCopy, sanitizeWorkflowDefaults, withoutDefault,
+    WORKFLOWS, CASE_WORKFLOWS, findAll, myWorkflows, toWorkflow, isApproved, toApproval, workflowCopy,
 } from '../services/workflows.js';
 import {
     canRequest, isPending, requestersOf, loadCaseWorkflowRow, describeRequests, notifyRequesters,
@@ -26,9 +25,12 @@ import {
 
 const caseRows = (caseId) => findAll(CASE_WORKFLOWS, { case: { equals: Number(caseId) } }, 'name');
 
-/** The case's settings as the API returns them. Personal workflows are allowed unless turned off. */
+/**
+ * The case's settings as the API returns them: the default workflow (an approval id, or null for
+ * none) and whether members may use their own workflows (yes unless turned off).
+ */
 const caseSettings = (caseDoc) => ({
-    defaults: caseDoc.workflow_defaults || {},
+    defaultWorkflow: caseDoc.default_workflow || null,
     allowPersonal: caseDoc.allow_personal_workflows !== false,
 });
 
@@ -36,7 +38,7 @@ export default function caseWorkflowRoutes(app) {
     const auth = [authenticateToken, requirePayload];
 
     // What a member can launch on this case: the approved workflows, and their own (unless the
-    // case turns those off), plus the case's defaults and their own pending requests. Admins also
+    // case turns those off), plus the case's default and their own pending requests. Admins also
     // get every pending request. ("Find more…" lists what could be added: routes/caseWorkflowRequests.js.)
     app.get('/api/cases/:id/workflows', ...auth, asyncHandler(async (req, res) => {
         const { caseDoc, role } = await loadCaseWithAccess(req.params.id, req);
@@ -88,33 +90,34 @@ export default function caseWorkflowRoutes(app) {
         res.status(existing ? 200 : 201).json({ approval: toApproval(row) });
     }));
 
-    // Removing an approval also clears the defaults that used it. A request is declined instead,
-    // so its requesters are told.
+    // Removing the default workflow also clears the default. A request is declined instead, so its
+    // requesters are told.
     app.delete('/api/cases/:id/workflows/:approvalId', ...auth, asyncHandler(async (req, res) => {
         const { caseDoc } = await loadCaseWithAccess(req.params.id, req, 'admin');
         const row = await loadCaseWorkflowRow(req.params.id, req.params.approvalId);
         if (isPending(row)) throw new ConflictError('Decline a pending request instead of removing it');
         const payload = getPayloadClient();
         await payload.delete({ collection: CASE_WORKFLOWS, id: row.id });
-        const defaults = caseDoc.workflow_defaults || {};
-        const remaining = withoutDefault(defaults, row.id);
-        if (Object.keys(remaining).length !== Object.keys(defaults).length) {
-            await payload.update({ collection: 'cases', id: caseDoc.id, data: { workflow_defaults: remaining } });
+        if (String(caseDoc.default_workflow) === String(row.id)) {
+            await payload.update({ collection: 'cases', id: caseDoc.id, data: { default_workflow: null } });
         }
         res.status(204).end();
     }));
 
-    // Case Settings › Workflows: the defaults table and whether members may use their own workflows.
+    // Case Settings: the default workflow (one of the case's approved ones, or none) and whether
+    // members may use their own workflows.
     app.patch('/api/cases/:id/workflow-settings', ...auth, asyncHandler(async (req, res) => {
         const { caseDoc } = await loadCaseWithAccess(req.params.id, req, 'admin');
         const body = req.body || {};
         const data = {};
-        if ('defaults' in body) {
-            const approvedIds = (await caseRows(req.params.id)).filter(isApproved).map((r) => r.id);
-            data.workflow_defaults = sanitizeWorkflowDefaults(body.defaults, [...approvedIds, ...BUILTIN_WORKFLOW_IDS]);
+        if ('defaultWorkflow' in body) {
+            const id = String(body.defaultWorkflow ?? '').trim();
+            const approved = (await caseRows(req.params.id)).filter(isApproved);
+            if (id && !approved.some((r) => String(r.id) === id)) throw ValidationError.fromKey('workflow.default_not_in_case');
+            data.default_workflow = id || null;
         }
         if ('allowPersonal' in body) {
-            if (typeof body.allowPersonal !== 'boolean') throw new ValidationError('allowPersonal must be true or false');
+            if (typeof body.allowPersonal !== 'boolean') throw ValidationError.fromKey('workflow.allow_personal_boolean');
             data.allow_personal_workflows = body.allowPersonal;
         }
         const saved = Object.keys(data).length

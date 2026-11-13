@@ -25,7 +25,7 @@ import '../components/case-settings.js';
 import '../components/find-workflows-dialog.js';
 import { listCaseWorkflows } from '../services/workflows.js';
 import {
-    workflowMenu, caseDefaultKey, resolveWorkflow, builtinForViewer, readWorkflowChoice, saveWorkflowChoice, fileTypesOf,
+    workflowMenu, caseDefaultKey, resolveWorkflow, builtinForViewer, readWorkflowChoice, saveWorkflowChoice,
 } from '../utils/caseWorkflowMenu.js';
 import { formatBytes } from '../utils/formatBytes.js';
 import { deepActiveElement } from '../utils/focus.js';
@@ -2115,7 +2115,7 @@ export class CasesPage extends LitElement {
         const accountDefault = builtinForViewer(this.accountDefaultViewer());
         const entry = resolveWorkflow(menu, {
             saved: readWorkflowChoice(caseRow.id, attachment?.id ?? null),
-            caseDefault: caseDefaultKey(data?.defaults, fileName),
+            caseDefault: caseDefaultKey(data),
             accountDefault,
         });
         const name = entry.nameKey ? t(entry.nameKey) : entry.name;
@@ -3196,9 +3196,6 @@ export class CasesPage extends LitElement {
     }
 
     renderCaseSettings(caseRow) {
-        const attachmentTypes = (caseRow.attachments || [])
-            .map((a) => fileTypesOf(attachmentFileName(a))[0])
-            .filter(Boolean);
         return this.renderCaseShell(html`
             <div slot="content" class="case-detail">
                 <div class="detail-toolbar">
@@ -3213,7 +3210,6 @@ export class CasesPage extends LitElement {
                 <case-settings
                     .caseId=${String(caseRow.id)}
                     .data=${this.caseWorkflowsFor(caseRow)}
-                    .fileTypes=${[...new Set(attachmentTypes)]}
                     @workflows-changed=${() => this.loadCaseWorkflows({ refresh: true })}
                     @find-workflows=${() => this.openFindWorkflows(caseRow)}
                 ></case-settings>

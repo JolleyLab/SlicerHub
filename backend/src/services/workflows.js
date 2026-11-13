@@ -6,13 +6,9 @@
 import { getPayloadClient } from '../payload/index.js';
 import { requireOwnerId, isOwner } from '../utils/ownedDocs.js';
 import { ValidationError } from '../utils/errors.js';
-import { sanitizeFileExtensions } from '../utils/validation.js';
 
 export const WORKFLOWS = 'workflows';
 export const CASE_WORKFLOWS = 'case-workflows';
-
-/** The plain viewers, as workflows defined in code (the SPA's utils/builtinWorkflows.js launches them). */
-export const BUILTIN_WORKFLOW_IDS = Object.freeze(['builtin:slicerweb', 'builtin:full', 'builtin:simplified']);
 
 /**
  * A workflow's startup configuration: what's passed to the viewer once it has started. Only
@@ -65,37 +61,6 @@ export const workflowCopy = (source) => ({
     startup_config: source.startup_config || {},
     source_updated_at: source.updatedAt,
 });
-
-/** Keys of a case's workflow defaults: the blank viewer, all other files, or a file type. */
-export const DEFAULT_KEY_BLANK = 'blank';
-export const DEFAULT_KEY_OTHER = '*';
-
-/**
- * Validated `workflow_defaults` for a case: { blank?, '*'?, <file type>? } → one of `allowedIds`
- * (the case's approved rows and the built-ins). Empty values are dropped: "each person's default".
- */
-export function sanitizeWorkflowDefaults(value, allowedIds) {
-    if (value == null) return {};
-    if (typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Defaults must be an object');
-    const allowed = new Set(allowedIds.map(String));
-    const out = {};
-    for (const [rawKey, rawId] of Object.entries(value)) {
-        const id = String(rawId ?? '').trim();
-        if (!id) continue;
-        const key = rawKey === DEFAULT_KEY_BLANK || rawKey === DEFAULT_KEY_OTHER
-            ? rawKey
-            : sanitizeFileExtensions([rawKey], { label: 'Default file type' })[0];
-        if (!allowed.has(id)) throw new ValidationError(`Default for ${key} is not a workflow of this case`);
-        out[key] = id;
-    }
-    if (Object.keys(out).length > 32) throw new ValidationError('Too many defaults');
-    return out;
-}
-
-/** `defaults` without the entries that point at `removedId`. */
-export const withoutDefault = (defaults, removedId) => Object.fromEntries(
-    Object.entries(defaults || {}).filter(([, id]) => String(id) !== String(removedId)),
-);
 
 /** At most 200 rows: plenty for now; the public gallery will need paging. */
 export async function findAll(collection, where, sort) {

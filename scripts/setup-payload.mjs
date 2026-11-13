@@ -146,6 +146,8 @@ const RETIRED_SCHEMA = [
     // Workflows no longer name a viewer; viewers are matched by extensions and startup keys.
     'ALTER TABLE IF EXISTS workflows DROP COLUMN IF EXISTS target',
     'DROP TYPE IF EXISTS enum_workflows_target',
+    // One default workflow per case replaced the per-file-type defaults map.
+    'ALTER TABLE IF EXISTS cases DROP COLUMN IF EXISTS workflow_defaults',
 ];
 
 function dropRetiredSchema(dbUser) {

@@ -63,16 +63,10 @@ describe('workflowMenu', () => {
 });
 
 describe('caseDefaultKey', () => {
-    const defaults = { mrb: '7', 'seg.nrrd': '9', '*': 'builtin:full', blank: 'builtin:slicerweb' };
-    it('picks the most specific file type, then all other files', () => {
-        assert.equal(caseDefaultKey(defaults, 'a.mrb'), 'approved:7');
-        assert.equal(caseDefaultKey(defaults, 'a.seg.nrrd'), 'approved:9');
-        assert.equal(caseDefaultKey(defaults, 'a.nrrd'), BUILTIN.FULL);
-        assert.equal(caseDefaultKey({}, 'a.nrrd'), null);
-    });
-    it('the blank viewer has its own default', () => {
-        assert.equal(caseDefaultKey(defaults, null), BUILTIN.SLICERWEB);
-        assert.equal(caseDefaultKey({ '*': '7' }, null), null);
+    it("is the case's default workflow as a menu key", () => {
+        assert.equal(caseDefaultKey({ defaultWorkflow: '7' }), 'approved:7');
+        assert.equal(caseDefaultKey({ defaultWorkflow: null }), null);
+        assert.equal(caseDefaultKey(null), null);
     });
 });
 
@@ -88,8 +82,9 @@ describe('resolveWorkflow', () => {
         const blank = workflowMenu(DATA);
         assert.equal(resolveWorkflow(blank, { accountDefault: BUILTIN.FULL }).key, BUILTIN.SLICERWEB);
     });
-    it('a case default for another file type still applies when the admin chose it', () => {
-        assert.equal(resolveWorkflow(menu, { caseDefault: 'approved:9' }).key, 'approved:9');
+    it('the case default only applies to files it is made for', () => {
+        assert.equal(resolveWorkflow(menu, { caseDefault: 'approved:9' }).key, BUILTIN.SLICERWEB); // 9 is for .seg.nrrd
+        assert.equal(resolveWorkflow(menu, { caseDefault: 'approved:8' }).key, 'approved:8');      // 8 is for any file
     });
     it('maps the account viewer setting to a built-in', () => {
         assert.equal(builtinForViewer('web'), BUILTIN.SLICERWEB);

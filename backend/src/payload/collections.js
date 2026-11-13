@@ -44,9 +44,9 @@ export const Cases = {
             defaultValue: 'active',
             required: true,
         },
-        // Case Settings › Workflows (docs/workflows-design.md). Defaults: { blank?, '*'?, <file type>? }
-        // → a case-workflows id or a built-in workflow id.
-        { name: 'workflow_defaults', type: 'json' },
+        // Case Settings (docs/workflows-design.md): what files open with unless someone picks something
+        // else, as a case-workflows id (empty: no workflow).
+        { name: 'default_workflow', type: 'text' },
         { name: 'allow_personal_workflows', type: 'checkbox', defaultValue: true },
     ],
 };

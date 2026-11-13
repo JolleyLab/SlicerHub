@@ -42,9 +42,6 @@ const fromMine = (w) => ({
     extensions: w.extensions || [], fileTypes: w.fileTypes || [],
 });
 
-/** A stored case default (an approval id or a built-in id) as a menu key. */
-const defaultKey = (raw) => (raw ? (String(raw).startsWith('builtin:') ? String(raw) : `approved:${raw}`) : null);
-
 /**
  * What the menu lists for `fileName` (null: the blank viewer), from GET /api/cases/:id/workflows.
  * Workflows for other file types are left out; the blank viewer only offers SlicerWeb.
@@ -69,13 +66,8 @@ export function workflowMenu(data, { fileName = null } = {}) {
     };
 }
 
-/** The case's default for `fileName` (null: blank viewer), as a menu key, or null. */
-export function caseDefaultKey(defaults, fileName = null) {
-    if (!defaults) return null;
-    if (fileName == null) return defaultKey(defaults.blank);
-    const byType = fileTypesOf(fileName).map((ext) => defaults[ext]).find(Boolean);
-    return defaultKey(byType ?? defaults['*']);
-}
+/** The case's default workflow (GET /api/cases/:id/workflows → defaultWorkflow) as a menu key, or null. */
+export const caseDefaultKey = (data) => (data?.defaultWorkflow ? `approved:${data.defaultWorkflow}` : null);
 
 /**
  * Which entry the main button opens: the person's choice for this file, then the case default,
@@ -83,7 +75,9 @@ export function caseDefaultKey(defaults, fileName = null) {
  */
 export function resolveWorkflow(menu, { saved = null, caseDefault = null, accountDefault = BUILTIN.SLICERWEB } = {}) {
     const find = (key) => (key ? menu.all.find((e) => e.key === key) : null);
-    return find(saved) || find(caseDefault) || find(accountDefault) || menu.builtins[0];
+    // The case default only applies to files it's made for.
+    const fitting = caseDefault ? menu.recommended.find((e) => e.key === caseDefault) : null;
+    return find(saved) || fitting || find(accountDefault) || menu.builtins[0];
 }
 
 // ── Choices per file ───────────────────────────────────────────────────────

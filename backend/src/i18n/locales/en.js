@@ -251,6 +251,8 @@ export default {
         startup_config_object: 'Startup configuration must be an object',
         startup_config_key: 'Startup configuration can’t include "{key}"',
         startup_config_value: 'Startup configuration has an invalid {key}',
+        default_not_in_case: 'The default workflow must be one of this case’s workflows',
+        allow_personal_boolean: 'allowPersonal must be true or false',
     },
     registration: {
         not_found: 'Registration request not found',

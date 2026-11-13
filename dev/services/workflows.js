@@ -25,7 +25,7 @@ export const uploadWorkflowIcon = (id, file) => {
 export const removeWorkflowIcon = (id) => apiRequest(`/api/workflows/${enc(id)}/icon`, { method: 'DELETE' }).then((d) => d.workflow);
 
 /**
- * A case's workflows: { approved, mine, myRequests, defaults, allowPersonal, canManage, canRequest },
+ * A case's workflows: { approved, mine, myRequests, defaultWorkflow, allowPersonal, canManage, canRequest },
  * plus for admins `requests` (pending) and `available` (what they could approve).
  */
 export const listCaseWorkflows = (caseId) => apiRequest(`/api/cases/${enc(caseId)}/workflows`);
@@ -42,7 +42,7 @@ export const requestCaseWorkflow = (caseId, workflowId) =>
     apiRequest(`/api/cases/${enc(caseId)}/workflows/requests`, { method: 'POST', body: { workflowId } });
 export const declineCaseWorkflowRequest = (caseId, rowId, reason = '') =>
     apiRequest(`/api/cases/${enc(caseId)}/workflows/${enc(rowId)}/decline`, { method: 'POST', body: { reason } });
-/** Case Settings: { defaults?, allowPersonal? } → the saved { defaults, allowPersonal }. */
+/** Case Settings: { defaultWorkflow?, allowPersonal? } → the saved { defaultWorkflow, allowPersonal }. */
 export const updateCaseWorkflowSettings = (caseId, settings) =>
     apiRequest(`/api/cases/${enc(caseId)}/workflow-settings`, { method: 'PATCH', body: settings });
 export const cancelCaseWorkflowRequest = (caseId, workflowId) =>

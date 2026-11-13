@@ -325,7 +325,8 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
 
 **Cleanup agreed before merging:**
 - Requests: unique index on (case, workflow); requesters as rows; no writes inside GETs (ex-members filtered on read); a cooldown before re-requesting a declined workflow; a cap on pending requests per member per case; optionally a per-user rate limit on request and cancel.
-- Backend error messages for workflows go through `msg()` and the backend `en.js`, with keys.
+- Backend error messages for workflows go through `msg()` and the backend `en.js`, with keys (`AppError.fromKey`).
+- Translate API errors in the browser: the SPA maps `error.key` to text from its own catalog (an `api.` section in `dev/i18n/locales/en.js`), keeping the backend's English message only as a fallback for logs and non-browser clients. Then a new language only touches `dev/i18n`, and the backend catalog stays English as the source of keys. Move existing API messages over key by key, starting with the workflow ones.
 - `loadCaseWorkflows()` in `cases-page.js`: log failures and show them in Case Settings with "Try again", instead of "Loading…" forever.
 - Bare strings in the new code become frozen constants (`WORKFLOW_TARGET`, `REQUEST_STATUS`, menu-key helpers).
 - Optional: `psql -1` and stop on failure for the `RETIRED_SCHEMA` step in `scripts/setup-payload.mjs`.
