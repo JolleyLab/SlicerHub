@@ -270,7 +270,7 @@ export class CaseWorkflowsPanel extends LitElement {
     render() {
         const body = { [PANEL_TAB.CASE]: () => this._renderInCase(), [PANEL_TAB.BROWSE]: () => this._renderBrowse(), [PANEL_TAB.REQUESTS]: () => this._renderRequests() };
         return html`
-            <app-dialog title=${t('caseWorkflows.title')}>
+            <app-dialog .title=${t('caseWorkflows.title')}>
                 <div class="tabs" role="tablist">
                     ${this._tabs.map(([key, label]) => html`
                         <button role="tab" aria-selected=${this.tab === key ? 'true' : 'false'} @click=${() => this._show(key)}>${label}</button>`)}

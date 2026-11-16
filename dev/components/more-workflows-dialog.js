@@ -70,7 +70,7 @@ export class MoreWorkflowsDialog extends LitElement {
     render() {
         const sections = [this._section('viewers.thisCase', this.usable.caseWorkflows), this._section('viewers.mine', this.usable.mine)];
         return html`
-            <app-dialog title=${this.heading}>
+            <app-dialog .title=${this.heading}>
                 <div class="stack">
                     <input class="search" type="text" .value=${this.query}
                         placeholder=${t('workflows.filterPlaceholder')} aria-label=${t('workflows.searchAria')}

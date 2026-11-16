@@ -105,7 +105,8 @@ function ensureStyle(id, text) {
  * portalStyleId/portalCss (extra panel styles), and the `alignEnd` property (line the menu up
  * with the button's right edge, for buttons at the end of a toolbar).
  *
- * The menu is portaled to document.body so scroll parents don't clip it, placed just below the
+ * The menu is portaled to document.body (or into the open modal dialog it's in; see
+ * menuContainer) so scroll parents don't clip it, placed just below the
  * button (or above when it doesn't fit), and closes on Escape, Tab or a click outside.
  */
 export class PopupMenu extends LitElement {
@@ -175,7 +176,7 @@ export class PopupMenu extends LitElement {
         this.open = false;
         this.disabled = false;
         this.alignEnd = false;
-        this._portalHost = null;
+        this._menuContainer = null;
         this._onDocumentPointerDown = (event) => this.closeIfOutside(event);
         this._repositionIfOpen = () => {
             if (this.open) this.renderMenuPortal();
@@ -223,7 +224,7 @@ export class PopupMenu extends LitElement {
     // ── Keyboard and focus ─────────────────────────────────────────────────
 
     menuItems() {
-        return Array.from(this._portalHost?.querySelectorAll(MENU_ITEMS) || []);
+        return Array.from(this._menuContainer?.querySelectorAll(MENU_ITEMS) || []);
     }
 
     focusMenuItem(index) {
@@ -262,22 +263,50 @@ export class PopupMenu extends LitElement {
 
     // ── The panel ──────────────────────────────────────────────────────────
 
-    ensurePortalHost() {
-        if (this._portalHost) return this._portalHost;
-        ensureStyle(BASE_STYLE_ID, BASE_CSS);
-        ensureStyle(this.constructor.portalStyleId, this.constructor.portalCss);
+    /** The open modal <dialog> this menu's button is in (through shadow roots and slots), or null. */
+    openDialogAround() {
+        let node = this;
+        while (node) {
+            if (node.localName === 'dialog' && node.open) return node;
+            node = node.assignedSlot || node.parentElement || node.getRootNode?.().host || null;
+        }
+        return null;
+    }
+
+    /**
+     * The element the panel renders into, made on first use. It goes at the end of the page, or,
+     * inside an open modal dialog (which makes the rest of the page inert and sits above it), at
+     * the end of that dialog, with its own copy of the panel styles since the page's don't reach
+     * into its shadow root.
+     */
+    menuContainer() {
+        if (this._menuContainer) return this._menuContainer;
         const host = document.createElement('div');
         host.setAttribute('data-popup-menu', this.localName);
-        document.body.appendChild(host);
-        this._portalHost = host;
+        const dialog = this.openDialogAround();
+        if (dialog) {
+            const wrapper = document.createElement('div');
+            for (const text of [BASE_CSS, this.constructor.portalCss]) {
+                if (text) wrapper.appendChild(Object.assign(document.createElement('style'), { textContent: text }));
+            }
+            wrapper.appendChild(host);
+            dialog.appendChild(wrapper);
+            this._menuContainerWrapper = wrapper;
+        } else {
+            ensureStyle(BASE_STYLE_ID, BASE_CSS);
+            ensureStyle(this.constructor.portalStyleId, this.constructor.portalCss);
+            document.body.appendChild(host);
+        }
+        this._menuContainer = host;
         return host;
     }
 
     destroyMenuPortal() {
-        if (!this._portalHost) return;
-        render(html``, this._portalHost);
-        this._portalHost.remove();
-        this._portalHost = null;
+        if (!this._menuContainer) return;
+        render(html``, this._menuContainer);
+        (this._menuContainerWrapper || this._menuContainer).remove();
+        this._menuContainer = null;
+        this._menuContainerWrapper = null;
     }
 
     renderMenuPortal() {
@@ -285,13 +314,13 @@ export class PopupMenu extends LitElement {
             <div class="popup-menu-panel ${this.panelClass()}" role="menu" aria-label=${this.menuLabel()} @keydown=${(e) => this.onMenuKeydown(e)}>
                 ${this.menuContent()}
             </div>
-        `, this.ensurePortalHost());
+        `, this.menuContainer());
         this.positionMenu();
     }
 
     /** Just below the button, or just above when it doesn't fit below; inside the window. */
     positionMenu() {
-        const panel = this._portalHost?.firstElementChild;
+        const panel = this._menuContainer?.firstElementChild;
         const anchor = this.shadowRoot?.querySelector('.trigger');
         if (!panel || !anchor) return;
         const rect = anchor.getBoundingClientRect();
@@ -310,7 +339,7 @@ export class PopupMenu extends LitElement {
     closeIfOutside(event) {
         if (!this.open) return;
         const path = event.composedPath?.() || [];
-        if (path.includes(this) || (this._portalHost && path.includes(this._portalHost))) return;
+        if (path.includes(this) || (this._menuContainer && path.includes(this._menuContainer))) return;
         this.open = false;
     }
 

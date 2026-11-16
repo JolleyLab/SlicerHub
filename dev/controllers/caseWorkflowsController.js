@@ -130,7 +130,7 @@ export class CaseWorkflowsController {
                 ?disabled=${this.options.isBusy()}
                 @switch-viewer=${(e) => { saveOpenPick(caseRow.id, attachment.id, { viewer: e.detail.viewer }); this.host.requestUpdate(); }}
                 @open-workflow=${(e) => this.pickAndOpen(caseRow, attachment, e.detail.key)}
-                @more-workflows=${() => this._openMore(caseRow, attachment, openWith, title)}
+                @more-workflows=${() => this.openMore(caseRow, attachment, openWith, title)}
             ></open-with-menu>
         `;
     }
@@ -166,12 +166,13 @@ export class CaseWorkflowsController {
         this.host.renderRoot.querySelector('case-workflows-panel')?.open({ tab });
     }
 
-    _openMore(caseRow, attachment, openWith, title) {
+    /** "More workflows…": the searchable list of `usable` ({ caseWorkflows, mine }); picking one opens the file. */
+    openMore(caseRow, attachment, { usable, selectedKey }, title) {
         this._moreFor = { caseRow, attachment };
         this.host.renderRoot.querySelector('more-workflows-dialog')?.open({
             title: t('viewers.moreWorkflowsTitle', { name: title }),
-            usable: openWith.usable,
-            selectedKey: openWith.selectedKey,
+            usable,
+            selectedKey,
         });
     }
 }

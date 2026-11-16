@@ -50,6 +50,22 @@ export async function clearSlicerWebStorage({
     } catch { /* IndexedDB unavailable */ }
 }
 
+/** SlicerWeb's list of extension wheels to load: hand-installed ones and those asked for with ?extensions=. */
+export const SLICERWEB_EXTENSIONS_KEY = 'slicerweb.extensions';
+
+/**
+ * Forget the extensions earlier launches left installed, so a launch loads only what its
+ * workflow asks for. SlicerWeb keeps ?extensions= in the same list as hand-installed ones and
+ * loads them every time after (docs/workflows-design.md › SlicerWeb launch parameters).
+ */
+export function resetSlicerWebExtensions(storage = globalThis.localStorage) {
+    try {
+        storage.removeItem(SLICERWEB_EXTENSIONS_KEY);
+    } catch (err) {
+        console.warn('[slicerWebStorage] could not reset SlicerWeb extensions; earlier ones may still load:', err);
+    }
+}
+
 /**
  * Mark this browser's SlicerWeb state as `userId`'s, clearing it first if it isn't already
  * theirs, including state left from before this marker existed.

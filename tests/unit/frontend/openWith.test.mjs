@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     VIEWER, NO_WORKFLOW, viewerFromAccount, fileTypesOf, canRun, usableWorkflows, resolveOpen, shortList,
-    readOpenPick, saveOpenPick,
+    workflowsAddingExtensions, readOpenPick, saveOpenPick,
 } from '../../../dev/utils/openWith.js';
 
 // GET /api/cases/:id/workflows, as the server sends it. Names are made up.
@@ -30,6 +30,15 @@ describe('viewerFromAccount', () => {
         assert.equal(viewerFromAccount(undefined), VIEWER.SLICERWEB);
         assert.equal(viewerFromAccount('full'), VIEWER.FULL);
         assert.equal(viewerFromAccount('simplified'), VIEWER.FULL);
+    });
+});
+
+describe('workflowsAddingExtensions', () => {
+    it('keeps the workflows that add an extension the launch did not have', () => {
+        const { caseWorkflows } = usableWorkflows(DATA, { fileName: 'scan.mrb' });
+        assert.deepEqual(keys(workflowsAddingExtensions(caseWorkflows)), ['case:1', 'case:3']);
+        // SlicerHeart was already in: only Cardiac segmentation adds something
+        assert.deepEqual(keys(workflowsAddingExtensions(caseWorkflows, ['SlicerHeart'])), ['case:3']);
     });
 });
 

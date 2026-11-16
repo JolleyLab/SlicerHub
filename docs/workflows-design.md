@@ -40,16 +40,14 @@ SlicerWeb (the build in `data/slicerweb-*`) already reads these query parameters
 
 The extension catalog is the static file `/slicerweb/{channel}/extensions/index.json` (name, description, icon, category). The editor reads it directly; no backend route is needed.
 
-**Limitation:** extensions a user installs by hand in SlicerWeb's Extensions Manager are saved in the browser's `localStorage` under `slicerweb.extensions`, as a list of wheel URLs. That storage belongs to the browser profile and site origin, not to a SlicerHub account or a session:
+**Limitation:** SlicerWeb saves extensions in the browser's `localStorage` under `slicerweb.extensions`, as a list of wheel URLs: both those installed by hand in its Extensions Manager and (found in testing, Nov 2026) those asked for with `?extensions=`. It loads that list on every later start. That storage belongs to the browser profile and site origin, not to a SlicerHub account or a session, and the stable and latest channels share it. Left alone, one SlicerHeart launch would make every later "No workflow" launch in that browser include SlicerHeart.
 
-- It stays until browser storage is cleared. Signing out of SlicerHub doesn't clear it, and the stable and latest channels share it.
-- Anyone who later uses the same browser profile (for example on a shared workstation) gets those extensions, whoever they sign in as.
-- It still loads alongside a workflow, so a workflow sets the minimum set of extensions, not the exact set.
+So **every case launch clears the list first** (`resetSlicerWebExtensions()` in `dev/utils/slicerWebStorage.js`, called from `_slicerWebUrl()`): a launch loads exactly its workflow's extensions. Extensions installed by hand work for that session only, and are gone on the next launch.
 
 **Security note:** the Extensions Manager can install a wheel from **any URL**, and `slicerweb.extensionIndex` can point at a different extension index. Workflows can't do this, but users can, by hand. The wheel's code runs on the SlicerHub origin. Because SlicerHub authenticates with cookies, that code's requests to `/api` carry the signed-in user's session. On a shared browser, a wheel one person installs therefore runs as whoever signs in next. Mitigations, cheapest first:
 
 1. **Done.** `dev/utils/slicerWebStorage.js` clears `slicerweb.*` keys and SlicerWeb's autosave databases (IndexedDB names under `/home/pyodide/`, which hold scene data) on sign-out, and when a different user signs in on the same browser.
-2. Have workflow launches ignore extensions installed by hand (needs a SlicerWeb option), or ask SlicerWeb upstream for a build flag that turns off install-from-URL and custom indexes.
+2. **Done for case launches:** extensions installed by hand don't carry over to the next launch (see the limitation above). Still open: ask SlicerWeb upstream for a build flag that turns off install-from-URL and custom indexes.
 3. Add a `connect-src` CSP on `/slicerweb/` limiting where wheels can be fetched from.
 
 ## Data model (Payload)
@@ -100,7 +98,7 @@ Icons: `PUT` / `DELETE /api/workflows/:id/icon` (owner; multipart field `icon`) 
 
 ## Launch
 
-Each openable file, and the blank viewer, has an Open ▾ menu (`<open-with-menu>`, `dev/components/open-with-menu.js`); see [Workflows in cases](#workflows-in-cases). What it lists, which workflow the main button opens and the per-file choice (stored under `slicerweb.hub.workflowChoices`, so sign-out clears it with SlicerWeb's own state) are in `dev/utils/caseWorkflowMenu.js`. `cases-page.js` loads the case's workflows once per case, hands them to the menus and to Case Settings (`dev/components/case-settings.js`), and reloads them after a change. `openWithWorkflow()` sends a choice to SlicerWeb (through `_slicerWebUrl()` and `buildSlicerWebUrl`) or to Full Slicer. Parts of this change in the next pass; see [Build status](#build-status).
+Each openable file, and the blank viewer, has an Open ▾ menu (`<open-with-menu>`, `dev/components/open-with-menu.js`); see [Workflows in cases](#workflows-in-cases). What it lists, which workflow the main button opens and the per-file choice (stored under `slicerweb.hub.openPicks`, so sign-out clears it with SlicerWeb's own state) are in `dev/utils/openWith.js`. `cases-page.js` loads the case's workflows once per case, hands them to the menus and to Case Settings (`dev/components/case-settings.js`), and reloads them after a change. `openWithWorkflow()` sends a choice to SlicerWeb (through `_slicerWebUrl()` and `buildSlicerWebUrl`) or to Full Slicer. Parts of this change in the next pass; see [Build status](#build-status).
 
 The **Workflows** page in the sidebar (`dev/pages/workflows-page.js`) is laid out like My Cases. It has two tabs of cards with search and sort: "My workflows", split into "Just me" and "Public" sections, and "All workflows" (everyone's public ones). It also has a detail view that lists the extensions with their descriptions, and a form to create or edit, with the checklist in `dev/components/extension-picker.js`. From someone else's public workflow you can make a private copy. Workflows get into a case only from that case's Workflows panel; the Workflows page has no "Add to case" action. Extensions show their icons. Most icons live on GitHub, and a browser loading them there would reveal who is browsing, so the backend serves its own copies at `GET /api/slicerweb/extension-icon/:channel/:name` (`backend/src/services/extensionIcons.js`). It fetches only the exact `https` URL the build's `index.json` lists, accepts only PNG, JPEG, GIF or WebP up to 512 KB (no SVG, which can carry script), caches copies on disk (`SLICERWEB_ICON_CACHE_DIR`, default the system temp folder), and waits an hour before retrying a failed fetch. Icons shipped inside the build are served from it directly. With no icon, the tile shows the name's first letter. Public workflows don't show their author.
 
@@ -185,12 +183,20 @@ The account viewer setting could go away if "Open in" is clear enough on its own
 
 "No workflow" is the fallback when nothing else applies, even though some files can only be read with an extension (`.mcs` and `.mxp` need SlicerHeart's `MimicsProject` reader). There's no table of which file types need which extensions: it would have to be known in advance and kept up to date. Instead, a failed load is recognised when it happens.
 
+**No check before launch (decided 16 Nov 2026).** Not a prompt for known types ("`.mcs` files need SlicerHeart"), not a silent add, and not reader file types published in SlicerWeb's extension catalog. More than one extension can read a format, and which one suits a file is only known when Slicer tries it, so a failed load is the one reliable signal. Its cost is one failed start per file and browser, since the workflow picked from the dialog is remembered for that file, and cases whose admin sets a default workflow don't pay it at all.
+
 Tested in SlicerWeb without SlicerHeart: opening an `.mcs` file doesn't report "no reader". Slicer falls back to its general volume reader, and ITK fails with `vtkITKArchetypeImageSeriesReader::ExecuteInformation: Cannot open <file>. ITK exception info: … Could not create IO object for reading file <file>`. So a check before loading ("is there a reader?") doesn't work; the failure has to be read afterwards.
 
 - **Only that signature gets the targeted message.** When a load fails with ITK's "Could not create IO object for reading file" (the format wasn't recognised), the case page says: *"This file's format wasn't recognised. It may need an extension that isn't included. Try one of this case's workflows, or ask a case admin."* If the case has workflows the chosen viewer can run, they're offered as buttons ("Open with SlicerHeart").
 - **Every other failure shows the real error**, as today. No general "file not supported" message: it would hide the real cause and mislead debugging.
 - The match is on error text, so it could change between Slicer versions. If it stops matching, people simply see the real error again, which is safe; a unit test on the matcher with the message above catches the change.
 - SlicerWeb's errors arrive through its `alert`, which `cases-page.js` already replaces inside the viewer iframe (`_slicerAlertMessage`), so the case page can show its own message instead of the browser's popup. Check that this path is caught: the test above showed the browser's native popup.
+
+**As built:** `isUnrecognisedFormat()` in `dev/services/slicerErrors.js` matches ITK's text and also SlicerWeb's own "No reader is available for …" (no reader claims the file at all), which means the same thing. It only applies when nothing loaded; a scene that loads with one unreadable part still opens. Where the text comes from:
+- Most files go through SlicerWeb's bridge `loadFiles`, which shows reader errors with `slicer.util.messageBox` → `window.alert` (in the iframe, so our override catches it; the native popup in the test was SlicerWeb opened on its own).
+- `.mcs` / `.mxp` are loaded by naming SlicerHeart's `MimicsProject` reader. Only when that load fails (no SlicerHeart) does the case page let Slicer pick a reader instead, as desktop Slicer would, and read the messages it collected. Checking for the reader up front didn't work in testing: with SlicerHeart, the load hung and failed, probably because its reader registers after SlicerWeb reports ready.
+
+The case page then shows the viewer error dialog (`#viewer-error-dialog`, which until now was never rendered, so every load error fell back to the page's error line; all load errors now use the dialog). It offers this case's workflows usable for the file in SlicerWeb that add an extension the failed launch didn't have (`workflowsAddingExtensions` in `openWith.js`), as one button: "Open with SlicerHeart", or with more than one, "Open with SlicerHeart ▾", a menu of them with the first checked, like "Open blank viewer ▾" (`<open-with-menu>` without "No workflow"). Past `MENU_LIMIT` the menu ends in "More workflows… (n more)", which closes this dialog and opens the searchable list in its place: one dialog at a time, never one on top of another. Picking one saves it as the file's pick and opens. With none to offer, the text says a case admin can add one, and the only button is Close. `PopupMenu` renders its panel inside a modal dialog it's opened from, since a modal dialog makes the rest of the page inert.
 
 
 ### Viewers and workflows
@@ -318,11 +324,12 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
 - The Workflows panel (In this case / Request or Add / Requests), opened from the case's ⋯ menu; Case Settings with the single default workflow and the personal switch.
 - `cases-page.js` split: workflow code in `dev/controllers/caseWorkflowsController.js`, styles in `cases-page.styles.js`, Case Settings draws its own header.
 
+- Failed loads (16 Nov, uncommitted): the "may need an extension" dialog with "Open with …" buttons (see [When a file needs an extension](#when-a-file-needs-an-extension)). Not yet tried in a browser.
+
 **Next, in order:**
-1. **Failed loads:** the targeted ITK message (see [When a file needs an extension](#when-a-file-needs-an-extension)).
-2. **Bell and Home To do** for requests.
-3. **Server-side search and paging** for public workflows, shared by the Workflows panel and the Workflows page's "All workflows" tab (both stop at 200 today).
-4. The cleanup below.
+1. **Bell and Home To do** for requests.
+2. **Server-side search and paging** for public workflows, shared by the Workflows panel and the Workflows page's "All workflows" tab (both stop at 200 today).
+3. The cleanup below.
 
 **Open questions and follow-ups:**
 - "Start in" shows module names (`SegmentEditor`), not the titles Slicer users know ("Segment Editor"); decide together with the core module list once users have said where they start.

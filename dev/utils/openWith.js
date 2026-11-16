@@ -77,6 +77,10 @@ export function usableWorkflows(data, { fileName = null, viewer = VIEWER.SLICERW
     };
 }
 
+/** The workflows that add an extension a launch didn't have: what may read a file it couldn't. */
+export const workflowsAddingExtensions = (workflows, extensions = []) =>
+    workflows.filter((w) => w.extensions.some((ext) => !extensions.includes(ext)));
+
 /**
  * What opening a file does. Viewer: the person's pick for this file, else their account setting
  * (the blank viewer is always SlicerWeb). Workflow: their pick for this file (a workflow, or

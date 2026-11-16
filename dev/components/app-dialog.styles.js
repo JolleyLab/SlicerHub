@@ -5,6 +5,9 @@ export const appDialogStyles = css`
         display: contents;
     }
 
+    /* No transform, filter or contain on .dialog: menus opened in a dialog draw their panel inside
+       it with position: fixed (popup-menu.js › menuContainer), and those would make it relative
+       to the dialog instead of the window. Animate the ::backdrop, or opacity, instead. */
     .dialog {
         position: relative;
         width: var(--app-dialog-width, min(560px, calc(100vw - 32px)));
@@ -45,6 +48,10 @@ export const appDialogStyles = css`
         font-weight: 700;
         letter-spacing: -0.01em;
         padding-right: 36px;
+    }
+
+    .dialog-message {
+        margin: 0;
     }
 
     .dialog-actions {

@@ -23,9 +23,10 @@ import '../components/people-dialog.js';
 import '../components/list-filter-tools.js';
 import '../components/overflow-menu.js';
 import '../components/case-settings.js';
-import { VIEWER, SIMPLIFIED_VIEWER_MODULE } from '../utils/openWith.js';
+import { VIEWER, SIMPLIFIED_VIEWER_MODULE, workflowsAddingExtensions } from '../utils/openWith.js';
 import { CaseWorkflowsController } from '../controllers/caseWorkflowsController.js';
 import { ICON_TRASH } from '../utils/icons.js';
+import { resetSlicerWebExtensions } from '../utils/slicerWebStorage.js';
 import { formatBytes } from '../utils/formatBytes.js';
 import { deepActiveElement } from '../utils/focus.js';
 import {
@@ -49,7 +50,7 @@ import {
     markViewerActivity,
     resetViewerActivity
 } from '../utils/viewerActivity.js';
-import { classifySlicerLoadError } from '../services/slicerErrors.js';
+import { classifySlicerLoadError, isUnrecognisedFormat, UnrecognisedFormatError } from '../services/slicerErrors.js';
 
 const attachmentFileName = (attachment) => attachment?.filenameDownload || attachment?.name || 'attachment';
 
@@ -162,6 +163,7 @@ export class CasesPage extends LitElement {
             _mcsSaveDefaultName: { type: String },
             errorDialogTitle: { type: String },
             errorDialogMessage: { type: String },
+            errorDialogOffer: { attribute: false },
         };
     }
 
@@ -216,6 +218,7 @@ export class CasesPage extends LitElement {
         this._lastSavedAttachmentId = null;
         this.errorDialogTitle = '';
         this.errorDialogMessage = '';
+        this.errorDialogOffer = null;
         this.iframeActivityCleanup = null;
         this.currentAttachmentId = '';
         this.toastMessage = '';
@@ -1659,9 +1662,11 @@ export class CasesPage extends LitElement {
     /**
      * SlicerWeb URL for this person's channel, with a workflow's extensions and start module ({}:
      * SlicerWeb's defaults). The installed build's SHA goes in as ?v= so a new build skips any
-     * stale service-worker cache.
+     * stale service-worker cache. Extensions earlier launches left installed are forgotten first,
+     * so only the workflow's load.
      */
     async _slicerWebUrl(params = {}) {
+        resetSlicerWebExtensions();
         const channel = this.slicerWebChannel();
         const statusData = await fetch('/api/slicerweb/status', { credentials: 'include' })
             .then((r) => r.ok ? r.json() : null)
@@ -1694,7 +1699,10 @@ export class CasesPage extends LitElement {
         // Download while the runtime starts; both are awaited in loadPendingIntoSlicerWeb.
         const download = fetchPayloadAttachmentContent(caseRow.id, attachment.id);
         download.catch(() => {}); // surfaced when awaited
-        this._slicerWebPending = { download, fileName: this.currentFileName, module: slicerWebParams?.module };
+        this._slicerWebPending = {
+            download, fileName: this.currentFileName, module: slicerWebParams?.module,
+            caseRow, attachment, extensions: slicerWebParams?.extensions || [], // for a failed load's "Open with …"
+        };
 
         this.iframeUrl = await this._slicerWebUrl(slicerWebParams);
 
@@ -1803,28 +1811,50 @@ export class CasesPage extends LitElement {
             // in WASM). Use evalPython for these; everything else goes through loadFiles.
             const needsPython = /\.(mrb|mcs|mxp)$/i.test(pending.fileName);
             let loadResult;
+            // What Slicer said while loading: its log and stderr (the ITK error behind an
+            // unrecognised format only goes there), SlicerWeb's alert() for reader errors (caught
+            // by handleViewerIframeLoad), and what the Python path collects itself.
+            const loadMessages = [];
+            cw._slicerAlertMessage = null;
+            const stopListening = ['log', 'stderr'].map((name) => slicer.bridge.events?.on?.(name,
+                (entry) => loadMessages.push(typeof entry === 'string' ? entry : entry?.message)));
             try {
                 if (needsPython) {
                     const safePath = filePaths[0].replace(/\\/g, '/').replace(/'/g, "\\'");
+                    // .mcs/.mxp go to SlicerHeart's MimicsProject reader by name (its confidence is
+                    // zero in WASM). Only if that fails (no SlicerHeart) does Slicer pick the reader,
+                    // as desktop Slicer would, so a missing extension shows up in its messages.
                     await slicer.bridge.callYielding('evalPython', [[
                         'import slicer, os, vtk',
                         'slicer.mrmlScene.Clear(False)',
                         '_sw_exc = None',
+                        '_sw_ok = True',
+                        '_sw_msgs = slicer.vtkMRMLMessageCollection()',
+                        '_sw_io = slicer.app.coreIOManager()',
+                        '_sw_fallback = False',
                         `_sw_path = '${safePath}'`,
                         'try:',
                         '    if os.path.splitext(_sw_path)[1].lower() in (".mrb", ".mrml"):',
                         '        slicer.util.loadScene(_sw_path)',
-                        '    else:',
-                        '        _sw_nodes = vtk.vtkCollection()',
+                        '    elif not _sw_io.loadNodes("MimicsProject", {"fileName": _sw_path}, vtk.vtkCollection(), _sw_msgs):',
+                        '        _sw_fallback = True',
                         '        _sw_msgs = slicer.vtkMRMLMessageCollection()',
-                        '        slicer.app.coreIOManager().loadNodes("MimicsProject", {"fileName": _sw_path}, _sw_nodes, _sw_msgs)',
+                        '        _sw_ok = bool(_sw_io.loadFiles([_sw_path], {}, _sw_msgs))',
                         'except Exception as _e:',
                         '    _sw_exc = str(_e)',
-                        '_sw_ids = [n.GetID() for i in range(slicer.mrmlScene.GetNumberOfNodes()) for n in [slicer.mrmlScene.GetNthNode(i)] if n]',
+                        '_sw_ids = [n.GetID() for i in range(slicer.mrmlScene.GetNumberOfNodes()) for n in [slicer.mrmlScene.GetNthNode(i)] if n] if _sw_ok else []',
+                        '_sw_messages = _sw_msgs.GetAllMessagesAsString()',
                     ].join('\n'), 'exec']);
                     const idsRepr = await slicer.bridge.call('evalPython', ['_sw_ids', 'eval']);
                     const excRepr = await slicer.bridge.call('evalPython', ['_sw_exc', 'eval']);
-                    if (excRepr !== 'None') console.warn('[SW-load] warning (non-fatal):', excRepr);
+                    if (excRepr !== 'None') {
+                        console.warn('[SW-load] warning (non-fatal):', excRepr);
+                        loadMessages.push(excRepr);
+                    }
+                    loadMessages.push(await slicer.bridge.call('evalPython', ['_sw_messages', 'eval']));
+                    if (await slicer.bridge.call('evalPython', ['_sw_fallback', 'eval']) === 'True') {
+                        console.warn('[SW-load] MimicsProject reader failed or missing; let Slicer pick a reader. Said:', loadMessages.join('\n'));
+                    }
                     loadResult = parseNodeIdsRepr(idsRepr);
                 } else {
                     await slicer.bridge.callYielding('closeScene', []);
@@ -1834,11 +1864,17 @@ export class CasesPage extends LitElement {
             } catch (loadErr) {
                 console.error('[SW-load] load threw:', loadErr);
                 throw loadErr;
+            } finally {
+                stopListening.forEach((stop) => stop?.());
             }
             if (cancelled()) return;
 
+            loadMessages.push(cw._slicerAlertMessage);
             cw._slicerAlertMessage = null;
             if (!Array.isArray(loadResult) || loadResult.length === 0) {
+                const said = loadMessages.filter(Boolean).join('\n');
+                console.warn('[SW-load] nothing loaded. Slicer said:', said);
+                if (isUnrecognisedFormat(said)) throw new UnrecognisedFormatError(said);
                 throw new Error(t('errors.slicerLoadFailed'));
             }
 
@@ -1864,8 +1900,8 @@ export class CasesPage extends LitElement {
             console.error('[SW] caught error:', err);
             if (cancelled()) return;
             const rawErr = err?.message || String(err || '');
-            const errorInfo = rawErr
-                ? this.viewerLoadError(rawErr)
+            const errorInfo = err instanceof UnrecognisedFormatError ? this._unrecognisedFormatError(pending)
+                : rawErr ? this.viewerLoadError(rawErr)
                 : { title: t('errors.slicerLoadFailedTransientTitle'), message: t('errors.openViewerFailed') };
             this._viewerPushedState = false;
             await this._doCloseViewer();
@@ -1889,9 +1925,34 @@ export class CasesPage extends LitElement {
         return classifySlicerLoadError(rawError);
     }
 
-    showErrorDialog({ title, message }) {
+    /**
+     * A file whose format wasn't recognised may need an extension: offer this case's workflows
+     * that add one the launch didn't have, as "Open with …" (docs/workflows-design.md › When a
+     * file needs an extension).
+     */
+    _unrecognisedFormatError({ caseRow, attachment, extensions }) {
+        const { usable } = this.workflows.openWithFor(caseRow, attachment);
+        const offered = workflowsAddingExtensions(usable.caseWorkflows, extensions);
+        if (!offered.length) return { title: t('errors.unrecognisedFormatTitle'), message: t('errors.unrecognisedFormatAskAdmin') };
+        const offer = {
+            fileName: this.attachmentTitle(attachment),
+            usable: { caseWorkflows: offered, mine: [] },
+            selectedKey: offered[0].key,
+            open: (key) => this.workflows.pickAndOpen(caseRow, attachment, key),
+            more: () => this.workflows.openMore(caseRow, attachment, offer, offer.fileName),
+        };
+        return { title: t('errors.unrecognisedFormatTitle'), message: t('errors.unrecognisedFormatTryWorkflows'), offer };
+    }
+
+    /**
+     * The viewer error dialog. `offer` ({ fileName, usable, selectedKey, open(key), more() }) turns
+     * Close into "Open with <first>": a button, or with more than one, a menu of them with the
+     * first checked, and "More workflows…" (which replaces this dialog, rather than open on top) past MENU_LIMIT.
+     */
+    showErrorDialog({ title, message, offer = null }) {
         this.errorDialogTitle = title || '';
         this.errorDialogMessage = message || '';
+        this.errorDialogOffer = offer;
         const dialog = this.renderRoot?.querySelector('#viewer-error-dialog');
         if (dialog) {
             queueMicrotask(() => dialog.openDialog?.());
@@ -2774,7 +2835,7 @@ export class CasesPage extends LitElement {
             </div>
             <app-dialog
                 id="save-mcs-dialog"
-                title=${t('files.saveMcsTitle')}
+                .title=${t('files.saveMcsTitle')}
                 .lightDismiss=${false}
             >
                 <p style="margin:0 0 0.75rem">${t('files.saveMcsBody')}</p>
@@ -2794,7 +2855,7 @@ export class CasesPage extends LitElement {
             </app-dialog>
             <app-dialog
                 id="save-as-new-dialog"
-                title=${t('files.saveAsNewTitle')}
+                .title=${t('files.saveAsNewTitle')}
                 .lightDismiss=${false}
             >
                 <div class="form-group">
@@ -2822,12 +2883,41 @@ export class CasesPage extends LitElement {
         `;
     }
 
+    renderViewerErrorDialog() {
+        const close = () => this.renderRoot?.querySelector('#viewer-error-dialog')?.closeDialog();
+        const offer = this.errorDialogOffer;
+        const then = (next) => { close(); next(); };
+        const workflows = offer?.usable.caseWorkflows || [];
+        const openFirst = workflows.length ? t('cases.openWithWorkflow', { name: workflows[0].name }) : '';
+        return html`
+            <app-dialog id="viewer-error-dialog" .title=${this.errorDialogTitle} .message=${this.errorDialogMessage}>
+                ${workflows.length > 1 ? html`
+                    <open-with-menu
+                        slot="actions"
+                        .buttonLabel=${openFirst}
+                        .fileName=${offer.fileName}
+                        .usable=${offer.usable}
+                        .selectedKey=${offer.selectedKey}
+                        .showNoWorkflow=${false}
+                        @open-workflow=${(e) => then(() => offer.open(e.detail.key))}
+                        @more-workflows=${() => then(offer.more)}
+                    ></open-with-menu>
+                ` : workflows.length ? html`
+                    <button slot="actions" class="primary-button" type="button" @click=${() => then(() => offer.open(offer.selectedKey))}>${openFirst}</button>
+                ` : html`
+                    <button slot="actions" class="secondary-button" type="button" @click=${close}>${t('common.close')}</button>
+                `}
+            </app-dialog>
+        `;
+    }
+
     render() {
         const detail = this.selectedCase;
         return html`
             ${!detail ? this.renderLanding() : this.showCaseSettings ? this.renderCaseSettings(detail) : this.renderCaseDetail(detail)}
             ${this.renderViewerOverlay()}
             ${this.workflows.renderDialogs(detail)}
+            ${this.renderViewerErrorDialog()}
             ${this.toastMessage ? html`<div class="toast" role="status">${this.toastMessage}</div>` : ''}
             <people-dialog
                 id="case-people-dialog"

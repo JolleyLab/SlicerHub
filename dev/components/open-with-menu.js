@@ -94,6 +94,8 @@ export class OpenWithMenu extends PopupMenu {
             selectedKey: { type: String },
             /** Shown next to the chevron: what differs from the person's own viewer with no workflow. */
             label: { type: String },
+            /** List "No workflow" first (true by default; off where only workflows are offered). */
+            showNoWorkflow: { type: Boolean },
         };
     }
 
@@ -106,17 +108,18 @@ export class OpenWithMenu extends PopupMenu {
         this.usable = null;
         this.selectedKey = NO_WORKFLOW;
         this.label = '';
+        this.showNoWorkflow = true;
     }
 
     updated(changed) {
         super.updated(changed);
         // Switching the viewer keeps focus on the viewer now chosen.
-        if (this.open && !changed.has('open') && changed.has('viewer')) this._portalHost?.querySelector('[aria-checked="true"]')?.focus();
+        if (this.open && !changed.has('open') && changed.has('viewer')) this._menuContainer?.querySelector('[aria-checked="true"]')?.focus();
     }
 
     /** Focus the checked workflow choice (so Enter opens with it), else the first item. */
     focusOnOpen() {
-        const checked = this._portalHost?.querySelector('[data-choice][aria-checked="true"]');
+        const checked = this._menuContainer?.querySelector('[data-choice][aria-checked="true"]');
         if (checked) checked.focus();
         else this.focusMenuItem(0);
     }
@@ -173,7 +176,7 @@ export class OpenWithMenu extends PopupMenu {
         ` : '');
         return html`
             ${this.canSwitchViewer ? this.viewerSwitchTemplate() : ''}
-            ${this.itemTemplate(NO_WORKFLOW, t('viewers.noWorkflow'), t('viewers.justViewer', { viewer: viewerName }))}
+            ${this.showNoWorkflow ? this.itemTemplate(NO_WORKFLOW, t('viewers.noWorkflow'), t('viewers.justViewer', { viewer: viewerName })) : ''}
             ${section('viewers.thisCase', list.caseWorkflows)}
             ${section('viewers.mine', list.mine)}
             ${list.hidden ? html`

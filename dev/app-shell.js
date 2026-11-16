@@ -1170,7 +1170,7 @@ export class SlicerApp extends LitElement {
 
       <app-dialog
         id="logout-billing-dialog"
-        title=${this.logoutBillingMode === 'transfer'
+        .title=${this.logoutBillingMode === 'transfer'
         ? t('gpu.billingStillActive')
         : t('gpu.stopBeforeLogout')}
         .lightDismiss=${false}
