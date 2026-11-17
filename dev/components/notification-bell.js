@@ -365,6 +365,7 @@ export class NotificationBell extends LitElement {
             loading: { type: Boolean },
             notifications: { type: Array },
             unreadCount: { type: Number },
+            newCount: { type: Number },
             error: { type: String },
             isRegistrationReviewer: { type: Boolean },
             _pendingRegCount: { type: Number },
@@ -379,6 +380,7 @@ export class NotificationBell extends LitElement {
         this.loading = false;
         this.notifications = [];
         this.unreadCount = 0;
+        this.newCount = 0;
         this.error = '';
         this.isRegistrationReviewer = false;
         this._pendingRegCount = 0;
@@ -405,12 +407,14 @@ export class NotificationBell extends LitElement {
         super.disconnectedCallback();
     }
 
-    _onStoreUpdate({ notifications, unreadCount, pendingRegCount, pendingInviteCount, loading }) {
+    _onStoreUpdate({ notifications, unreadCount, newCount, pendingRegCount, pendingInviteCount, loading }) {
         this.notifications = notifications;
         this.unreadCount = unreadCount;
+        this.newCount = newCount;
         this._pendingRegCount = pendingRegCount;
         this._pendingInviteCount = pendingInviteCount;
         this.loading = loading;
+        if (this.open && newCount) notificationStore.markSeen(); // arrived while the bell is open
     }
 
     handleDocPointer(event) {
@@ -421,11 +425,17 @@ export class NotificationBell extends LitElement {
 
     async toggleOpen() {
         this.open = !this.open;
-        if (this.open) await notificationStore.refresh();
+        if (!this.open) return;
+        await notificationStore.markSeen();
+        await notificationStore.refresh();
     }
 
+    /**
+     * The dot: notifications that arrived since the bell was last opened (they stay marked unread
+     * inside), or invites/registrations still waiting, which are to-dos and stay until handled.
+     */
     hasUnread() {
-        return this.unreadCount > 0 || this._pendingRegCount > 0 || this._pendingInviteCount > 0;
+        return this.newCount > 0 || this._pendingRegCount > 0 || this._pendingInviteCount > 0;
     }
 
     _firePendingRegistrations() {

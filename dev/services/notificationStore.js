@@ -1,4 +1,4 @@
-import { listNotifications } from './notifications.js';
+import { listNotifications, markNotificationsSeen } from './notifications.js';
 import { getPendingRegistrationsCount } from './registrations.js';
 import { getPendingCaseInvitesCount } from './cases.js';
 
@@ -9,6 +9,8 @@ class NotificationStore {
         this._state = {
             notifications: [],
             unreadCount: 0,
+            /** Unread and not yet seen in an open bell: the bell's dot */
+            newCount: 0,
             pendingRegCount: 0,
             pendingInviteCount: 0,
             loading: false
@@ -61,6 +63,17 @@ class NotificationStore {
         for (const cb of this._subscribers) cb(this._state);
     }
 
+    /** The bell was opened: its dot clears at once, on every device once saved. */
+    async markSeen() {
+        if (!this._state.newCount) return;
+        this._notify({ newCount: 0 });
+        try {
+            await markNotificationsSeen();
+        } catch {
+            this.refresh({ quiet: true }); // not saved: the dot comes back
+        }
+    }
+
     async refresh({ quiet = false } = {}) {
         if (!quiet) this._notify({ loading: true });
         try {
@@ -72,6 +85,7 @@ class NotificationStore {
             this._notify({
                 notifications: Array.isArray(data.notifications) ? data.notifications : [],
                 unreadCount: Number(data.unreadCount) || 0,
+                newCount: Number(data.newCount) || 0,
                 pendingRegCount,
                 pendingInviteCount,
                 loading: false

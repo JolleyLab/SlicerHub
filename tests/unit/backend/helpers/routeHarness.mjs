@@ -49,7 +49,7 @@ export function dispatch(app, method, path, { user, body, query } = {}) {
     });
 }
 
-/** In-memory Payload Local API: find/findByID/create/update/delete with equals/in/and/or. */
+/** In-memory Payload Local API: find/findByID/count/create/update/delete with equals/in/exists/and/or. */
 export function fakePayload(initial = {}) {
     const data = structuredClone(initial);
     let nextId = 500;
@@ -79,13 +79,21 @@ export function fakePayload(initial = {}) {
             }
             return { docs: limit ? docs.slice(0, limit) : docs, totalDocs: docs.length };
         },
+        async count({ collection, where }) {
+            return { totalDocs: rows(collection).filter((d) => matches(d, where)).length };
+        },
         async create({ collection, data: fields }) {
             const stamp = now();
             const doc = { id: nextId++, createdAt: stamp, updatedAt: stamp, ...fields };
             rows(collection).push(doc);
             return doc;
         },
-        async update({ collection, id, data: fields }) {
+        async update({ collection, id, where, data: fields }) {
+            if (id == null) { // by `where`, like Payload: { docs } of what was updated
+                const docs = rows(collection).filter((d) => matches(d, where));
+                docs.forEach((d) => Object.assign(d, fields, { updatedAt: now() }));
+                return { docs };
+            }
             const doc = byId(collection, id);
             if (!doc) throw new Error('not found');
             return Object.assign(doc, fields, { updatedAt: now() });

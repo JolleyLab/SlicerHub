@@ -11,18 +11,27 @@ import {
     markNotificationRead,
     markAllNotificationsRead,
     unreadNotificationCount,
+    newNotificationCount,
+    markNotificationsSeen,
     deleteNotificationForUser,
 } from '../services/notifications.js';
 
 export default function notificationRoutes(app) {
     app.get('/api/notifications', authenticateToken, asyncHandler(async (req, res) => {
         const unreadOnly = String(req.query.unread || '') === '1';
-        const [notifications, unreadCount] = await Promise.all([
+        const [notifications, unreadCount, newCount] = await Promise.all([
             listNotificationsForUser(req.user.id, { unreadOnly }),
             unreadNotificationCount(req.user.id),
+            newNotificationCount(req.user.id),
         ]);
         res.set('Cache-Control', 'no-store');
-        res.json({ notifications, unreadCount });
+        res.json({ notifications, unreadCount, newCount });
+    }));
+
+    /** The bell was opened: clears its dot; the notifications stay unread. */
+    app.post('/api/notifications/seen', authenticateToken, asyncHandler(async (req, res) => {
+        const seen = await markNotificationsSeen(req.user.id);
+        res.json({ ok: true, seen, newCount: 0 });
     }));
 
     app.post('/api/notifications/read-all', authenticateToken, asyncHandler(async (req, res) => {
