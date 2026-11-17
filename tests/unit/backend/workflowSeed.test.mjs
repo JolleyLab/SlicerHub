@@ -63,13 +63,15 @@ test('keeps a default the case already has, and approves a seed that was only re
     const seeds = await ensureSeedWorkflows();
     const caseDoc = rows('cases').find((c) => c.id === 1);
     caseDoc.default_workflow = '77';
-    mocks.payload.rows['case-workflows'] = [{ id: 50, case: 1, workflow: String(seeds[1].id), name: 'x', status: 'pending', requesters: ['kc-b'] }];
+    mocks.payload.rows['case-workflows'] = [{ id: 50, case: 1, workflow: String(seeds[1].id), name: 'x', status: 'pending' }];
+    mocks.payload.rows['case-workflow-requesters'] = [{ id: 60, case: 1, workflow: String(seeds[1].id), user_sub: 'kc-b' }];
 
     await seedExistingCases(seeds);
     assert.equal(caseDoc.default_workflow, '77');
     const simplifiedRow = caseRows(1).find((r) => r.workflow === String(seeds[1].id));
     assert.equal(simplifiedRow.id, 50);
     assert.equal(simplifiedRow.status, 'approved');
+    assert.deepEqual(rows('case-workflow-requesters'), []); // the request is met: nobody is kept as asking
 });
 
 test('reports what it did for setup-payload, and doing it again changes nothing', async () => {

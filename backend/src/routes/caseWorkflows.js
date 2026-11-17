@@ -21,7 +21,7 @@ import {
     WORKFLOWS, CASE_WORKFLOWS, findAll, myWorkflows, toWorkflow, isApproved, toApproval, workflowCopy,
 } from '../services/workflows.js';
 import {
-    canRequest, isPending, requestersOf, loadCaseWorkflowRow, describeRequests, notifyRequesters,
+    canRequest, isPending, loadCaseWorkflowRow, describeRequests, decideRequesters, requestedBy,
 } from '../services/workflowRequests.js';
 import { viewerCapabilities } from '../services/viewerCapabilities.js';
 
@@ -46,19 +46,20 @@ export default function caseWorkflowRoutes(app) {
         const { caseDoc, role } = await loadCaseWithAccess(req.params.id, req);
         const canManage = role === 'admin';
         const settings = caseSettings(caseDoc);
-        const [rows, mine] = await Promise.all([caseRows(req.params.id), myWorkflows(req)]);
+        const [rows, mine, askedByMe] = await Promise.all([
+            caseRows(req.params.id), myWorkflows(req), requestedBy(req.params.id, requireOwnerId(req)),
+        ]);
         const approvals = rows.filter(isApproved);
         const sourceIds = [...new Set(approvals.map((a) => a.workflow))];
         const sources = sourceIds.length
             ? (await findAll(WORKFLOWS, { id: { in: sourceIds } })).filter((d) => canView(d, req))
             : [];
         const sourceById = new Map(sources.map((d) => [String(d.id), d]));
-        const me = requireOwnerId(req);
         const pending = rows.filter(isPending);
         res.json({
             approved: approvals.map((a) => toApproval(a, sourceById.get(String(a.workflow)))),
             mine: settings.allowPersonal ? mine.map((d) => toWorkflow(d, req)) : [],
-            myRequests: pending.filter((r) => requestersOf(r).includes(me)).map((r) => ({ workflowId: r.workflow, name: r.name })),
+            myRequests: pending.filter((r) => askedByMe.has(String(r.workflow))).map((r) => ({ workflowId: r.workflow, name: r.name })),
             ...settings,
             canManage,
             canRequest: canRequest(role),
@@ -76,7 +77,6 @@ export default function caseWorkflowRoutes(app) {
             case: Number(req.params.id),
             ...workflowCopy(source),
             status: 'approved',
-            requesters: [],
             requested_at: null,
             decline_reason: null,
             decided_by: requireOwnerId(req),
@@ -86,7 +86,7 @@ export default function caseWorkflowRoutes(app) {
         const [existing] = await findAll(CASE_WORKFLOWS, {
             case: { equals: data.case }, workflow: { equals: data.workflow },
         });
-        if (existing && isPending(existing)) await notifyRequesters(existing, caseDoc, 'approved');
+        if (existing && isPending(existing)) await decideRequesters(existing, caseDoc, 'approved');
         const row = existing
             ? await payload.update({ collection: CASE_WORKFLOWS, id: existing.id, data })
             : await payload.create({ collection: CASE_WORKFLOWS, data });

@@ -1,7 +1,8 @@
 /**
  * Requests for a public workflow on a case (docs/workflows-design.md › Requests). One
- * case-workflows row per (case, workflow) carries the request: its requesters (Keycloak subs
- * only; names are looked up when shown) and, after a decline, the reason.
+ * case-workflows row per (case, workflow) carries the request (and, after a decline, the
+ * reason); who asked is one case-workflow-requesters row per person, under the same key.
+ * Requesters are Keycloak subs only; names are looked up when shown.
  */
 
 import { getPayloadClient } from '../payload/index.js';
@@ -12,13 +13,74 @@ import { getKeycloakUser, kcDisplayName } from './keycloakAdmin.js';
 import { createNotification } from './notifications.js';
 import { WORKFLOWS, CASE_WORKFLOWS, findAll } from './workflows.js';
 
+export const CASE_WORKFLOW_REQUESTERS = 'case-workflow-requesters';
+
 /** Members below this role (read_only) can't request workflows. */
 export const REQUEST_MIN_ROLE = 'collaborator';
 const CAN_REQUEST = new Set(['collaborator', 'admin']);
 
 export const canRequest = (role) => CAN_REQUEST.has(role);
 export const isPending = (row) => row.status === 'pending';
-export const requestersOf = (row) => (Array.isArray(row.requesters) ? row.requesters.map(String) : []);
+
+// ── Requesters ─────────────────────────────────────────────────────────────
+
+const keyOf = (caseId, workflowId) => `${caseId}:${workflowId}`;
+const requestKey = (row) => keyOf(row.case, row.workflow);
+const requestWhere = (caseId, workflowId) => ({
+    and: [{ case: { equals: Number(caseId) } }, { workflow: { equals: String(workflowId) } }],
+});
+
+/** Requesters of each request in `rows` (all on cases in `rows`): a Map from request to subs, oldest first. */
+export async function requestersByRequest(rows) {
+    const caseIds = [...new Set(rows.map((r) => Number(r.case)))];
+    const found = caseIds.length
+        ? await findAll(CASE_WORKFLOW_REQUESTERS, { case: { in: caseIds } }, 'createdAt')
+        : [];
+    const byKey = new Map();
+    for (const r of found) {
+        const key = keyOf(r.case, r.workflow);
+        byKey.set(key, [...(byKey.get(key) || []), String(r.user_sub)]);
+    }
+    return new Map(rows.map((row) => [row, byKey.get(requestKey(row)) || []]));
+}
+
+/** The source workflow ids `sub` has asked for on a case. */
+export async function requestedBy(caseId, sub) {
+    const mine = await findAll(CASE_WORKFLOW_REQUESTERS, {
+        and: [{ case: { equals: Number(caseId) } }, { user_sub: { equals: String(sub) } }],
+    });
+    return new Set(mine.map((r) => String(r.workflow)));
+}
+
+/**
+ * Add `sub` to a request; asking twice changes nothing. Two tries at once both pass the check,
+ * and the unique index refuses the second: a refusal with the row in place counts as done.
+ */
+export async function addRequester(caseId, workflowId, sub) {
+    if ((await requestedBy(caseId, sub)).has(String(workflowId))) return;
+    try {
+        await getPayloadClient().create({
+            collection: CASE_WORKFLOW_REQUESTERS,
+            data: { case: Number(caseId), workflow: String(workflowId), user_sub: String(sub) },
+        });
+    } catch (err) {
+        if (!(await requestedBy(caseId, sub)).has(String(workflowId))) throw err;
+    }
+}
+
+/** Take `sub` off a request. Returns how many requesters are left. */
+export async function removeRequester(caseId, workflowId, sub) {
+    const payload = getPayloadClient();
+    await payload.delete({
+        collection: CASE_WORKFLOW_REQUESTERS,
+        where: { and: [...requestWhere(caseId, workflowId).and, { user_sub: { equals: String(sub) } }] },
+    });
+    return (await findAll(CASE_WORKFLOW_REQUESTERS, requestWhere(caseId, workflowId))).length;
+}
+
+/** Forget everyone who asked for a request: once it's decided, or reopened after a decline. */
+export const clearRequesters = (caseId, workflowId) =>
+    getPayloadClient().delete({ collection: CASE_WORKFLOW_REQUESTERS, where: requestWhere(caseId, workflowId) });
 
 /** A case-workflows row by id, only if it belongs to `caseId`. */
 export async function loadCaseWorkflowRow(caseId, rowId) {
@@ -29,36 +91,34 @@ export async function loadCaseWorkflowRow(caseId, rowId) {
     return row;
 }
 
-/** Requesters who may still request: anyone who left the case, or is now read_only, is dropped. */
-async function currentRequesters(row, caseDoc) {
-    const subs = requestersOf(row);
-    const roles = await Promise.all(subs.map((sub) => getCaseRoleForSub(caseDoc, sub).catch(() => null)));
+/**
+ * Who of `subs` may still ask: anyone who has left the case, or is now read_only, is left out.
+ * Read-time only: their rows go when the request is decided.
+ */
+async function stillMembers(subs, caseDoc) {
+    const roles = await Promise.all(subs.map((sub) => (caseDoc ? getCaseRoleForSub(caseDoc, sub).catch(() => null) : null)));
     return subs.filter((_, i) => canRequest(roles[i]));
 }
 
 const displayName = async (sub) => kcDisplayName(await getKeycloakUser(sub).catch(() => null)) || null;
 
 /**
- * Pending rows as admins see them, with requester names. A request whose requesters have all
- * left is deleted; one with some gone is saved without them.
+ * Pending rows as admins see them, with requester names. A request nobody in the case is
+ * asking for any more isn't shown; it's reused if someone asks again.
  */
 export async function describeRequests(rows, caseById) {
-    const payload = getPayloadClient();
     const pending = rows.filter(isPending);
     const sourceIds = [...new Set(pending.map((r) => r.workflow))];
-    const publicIds = new Set(sourceIds.length
-        ? (await findAll(WORKFLOWS, { id: { in: sourceIds } })).filter((d) => d.visibility === 'public').map((d) => String(d.id))
-        : []);
+    const [publicIds, requesters] = await Promise.all([
+        sourceIds.length
+            ? findAll(WORKFLOWS, { id: { in: sourceIds } }).then((docs) => new Set(docs.filter((d) => d.visibility === 'public').map((d) => String(d.id))))
+            : new Set(),
+        requestersByRequest(pending),
+    ]);
     const described = await Promise.all(pending.map(async (row) => {
         const caseDoc = caseById.get(String(row.case));
-        const subs = await currentRequesters(row, caseDoc);
-        if (!subs.length) {
-            await payload.delete({ collection: CASE_WORKFLOWS, id: row.id });
-            return null;
-        }
-        if (subs.length !== requestersOf(row).length) {
-            await payload.update({ collection: CASE_WORKFLOWS, id: row.id, data: { requesters: subs } });
-        }
+        const subs = await stillMembers(requesters.get(row), caseDoc);
+        if (!subs.length) return null;
         return {
             id: row.id,
             caseId: String(row.case),
@@ -76,11 +136,21 @@ export async function describeRequests(rows, caseById) {
     return described.filter(Boolean);
 }
 
-/** Tell each requester the outcome. Never throws (createNotification doesn't). */
-export function notifyRequesters(row, caseDoc, outcome, reason = '') {
+/**
+ * A request has been decided: tell each requester still in the case the outcome (someone who
+ * has left isn't told, so they don't learn the case's title), then forget who asked.
+ * Never throws for a notification (createNotification doesn't).
+ */
+export async function decideRequesters(row, caseDoc, outcome, reason = '') {
+    const subs = await stillMembers((await requestersByRequest([row])).get(row), caseDoc);
+    await notifyRequesters(subs, row, caseDoc, outcome, reason);
+    await clearRequesters(row.case, row.workflow);
+}
+
+function notifyRequesters(subs, row, caseDoc, outcome, reason) {
     const caseTitle = caseDoc?.title || 'a case';
     const approved = outcome === 'approved';
-    return Promise.all(requestersOf(row).map((userId) => createNotification({
+    return Promise.all(subs.map((userId) => createNotification({
         userId,
         type: approved ? 'workflow_request_approved' : 'workflow_request_declined',
         title: approved

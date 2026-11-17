@@ -96,7 +96,10 @@ function memberSecondaryLine(person, ctx = {}) {
             : t('people.group');
     }
     const id = person?.id != null ? String(person.id) : '';
-    if (ctx.currentUserId && id === String(ctx.currentUserId)) return '';
+    if (ctx.currentUserId && id === String(ctx.currentUserId)) {
+        // A site admin is admin on every case, whatever role they were given here.
+        return ctx.myRole === 'admin' && person.role !== 'admin' ? t('people.siteAdminAccess') : '';
+    }
     if (hasPersonName(person)) return '';
     return String(person?.email || '').trim();
 }
@@ -145,6 +148,8 @@ export class PeopleDialog extends LitElement {
             inviteRole: { type: String },
             /** User id of the signed-in viewer (for the "Me" label) */
             currentUserId: { type: String },
+            /** The viewer's effective role on the case (site admins: 'admin', even if listed lower) */
+            myRole: { type: String },
             /** SlicerHub groups the viewer can add as a collaborator: [{ id, name }] */
             availableGroups: { type: Array },
             groupPickId: { type: String },
@@ -176,6 +181,7 @@ export class PeopleDialog extends LitElement {
         this.unknownEmail = '';
         this.inviteRole = '';
         this.currentUserId = '';
+        this.myRole = '';
         this.availableGroups = [];
         this.groupPickId = '';
         this.groupPickRole = '';
@@ -194,6 +200,7 @@ export class PeopleDialog extends LitElement {
     get nameContext() {
         return {
             currentUserId: this.currentUserId || null,
+            myRole: this.myRole || null,
             unknownLabels: buildUnknownLabels(this.members, this.currentUserId || null)
         };
     }

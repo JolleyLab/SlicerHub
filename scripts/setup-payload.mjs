@@ -133,8 +133,9 @@ async function ensurePayloadSecret(current) {
 
 /**
  * Schema left by features that are gone (docs/redirect-login-and-sessions-design.md,
- * phase 7: the app's own password reset, registration completion and invite links).
- * IF EXISTS throughout, so this is a no-op on a fresh database or a second run.
+ * phase 7: the app's own password reset, registration completion and invite links), and data
+ * the push couldn't add a new unique index over. IF EXISTS throughout, so this is a no-op on a
+ * fresh database or a second run.
  */
 const RETIRED_SCHEMA = [
     'ALTER TABLE IF EXISTS payload_locked_documents_rels DROP COLUMN IF EXISTS password_reset_tokens_id',
@@ -151,6 +152,28 @@ const RETIRED_SCHEMA = [
     'DROP TYPE IF EXISTS enum_workflows_target',
     // One default workflow per case replaced the per-file-type defaults map.
     'ALTER TABLE IF EXISTS cases DROP COLUMN IF EXISTS workflow_defaults',
+    // Requesters became rows (case-workflow-requesters). Requests only ever existed on the
+    // workflows branch, so they aren't carried over: pending ones are deleted (members ask again).
+    `DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'case_workflows' AND column_name = 'requesters') THEN
+            DELETE FROM case_workflows WHERE status = 'pending';
+        END IF;
+    END $$`,
+    'ALTER TABLE IF EXISTS case_workflows DROP COLUMN IF EXISTS requesters',
+    // case-workflows became unique per (case, workflow); the push can't add that index over
+    // duplicates. Keep one of each: an approved row before a request, then the newest.
+    `DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'case_workflows' AND column_name = 'case_id') THEN
+            DELETE FROM case_workflows WHERE id IN (
+                SELECT id FROM (
+                    SELECT id, row_number() OVER (
+                        PARTITION BY case_id, workflow
+                        ORDER BY (status IS NULL OR status = 'approved') DESC, id DESC
+                    ) AS n FROM case_workflows
+                ) ranked WHERE n > 1
+            );
+        END IF;
+    END $$`,
 ];
 
 function dropRetiredSchema(dbUser) {

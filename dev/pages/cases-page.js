@@ -863,6 +863,7 @@ export class CasesPage extends LitElement {
         }
 
         const myRole = this.myCaseRole(caseRow);
+        dialog.myRole = myRole || '';
         dialog.roleOptions = (myRole === 'admin')
             ? null  // admins get all options (default)
             : [

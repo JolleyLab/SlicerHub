@@ -298,7 +298,7 @@ export default function casesRoutes(app) {
 
         // These `case` columns are NOT NULL with ON DELETE SET NULL, so leftover rows block the delete.
         const caseWhere = { case: { equals: Number(req.params.id) } };
-        for (const collection of ['attachments', 'case-comments', 'case-invites', 'case-workflows']) {
+        for (const collection of ['attachments', 'case-comments', 'case-invites', 'case-workflows', 'case-workflow-requesters']) {
             await payload.delete({ collection, where: caseWhere });
         }
         await removeAllGroupAccessForCase(req.params.id);

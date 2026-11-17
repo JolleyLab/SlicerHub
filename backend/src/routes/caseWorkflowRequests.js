@@ -20,12 +20,27 @@ import {
     WORKFLOWS, CASE_WORKFLOWS, findAll, myWorkflows, publicWorkflows, toWorkflow, isApproved, workflowCopy,
 } from '../services/workflows.js';
 import {
-    REQUEST_MIN_ROLE, isPending, requestersOf, loadCaseWorkflowRow, describeRequests, notifyRequesters,
+    REQUEST_MIN_ROLE, isPending, loadCaseWorkflowRow, describeRequests, decideRequesters,
+    requestedBy, addRequester, removeRequester,
 } from '../services/workflowRequests.js';
 
 const rowFor = async (caseId, workflowId) => (await findAll(CASE_WORKFLOWS, {
     case: { equals: Number(caseId) }, workflow: { equals: String(workflowId) },
 }))[0] || null;
+
+/**
+ * Create a case's row for a workflow. Two people asking at once both try: the unique index on
+ * (case, workflow) refuses the second, which then gets the row the first made.
+ */
+async function createRow(caseId, workflowId, data) {
+    try {
+        return await getPayloadClient().create({ collection: CASE_WORKFLOWS, data: { case: Number(caseId), ...data } });
+    } catch (err) {
+        const row = await rowFor(caseId, workflowId);
+        if (!row) throw err;
+        return row;
+    }
+}
 
 const matchesQuery = (doc, q) => !q
     || `${doc.name} ${doc.description || ''}`.toLowerCase().includes(q);
@@ -43,13 +58,13 @@ export default function caseWorkflowRequestRoutes(app) {
         const q = String(req.query.q || '').trim().toLowerCase().slice(0, 100);
         const fileTypes = String(req.query.fileTypes || '').toLowerCase().split(',')
             .map((ext) => ext.trim().replace(/^\*?\./, '')).filter(Boolean).slice(0, 8);
-        const [rows, everyonePublic, mine] = await Promise.all([
+        const [rows, everyonePublic, mine, askedByMe] = await Promise.all([
             findAll(CASE_WORKFLOWS, { case: { equals: Number(req.params.id) } }),
             publicWorkflows(),
             role === 'admin' ? myWorkflows(req) : [],
+            requestedBy(req.params.id, requireOwnerId(req)),
         ]);
         const rowByWorkflow = new Map(rows.map((r) => [String(r.workflow), r]));
-        const me = requireOwnerId(req);
         const workflows = [...new Map([...everyonePublic, ...mine].map((d) => [String(d.id), d])).values()]
             .filter((d) => !(rowByWorkflow.has(String(d.id)) && isApproved(rowByWorkflow.get(String(d.id)))))
             .filter((d) => matchesQuery(d, q) && matchesFileTypes(d, fileTypes))
@@ -57,7 +72,7 @@ export default function caseWorkflowRequestRoutes(app) {
             .map((d) => {
                 const row = rowByWorkflow.get(String(d.id));
                 const pending = Boolean(row && isPending(row));
-                return { ...toWorkflow(d, req), requested: pending, requestedByMe: pending && requestersOf(row).includes(me) };
+                return { ...toWorkflow(d, req), requested: pending, requestedByMe: pending && askedByMe.has(String(d.id)) };
             });
         res.json({ workflows });
     }));
@@ -68,25 +83,17 @@ export default function caseWorkflowRequestRoutes(app) {
         await loadCaseWithAccess(req.params.id, req, REQUEST_MIN_ROLE);
         const source = await loadOwnedDoc(WORKFLOWS, String(req.body?.workflowId ?? ''), req, { write: false });
         if (source.visibility !== 'public') throw new ValidationError('Only public workflows can be requested');
-        const me = requireOwnerId(req);
-        const payload = getPayloadClient();
         const existing = await rowFor(req.params.id, source.id);
         if (existing && isApproved(existing)) throw new ConflictError('This workflow is already available in this case');
 
-        if (existing && isPending(existing)) {
-            const requesters = [...new Set([...requestersOf(existing), me])];
-            await payload.update({ collection: CASE_WORKFLOWS, id: existing.id, data: { requesters } });
-            return res.json({ requested: true });
+        const opening = !existing || !isPending(existing);
+        if (opening) {
+            const data = { ...workflowCopy(source), status: 'pending', requested_at: new Date().toISOString() };
+            if (existing) await getPayloadClient().update({ collection: CASE_WORKFLOWS, id: existing.id, data });
+            else await createRow(req.params.id, source.id, data);
         }
-        const data = {
-            ...workflowCopy(source),
-            status: 'pending',
-            requesters: [me],
-            requested_at: new Date().toISOString(),
-        };
-        if (existing) await payload.update({ collection: CASE_WORKFLOWS, id: existing.id, data });
-        else await payload.create({ collection: CASE_WORKFLOWS, data: { case: Number(req.params.id), ...data } });
-        res.status(201).json({ requested: true });
+        await addRequester(req.params.id, source.id, requireOwnerId(req));
+        res.status(opening ? 201 : 200).json({ requested: true });
     }));
 
     // Cancel my request. When nobody is left, the request goes away.
@@ -94,11 +101,11 @@ export default function caseWorkflowRequestRoutes(app) {
         await loadCaseWithAccess(req.params.id, req);
         const me = requireOwnerId(req);
         const row = await rowFor(req.params.id, req.params.workflowId);
-        if (!row || !isPending(row) || !requestersOf(row).includes(me)) throw new NotFoundError('Not found');
-        const requesters = requestersOf(row).filter((sub) => sub !== me);
-        const payload = getPayloadClient();
-        if (requesters.length) await payload.update({ collection: CASE_WORKFLOWS, id: row.id, data: { requesters } });
-        else await payload.delete({ collection: CASE_WORKFLOWS, id: row.id });
+        if (!row || !isPending(row) || !(await requestedBy(req.params.id, me)).has(String(row.workflow))) {
+            throw new NotFoundError('Not found');
+        }
+        const left = await removeRequester(req.params.id, row.workflow, me);
+        if (!left) await getPayloadClient().delete({ collection: CASE_WORKFLOWS, id: row.id });
         res.status(204).end();
     }));
 
@@ -107,13 +114,12 @@ export default function caseWorkflowRequestRoutes(app) {
         const row = await loadCaseWorkflowRow(req.params.id, req.params.rowId);
         if (!isPending(row)) throw new ConflictError('Only a pending request can be declined');
         const reason = sanitizeText(req.body?.reason, { label: 'Reason', max: 500 });
-        await notifyRequesters(row, caseDoc, 'declined', reason);
+        await decideRequesters(row, caseDoc, 'declined', reason);
         await getPayloadClient().update({
             collection: CASE_WORKFLOWS,
             id: row.id,
             data: {
                 status: 'declined',
-                requesters: [],
                 decline_reason: reason || null,
                 decided_by: requireOwnerId(req),
                 decided_at: new Date().toISOString(),

@@ -258,7 +258,7 @@ There is at most **one request row per (case, workflow)**, however many people a
 - **Approve:** copies the workflow as approval does; requesters get a notification ("now available in Case X").
 - **Request again after a decline:** the row goes back to pending with only the new requester. The admin sees the earlier decline date and reason.
 - **Source no longer public** while pending: Approve is disabled and the line reads "No longer public". The admin declines it so requesters are told.
-- **Requester leaves the case or is deleted:** they're dropped from the request; an empty request is deleted.
+- **Requester leaves the case, becomes `read_only`, or is deleted:** they're left out when the request is read (names, counts) and aren't told the outcome, so a notification can't show them the title of a case they've left. Reads never write: their row goes when the request is decided. A request nobody in the case is still asking for is hidden, and reused if someone asks again.
 
 ### Notifications
 
@@ -287,7 +287,7 @@ These follow the two patterns already in use: pending invites (a live count in t
 | `decline_reason` | text | optional, up to 500 characters, plain text; shown to the admin if the workflow is requested again, cleared on approval |
 | `decided_by`, `decided_at` | text, date | replaced `approved_by` / `approved_at` |
 
-`name`, `description`, `extensions`, `file_types`, `startup_config` and `source_updated_at` are copied from the source on request and again on approval. A unique index on (case, workflow) enforces one row each. Requesters are rows in a small `case-workflow-requesters` collection (one per request and person, Keycloak sub only, unique), so joining and cancelling are an insert and a delete rather than rewriting an array. Names are looked up from Keycloak when shown, as the People dialog does.
+`name`, `description`, `extensions`, `file_types`, `startup_config` and `source_updated_at` are copied from the source on request and again on approval. A unique index on (case, workflow) enforces one row each; when two people make the first request at once, the second gets the first's row. Requesters are rows in a small `case-workflow-requesters` collection, keyed like the request by (case, workflow), plus `user_sub` (Keycloak sub only), unique on all three. So joining and cancelling are an insert and a delete, which two people at once can't overwrite; one person's rows can be found (and deleted) by `user_sub`; and the requesters go with the case without a reference between the two collections that would block deleting it. They're deleted once the request is decided. Names are looked up from Keycloak when shown, as the People dialog does.
 
 **`cases`** gains:
 
@@ -297,7 +297,7 @@ These follow the two patterns already in use: pending invites (a live count in t
 | `allow_personal_workflows` | checkbox | default true |
 | `workflows_seeded` | checkbox | set once the existing-case step has run |
 
-Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approved_by` / `approved_at` (done), `case_workflows.requesters` (json array, replaced by the collection), `cases.workflow_defaults`, `user_preferences.use_simplified_viewer`.
+Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approved_by` / `approved_at` (done), `case_workflows.requesters` (json array, replaced by the collection; done, deleting the branch-only pending requests with it), `cases.workflow_defaults`, `user_preferences.use_simplified_viewer`.
 
 ### API
 
@@ -339,7 +339,7 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
 - A Docker 409 ("removal already in progress") when starting a Full Slicer seat right after a backend restart.
 
 **Cleanup agreed before merging:**
-- Requests: unique index on (case, workflow); requesters as rows; no writes inside GETs (ex-members filtered on read); a cooldown before re-requesting a declined workflow; a cap on pending requests per member per case; optionally a per-user rate limit on request and cancel.
+- Requests: ~~unique index on (case, workflow); requesters as rows; no writes inside GETs (ex-members filtered on read)~~ (done 16 Nov); a cooldown before re-requesting a declined workflow; a cap on pending requests per member per case; optionally a per-user rate limit on request and cancel.
 - Backend error messages for workflows go through `msg()` and the backend `en.js`, with keys (`AppError.fromKey`).
 - Translate API errors in the browser: the SPA maps `error.key` to text from its own catalog (an `api.` section in `dev/i18n/locales/en.js`), keeping the backend's English message only as a fallback for logs and non-browser clients. Then a new language only touches `dev/i18n`, and the backend catalog stays English as the source of keys. Move existing API messages over key by key, starting with the workflow ones.
 - `loadCaseWorkflows()` in `cases-page.js`: log failures and show them in Case Settings with "Try again", instead of "Loading…" forever.

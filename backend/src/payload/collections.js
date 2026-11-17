@@ -376,12 +376,13 @@ export const Workflows = {
 
 /**
  * A workflow on a case: requested by members, or approved by a case admin. One row per
- * (case, workflow). An approved row holds a copy of the workflow as approved, so later edits
- * (or deletion) by its owner don't change the case until it is re-approved.
+ * (case, workflow), enforced by a unique index. An approved row holds a copy of the workflow as
+ * approved, so later edits (or deletion) by its owner don't change the case until it is re-approved.
  */
 export const CaseWorkflows = {
     slug: 'case-workflows',
     admin: { useAsTitle: 'name' },
+    indexes: [{ fields: ['case', 'workflow'], unique: true }],
     fields: [
         { name: 'case', type: 'relationship', relationTo: 'cases', required: true, index: true },
         { name: 'workflow', type: 'text', label: 'Source workflow ID', required: true, index: true },
@@ -404,8 +405,7 @@ export const CaseWorkflows = {
         { name: 'startup_config', type: 'json' },
         // The source's updatedAt when approved: a later one means "Update available".
         { name: 'source_updated_at', type: 'date' },
-        // Requests: Keycloak subs only (names are looked up when shown); cleared once decided.
-        { name: 'requesters', type: 'json' },
+        // Who asked is in case-workflow-requesters.
         { name: 'requested_at', type: 'date' },
         { name: 'decline_reason', type: 'text' }, // kept until the next request or approval
         { name: 'decided_by', type: 'text', label: 'Decided by (Keycloak sub)' },
@@ -413,8 +413,26 @@ export const CaseWorkflows = {
     ],
 };
 
+/**
+ * Who asked for a pending request: one row per person, keyed like the request by (case,
+ * workflow), so joining is an insert and cancelling a delete (two people asking at once can't
+ * overwrite each other), and one person's rows are found by user_sub. Keycloak subs only; names
+ * are looked up when shown. Deleted once the request is decided, or with the case.
+ */
+export const CaseWorkflowRequesters = {
+    slug: 'case-workflow-requesters',
+    admin: { useAsTitle: 'user_sub' },
+    indexes: [{ fields: ['case', 'workflow', 'user_sub'], unique: true }],
+    fields: [
+        { name: 'case', type: 'relationship', relationTo: 'cases', required: true, index: true },
+        { name: 'workflow', type: 'text', label: 'Source workflow ID', required: true },
+        { name: 'user_sub', type: 'text', label: 'Requester (Keycloak sub)', required: true, index: true },
+    ],
+};
+
 /** Every collection, in one list for both Payload configs (backend + payload-admin). */
 export const ALL_COLLECTIONS = [
     Users, Cases, Attachments, CaseComments, CaseInvites, CaseGroupAccess, UserPreferences,
     RegistrationRequests, Groups, GroupMembers, UserNotifications, Workflows, CaseWorkflows,
+    CaseWorkflowRequesters,
 ];

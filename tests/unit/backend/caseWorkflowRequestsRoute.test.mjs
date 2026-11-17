@@ -16,6 +16,9 @@ const OTHER = { id: 5, role: 'user', keycloakSub: 'kc-other' }; // a second coll
 
 const request = (user, workflowId = 11) => call('POST', '/api/cases/1/workflows/requests', { user, body: { workflowId } });
 const rows = () => mocks.payload.rows['case-workflows'] || [];
+/** Who is asking for a workflow on case 1, oldest first. */
+const requesters = (workflowId = 11) => (mocks.payload.rows['case-workflow-requesters'] || [])
+    .filter((r) => String(r.case) === '1' && r.workflow === String(workflowId)).map((r) => r.user_sub);
 const caseView = async (user) => (await call('GET', '/api/cases/1/workflows', { user })).body;
 
 test.beforeEach(() => {
@@ -30,7 +33,7 @@ test('a collaborator can request a public workflow; read_only members and strang
     assert.equal((await request(MEMBER)).status, 201);
     const [row] = rows();
     assert.equal(row.status, 'pending');
-    assert.deepEqual(row.requesters, ['kc-member']);
+    assert.deepEqual(requesters(), ['kc-member']);
     assert.equal(row.name, 'WF 11');
 
     assert.equal((await request(READER)).status, 403);
@@ -50,7 +53,7 @@ test('a second request joins the first: one row, both requesters', async () => {
     assert.equal((await request(OTHER)).status, 200);
     await request(OTHER); // asking twice changes nothing
     assert.equal(rows().length, 1);
-    assert.deepEqual(rows()[0].requesters, ['kc-member', 'kc-other']);
+    assert.deepEqual(requesters(), ['kc-member', 'kc-other']);
 
     const { requests } = await caseView(ADMIN);
     assert.equal(requests.length, 1);
@@ -79,10 +82,11 @@ test('a requester can cancel; the last one out removes the request', async () =>
     await request(MEMBER);
     await request(OTHER);
     assert.equal((await call('DELETE', '/api/cases/1/workflows/requests/11', { user: MEMBER })).status, 204);
-    assert.deepEqual(rows()[0].requesters, ['kc-other']);
+    assert.deepEqual(requesters(), ['kc-other']);
     assert.equal((await call('DELETE', '/api/cases/1/workflows/requests/11', { user: MEMBER })).status, 404);
     await call('DELETE', '/api/cases/1/workflows/requests/11', { user: OTHER });
     assert.equal(rows().length, 0);
+    assert.deepEqual(requesters(), []);
 });
 
 // ── deciding ───────────────────────────────────────────────────────────────
@@ -94,7 +98,7 @@ test('approving a request copies the workflow, clears the requesters and tells t
     assert.equal(res.status, 200);
     const [row] = rows();
     assert.equal(row.status, 'approved');
-    assert.deepEqual(row.requesters, []);
+    assert.deepEqual(requesters(), []);
     assert.deepEqual(mocks.notifications.map((n) => [n.userId, n.type]), [
         ['kc-member', 'workflow_request_approved'],
         ['kc-other', 'workflow_request_approved'],
@@ -113,7 +117,7 @@ test('declining tells requesters with the reason; only admins decline, and only 
 
     assert.equal((await decline(ADMIN, { reason: ' Use Cardiac instead ' })).status, 204);
     assert.equal(row.status, 'declined');
-    assert.deepEqual(row.requesters, []);
+    assert.deepEqual(requesters(), []);
     assert.equal(row.decline_reason, 'Use Cardiac instead');
     assert.deepEqual(mocks.notifications.map((n) => [n.userId, n.type, n.body]), [
         ['kc-member', 'workflow_request_declined', 'Use Cardiac instead'],
@@ -127,7 +131,7 @@ test('requesting again after a decline reopens the row and shows the admin the e
     await call('POST', `/api/cases/1/workflows/${row.id}/decline`, { user: ADMIN, body: { reason: 'Not yet' } });
     assert.equal((await request(OTHER)).status, 201);
     assert.equal(rows().length, 1);
-    assert.deepEqual(row.requesters, ['kc-other']);
+    assert.deepEqual(requesters(), ['kc-other']);
 
     const [shown] = (await caseView(ADMIN)).requests;
     assert.deepEqual(shown.requesterNames, ['Oli Other']);
@@ -150,16 +154,55 @@ test('a request whose source is no longer public cannot be approved', async () =
     assert.equal((await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } })).status, 404);
 });
 
-test('requesters who leave the case, or become read_only, drop off; an emptied request goes away', async () => {
+test('requesters who leave the case, or become read_only, are left out when read, without writing', async () => {
     await request(MEMBER);
     await request(OTHER);
     delete mocks.caseRoles['kc-other:1'];
     assert.deepEqual((await caseView(ADMIN)).requests[0].requesterNames, ['Mia Member']);
-    assert.deepEqual(rows()[0].requesters, ['kc-member']);
+    assert.deepEqual(requesters(), ['kc-member', 'kc-other']); // a GET changes nothing
 
     mocks.caseRoles['kc-member:1'] = 'read_only';
     assert.deepEqual((await caseView(ADMIN)).requests, []);
-    assert.equal(rows().length, 0);
+    assert.equal(rows().length, 1); // hidden, and reused if someone asks again
+
+    mocks.caseRoles['kc-member:1'] = 'collaborator';
+    assert.equal((await request(MEMBER)).status, 200);
+    assert.deepEqual((await caseView(ADMIN)).requests[0].requesterNames, ['Mia Member']);
+});
+
+test('only requesters still in the case are told the outcome, and nobody is kept as a requester', async () => {
+    await request(MEMBER);
+    await request(OTHER);
+    delete mocks.caseRoles['kc-other:1']; // left the case: mustn't learn its title from a notification
+    await call('POST', `/api/cases/1/workflows/${rows()[0].id}/decline`, { user: ADMIN, body: {} });
+    assert.deepEqual(mocks.notifications.map((n) => n.userId), ['kc-member']);
+    assert.deepEqual(requesters(), []);
+});
+
+// ── two people at once ─────────────────────────────────────────────────────
+
+/** The next create in `collection` behaves as if someone else's identical one got there first. */
+function loseTheRace(collection) {
+    const create = mocks.payload.create;
+    mocks.payload.create = async (args) => {
+        mocks.payload.create = create;
+        if (args.collection !== collection) return create(args);
+        await create(args); // theirs
+        throw new Error('duplicate key value violates unique constraint');
+    };
+}
+
+test('two first requests at once make one request: the second joins the row the first made', async () => {
+    loseTheRace('case-workflows');
+    assert.equal((await request(OTHER)).status, 201);
+    assert.equal(rows().length, 1);
+    assert.deepEqual(requesters(), ['kc-other']);
+});
+
+test('asking at the same moment twice keeps one requester row', async () => {
+    loseTheRace('case-workflow-requesters');
+    assert.equal((await request(MEMBER)).status, 201);
+    assert.deepEqual(requesters(), ['kc-member']);
 });
 
 // ── finding more, and the admin's list across cases ───────────────────────
