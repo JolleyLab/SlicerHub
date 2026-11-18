@@ -265,7 +265,7 @@ There is at most **one request row per (case, workflow)**, however many people a
 These follow the two patterns already in use: pending invites (a live count in the bell, plus cards in Home's To do that act on the live data) and mentions (stored rows in `user-notifications`).
 
 **Case admins: pending requests (live, not stored).**
-- **Bell:** the count of pending workflow requests on cases they admin, next to `pendingInviteCount` in `notificationStore`. A plain count, with no Keycloak lookups.
+- **Bell:** the count of pending workflow requests on cases they admin, next to `pendingInviteCount` in `notificationStore`, with when the newest arrived. No Keycloak lookups. As on most sites, the bell's dot is for what arrived since it was last opened (stored per user as `bell_opened_at` in user preferences, so it holds across browsers): waiting to-dos stay listed in the bell until handled but don't keep the dot lit.
 - **Home To do:** one card per pending request, built like `inviteToTodo`: "A. Smith and 2 others requested Valve planning for Case X", with **Approve** and **Decline** (decline asks for the optional reason). Clicking the card opens the case's Workflows panel on Requests.
 - Because both come from the pending rows, a request that is cancelled, or decided by another admin, disappears for every admin with nothing to clean up.
 

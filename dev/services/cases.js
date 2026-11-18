@@ -2,6 +2,7 @@ import { API_URL } from '../config.js';
 import { tusUpload } from './tusUpload.js';
 import { t } from '../i18n/index.js';
 import { parseApiResponse, apiError, readJson } from './apiResponse.js';
+import { NO_TODOS, toBellCount } from '../utils/bellCount.js';
 
 // Kept here too: callers have always imported the error wording from the cases service.
 export { friendlyCasesError } from './apiResponse.js';
@@ -190,11 +191,10 @@ export async function getPendingCaseInvitesCount() {
             `${API_URL}/api/cases/invites/pending-count`,
             { credentials: 'include', cache: 'no-store' }
         );
-        if (!res.ok) return 0;
-        const data = await res.json();
-        return Number(data.count) || 0;
+        if (!res.ok) return NO_TODOS;
+        return toBellCount(await res.json());
     } catch {
-        return 0;
+        return NO_TODOS;
     }
 }
 

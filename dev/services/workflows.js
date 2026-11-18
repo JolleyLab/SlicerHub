@@ -3,6 +3,7 @@
  */
 
 import { apiRequest } from './apiResponse.js';
+import { NO_TODOS, toBellCount } from '../utils/bellCount.js';
 
 const enc = encodeURIComponent;
 
@@ -15,9 +16,9 @@ export const deleteWorkflow = (id) => apiRequest(`/api/workflows/${enc(id)}`, { 
 
 /** Home's To do: pending requests on the cases the user administers, with requester names. */
 export const listPendingWorkflowRequests = () => apiRequest('/api/workflow-requests/pending').then((d) => d.requests);
-/** The bell's count of those; 0 if it can't be had, so the bell still works. */
+/** The bell's count of those, { count, latestAt }; none if it can't be had, so the bell still works. */
 export const pendingWorkflowRequestCount = () =>
-    apiRequest('/api/workflow-requests/pending-count').then((d) => Number(d.count) || 0, () => 0);
+    apiRequest('/api/workflow-requests/pending-count').then(toBellCount, () => NO_TODOS);
 
 /** What an uploaded workflow icon may be (the server checks the file's contents too). */
 export const WORKFLOW_ICON_TYPES = Object.freeze(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);

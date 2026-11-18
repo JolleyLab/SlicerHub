@@ -194,6 +194,8 @@ export const UserPreferences = {
         // Show my name in group member lists (e.g. when a case admin reviews a group), even as a regular member
         { name: 'share_name_in_groups',         type: 'checkbox', defaultValue: false },
         { name: 'activity_filters', type: 'json' },
+        // When the notification bell was last opened: to-dos older than this don't light its dot
+        { name: 'bell_opened_at', type: 'date' },
     ],
 };
 

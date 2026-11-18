@@ -265,6 +265,9 @@ test("the bell's count: pending requests on cases the requester administers, one
     await request(MEMBER, 13);
     assert.equal(await count(), 2);
     assert.equal(await count(MEMBER), 0);
+    // With when the newest arrived, so the bell can light only for ones since it was last opened.
+    const { latestAt } = (await call('GET', '/api/workflow-requests/pending-count', { user: ADMIN })).body;
+    assert.ok(Date.parse(latestAt));
 
     await call('DELETE', '/api/cases/1/workflows/requests/13', { user: MEMBER });
     await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });

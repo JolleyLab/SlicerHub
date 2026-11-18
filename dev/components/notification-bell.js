@@ -366,6 +366,7 @@ export class NotificationBell extends LitElement {
             notifications: { type: Array },
             unreadCount: { type: Number },
             newCount: { type: Number },
+            _newTodo: { type: Boolean },
             error: { type: String },
             isRegistrationReviewer: { type: Boolean },
             _pendingRegCount: { type: Number },
@@ -382,6 +383,7 @@ export class NotificationBell extends LitElement {
         this.notifications = [];
         this.unreadCount = 0;
         this.newCount = 0;
+        this._newTodo = false;
         this.error = '';
         this.isRegistrationReviewer = false;
         this._pendingRegCount = 0;
@@ -409,15 +411,16 @@ export class NotificationBell extends LitElement {
         super.disconnectedCallback();
     }
 
-    _onStoreUpdate({ notifications, unreadCount, newCount, pendingRegCount, pendingInviteCount, pendingWorkflowRequestCount, loading }) {
+    _onStoreUpdate({ notifications, unreadCount, newCount, newTodo, pendingRegCount, pendingInviteCount, pendingWorkflowRequestCount, loading }) {
         this.notifications = notifications;
         this.unreadCount = unreadCount;
         this.newCount = newCount;
+        this._newTodo = newTodo;
         this._pendingRegCount = pendingRegCount;
         this._pendingInviteCount = pendingInviteCount;
         this._pendingWorkflowRequestCount = pendingWorkflowRequestCount;
         this.loading = loading;
-        if (this.open && newCount) notificationStore.markSeen(); // arrived while the bell is open
+        if (this.open && (newCount || newTodo)) notificationStore.markSeen(); // arrived while the bell is open
     }
 
     handleDocPointer(event) {
@@ -434,14 +437,14 @@ export class NotificationBell extends LitElement {
     }
 
     /**
-     * The dot: notifications that arrived since the bell was last opened (they stay marked unread
-     * inside), or invites/registrations still waiting, which are to-dos and stay until handled.
+     * The dot: what arrived since the bell was last opened, as on most sites. Notifications stay
+     * unread inside, and to-dos stay listed until handled, but neither keeps the dot lit.
      */
     hasUnread() {
-        return this.newCount > 0 || this._pendingCount > 0;
+        return this.newCount > 0 || this._newTodo;
     }
 
-    /** To-dos waiting (registrations, case invites, workflow requests): they keep the dot on until handled. */
+    /** To-dos waiting (registrations, case invites, workflow requests), listed in the bell until handled. */
     get _pendingCount() {
         return this._pendingRegCount + this._pendingInviteCount + this._pendingWorkflowRequestCount;
     }

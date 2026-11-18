@@ -15,23 +15,30 @@ import {
     markNotificationsSeen,
     deleteNotificationForUser,
 } from '../services/notifications.js';
+import { getBellOpenedAt, markBellOpened } from '../services/payloadPreferences.js';
 
 export default function notificationRoutes(app) {
     app.get('/api/notifications', authenticateToken, asyncHandler(async (req, res) => {
         const unreadOnly = String(req.query.unread || '') === '1';
-        const [notifications, unreadCount, newCount] = await Promise.all([
+        const [notifications, unreadCount, newCount, bellOpenedAt] = await Promise.all([
             listNotificationsForUser(req.user.id, { unreadOnly }),
             unreadNotificationCount(req.user.id),
             newNotificationCount(req.user.id),
+            getBellOpenedAt(req.user.keycloakSub),
         ]);
         res.set('Cache-Control', 'no-store');
-        res.json({ notifications, unreadCount, newCount });
+        // bellOpenedAt: to-dos (registrations, invites, workflow requests) that arrived before it
+        // stay listed in the bell but don't light its dot.
+        res.json({ notifications, unreadCount, newCount, bellOpenedAt });
     }));
 
-    /** The bell was opened: clears its dot; the notifications stay unread. */
+    /** The bell was opened: clears its dot (notifications and to-dos); everything stays listed. */
     app.post('/api/notifications/seen', authenticateToken, asyncHandler(async (req, res) => {
-        const seen = await markNotificationsSeen(req.user.id);
-        res.json({ ok: true, seen, newCount: 0 });
+        const [seen, bellOpenedAt] = await Promise.all([
+            markNotificationsSeen(req.user.id),
+            markBellOpened(req.user.keycloakSub),
+        ]);
+        res.json({ ok: true, seen, newCount: 0, bellOpenedAt });
     }));
 
     app.post('/api/notifications/read-all', authenticateToken, asyncHandler(async (req, res) => {

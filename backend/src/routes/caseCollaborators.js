@@ -34,6 +34,7 @@ import { removeUnusedInviteeAccount } from '../services/inviteExpiry.js';
 import config from '../config/index.js';
 import { avatarUrlFor } from '../services/avatars.js';
 import { SITE_ADMIN_CASE_ROLE, SITE_ADMIN_REALM_ROLE } from '../utils/caseRoles.js';
+import { bellCount } from '../utils/bellCount.js';
 
 const GROUP_ID_PREFIX = 'group:';
 
@@ -213,12 +214,17 @@ export default function caseCollaboratorsRoutes(app) {
     app.get('/api/cases/invites/pending-count', ...auth, asyncHandler(async (req, res) => {
         res.set('Cache-Control', 'no-store');
         const administered = await administeredCasesWhere(req);
-        if (!administered) return res.json({ count: 0 });
-        const result = await getPayloadClient().count({
+        if (!administered) return res.json(bellCount([]));
+        // Fetch only the newest pending invite: its createdAt is when the latest one arrived, and
+        // totalDocs still counts every match, so one small query gives both numbers the bell needs.
+        const result = await getPayloadClient().find({
             collection: 'case-invites',
             where: { and: [administered, { status: { equals: 'pending_approval' } }] },
+            sort: '-createdAt',
+            limit: 1,
+            depth: 0,
         });
-        res.json({ count: Number(result?.totalDocs) || 0 });
+        res.json({ count: Number(result?.totalDocs) || 0, latestAt: result.docs[0]?.createdAt ?? null });
     }));
 
     /**

@@ -17,6 +17,7 @@ import { ConflictError, NotFoundError, ValidationError } from '../utils/errors.j
 import { loadCaseWithAccess, administeredCasesWhere } from '../utils/caseAccess.js';
 import { requireOwnerId, loadOwnedDoc } from '../utils/ownedDocs.js';
 import { sanitizeText } from '../utils/validation.js';
+import { bellCount } from '../utils/bellCount.js';
 import {
     WORKFLOWS, CASE_WORKFLOWS, findAll, myWorkflows, publicWorkflows, toWorkflow, isApproved, workflowCopy,
 } from '../services/workflows.js';
@@ -152,6 +153,7 @@ export default function caseWorkflowRequestRoutes(app) {
     app.get('/api/workflow-requests/pending-count', ...auth, asyncHandler(async (req, res) => {
         res.set('Cache-Control', 'no-store');
         const requesters = await requestersByRequest(await pendingOnAdministeredCases(req));
-        res.json({ count: [...requesters.values()].filter((subs) => subs.length).length });
+        const asked = [...requesters].filter(([, subs]) => subs.length).map(([row]) => row.requested_at);
+        res.json(bellCount(asked));
     }));
 }

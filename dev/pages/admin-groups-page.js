@@ -125,7 +125,7 @@ export class AdminGroupsPage extends LitElement {
             }
 
             if (this.isRegistrationReviewer) {
-                this._pendingCount = results[results.length - 1];
+                this._pendingCount = results[results.length - 1].count;
             }
 
             if (this._selectedGroup) {

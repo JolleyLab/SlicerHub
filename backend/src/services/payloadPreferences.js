@@ -94,3 +94,29 @@ export async function updatePreferencesByKcSub(kcSub, patch) {
         throw err;
     }
 }
+
+/**
+ * When the user last opened the notification bell (ISO string), or null. Kept on their
+ * preferences record so it holds across browsers; it isn't one of the preferences they set.
+ */
+export async function getBellOpenedAt(kcSub) {
+    const payload = getPayloadClient();
+    if (!payload || !kcSub) return null;
+    try {
+        return (await findDoc(payload, kcSub))?.bell_opened_at ?? null;
+    } catch (err) {
+        console.warn('[payloadPreferences] getBellOpenedAt failed:', err.message);
+        return null;
+    }
+}
+
+/** Record that the user opened the bell now; returns the time stored. */
+export async function markBellOpened(kcSub) {
+    const payload = getPayloadClient();
+    if (!payload || !kcSub) return null;
+    const at = new Date().toISOString();
+    const existing = await findDoc(payload, kcSub);
+    if (existing) await payload.update({ collection: 'user-preferences', id: existing.id, data: { bell_opened_at: at } });
+    else await payload.create({ collection: 'user-preferences', data: { keycloak_sub: kcSub, bell_opened_at: at } });
+    return at;
+}
