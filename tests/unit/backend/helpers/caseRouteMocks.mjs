@@ -18,11 +18,13 @@ export const mocks = {
     payload: null,
     caseRoles: {},        // `${sub}:${caseId}` -> role
     names: {},            // sub -> display name
+    siteAdmins: new Set(), // subs Keycloak says are site admins now
     notifications: [],    // what createNotification was called with
     reset(payload) {
         this.payload = payload;
         this.caseRoles = {};
         this.names = {};
+        this.siteAdmins = new Set();
         this.notifications = [];
     },
 };
@@ -38,6 +40,7 @@ mock.module(src('middleware/authMiddleware.js'), {
 });
 mock.module(src('services/keycloakAdmin.js'), {
     namedExports: {
+        isSiteAdminAccount: async (sub) => mocks.siteAdmins.has(sub),
         getUserCaseRole: async (sub, caseId) => mocks.caseRoles[`${sub}:${caseId}`] ?? null,
         getUserCaseRoleMap: async (sub) => Object.fromEntries(Object.entries(mocks.caseRoles)
             .filter(([key]) => key.startsWith(`${sub}:`))

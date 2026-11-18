@@ -24,6 +24,8 @@ export function normalizeMember(m) {
         lastName: m.lastName || m.last_name || '',
         avatarUrl: m.avatarUrl || null,
         role: m.locked ? 'admin' : (m.role || 'collaborator'),
+        siteAdmin: m.siteAdmin === true,
+        needsRole: m.needsRole === true,
         locked: Boolean(m.locked)
     };
 }

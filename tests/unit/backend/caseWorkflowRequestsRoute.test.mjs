@@ -229,7 +229,7 @@ test('"Find more" offers unapproved public workflows, marking requests; admins a
     assert.deepEqual((await available(MEMBER)).body.workflows.map((w) => w.id), [13]);
 });
 
-test('the pending list covers the cases I administer, with their titles', async () => {
+test('the pending list covers the cases the user administers, with their titles', async () => {
     mocks.payload.rows.cases.push({ id: 2, title: 'Not mine', owner_id: 'kc-stranger' });
     mocks.caseRoles['kc-member:2'] = 'collaborator';
     await request(MEMBER);
@@ -243,4 +243,15 @@ test('the pending list covers the cases I administer, with their titles', async 
     mocks.caseRoles['kc-member:2'] = 'admin';
     const viaRole = await call('GET', '/api/workflow-requests/pending', { user: MEMBER });
     assert.deepEqual(viaRole.body.requests.map((r) => r.caseId), ['2']);
+});
+
+test("a site admin's pending list covers every case; an org admin's only the cases they're admin of", async () => {
+    mocks.payload.rows.cases.push({ id: 2, title: 'Not mine', owner_id: 'kc-stranger' });
+    mocks.caseRoles['kc-member:2'] = 'collaborator';
+    await request(MEMBER);
+    await call('POST', '/api/cases/2/workflows/requests', { user: MEMBER, body: { workflowId: 11 } });
+
+    const pending = async (user) => (await call('GET', '/api/workflow-requests/pending', { user })).body.requests.map((r) => r.caseId).sort();
+    assert.deepEqual(await pending({ id: 7, role: 'admin', keycloakSub: 'kc-site' }), ['1', '2']);
+    assert.deepEqual(await pending({ id: 8, role: 'org-admin', keycloakSub: 'kc-org' }), []);
 });

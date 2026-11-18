@@ -32,6 +32,15 @@ describe('normalizeMember', () => {
         assert.equal(result.locked, true);
     });
 
+    it('keeps the site admin and needs-a-role flags the Share dialog shows', () => {
+        const site = normalizeMember({ id: 'x', role: 'site_admin', siteAdmin: true });
+        assert.equal(site.siteAdmin, true);
+        assert.equal(site.needsRole, false);
+        const former = normalizeMember({ id: 'y', role: 'site_admin', needsRole: true });
+        assert.equal(former.siteAdmin, false);
+        assert.equal(former.needsRole, true);
+    });
+
     it('uses provided role for non-locked members', () => {
         assert.equal(normalizeMember({ id: 'x', role: 'read_only', locked: false }).role, 'read_only');
         assert.equal(normalizeMember({ id: 'x', role: 'collaborator' }).role, 'collaborator');

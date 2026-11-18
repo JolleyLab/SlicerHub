@@ -5,7 +5,7 @@ import { getPayloadClient, requirePayload } from '../payload/index.js';
 import { ValidationError, NotFoundError, ForbiddenError } from '../utils/errors.js';
 import storage from '../storage/index.js';
 import { attachmentOpenFlags } from '../utils/attachmentFlags.js';
-import { assertCaseAccess, buildCaseRoleMap, getCaseRoleForSub } from '../utils/caseAccess.js';
+import { assertCaseAccess, buildCaseRoleMap, getCaseRoleForSub, isSiteAdmin } from '../utils/caseAccess.js';
 import { removeAllGroupAccessForCase } from '../services/caseGroupAccess.js';
 import { getKeycloakUser, kcDisplayName } from '../services/keycloakAdmin.js';
 import { avatarUrlFor } from '../services/avatars.js';
@@ -149,11 +149,12 @@ export default function casesRoutes(app) {
 
         // Build Keycloak case role map once — efficient single Admin API call
         const keycloakSub = req.user.keycloakSub;
-        const roleMap = req.user.role === 'admin' ? {} : await buildCaseRoleMap(req);
+        const siteAdmin = isSiteAdmin(req.user); // sees every case, as admin
+        const roleMap = siteAdmin ? {} : await buildCaseRoleMap(req);
         const collaboratorCaseIds = Object.keys(roleMap).map(Number);
 
         let where;
-        if (req.user.role === 'admin') {
+        if (siteAdmin) {
             where = {};
         } else if (!keycloakSub) {
             where = { id: { equals: -1 } }; // no Keycloak identity → no owned cases visible
@@ -179,7 +180,7 @@ export default function casesRoutes(app) {
         // Annotate each case with the current user's effective role
         const cases = result.docs.map(doc => ({
             ...doc,
-            myRole: req.user.role === 'admin'
+            myRole: siteAdmin
                 ? 'admin'
                 : doc.owner_id === keycloakSub
                     ? 'admin'

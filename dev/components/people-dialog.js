@@ -13,6 +13,7 @@ import './app-button.js';
 import './badge-pill.js';
 import './icon-button.js';
 import './dropdown-select.js';
+import './info-tip.js';
 
 const DEFAULT_ROLE_OPTIONS = Object.freeze([
     Object.freeze({ value: '', label: t('roles.selectRole'), disabled: true }),
@@ -96,10 +97,7 @@ function memberSecondaryLine(person, ctx = {}) {
             : t('people.group');
     }
     const id = person?.id != null ? String(person.id) : '';
-    if (ctx.currentUserId && id === String(ctx.currentUserId)) {
-        // A site admin is admin on every case, whatever role they were given here.
-        return ctx.myRole === 'admin' && person.role !== 'admin' ? t('people.siteAdminAccess') : '';
-    }
+    if (ctx.currentUserId && id === String(ctx.currentUserId)) return '';
     if (hasPersonName(person)) return '';
     return String(person?.email || '').trim();
 }
@@ -148,8 +146,6 @@ export class PeopleDialog extends LitElement {
             inviteRole: { type: String },
             /** User id of the signed-in viewer (for the "Me" label) */
             currentUserId: { type: String },
-            /** The viewer's effective role on the case (site admins: 'admin', even if listed lower) */
-            myRole: { type: String },
             /** SlicerHub groups the viewer can add as a collaborator: [{ id, name }] */
             availableGroups: { type: Array },
             groupPickId: { type: String },
@@ -181,7 +177,6 @@ export class PeopleDialog extends LitElement {
         this.unknownEmail = '';
         this.inviteRole = '';
         this.currentUserId = '';
-        this.myRole = '';
         this.availableGroups = [];
         this.groupPickId = '';
         this.groupPickRole = '';
@@ -200,7 +195,6 @@ export class PeopleDialog extends LitElement {
     get nameContext() {
         return {
             currentUserId: this.currentUserId || null,
-            myRole: this.myRole || null,
             unknownLabels: buildUnknownLabels(this.members, this.currentUserId || null)
         };
     }
@@ -262,8 +256,9 @@ export class PeopleDialog extends LitElement {
     handleRoleChange(memberId, event) {
         const role = event.target?.value || event.detail?.value;
         if (!role) return;
+        // Choosing a role answers a row's "assign a new role" note, so the note goes
         this.members = this.sortMembers(this.members.map((m) => (
-            m.id === memberId ? { ...m, role } : m
+            m.id === memberId ? { ...m, role, needsRole: false } : m
         )));
     }
 
@@ -444,8 +439,21 @@ export class PeopleDialog extends LitElement {
         const secondary = memberSecondaryLine(member, ctx);
         const editable = this.memberIsEditable(member);
         const isGroup = member?.type === 'group';
+        // A site admin is admin here whatever is stored, so there's no role to choose. One who no
+        // longer is has read only until given a role (backend utils/caseRoles.js): case admins are
+        // asked to assign one, without being told why; everyone else just sees "Read only".
+        const roleChoice = editable && !member.siteAdmin;
+        const askForRole = roleChoice && member.needsRole;
+        const remove = editable ? html`
+            <icon-button
+                label=${t('people.removePerson', { name })}
+                title=${t('common.remove')}
+                ?disabled=${this.saving}
+                @click=${() => this.handleRemove(member.id)}
+            >${ICON_TRASH}</icon-button>
+        ` : '';
         return html`
-            <div class="row">
+            <div class="row ${askForRole ? 'needs-role' : ''}">
                 <person-chip
                     .avatarUrl=${member.avatarUrl || ''}
                     .name=${name}
@@ -453,24 +461,22 @@ export class PeopleDialog extends LitElement {
                     title=${isGroup ? groupMembersTitle(member.groupMembers, member.hiddenMemberCount) : ''}
                 ></person-chip>
                 <div class="meta">
-                    ${editable ? html`
+                    ${askForRole ? html`<span class="role-note">${t('people.assignNewRole')}</span>` : ''}
+                    ${member.siteAdmin ? html`<badge-pill>${t('people.siteAdmin')}</badge-pill>` : ''}
+                    ${roleChoice ? html`
                         <dropdown-select
-                            .value=${member.role || 'collaborator'}
-                            .options=${this.effectiveRoleOptions.filter((o) => o.value)}
+                            .value=${askForRole ? '' : member.role || 'collaborator'}
+                            .options=${[
+                                ...(askForRole ? [{ value: '', label: t('people.chooseRole'), disabled: true }] : []),
+                                ...this.effectiveRoleOptions.filter((o) => o.value)
+                            ]}
                             aria-label=${t('people.roleForPerson', { name })}
                             @change=${(e) => this.handleRoleChange(member.id, e)}
                         ></dropdown-select>
-                        <icon-button
-                            label=${t('people.removePerson', { name })}
-                            title=${t('common.remove')}
-                            ?disabled=${this.saving}
-                            @click=${() => this.handleRemove(member.id)}
-                        >
-                            ${ICON_TRASH}
-                        </icon-button>
-                    ` : html`
-                        <badge-pill>${roleLabel(member.role)}</badge-pill>
+                    ` : member.siteAdmin ? '' : html`
+                        <badge-pill>${roleLabel(member.needsRole ? 'read_only' : member.role)}</badge-pill>
                     `}
+                    ${remove}
                 </div>
             </div>
         `;
@@ -640,6 +646,10 @@ export class PeopleDialog extends LitElement {
                 <div class="body">
                     ${this.error ? html`<p class="error">${this.error}</p>` : ''}
 
+                    <div class="list-heading">
+                        ${t('people.withAccess')}
+                        <info-tip .text=${t('people.siteAdminsHint')} .label=${t('people.siteAdminsInfo')}></info-tip>
+                    </div>
                     <div class="list">
                         <div class="list-scroll">
                             ${this.members.length === 0 ? html`

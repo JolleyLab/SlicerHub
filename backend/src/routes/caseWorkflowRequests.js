@@ -13,7 +13,7 @@ import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { getPayloadClient, requirePayload } from '../payload/index.js';
 import { ConflictError, NotFoundError, ValidationError } from '../utils/errors.js';
-import { loadCaseWithAccess, adminCaseIds } from '../utils/caseAccess.js';
+import { loadCaseWithAccess, administeredCasesWhere } from '../utils/caseAccess.js';
 import { requireOwnerId, loadOwnedDoc } from '../utils/ownedDocs.js';
 import { sanitizeText } from '../utils/validation.js';
 import {
@@ -131,11 +131,9 @@ export default function caseWorkflowRequestRoutes(app) {
     // Home's To do and the bell: pending requests on every case the user administers.
     app.get('/api/workflow-requests/pending', ...auth, asyncHandler(async (req, res) => {
         res.set('Cache-Control', 'no-store');
-        const caseIds = await adminCaseIds(req);
-        if (!caseIds.length) return res.json({ requests: [] });
-        const rows = await findAll(CASE_WORKFLOWS, {
-            and: [{ case: { in: caseIds } }, { status: { equals: 'pending' } }],
-        }, '-requested_at');
+        const administered = await administeredCasesWhere(req);
+        if (!administered) return res.json({ requests: [] });
+        const rows = await findAll(CASE_WORKFLOWS, { and: [administered, { status: { equals: 'pending' } }] }, '-requested_at');
         const caseIdsWithRequests = [...new Set(rows.map((r) => String(r.case)))];
         const cases = caseIdsWithRequests.length ? await findAll('cases', { id: { in: caseIdsWithRequests } }) : [];
         res.json({ requests: await describeRequests(rows, new Map(cases.map((c) => [String(c.id), c]))) });

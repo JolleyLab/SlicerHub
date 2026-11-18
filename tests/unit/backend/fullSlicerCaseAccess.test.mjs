@@ -22,7 +22,10 @@ mock.module('../../../backend/src/slicerGui/sessionManager.js', {
     namedExports: { stopSlicerGuiSession: async ({ userId, seatId }) => { stopped.push(`${userId}:${seatId}`); } },
 });
 mock.module('../../../backend/src/utils/caseAccess.js', {
-    namedExports: { getCaseRoleForSub: async (doc) => (canOpen.has(doc.id) ? 'read_only' : null) },
+    namedExports: {
+        getCaseRoleForSub: async (doc) => (canOpen.has(doc.id) ? 'read_only' : null),
+        isSiteAdmin: (u) => u?.role === 'admin', // as in caseAccess.js: app-admin only
+    },
 });
 mock.module('../../../backend/src/payload/index.js', {
     namedExports: {
@@ -86,6 +89,13 @@ test('site admins can open every case: their copies are never removed', async ()
     canOpen.clear();
     const r = await removeCopiesWithoutAccess({ user: { ...user, role: 'admin' }, seatId: 1 });
     assert.deepEqual(r.removed, []);
+});
+
+test("org admins are like anyone else on cases: copies from a case they can't open go", async () => {
+    stage(1, ['pl-11-a.nrrd']);
+    canOpen.clear();
+    const r = await removeCopiesWithoutAccess({ user: { ...user, role: 'org-admin' }, seatId: 1 });
+    assert.deepEqual(r.removed, ['pl-11-a.nrrd']);
 });
 
 test('before opening a file: every seat is cleaned, and only seats that held lost copies stop', async () => {

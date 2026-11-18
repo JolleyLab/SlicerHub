@@ -715,8 +715,7 @@ export class CasesPage extends LitElement {
         if (!caseRow) return null;
         if (caseRow.myRole) return caseRow.myRole;
         if (this.currentKeycloakSub && caseRow.owner_id === this.currentKeycloakSub) return 'admin';
-        if (this.isOrgAdmin) return 'admin';
-        return null;
+        return null; // the server's myRole covers site admins; org admins get only their membership
     }
 
     canEditCaseContent(caseRow) {
@@ -838,6 +837,8 @@ export class CasesPage extends LitElement {
                 displayName: entry.displayName || [entry.firstName, entry.lastName].filter(Boolean).join(' ') || entry.email || '',
                 avatarUrl: entry.avatarUrl || null,
                 role: entry.role || 'collaborator',
+                siteAdmin: entry.siteAdmin === true,
+                needsRole: entry.needsRole === true,
                 locked: false,
             });
         }
@@ -863,7 +864,6 @@ export class CasesPage extends LitElement {
         }
 
         const myRole = this.myCaseRole(caseRow);
-        dialog.myRole = myRole || '';
         dialog.roleOptions = (myRole === 'admin')
             ? null  // admins get all options (default)
             : [

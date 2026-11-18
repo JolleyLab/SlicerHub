@@ -21,6 +21,16 @@ export const peopleDialogStyles = css`
         font-size: 0.875rem;
     }
 
+    .list-heading {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        margin-bottom: -8px; /* sits with the list below, not spaced like a section */
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--color-text-secondary);
+    }
+
     .list {
         display: flex;
         flex-direction: column;
@@ -46,6 +56,17 @@ export const peopleDialogStyles = css`
         padding: 10px 12px;
         min-height: 52px;
         box-sizing: border-box;
+    }
+
+    /* A row waiting for a case admin to assign a role. Only the person is dimmed; the
+       note beside them keeps full contrast. */
+    .row.needs-role person-chip {
+        opacity: 0.55;
+    }
+
+    .role-note {
+        font-size: 0.8rem;
+        color: var(--color-text-secondary);
     }
 
     .row + .row {
