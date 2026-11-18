@@ -2,7 +2,7 @@
  * Requesting public workflows for a case (docs/workflows-design.md › Requests). Approving is
  * POST /api/cases/:id/workflows (routes/caseWorkflows.js), for requests and direct adds alike.
  *
- *   GET    /api/cases/:id/workflows/available?q=&fileTypes=  members above read_only: what "Find more…" offers
+ *   GET    /api/cases/:id/workflows/available?q=&sort=&page=  members above read_only: what "Request or Add" offers
  *   POST   /api/cases/:id/workflows/requests                  members above read_only: { workflowId }
  *   DELETE /api/cases/:id/workflows/requests/:workflowId      a requester cancels their own request
  *   POST   /api/cases/:id/workflows/:rowId/decline            admins: { reason? }
@@ -19,7 +19,7 @@ import { requireOwnerId, loadOwnedDoc } from '../utils/ownedDocs.js';
 import { sanitizeText } from '../utils/validation.js';
 import { bellCount } from '../utils/bellCount.js';
 import {
-    WORKFLOWS, CASE_WORKFLOWS, findAll, myWorkflows, publicWorkflows, toWorkflow, isApproved, workflowCopy,
+    WORKFLOWS, CASE_WORKFLOWS, PUBLIC, findAll, findWorkflowPage, workflowPageQuery, toWorkflow, isApproved, workflowCopy,
 } from '../services/workflows.js';
 import {
     REQUEST_MIN_ROLE, isPending, loadCaseWorkflowRow, describeRequests, decideRequesters,
@@ -52,39 +52,32 @@ async function createRow(caseId, workflowId, data) {
     }
 }
 
-const matchesQuery = (doc, q) => !q
-    || `${doc.name} ${doc.description || ''}`.toLowerCase().includes(q);
-/** For a file whose name could match any of `fileTypes` ("seg.nrrd", "nrrd"); workflows for any type always match. */
-const matchesFileTypes = (doc, fileTypes) => !fileTypes.length
-    || !(doc.file_types || []).length || fileTypes.some((ext) => doc.file_types.includes(ext));
-
 export default function caseWorkflowRequestRoutes(app) {
     const auth = [authenticateToken, requirePayload];
 
-    // "Find more…": public workflows not yet approved for the case (admins: plus their own, which
-    // they can add directly), with whether each is already requested, and by me.
+    // "Request or Add": public workflows not yet approved for the case (admins: plus their own,
+    // which they can add directly), a page at a time, with whether each is already requested, and
+    // whether by the requester.
     app.get('/api/cases/:id/workflows/available', ...auth, asyncHandler(async (req, res) => {
         const { role } = await loadCaseWithAccess(req.params.id, req, REQUEST_MIN_ROLE);
-        const q = String(req.query.q || '').trim().toLowerCase().slice(0, 100);
-        const fileTypes = String(req.query.fileTypes || '').toLowerCase().split(',')
-            .map((ext) => ext.trim().replace(/^\*?\./, '')).filter(Boolean).slice(0, 8);
-        const [rows, everyonePublic, mine, askedByMe] = await Promise.all([
+        const requester = requireOwnerId(req);
+        const [rows, askedByRequester] = await Promise.all([
             findAll(CASE_WORKFLOWS, { case: { equals: Number(req.params.id) } }),
-            publicWorkflows(),
-            role === 'admin' ? myWorkflows(req) : [],
-            requestedBy(req.params.id, requireOwnerId(req)),
+            requestedBy(req.params.id, requester),
         ]);
+        const approvedIds = rows.filter(isApproved).map((r) => Number(r.workflow));
+        const where = { and: [
+            role === 'admin' ? { or: [PUBLIC, { owner_id: { equals: requester } }] } : PUBLIC,
+            ...(approvedIds.length ? [{ id: { not_in: approvedIds } }] : []),
+        ] };
+        const { docs, hasMore } = await findWorkflowPage(where, workflowPageQuery(req.query));
         const rowByWorkflow = new Map(rows.map((r) => [String(r.workflow), r]));
-        const workflows = [...new Map([...everyonePublic, ...mine].map((d) => [String(d.id), d])).values()]
-            .filter((d) => !(rowByWorkflow.has(String(d.id)) && isApproved(rowByWorkflow.get(String(d.id)))))
-            .filter((d) => matchesQuery(d, q) && matchesFileTypes(d, fileTypes))
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map((d) => {
-                const row = rowByWorkflow.get(String(d.id));
-                const pending = Boolean(row && isPending(row));
-                return { ...toWorkflow(d, req), requested: pending, requestedByMe: pending && askedByMe.has(String(d.id)) };
-            });
-        res.json({ workflows });
+        const workflows = docs.map((d) => {
+            const row = rowByWorkflow.get(String(d.id));
+            const pending = Boolean(row && isPending(row));
+            return { ...toWorkflow(d, req), requested: pending, requestedByMe: pending && askedByRequester.has(String(d.id)) };
+        });
+        res.json({ workflows, hasMore });
     }));
 
     // Request a public workflow, or join the pending request for it. Asking again after a

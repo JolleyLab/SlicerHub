@@ -351,9 +351,20 @@ export const SiteAnnouncement = {
  * Saved viewer setups (docs/workflows-design.md). Anyone can make one; `public` ones can be
  * approved for a case by its admin. First pass: SlicerWeb extensions only.
  */
+/**
+ * What workflow search matches (services/workflows.js): name, description, extensions and file
+ * types, lowercased. Payload can't search inside json fields, so this is kept as plain text.
+ */
+export const workflowSearchText = (doc) => [doc.name, doc.description, ...(doc.extensions || []), ...(doc.file_types || [])]
+    .filter(Boolean).join(' ').toLowerCase();
+
 export const Workflows = {
     slug: 'workflows',
     admin: { useAsTitle: 'name' },
+    // On every save, the Payload admin's included, so search always matches what's stored.
+    hooks: {
+        beforeChange: [({ data, originalDoc }) => ({ ...data, search_text: workflowSearchText({ ...originalDoc, ...data }) })],
+    },
     fields: [
         { name: 'name', type: 'text', required: true },
         { name: 'description', type: 'textarea' },
@@ -375,6 +386,7 @@ export const Workflows = {
         { name: 'icon_key', type: 'text' },   // storage key of an uploaded icon (routes/workflows.js)
         { name: 'file_types', type: 'json' }, // string[]: data file extensions it's for ("mrb", "nii.gz"); empty = any
         { name: 'startup_config', type: 'json' }, // { module? }: known keys only (services/workflows.js)
+        { name: 'search_text', type: 'text', admin: { hidden: true } }, // set by the hook above
     ],
 };
 

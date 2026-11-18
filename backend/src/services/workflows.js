@@ -80,14 +80,50 @@ export const workflowCopy = (source) => ({
     source_updated_at: source.updatedAt,
 });
 
-/** At most 200 rows: plenty for now; the public gallery will need paging. */
+/** At most 200 rows: for lists bounded by one person or one case (public workflows are paged). */
 export async function findAll(collection, where, sort) {
     const { docs } = await getPayloadClient().find({ collection, where, sort, depth: 0, limit: 200 });
     return docs;
 }
 
 export const myWorkflows = (req) => findAll(WORKFLOWS, { owner_id: { equals: requireOwnerId(req) } }, 'name');
-export const publicWorkflows = () => findAll(WORKFLOWS, { visibility: { equals: 'public' } }, 'name');
+export const PUBLIC = { visibility: { equals: 'public' } };
+
+export const WORKFLOW_PAGE_SIZE = 24;
+const MAX_PAGE = 1000;
+/** Sort orders a list can ask for; the id breaks ties, so paging never repeats or skips a row. */
+const WORKFLOW_SORTS = Object.freeze({
+    title: ['name', 'id'],
+    newest: ['-updatedAt', '-id'],
+    oldest: ['updatedAt', 'id'],
+});
+
+/** A list request's search, sort and page (?q=&sort=&page=), made safe; unknown values fall back. */
+export function workflowPageQuery(query = {}) {
+    const page = Number.parseInt(query.page, 10);
+    return {
+        q: String(query.q || '').trim().slice(0, 100),
+        sort: Object.hasOwn(WORKFLOW_SORTS, query.sort) ? query.sort : 'title',
+        page: Number.isFinite(page) ? Math.min(Math.max(page, 1), MAX_PAGE) : 1,
+    };
+}
+
+/**
+ * One page of the workflows matching `where`, searched by `q` (every word must appear in the name,
+ * description, extensions or file types; payload/collections.js workflowSearchText).
+ * @returns {Promise<{ docs: object[], hasMore: boolean }>}
+ */
+export async function findWorkflowPage(where, { q, sort, page }) {
+    const result = await getPayloadClient().find({
+        collection: WORKFLOWS,
+        where: q ? { and: [where, { search_text: { like: q } }] } : where,
+        sort: WORKFLOW_SORTS[sort],
+        page,
+        limit: WORKFLOW_PAGE_SIZE,
+        depth: 0,
+    });
+    return { docs: result.docs, hasMore: Boolean(result.hasNextPage) };
+}
 
 /** A workflow as the API returns it (never its owner_id). */
 export const toWorkflow = (doc, req) => ({

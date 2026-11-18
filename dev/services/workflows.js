@@ -7,8 +7,18 @@ import { NO_TODOS, toBellCount } from '../utils/bellCount.js';
 
 const enc = encodeURIComponent;
 
+/** A query string from `params`, leaving out empty values and page 1: '' or '?scope=public&q=…'. */
+function queryString(params) {
+    const kept = Object.entries(params).filter(([key, value]) => value && !(key === 'page' && Number(value) <= 1));
+    return kept.length ? `?${new URLSearchParams(kept.map(([k, v]) => [k, String(v)]))}` : '';
+}
+/** A page of a list: { items, hasMore }. */
+const toPage = (d) => ({ items: d.workflows || [], hasMore: d.hasMore === true });
+
 export const listMyWorkflows = () => apiRequest('/api/workflows').then((d) => d.workflows);
-export const listPublicWorkflows = () => apiRequest('/api/workflows?scope=public').then((d) => d.workflows);
+/** Everyone's public workflows, a page at a time: { q, sort ('title' | 'newest' | 'oldest'), page } → { items, hasMore }. */
+export const listPublicWorkflows = ({ q, sort, page } = {}) =>
+    apiRequest(`/api/workflows${queryString({ scope: 'public', q, sort, page })}`).then(toPage);
 export const getWorkflow = (id) => apiRequest(`/api/workflows/${enc(id)}`).then((d) => d.workflow);
 export const createWorkflow = (fields) => apiRequest('/api/workflows', { method: 'POST', body: fields }).then((d) => d.workflow);
 export const updateWorkflow = (id, fields) => apiRequest(`/api/workflows/${enc(id)}`, { method: 'PATCH', body: fields }).then((d) => d.workflow);
@@ -37,14 +47,12 @@ export const removeWorkflowIcon = (id) => apiRequest(`/api/workflows/${enc(id)}/
  */
 export const listCaseWorkflows = (caseId) => apiRequest(`/api/cases/${enc(caseId)}/workflows`);
 
-/** "Find more…": public workflows not yet approved, each with `requested` and `requestedByMe`. */
-export function listAvailableCaseWorkflows(caseId, { q = '', fileTypes = [] } = {}) {
-    const params = new URLSearchParams();
-    if (q) params.set('q', q);
-    if (fileTypes.length) params.set('fileTypes', fileTypes.join(','));
-    const query = params.toString();
-    return apiRequest(`/api/cases/${enc(caseId)}/workflows/available${query ? `?${query}` : ''}`).then((d) => d.workflows);
-}
+/**
+ * "Request or Add": public workflows not yet approved for the case (admins: plus their own), a page
+ * at a time, each with `requested` and `requestedByMe`: { q, page } → { items, hasMore }.
+ */
+export const listAvailableCaseWorkflows = (caseId, { q, page } = {}) =>
+    apiRequest(`/api/cases/${enc(caseId)}/workflows/available${queryString({ q, page })}`).then(toPage);
 export const requestCaseWorkflow = (caseId, workflowId) =>
     apiRequest(`/api/cases/${enc(caseId)}/workflows/requests`, { method: 'POST', body: { workflowId } });
 export const declineCaseWorkflowRequest = (caseId, rowId, reason = '') =>

@@ -14,8 +14,10 @@ globalThis.fetch = async (url, init = {}) => {
 };
 
 const { apiRequest } = await import('../../../dev/services/apiResponse.js');
-const { approveCaseWorkflow, deleteWorkflow, listMyWorkflows, loadExtensionCatalog, uploadWorkflowIcon } =
-    await import('../../../dev/services/workflows.js');
+const {
+    approveCaseWorkflow, deleteWorkflow, listMyWorkflows, listPublicWorkflows, listAvailableCaseWorkflows,
+    loadExtensionCatalog, uploadWorkflowIcon,
+} = await import('../../../dev/services/workflows.js');
 
 beforeEach(() => {
     calls.length = 0;
@@ -91,5 +93,18 @@ describe('loadExtensionCatalog', () => {
         respond = () => ({ status: 200, body: { extensions: [] } });
         assert.deepEqual(await loadExtensionCatalog('latest'), []);
         assert.equal(calls.length, 2);
+    });
+});
+
+describe('paged workflow lists', () => {
+    it('ask for one page of a search, leaving out what is empty, and return { items, hasMore }', async () => {
+        respond = () => ({ status: 200, body: { workflows: [{ id: 1 }], hasMore: true } });
+        assert.deepEqual(await listPublicWorkflows({ q: 'valve tools', sort: 'newest', page: 2 }), { items: [{ id: 1 }], hasMore: true });
+        assert.equal(calls[0].url, '/api/workflows?scope=public&q=valve+tools&sort=newest&page=2');
+
+        await listPublicWorkflows({ q: '', page: 1 });
+        assert.equal(calls[1].url, '/api/workflows?scope=public');
+        await listAvailableCaseWorkflows('7', { q: 'heart' });
+        assert.equal(calls[2].url, '/api/cases/7/workflows/available?q=heart');
     });
 });

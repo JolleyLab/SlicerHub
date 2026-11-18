@@ -78,6 +78,8 @@ test('reports what it did for setup-payload, and doing it again changes nothing'
     assert.deepEqual(await seedWorkflows(), { workflows: ['SlicerHeart', 'SlicerHeart – Simplified'], cases: 2 });
     assert.deepEqual(await seedWorkflows(), { workflows: ['SlicerHeart', 'SlicerHeart – Simplified'], cases: 0 });
     assert.equal(rows('workflows').length, 2);
+    // Created through Payload, so the search hook gave them their search text.
+    assert.ok(rows('workflows').every((w) => w.search_text.includes('slicerheart')));
 });
 
 test('a failure reaches setup-payload, which stops and says so', async () => {

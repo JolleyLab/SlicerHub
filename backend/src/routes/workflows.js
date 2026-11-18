@@ -1,6 +1,7 @@
 /**
  * Workflows: saved SlicerWeb setups (docs/workflows-design.md). Anyone signed in can list and
- * create their own (?scope=public: everyone's public ones); only the owner can change one.
+ * create their own (?scope=public: everyone's public ones, paged: ?q=&sort=&page=); only the owner
+ * can change one.
  * Workflows on a case are in routes/caseWorkflows.js.
  */
 
@@ -13,7 +14,9 @@ import { NotFoundError, ValidationError } from '../utils/errors.js';
 import { IMAGE_MIME, sniffImageType, sendStoredImage } from '../utils/storedImage.js';
 import { requireOwnerId, loadOwnedDoc } from '../utils/ownedDocs.js';
 import { sanitizeNameList, sanitizeFileExtensions, sanitizeText, sanitizeChoice } from '../utils/validation.js';
-import { WORKFLOWS, myWorkflows, publicWorkflows, toWorkflow, sanitizeStartupConfig } from '../services/workflows.js';
+import {
+    WORKFLOWS, PUBLIC, myWorkflows, findWorkflowPage, workflowPageQuery, toWorkflow, sanitizeStartupConfig,
+} from '../services/workflows.js';
 
 export const VISIBILITIES = ['private', 'public'];
 export const ICON_MAX_BYTES = 256 * 1024;
@@ -40,9 +43,16 @@ export function workflowFields(body = {}, { partial = false } = {}) {
 export default function workflowRoutes(app) {
     const auth = [authenticateToken, requirePayload];
 
+    // The requester's own workflows come all at once (one person's list stays small; the browser
+    // searches and sorts it). ?scope=public is everyone's public workflows, which can grow without
+    // limit, so the server searches and sorts them and returns one page at a time (?q=&sort=&page=).
     app.get('/api/workflows', ...auth, asyncHandler(async (req, res) => {
-        const docs = req.query.scope === 'public' ? await publicWorkflows() : await myWorkflows(req);
-        res.json({ workflows: docs.map((d) => toWorkflow(d, req)) });
+        if (req.query.scope !== 'public') {
+            const docs = await myWorkflows(req);
+            return res.json({ workflows: docs.map((d) => toWorkflow(d, req)), hasMore: false });
+        }
+        const { docs, hasMore } = await findWorkflowPage(PUBLIC, workflowPageQuery(req.query));
+        res.json({ workflows: docs.map((d) => toWorkflow(d, req)), hasMore });
     }));
 
     app.get('/api/workflows/:id', ...auth, asyncHandler(async (req, res) => {

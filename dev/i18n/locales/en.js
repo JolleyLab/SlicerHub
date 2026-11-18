@@ -874,6 +874,14 @@ avatarUpload: 'Upload photo',
         updateAvailable: 'Update available',
         update: 'Update',
         loadFailed: 'Workflows could not be loaded.',
+        // Lists searched on the server, a page at a time (utils/pagedList.js)
+        loadMore: 'Load more',
+        loadingMore: 'Loading…',
+        // Announced to screen readers when a search or "Load more" finishes
+        shown: 'Showing {count} workflows',
+        shownOne: 'Showing 1 workflow',
+        shownNone: 'No workflows found',
+        shownHasMore: 'More can be loaded',
         // Requesting and adding workflows on a case (case-workflows-panel)
         add: 'Add',
         request: 'Request',

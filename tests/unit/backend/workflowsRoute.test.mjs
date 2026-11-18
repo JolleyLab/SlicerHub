@@ -279,6 +279,35 @@ test('?scope=public lists everyone\'s public workflows, without owners', async (
     assert.equal('owner_id' in res.body.workflows[0], false);
 });
 
+test('public workflows come a page at a time, searched and sorted on the server', async () => {
+    for (let i = 0; i < 30; i += 1) {
+        await call('POST', '/api/workflows', { user: STRANGER, body: { name: `Gallery ${String(i).padStart(2, '0')}`, visibility: 'public' } });
+    }
+    const list = async (query) => (await call('GET', '/api/workflows', { user: MEMBER, query: { scope: 'public', ...query } })).body;
+
+    const first = await list({});
+    const second = await list({ page: '2' });
+    assert.equal(first.workflows.length, 24);
+    assert.equal(first.hasMore, true);
+    assert.equal(second.hasMore, false);
+    const ids = [...first.workflows, ...second.workflows].map((w) => w.id);
+    assert.equal(new Set(ids).size, 31); // the 30, and workflow 11: none repeated or skipped
+    assert.equal(first.workflows[0].name, 'Gallery 00'); // by title unless asked otherwise
+
+    assert.equal((await list({ sort: 'newest' })).workflows[0].name, 'Gallery 29');
+    assert.deepEqual((await list({ q: 'gallery 07' })).workflows.map((w) => w.name), ['Gallery 07']);
+    assert.deepEqual((await list({ q: 'slicerheart' })).workflows.map((w) => w.id), [11]); // by extension
+    // Nonsense paging or sorting falls back instead of failing.
+    assert.equal((await list({ page: '-3', sort: 'drop table' })).workflows[0].name, 'Gallery 00');
+});
+
+test('search follows edits: the search text is rebuilt on every save', async () => {
+    await call('PATCH', '/api/workflows/11', { user: MEMBER, body: { name: 'Valve planning', extensions: ['SlicerIGT'] } });
+    const search = async (q) => (await call('GET', '/api/workflows', { user: MEMBER, query: { scope: 'public', q } })).body.workflows;
+    assert.deepEqual((await search('valve igt')).map((w) => w.id), [11]);
+    assert.deepEqual(await search('slicerheart'), []);
+});
+
 // ── icons ──────────────────────────────────────────────────────────────────
 
 test('the owner can upload an icon; it is stored and gets a versioned URL', async () => {

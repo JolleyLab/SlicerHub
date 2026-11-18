@@ -13,8 +13,8 @@ import { formatFileExtension } from '../utils/fileTypes.js';
 import { ICON_TRASH } from '../utils/icons.js';
 import { requesterText } from '../utils/activityItems.js';
 import { invalidateNotifications } from '../services/notifications.js';
+import { PagedList, renderPagedList, pagedListStyles } from '../utils/pagedList.js';
 
-const SEARCH_DELAY_MS = 250;
 export const PANEL_TAB = Object.freeze({ CASE: 'case', BROWSE: 'browse', REQUESTS: 'requests' });
 
 const formatDate = (iso) => (iso ? new Date(iso).toLocaleDateString() : '');
@@ -35,7 +35,6 @@ export class CaseWorkflowsPanel extends LitElement {
             slicerWebExtensions: { attribute: false },
             tab: { state: true },
             query: { state: true },
-            results: { state: true },
             busyId: { state: true },
             decliningId: { state: true },
             declineReason: { state: true },
@@ -44,7 +43,7 @@ export class CaseWorkflowsPanel extends LitElement {
     }
 
     static get styles() {
-        return [buttonStyles, workflowStyles, css`
+        return [buttonStyles, workflowStyles, pagedListStyles, css`
             icon-button svg { width: 15px; height: 15px; }
             .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--color-border); margin-bottom: 12px; }
             .tabs button { border: 0; background: transparent; color: var(--color-text-secondary); font: inherit;
@@ -69,12 +68,17 @@ export class CaseWorkflowsPanel extends LitElement {
         this.slicerWebExtensions = null;
         this.tab = PANEL_TAB.CASE;
         this.query = '';
-        this.results = null;
+        /** "Request or Add": searched on the server, a page at a time */
+        this._available = new PagedList((params) => listAvailableCaseWorkflows(this.caseId, params), () => this.requestUpdate());
         this.busyId = '';
         this.decliningId = '';
         this.declineReason = '';
         this.error = '';
-        this._searchTimer = null;
+    }
+
+    disconnectedCallback() {
+        this._available.cancel();
+        super.disconnectedCallback();
     }
 
     get _admin() { return this.data?.canManage === true; }
@@ -103,21 +107,13 @@ export class CaseWorkflowsPanel extends LitElement {
         }
     }
 
-    async _search() {
-        const key = `${this.caseId}|${this.query}`;
-        this._searchKey = key;
-        try {
-            const results = await listAvailableCaseWorkflows(this.caseId, { q: this.query.trim() });
-            if (key === this._searchKey) this.results = results;
-        } catch (err) {
-            if (key === this._searchKey) this.error = err?.message || t('workflows.loadFailed');
-        }
+    _search() {
+        return this._available.search({ q: this.query.trim() });
     }
 
     _onQuery(value) {
         this.query = value;
-        clearTimeout(this._searchTimer);
-        this._searchTimer = setTimeout(() => this._search(), SEARCH_DELAY_MS);
+        this._available.searchSoon({ q: value.trim() });
     }
 
     /** Run an action for one row, then tell the page (which reloads `data`) and refresh the browse list. */
@@ -217,9 +213,10 @@ export class CaseWorkflowsPanel extends LitElement {
             <input class="search" type="text" .value=${this.query}
                 placeholder=${t('workflows.filterPlaceholder')} aria-label=${t('workflows.searchAria')}
                 @input=${(e) => this._onQuery(e.target.value)} />
-            ${!this.results ? html`<span class="muted">${t('common.loading')}</span>`
-                : !this.results.length ? html`<span class="muted">${t('caseWorkflows.browseNone')}</span>`
-                : html`<ul class="list results">${this.results.map((w) => this._browseRow(w))}</ul>`}
+            ${renderPagedList(this._available, {
+                empty: html`<span class="muted">${t('caseWorkflows.browseNone')}</span>`,
+                render: (items) => html`<ul class="list results">${items.map((w) => this._browseRow(w))}</ul>`,
+            })}
         `;
     }
 

@@ -3,6 +3,7 @@ import { t } from '../i18n/index.js';
 import { buttonStyles } from '../styles/buttons.js';
 import { listPageStyles } from '../styles/listPage.js';
 import { LIST_SORT_OPTIONS, filterByText, sortRows } from '../utils/listSort.js';
+import { PagedList, renderPagedList, pagedListStyles } from '../utils/pagedList.js';
 import {
     getWorkflow, listMyWorkflows, listPublicWorkflows, createWorkflow, updateWorkflow, deleteWorkflow,
     loadExtensionCatalog, uploadWorkflowIcon, removeWorkflowIcon, WORKFLOW_ICON_TYPES, WORKFLOW_ICON_MAX_BYTES,
@@ -46,7 +47,7 @@ export class WorkflowsPage extends LitElement {
             isOrgAdmin: { type: Boolean },
             isRegistrationReviewer: { type: Boolean },
             tab: { state: true },
-            lists: { state: true },      // { mine, public }: arrays, or null while loading
+            owned: { state: true },      // My workflows: the requester's own, or null while loading
             query: { state: true },
             sortOrder: { state: true },
             selected: { state: true },   // workflow shown in detail
@@ -60,7 +61,7 @@ export class WorkflowsPage extends LitElement {
     }
 
     static get styles() {
-        return [buttonStyles, listPageStyles, iconTileStyles, css`
+        return [buttonStyles, listPageStyles, iconTileStyles, pagedListStyles, css`
             :host { display: block; width: 100%; min-width: 0; }
             .tabs { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--color-border); border-radius: 8px; margin-bottom: 16px; }
             .tabs button {
@@ -161,7 +162,10 @@ export class WorkflowsPage extends LitElement {
     constructor() {
         super();
         this.tab = 'mine';
-        this.lists = { mine: null, public: null };
+        /** My workflows: all of them, searched and sorted here. */
+        this.owned = null;
+        /** All workflows: everyone's public ones, searched and sorted on the server, a page at a time. */
+        this.everyone = new PagedList((params) => listPublicWorkflows(params), () => this.requestUpdate());
         this.query = '';
         this.sortOrder = 'newest';
         this.selected = null;
@@ -189,6 +193,7 @@ export class WorkflowsPage extends LitElement {
     disconnectedCallback() {
         window.removeEventListener('popstate', this._onPopState);
         window.removeEventListener('beforeunload', this._onBeforeUnload);
+        this.everyone.cancel();
         this._releaseIconPreview();
         setPageTitle();
         super.disconnectedCallback();
@@ -239,7 +244,7 @@ export class WorkflowsPage extends LitElement {
     async _syncFromUrl() {
         const params = new URLSearchParams(location.search);
         const tab = params.get('tab') === 'all' ? 'public' : 'mine';
-        if (tab !== this.tab || this.lists[tab] === null) this._loadTab(tab);
+        if (tab !== this.tab || this._items(tab) === null) this._loadTab(tab);
         this.error = '';
         const id = params.get('workflow');
         const edit = params.get('edit');
@@ -253,7 +258,7 @@ export class WorkflowsPage extends LitElement {
             return;
         }
         let workflow = String(this.selected?.id) === id ? this.selected
-            : [...(this.lists.mine || []), ...(this.lists.public || [])].find((w) => String(w.id) === id);
+            : [...(this.owned || []), ...(this.everyone.items || [])].find((w) => String(w.id) === id);
         workflow = workflow || await this._run(() => getWorkflow(id));
         if (!workflow) {
             updateUrlParams({ workflow: null, edit: null }, { replace: true });
@@ -287,22 +292,47 @@ export class WorkflowsPage extends LitElement {
         }
     }
 
-    _loadTab(tab) {
-        this.tab = tab;
-        return this._run(async () => {
-            const list = await (tab === 'public' ? listPublicWorkflows() : listMyWorkflows());
-            this.lists = { ...this.lists, [tab]: list };
-        });
+    /** The tab's loaded workflows, or null before they arrive. */
+    _items(tab = this.tab) {
+        return tab === 'public' ? this.everyone.items : this.owned;
     }
 
-    /** Put a saved workflow into the lists it belongs to (and out of the ones it doesn't). */
+    _loadTab(tab) {
+        this.tab = tab;
+        if (tab === 'public') return this._searchEveryone();
+        return this._run(async () => { this.owned = await listMyWorkflows(); });
+    }
+
+    /** All workflows for the current search and sort (soon: once typing pauses). */
+    _searchEveryone({ soon = false } = {}) {
+        const params = { q: this.query.trim(), sort: this.sortOrder };
+        return soon ? this.everyone.searchSoon(params) : this.everyone.search(params);
+    }
+
+    _onSearch(query) {
+        this.query = query;
+        if (this.tab === 'public') this._searchEveryone({ soon: true });
+    }
+
+    _onSort(order) {
+        this.sortOrder = order;
+        if (this.tab === 'public') this._searchEveryone();
+    }
+
+    /**
+     * Put a saved workflow into the lists it belongs to (and out of the ones it doesn't). All
+     * workflows only updates or drops what's shown: a new public one appears on its next search,
+     * in the server's order.
+     */
     _remember(workflow, { removed = false } = {}) {
-        const place = (list, keep) => (list === null ? null
-            : [...list.filter((w) => w.id !== workflow.id), ...(keep ? [workflow] : [])]);
-        this.lists = {
-            mine: place(this.lists.mine, !removed),
-            public: place(this.lists.public, !removed && workflow.visibility === 'public'),
-        };
+        if (this.owned !== null) {
+            this.owned = [...this.owned.filter((w) => w.id !== workflow.id), ...(removed ? [] : [workflow])];
+        }
+        const keep = !removed && workflow.visibility === 'public';
+        if (this.everyone.items) {
+            this.everyone.items = this.everyone.items.flatMap((w) => (w.id !== workflow.id ? [w] : keep ? [workflow] : []));
+            this.requestUpdate();
+        }
     }
 
     /** Open a workflow's page (a history entry, so Back returns to the list). */
@@ -555,14 +585,13 @@ export class WorkflowsPage extends LitElement {
     }
 
     _renderList() {
-        const all = this.lists[this.tab];
-        const rows = sortRows(filterByText(all, this.query, (w) => [w.name, w.description, ...w.extensions, ...w.fileTypes.map(formatFileExtension)]),
-            this.sortOrder, { titleOf: (w) => w.name, timeOf: (w) => w.updatedAt });
+        const all = this._items();
+        const searching = Boolean(this.query.trim());
         return this._layout(html`
             <div class="page-header-row">
                 <h1 class="page-heading">${t('workflows.title')}</h1>
                 <div class="page-header-actions">
-                    ${all?.length ? html`
+                    ${all?.length || searching ? html`
                         <list-filter-tools
                             .searchQuery=${this.query}
                             .sortOrder=${this.sortOrder}
@@ -570,8 +599,8 @@ export class WorkflowsPage extends LitElement {
                             searchLabel=${t('workflows.searchAria')}
                             sortLabel=${t('workflows.sortAria')}
                             searchPlaceholder=${t('workflows.filterPlaceholder')}
-                            @search-change=${(e) => { this.query = e.detail.query; }}
-                            @sort-change=${(e) => { this.sortOrder = e.detail.order; }}
+                            @search-change=${(e) => this._onSearch(e.detail.query)}
+                            @sort-change=${(e) => this._onSort(e.detail.order)}
                         ></list-filter-tools>
                     ` : ''}
                     <button class="primary-button" type="button" ?disabled=${this.busy} @click=${() => this._edit(null)}>
@@ -591,14 +620,26 @@ export class WorkflowsPage extends LitElement {
             </div>
             <div id="wf-tabpanel" role="tabpanel" aria-labelledby="wf-tab-${this.tab}">
             ${this._renderError()}
-            ${all === null ? html`<div class="status-note" role="status">${t('common.loading')}</div>`
-                : !all.length ? html`<page-content-message variant="empty"
-                    message=${t(this.tab === 'mine' ? 'workflows.none' : 'workflows.noPublic')}></page-content-message>`
-                : !rows.length ? html`<p class="empty-filter">${t('workflows.noMatch', { query: this.query.trim() })}</p>`
-                : this.tab === 'mine' ? this._renderSections(rows)
-                : html`<div class="card-grid">${rows.map((w) => this._renderCard(w))}</div>`}
+            ${this.tab === 'mine' ? this._renderOwned() : renderPagedList(this.everyone, {
+                empty: searching ? this._noMatch() : html`<page-content-message variant="empty"
+                    message=${t('workflows.noPublic')}></page-content-message>`,
+                render: (rows) => html`<div class="card-grid">${rows.map((w) => this._renderCard(w))}</div>`,
+            })}
             </div>
         `);
+    }
+
+    _noMatch() {
+        return html`<p class="empty-filter">${t('workflows.noMatch', { query: this.query.trim() })}</p>`;
+    }
+
+    /** My workflows: searched and sorted here (one person's, so all are loaded). */
+    _renderOwned() {
+        if (this.owned === null) return html`<div class="status-note" role="status">${t('common.loading')}</div>`;
+        if (!this.owned.length) return html`<page-content-message variant="empty" message=${t('workflows.none')}></page-content-message>`;
+        const rows = sortRows(filterByText(this.owned, this.query, (w) => [w.name, w.description, ...w.extensions, ...w.fileTypes.map(formatFileExtension)]),
+            this.sortOrder, { titleOf: (w) => w.name, timeOf: (w) => w.updatedAt });
+        return rows.length ? this._renderSections(rows) : this._noMatch();
     }
 
     /** Tabs pattern: Left/Right (wrapping), Home, End move to and select a tab. */

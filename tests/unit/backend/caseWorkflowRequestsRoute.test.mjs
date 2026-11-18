@@ -207,8 +207,8 @@ test('asking at the same moment twice keeps one requester row', async () => {
 
 // ── finding more, and the admin's list across cases ───────────────────────
 
-test('"Find more" offers unapproved public workflows, marking requests; admins also see their own', async () => {
-    mocks.payload.rows.workflows.push({ ...workflow(13, 'kc-stranger', 'public'), name: 'Valve tools', file_types: ['nrrd'] });
+test('"Request or Add" offers unapproved public workflows, marking requests; admins also see their own', async () => {
+    mocks.payload.rows.workflows.push(workflow(13, 'kc-stranger', 'public', undefined, { name: 'Valve tools', file_types: ['nrrd'] }));
     await request(OTHER, 13);
     const available = (user, query) => call('GET', '/api/cases/1/workflows/available', { user, query });
 
@@ -218,12 +218,13 @@ test('"Find more" offers unapproved public workflows, marking requests; admins a
     assert.deepEqual((await available(ADMIN)).body.workflows.map((w) => w.id), [13, 11, 12]);
     assert.equal((await available(READER)).status, 403);
 
+    // Searched on the server: every word, in the name, description, extensions or file types.
     res = await available(MEMBER, { q: 'valve' });
     assert.deepEqual(res.body.workflows.map((w) => w.id), [13]);
-    res = await available(MEMBER, { fileTypes: '.MRB' });
-    assert.deepEqual(res.body.workflows.map((w) => w.id), [11]); // 13 is for nrrd only; 11 is for any type
-    res = await available(MEMBER, { fileTypes: 'seg.nrrd,nrrd' });
-    assert.deepEqual(res.body.workflows.map((w) => w.id), [13, 11]);
+    res = await available(MEMBER, { q: 'NRRD tools' });
+    assert.deepEqual(res.body.workflows.map((w) => w.id), [13]);
+    res = await available(MEMBER, { q: 'slicerrt' });
+    assert.deepEqual(res.body.workflows.map((w) => w.id), [11]);
 
     await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
     assert.deepEqual((await available(MEMBER)).body.workflows.map((w) => w.id), [13]);

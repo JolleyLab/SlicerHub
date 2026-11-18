@@ -326,11 +326,11 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
 
 - Failed loads (16 Nov): the "may need an extension" dialog with "Open with …" buttons (see [When a file needs an extension](#when-a-file-needs-an-extension)).
 - Requesters as rows, unique indexes, reads that never write (16 Nov).
-- Bell and Home To do for requests (17 Nov, uncommitted): `GET /api/workflow-requests/pending-count`; the bell's line for requests waiting (opens Home); To do cards with Approve / Decline (inline optional reason), whose title opens the case's Workflows panel on Requests; approved/declined outcomes in To do while unread, under a new "Workflow" category. The bell's count doesn't check that requesters are still in the case (that needs their roles on every poll), so a request whose requesters have all left counts until decided, though To do hides it.
+- Bell and Home To do for requests (17 Nov): `GET /api/workflow-requests/pending-count`; the bell's line for requests waiting (opens Home); To do cards with Approve / Decline (inline optional reason), whose title opens the case's Workflows panel on Requests; approved/declined outcomes in To do while unread, under a new "Workflow" category. The bell's count doesn't check that requesters are still in the case (that needs their roles on every poll), so a request whose requesters have all left counts until decided, though To do hides it.
 
-**Next, in order:**
-1. **Server-side search and paging** for public workflows, shared by the Workflows panel and the Workflows page's "All workflows" tab (both stop at 200 today).
-2. The cleanup below.
+- Server-side search and paging (18 Nov, uncommitted): the Workflows page's "All workflows" tab and the case panel's "Request or Add" list ask the server for 24 at a time (`?q=&sort=&page=`, `findWorkflowPage` in `services/workflows.js`), with "Load more" (`dev/utils/pagedList.js`). Search matches every word in the name, description, extensions or file types, through a `search_text` field that a Payload hook rebuilds on every save (Payload can't search inside json fields). No backfill: workflows exist only on this branch, and the one local database with older rows was filled in by hand. "My workflows" stays loaded whole and searched in the browser, since it's one person's. The case panel's unused `fileTypes` filter is gone.
+
+**Next:** the cleanup below.
 
 **Open questions and follow-ups:**
 - "Start in" shows module names (`SegmentEditor`), not the titles Slicer users know ("Segment Editor"); decide together with the core module list once users have said where they start.
@@ -338,6 +338,7 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
 - Move the remaining inline icons (download, search, `homeIcons.js`) into `dev/utils/icons.js`.
 - Extract the viewer code (about 900 lines) from `cases-page.js`.
 - A Docker 409 ("removal already in progress") when starting a Full Slicer seat right after a backend restart.
+- A local test-data script (e.g. `scripts/seed-test-data.mjs`, never run by setup or bootstrap): data for trying things locally that a real installation shouldn't get, such as enough public workflows to page through, with a matching remove step. Paging was tested on 18 Nov with 30 public workflows owned by `test-paging`, added by hand.
 
 **Cleanup agreed before merging:**
 - Requests: ~~unique index on (case, workflow); requesters as rows; no writes inside GETs (ex-members filtered on read)~~ (done 16 Nov); a cooldown before re-requesting a declined workflow; a cap on pending requests per member per case; optionally a per-user rate limit on request and cancel.
@@ -352,10 +353,9 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
 
 ## To think about later
 
-**Abuse once there's a public gallery.** Nothing limits how many workflows one person can create or make public, and `GET /api/workflows?scope=public` returns the first 200 by name. One account could crowd the list, or publish misleading names and descriptions. None of this is a vulnerability today (public workflows can only name extensions we ship, and every field is shown as plain text), but the gallery needs some of these before it ships:
+**Abuse once there's a public gallery.** Nothing limits how many workflows one person can create or make public, though `GET /api/workflows?scope=public` is now searched and paged on the server (sorted by title unless asked otherwise). One account could crowd the list, or publish misleading names and descriptions. None of this is a vulnerability today (public workflows can only name extensions we ship, and every field is shown as plain text), but the gallery needs some of these before it ships:
 
 - a per-person limit on workflows, or on public ones, and rate limits on create and publish;
-- paging and search on the server instead of a fixed 200;
 - a way to report a workflow, and to hide or unpublish it (for example from the Payload admin);
 - showing who published a workflow, which needs the same opt-in as names elsewhere (`share_name_in_groups`); today public workflows show no author, by design;
 - a sort that isn't just alphabetical (recent, or most used), so the first page can't be claimed by naming.
