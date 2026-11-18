@@ -586,10 +586,10 @@ export class CasesPage extends LitElement {
     }
 
     /**
-     * Open case People dialog (used by notification deep-links).
+     * Open a case, then `then(caseRow)` once it's in the list (notification deep-links).
      * Retries briefly if the case list has not finished loading.
      */
-    async openPeopleForCaseId(caseId) {
+    async _openCaseThen(caseId, then) {
         const id = String(caseId || '').trim();
         if (!id) return;
         this.openCase(id);
@@ -597,11 +597,21 @@ export class CasesPage extends LitElement {
             const caseRow = this.cases.find((row) => String(row.id) === id);
             if (caseRow) {
                 await this.updateComplete;
-                await this.openPeopleDialog(caseRow);
+                await then(caseRow);
                 return;
             }
             await new Promise((r) => setTimeout(r, 100));
         }
+    }
+
+    /** Open case People dialog (used by notification deep-links). */
+    openPeopleForCaseId(caseId) {
+        return this._openCaseThen(caseId, (caseRow) => this.openPeopleDialog(caseRow));
+    }
+
+    /** Open the case's Workflows panel on `tab` (PANEL_TAB; Home's workflow request cards). */
+    openWorkflowsForCaseId(caseId, tab) {
+        return this._openCaseThen(caseId, (caseRow) => this.workflows.openPanel(caseRow, tab));
     }
 
     async refreshPendingInviteCount() {

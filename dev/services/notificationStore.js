@@ -1,6 +1,7 @@
 import { listNotifications, markNotificationsSeen } from './notifications.js';
 import { getPendingRegistrationsCount } from './registrations.js';
 import { getPendingCaseInvitesCount } from './cases.js';
+import { pendingWorkflowRequestCount } from './workflows.js';
 
 const POLL_MS = 60_000;
 
@@ -13,6 +14,8 @@ class NotificationStore {
             newCount: 0,
             pendingRegCount: 0,
             pendingInviteCount: 0,
+            /** Workflow requests waiting on cases the user administers */
+            pendingWorkflowRequestCount: 0,
             loading: false
         };
         this._subscribers = new Set();
@@ -77,10 +80,11 @@ class NotificationStore {
     async refresh({ quiet = false } = {}) {
         if (!quiet) this._notify({ loading: true });
         try {
-            const [data, pendingRegCount, pendingInviteCount] = await Promise.all([
+            const [data, pendingRegCount, pendingInviteCount, pendingWorkflowRequests] = await Promise.all([
                 listNotifications(),
                 this._isRegistrationReviewer ? getPendingRegistrationsCount() : Promise.resolve(0),
-                getPendingCaseInvitesCount()
+                getPendingCaseInvitesCount(),
+                pendingWorkflowRequestCount()
             ]);
             this._notify({
                 notifications: Array.isArray(data.notifications) ? data.notifications : [],
@@ -88,6 +92,7 @@ class NotificationStore {
                 newCount: Number(data.newCount) || 0,
                 pendingRegCount,
                 pendingInviteCount,
+                pendingWorkflowRequestCount: pendingWorkflowRequests,
                 loading: false
             });
         } catch {

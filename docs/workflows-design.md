@@ -324,12 +324,13 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
 - The Workflows panel (In this case / Request or Add / Requests), opened from the case's ⋯ menu; Case Settings with the single default workflow and the personal switch.
 - `cases-page.js` split: workflow code in `dev/controllers/caseWorkflowsController.js`, styles in `cases-page.styles.js`, Case Settings draws its own header.
 
-- Failed loads (16 Nov, uncommitted): the "may need an extension" dialog with "Open with …" buttons (see [When a file needs an extension](#when-a-file-needs-an-extension)). Not yet tried in a browser.
+- Failed loads (16 Nov): the "may need an extension" dialog with "Open with …" buttons (see [When a file needs an extension](#when-a-file-needs-an-extension)).
+- Requesters as rows, unique indexes, reads that never write (16 Nov).
+- Bell and Home To do for requests (17 Nov, uncommitted): `GET /api/workflow-requests/pending-count`; the bell's line for requests waiting (opens Home); To do cards with Approve / Decline (inline optional reason), whose title opens the case's Workflows panel on Requests; approved/declined outcomes in To do while unread, under a new "Workflow" category. The bell's count doesn't check that requesters are still in the case (that needs their roles on every poll), so a request whose requesters have all left counts until decided, though To do hides it.
 
 **Next, in order:**
-1. **Bell and Home To do** for requests.
-2. **Server-side search and paging** for public workflows, shared by the Workflows panel and the Workflows page's "All workflows" tab (both stop at 200 today).
-3. The cleanup below.
+1. **Server-side search and paging** for public workflows, shared by the Workflows panel and the Workflows page's "All workflows" tab (both stop at 200 today).
+2. The cleanup below.
 
 **Open questions and follow-ups:**
 - "Start in" shows module names (`SegmentEditor`), not the titles Slicer users know ("Segment Editor"); decide together with the core module list once users have said where they start.

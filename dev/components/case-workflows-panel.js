@@ -11,16 +11,11 @@ import {
 import { VIEWER, canRun } from '../utils/openWith.js';
 import { formatFileExtension } from '../utils/fileTypes.js';
 import { ICON_TRASH } from '../utils/icons.js';
+import { requesterText } from '../utils/activityItems.js';
+import { invalidateNotifications } from '../services/notifications.js';
 
 const SEARCH_DELAY_MS = 250;
 export const PANEL_TAB = Object.freeze({ CASE: 'case', BROWSE: 'browse', REQUESTS: 'requests' });
-
-/** "A", "A and B", "A and 2 others". */
-function requesterText(names) {
-    const shown = names.map((n) => n || t('caseWorkflows.someone'));
-    if (shown.length <= 2) return shown.join(` ${t('caseWorkflows.and')} `);
-    return t('caseWorkflows.nameAndOthers', { name: shown[0], count: shown.length - 1 });
-}
 
 const formatDate = (iso) => (iso ? new Date(iso).toLocaleDateString() : '');
 
@@ -133,6 +128,7 @@ export class CaseWorkflowsPanel extends LitElement {
             await action();
             if (this.tab === PANEL_TAB.BROWSE) await this._search();
             this.dispatchEvent(new CustomEvent('workflows-changed', { bubbles: true, composed: true }));
+            invalidateNotifications(); // the bell's count of requests waiting
             return true;
         } catch (err) {
             this.error = err?.message || t('common.somethingWentWrong');

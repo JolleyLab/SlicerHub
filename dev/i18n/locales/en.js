@@ -165,13 +165,15 @@ export default {
             inviteTitle: '{actor} invited {invitee} to {case}',
             pendingRegistration: 'New registration request',
             pendingRegistrations: '{count} pending registration requests',
-            pendingRegistrationsDetail: 'Click to review and approve or reject.'
+            pendingRegistrationsDetail: 'Click to review and approve or reject.',
+            workflowRequestTitle: '{names} requested {workflow} for {case}'
         },
         category: {
             collaboration: 'Collaboration',
             mention: 'Mention',
             comment: 'Comment',
             attachment: 'File upload',
+            workflow: 'Workflow',
             task: 'Task'
         },
         card: {
@@ -202,6 +204,12 @@ export default {
             rejectAria: 'Reject invitation for {subject}',
             approved: 'Approved the invitation for {email}.',
             rejected: 'Rejected the invitation for {email}.'
+        },
+        workflowRequest: {
+            approveAria: 'Approve the request for {subject}',
+            declineAria: 'Decline the request for {subject}',
+            approved: '{workflow} is now available in {case}.',
+            declined: 'Declined {workflow} for {case}.'
         },
     },
     homeLayout: {
@@ -312,12 +320,15 @@ avatarUpload: 'Upload photo',
         dismissAria: 'Dismiss notification',
         dismissFailed: "Couldn't dismiss notification.",
         unreadBell: 'Notifications, new items',
-        pendingRegistration: 'New registration request',
+        pendingRegistrationsOne: 'New registration request',
         pendingRegistrations: '{count} pending registration requests',
         pendingRegistrationsBody: 'Click to review and approve or reject.',
-        pendingCaseInvite: '1 case invite pending approval',
+        pendingCaseInvitesOne: '1 case invite pending approval',
         pendingCaseInvites: '{count} case invites pending approval',
-        pendingCaseInvitesBody: 'Click to go to Cases and approve or reject.'
+        pendingCaseInvitesBody: 'Click to go to Cases and approve or reject.',
+        pendingWorkflowRequestsOne: '1 workflow request waiting',
+        pendingWorkflowRequests: '{count} workflow requests waiting',
+        pendingWorkflowRequestsBody: 'Click to see them in To do on Home.'
     },
     share: {
         unableOpen: 'Unable to open shared file',

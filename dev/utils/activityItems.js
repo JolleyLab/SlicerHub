@@ -17,6 +17,13 @@ export function roleLabel(role) {
     return key ? t(key) : String(role || '');
 }
 
+/** Requester names for a workflow request: "A", "A and B", "A and 2 others". `someone` stands in for a missing name. */
+export function requesterText(names, someone = t('caseWorkflows.someone')) {
+    const shown = names.map((n) => n || someone);
+    if (shown.length <= 2) return shown.join(` ${t('caseWorkflows.and')} `);
+    return t('caseWorkflows.nameAndOthers', { name: shown[0], count: shown.length - 1 });
+}
+
 /** Invite event from /api/cases/activity/recent → activity card shape. */
 export function eventToActivity(event) {
     const sent = event.type === 'invite_sent';

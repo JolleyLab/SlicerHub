@@ -7,6 +7,7 @@
  *   DELETE /api/cases/:id/workflows/requests/:workflowId      a requester cancels their own request
  *   POST   /api/cases/:id/workflows/:rowId/decline            admins: { reason? }
  *   GET    /api/workflow-requests/pending                     requests on cases the user administers
+ *   GET    /api/workflow-requests/pending-count               how many, for the bell (no name lookups)
  */
 
 import { authenticateToken } from '../middleware/authMiddleware.js';
@@ -21,8 +22,16 @@ import {
 } from '../services/workflows.js';
 import {
     REQUEST_MIN_ROLE, isPending, loadCaseWorkflowRow, describeRequests, decideRequesters,
-    requestedBy, addRequester, removeRequester,
+    requestedBy, addRequester, removeRequester, requestersByRequest,
 } from '../services/workflowRequests.js';
+
+/** Pending requests on every case the requester administers (every case, for a site admin), newest first. */
+async function pendingOnAdministeredCases(req) {
+    const administered = await administeredCasesWhere(req);
+    return administered
+        ? findAll(CASE_WORKFLOWS, { and: [administered, { status: { equals: 'pending' } }] }, '-requested_at')
+        : [];
+}
 
 const rowFor = async (caseId, workflowId) => (await findAll(CASE_WORKFLOWS, {
     case: { equals: Number(caseId) }, workflow: { equals: String(workflowId) },
@@ -128,14 +137,21 @@ export default function caseWorkflowRequestRoutes(app) {
         res.status(204).end();
     }));
 
-    // Home's To do and the bell: pending requests on every case the user administers.
+    // Home's To do: pending requests on every case the user administers, with requester names.
     app.get('/api/workflow-requests/pending', ...auth, asyncHandler(async (req, res) => {
         res.set('Cache-Control', 'no-store');
-        const administered = await administeredCasesWhere(req);
-        if (!administered) return res.json({ requests: [] });
-        const rows = await findAll(CASE_WORKFLOWS, { and: [administered, { status: { equals: 'pending' } }] }, '-requested_at');
+        const rows = await pendingOnAdministeredCases(req);
         const caseIdsWithRequests = [...new Set(rows.map((r) => String(r.case)))];
         const cases = caseIdsWithRequests.length ? await findAll('cases', { id: { in: caseIdsWithRequests } }) : [];
         res.json({ requests: await describeRequests(rows, new Map(cases.map((c) => [String(c.id), c]))) });
+    }));
+
+    // The bell, polled: requests someone is still asking for. Unlike To do it doesn't check that
+    // they're still in the case (that needs their roles), so a request whose requesters have all
+    // left still counts until it's decided.
+    app.get('/api/workflow-requests/pending-count', ...auth, asyncHandler(async (req, res) => {
+        res.set('Cache-Control', 'no-store');
+        const requesters = await requestersByRequest(await pendingOnAdministeredCases(req));
+        res.json({ count: [...requesters.values()].filter((subs) => subs.length).length });
     }));
 }

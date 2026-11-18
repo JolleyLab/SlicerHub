@@ -255,3 +255,18 @@ test("a site admin's pending list covers every case; an org admin's only the cas
     assert.deepEqual(await pending({ id: 7, role: 'admin', keycloakSub: 'kc-site' }), ['1', '2']);
     assert.deepEqual(await pending({ id: 8, role: 'org-admin', keycloakSub: 'kc-org' }), []);
 });
+
+test("the bell's count: pending requests on cases the requester administers, one however many asked, gone once nobody is asking", async () => {
+    const count = async (user = ADMIN) => (await call('GET', '/api/workflow-requests/pending-count', { user })).body.count;
+    mocks.payload.rows.workflows.push(workflow(13, 'kc-stranger', 'public'));
+    assert.equal(await count(), 0);
+    await request(MEMBER);
+    await request(OTHER);
+    await request(MEMBER, 13);
+    assert.equal(await count(), 2);
+    assert.equal(await count(MEMBER), 0);
+
+    await call('DELETE', '/api/cases/1/workflows/requests/13', { user: MEMBER });
+    await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
+    assert.equal(await count(), 0);
+});

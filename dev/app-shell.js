@@ -363,6 +363,7 @@ export class SlicerApp extends LitElement {
     const openPeople = Boolean(inviteId)
       || type === 'case_invite_pending'
       || type === 'case_invite_accepted';
+    const workflowsTab = e.detail?.workflowsTab || null; // a workflow request: the Workflows panel
     this.selectedProjectId = null;
     this.currentView = APP_VIEWS.CASES;
     const url = new URL(window.location.href);
@@ -377,6 +378,8 @@ export class SlicerApp extends LitElement {
       }
       if (openPeople && typeof page.openPeopleForCaseId === 'function') {
         page.openPeopleForCaseId(String(caseId));
+      } else if (workflowsTab && typeof page.openWorkflowsForCaseId === 'function') {
+        page.openWorkflowsForCaseId(String(caseId), workflowsTab);
       }
     });
   }
