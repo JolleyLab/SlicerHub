@@ -20,11 +20,8 @@ export const PANEL_TAB = Object.freeze({ CASE: 'case', BROWSE: 'browse', REQUEST
 const formatDate = (iso) => (iso ? new Date(iso).toLocaleDateString() : '');
 
 /**
- * The case's Workflows panel (docs/workflows-design.md › Workflows panel), from the case toolbar,
- * for everyone: what's in the case (admins remove or update; members see and cancel their
- * requests), browsing public workflows to request (members above read_only) or add (admins), and
- * for admins the requests waiting. `data` is the case page's GET /api/cases/:id/workflows.
- * Call open({ tab }); emits `workflows-changed` after a change.
+ * The case's Workflows panel: what's in the case, "Request or Add", and (admins) the requests
+ * waiting. `data` is GET /api/cases/:id/workflows. Call open({ tab }); emits `workflows-changed`.
  */
 export class CaseWorkflowsPanel extends LitElement {
     static get properties() {

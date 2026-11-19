@@ -1,11 +1,8 @@
 /**
- * Workflows on a case (docs/workflows-design.md): which ones members can launch, case admins
- * approving and removing them, and the case's workflow settings. An approval keeps a copy of
- * the workflow as approved.
+ * Workflows on a case (docs/workflows-design.md). An approval keeps a copy of the workflow as approved.
  *
- *   GET    /api/cases/:id/workflows               members: approved, their own, their requests, default, settings,
- *                                                 and what each viewer can run (services/viewerCapabilities.js)
- *                                                 (admins: + pending requests)
+ *   GET    /api/cases/:id/workflows               members: what they can launch, the settings, what each
+ *                                                 viewer can run (admins: + pending requests)
  *   POST   /api/cases/:id/workflows               admins: approve, or re-approve to refresh the copy
  *   DELETE /api/cases/:id/workflows/:approvalId   admins
  *   PATCH  /api/cases/:id/workflow-settings       admins: { defaultWorkflow?, allowPersonal? }
@@ -27,10 +24,7 @@ import { viewerCapabilities } from '../services/viewerCapabilities.js';
 
 const caseRows = (caseId) => findAll(CASE_WORKFLOWS, { case: { equals: Number(caseId) } }, 'name');
 
-/**
- * The case's settings as the API returns them: the default workflow (an approval id, or null for
- * none) and whether members may use their own workflows (yes unless turned off).
- */
+/** The case's settings as the API returns them; personal workflows are allowed unless turned off. */
 const caseSettings = (caseDoc) => ({
     defaultWorkflow: caseDoc.default_workflow || null,
     allowPersonal: caseDoc.allow_personal_workflows !== false,
@@ -39,9 +33,6 @@ const caseSettings = (caseDoc) => ({
 export default function caseWorkflowRoutes(app) {
     const auth = [authenticateToken, requirePayload];
 
-    // What a member can launch on this case: the approved workflows, and their own (unless the
-    // case turns those off), plus the case's default and their own pending requests. Admins also
-    // get every pending request. ("Find more…" lists what could be added: routes/caseWorkflowRequests.js.)
     app.get('/api/cases/:id/workflows', ...auth, asyncHandler(async (req, res) => {
         const { caseDoc, role } = await loadCaseWithAccess(req.params.id, req);
         const canManage = role === 'admin';
@@ -68,8 +59,7 @@ export default function caseWorkflowRoutes(app) {
         });
     }));
 
-    // Approve (or re-approve, refreshing the copy) a public workflow or one of the admin's own.
-    // Approving a pending request tells its requesters.
+    // A public workflow or one of the admin's own. Approving a pending request tells its requesters.
     app.post('/api/cases/:id/workflows', ...auth, asyncHandler(async (req, res) => {
         const { caseDoc } = await loadCaseWithAccess(req.params.id, req, 'admin');
         const source = await loadOwnedDoc(WORKFLOWS, String(req.body?.workflowId ?? ''), req, { write: false });
@@ -93,8 +83,7 @@ export default function caseWorkflowRoutes(app) {
         res.status(existing ? 200 : 201).json({ approval: toApproval(row) });
     }));
 
-    // Removing the default workflow also clears the default. A request is declined instead, so its
-    // requesters are told.
+    // Pending requests are declined instead, so their requesters are told.
     app.delete('/api/cases/:id/workflows/:approvalId', ...auth, asyncHandler(async (req, res) => {
         const { caseDoc } = await loadCaseWithAccess(req.params.id, req, 'admin');
         const row = await loadCaseWorkflowRow(req.params.id, req.params.approvalId);
@@ -107,8 +96,6 @@ export default function caseWorkflowRoutes(app) {
         res.status(204).end();
     }));
 
-    // Case Settings: the default workflow (one of the case's approved ones, or none) and whether
-    // members may use their own workflows.
     app.patch('/api/cases/:id/workflow-settings', ...auth, asyncHandler(async (req, res) => {
         const { caseDoc } = await loadCaseWithAccess(req.params.id, req, 'admin');
         const body = req.body || {};

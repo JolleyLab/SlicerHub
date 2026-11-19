@@ -64,9 +64,7 @@ async function createRow(caseId, workflowId, data) {
 export default function caseWorkflowRequestRoutes(app) {
     const auth = [authenticateToken, requirePayload];
 
-    // "Request or Add": public workflows not yet approved for the case (admins: plus their own,
-    // which they can add directly), a page at a time, with whether each is already requested, and
-    // whether by the requester.
+    // Public workflows not in the case (admins: plus their own), each marked if already requested.
     app.get('/api/cases/:id/workflows/available', ...auth, asyncHandler(async (req, res) => {
         const { role } = await loadCaseWithAccess(req.params.id, req, REQUEST_MIN_ROLE);
         const requester = requireOwnerId(req);
@@ -89,9 +87,8 @@ export default function caseWorkflowRequestRoutes(app) {
         res.json({ workflows, hasMore });
     }));
 
-    // Request a public workflow, or join the pending request for it. Asking again after a
-    // decline reopens the row (a day later, or at once if the workflow has changed), keeping the earlier
-    // decline for the admin to see. A member can have MAX_PENDING_PER_MEMBER requests waiting.
+    // Or join the pending request. Asking after a decline (past inCooldown) reopens the row,
+    // keeping the earlier decline for the admin to see.
     app.post('/api/cases/:id/workflows/requests', ...auth, requestRateLimit, asyncHandler(async (req, res) => {
         await loadCaseWithAccess(req.params.id, req, REQUEST_MIN_ROLE);
         const requester = requireOwnerId(req);
@@ -113,7 +110,7 @@ export default function caseWorkflowRequestRoutes(app) {
         res.status(opening ? 201 : 200).json({ requested: true });
     }));
 
-    // Cancel the requester's own request. When nobody is left, the request goes away.
+    // When nobody is left asking, the request goes away.
     app.delete('/api/cases/:id/workflows/requests/:workflowId', ...auth, requestRateLimit, asyncHandler(async (req, res) => {
         await loadCaseWithAccess(req.params.id, req);
         const requester = requireOwnerId(req);
@@ -145,7 +142,6 @@ export default function caseWorkflowRequestRoutes(app) {
         res.status(204).end();
     }));
 
-    // Home's To do: pending requests on every case the user administers, with requester names.
     app.get('/api/workflow-requests/pending', ...auth, asyncHandler(async (req, res) => {
         res.set('Cache-Control', 'no-store');
         const rows = await pendingOnAdministeredCases(req);

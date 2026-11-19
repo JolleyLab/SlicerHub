@@ -1,8 +1,7 @@
 /**
- * Opening a case file (docs/workflows-design.md › Workflows in cases): which viewer, which
- * workflow on top, and what the Open ▾ menu offers. A launch is a viewer plus, optionally, a
- * workflow the viewer can run. Pure functions over GET /api/cases/:id/workflows, plus the
- * per-file picks kept in the browser.
+ * Opening a case file: which viewer, which workflow, and what the Open ▾ menu offers. Pure
+ * functions over GET /api/cases/:id/workflows, plus per-file picks kept in the browser
+ * (docs/workflows-design.md › Workflows in cases).
  */
 
 export const VIEWER = Object.freeze({ SLICERWEB: 'slicerweb', FULL: 'full' });
@@ -10,21 +9,14 @@ export const VIEWER = Object.freeze({ SLICERWEB: 'slicerweb', FULL: 'full' });
 export const SIMPLIFIED_VIEWER_MODULE = 'SimplifiedViewer';
 /** The menu's "No workflow" pick. */
 export const NO_WORKFLOW = 'none';
-/**
- * The menu's two sections: the case's approved workflows, and the person's own. The values are
- * part of the keys picks store in the browser, so they stay as they are.
- */
+/** The menu's sections. The values are in the keys of stored picks, so they mustn't change. */
 export const WORKFLOW_SECTION = Object.freeze({ CASE: 'case', OWN: 'mine' });
 /** A menu entry's key, what picks store: "case:<approval id>" or "mine:<workflow id>". */
 export const workflowKey = (section, id) => `${section}:${id}`;
 /** Workflows shown in the menu before "More workflows…". */
 export const MENU_LIMIT = 5;
 
-/**
- * The account's viewer setting ('web' | 'full' | 'simplified') as a viewer. 'simplified' was always
- * Full Slicer with the simplified interface; that interface is now the "SlicerHeart – Simplified"
- * workflow, picked from the menu, so the setting just means Full Slicer.
- */
+/** The account viewer setting as a viewer; 'simplified' (now a workflow) means Full Slicer. */
 export const viewerFromAccount = (setting) => (setting === 'full' || setting === 'simplified' ? VIEWER.FULL : VIEWER.SLICERWEB);
 
 /** The file types a name could match, longest first: "a.seg.nrrd" → ["seg.nrrd", "nrrd"]. */
@@ -46,11 +38,9 @@ const toEntry = (w, section) => ({
 });
 
 /**
- * Whether a viewer can run a workflow: every extension it needs is available there, its
- * startup configuration only uses keys the viewer supports, and it doesn't start in a module
- * the viewer can't start in (`unsupportedModules`, e.g. SimplifiedViewer in SlicerWeb). SlicerWeb's extensions come from the
- * build's index.json (`slicerWebExtensions`; null while unknown counts as all); Full Slicer's
- * from the server (`viewers.full.extensions`). Before the case's data loads, only SlicerWeb.
+ * Whether a viewer can run a workflow: it has every extension, supports every startup key, and can
+ * start in the workflow's module. `slicerWebExtensions` null (unknown) counts as all. Before the
+ * case's data loads, only SlicerWeb can.
  */
 export function canRun(workflow, viewer, { viewers = null, slicerWebExtensions = null } = {}) {
     const caps = viewers?.[viewer];
@@ -63,10 +53,9 @@ export function canRun(workflow, viewer, { viewers = null, slicerWebExtensions =
 }
 
 /**
- * What can open this file (fileName null: the blank viewer) in this viewer, right now: the
- * case's workflows, then the person's own (unless the case turns them off). Workflows for other
- * file types, or that the viewer can't run, are left out. One of your own that the case has
- * approved is listed only as the case's: its approved copy is what everyone in the case gets.
+ * What can open this file (fileName null: the blank viewer) in this viewer: the case's workflows,
+ * then the person's own unless the case turns them off. An own workflow the case has approved is
+ * listed only as the case's, since its approved copy is what the case uses.
  */
 export function usableWorkflows(data, { fileName = null, viewer = VIEWER.SLICERWEB, slicerWebExtensions = null } = {}) {
     const types = fileName == null ? [] : fileTypesOf(fileName);
@@ -86,10 +75,9 @@ export const workflowsAddingExtensions = (workflows, extensions = []) =>
     workflows.filter((w) => w.extensions.some((ext) => !extensions.includes(ext)));
 
 /**
- * What opening a file does. Viewer: the person's pick for this file, else their account setting
- * (the blank viewer is always SlicerWeb). Workflow: their pick for this file (a workflow, or
- * NO_WORKFLOW), else the case's default, else none; each only if usable here.
- * Returns { viewer, workflow (an entry or null), from: 'pick' | 'default' | 'none' }.
+ * What opening a file does: { viewer, workflow (entry or null), from: 'pick' | 'default' | 'none' }.
+ * Viewer: the file's pick, else the account setting (the blank viewer is always SlicerWeb).
+ * Workflow: the file's pick, else the case default, if usable here.
  */
 export function resolveOpen(data, { fileName = null, pick = null, accountViewer = 'web', slicerWebExtensions = null } = {}) {
     const blank = fileName == null;
@@ -104,11 +92,7 @@ export function resolveOpen(data, { fileName = null, pick = null, accountViewer 
     return { viewer, workflow: null, from: 'none' };
 }
 
-/**
- * The menu's short list: the first MENU_LIMIT workflows across both sections, keeping the
- * selected one visible. Returns { caseWorkflows, mine, hidden } (hidden: how many are left for
- * "More workflows…").
- */
+/** The first MENU_LIMIT workflows, keeping the selected one: { caseWorkflows, mine, hidden }. */
 export function shortList(usable, selectedKey = null, limit = MENU_LIMIT) {
     const all = [...usable.caseWorkflows, ...usable.mine];
     let shown = all.slice(0, limit);
@@ -128,8 +112,7 @@ const PICKS_KEY = 'slicerweb.hub.openPicks';
 const MAX_PICKS = 500;
 const pickId = (caseId, attachmentId) => `${caseId}:${attachmentId ?? 'blank'}`;
 
-// Storage failures don't stop a file opening, but picks then aren't remembered: say so once per
-// page load (blocked storage would otherwise warn on every save).
+// If storage fails, files still open, just without picks: warn once per page load.
 const warned = new Set();
 function warnOnce(what, err) {
     if (warned.has(what)) return;

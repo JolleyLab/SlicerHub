@@ -1,8 +1,6 @@
 /**
- * Workflows: saved SlicerWeb setups (docs/workflows-design.md). Anyone signed in can list and
- * create their own (?scope=public: everyone's public ones, paged: ?q=&sort=&page=); only the owner
- * can change one.
- * Workflows on a case are in routes/caseWorkflows.js.
+ * Workflows: saved SlicerWeb setups (docs/workflows-design.md). Anyone signed in can create their
+ * own; only the owner can change one. Workflows on a case: routes/caseWorkflows.js.
  */
 
 import multer from 'multer';
@@ -43,9 +41,8 @@ export function workflowFields(body = {}, { partial = false } = {}) {
 export default function workflowRoutes(app) {
     const auth = [authenticateToken, requirePayload];
 
-    // The requester's own workflows come all at once (one person's list stays small; the browser
-    // searches and sorts it). ?scope=public is everyone's public workflows, which can grow without
-    // limit, so the server searches and sorts them and returns one page at a time (?q=&sort=&page=).
+    // Own workflows come all at once (the browser searches them). ?scope=public can grow without
+    // limit, so it's searched and paged here (?q=&sort=&page=).
     app.get('/api/workflows', ...auth, asyncHandler(async (req, res) => {
         if (req.query.scope !== VISIBILITY.PUBLIC) {
             const docs = await myWorkflows(req);

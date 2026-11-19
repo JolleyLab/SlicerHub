@@ -19,11 +19,7 @@ export const CASE_WORKFLOW_REQUESTERS = 'case-workflow-requesters';
 export const REQUEST_MIN_ROLE = 'collaborator';
 const CAN_REQUEST = new Set(['collaborator', 'admin']);
 
-/**
- * After a decline, members can ask for the same workflow again this long after (admins can still
- * add it). Long enough that nobody asks again straight away; the per-person rate limit and
- * MAX_PENDING_PER_MEMBER are what keep the load down.
- */
+/** How long after a decline members wait to ask again (admins can add it any time). */
 export const REQUEST_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 /** How many requests one member can have waiting on one case. */
 export const MAX_PENDING_PER_MEMBER = 10;
@@ -31,11 +27,7 @@ export const MAX_PENDING_PER_MEMBER = 10;
 export const canRequest = (role) => CAN_REQUEST.has(role);
 export const isPending = (row) => row.status === REQUEST_STATUS.PENDING;
 
-/**
- * Whether a declined row can't be asked for again yet: it was declined less than
- * REQUEST_COOLDOWN_MS ago, and the workflow (`source`) hasn't changed since. A changed workflow
- * (say, fixed after the decline's reason) is a new proposal, so it can be asked for at once.
- */
+/** Whether a declined row is still waiting out the cooldown. A changed workflow is a new proposal, so no wait. */
 export const inCooldown = (row, source, now = Date.now()) => row?.status === REQUEST_STATUS.DECLINED
     && Boolean(row.decided_at) && now - Date.parse(row.decided_at) < REQUEST_COOLDOWN_MS
     && !copyDiffers(row, source);

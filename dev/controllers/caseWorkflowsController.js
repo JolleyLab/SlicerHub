@@ -12,18 +12,10 @@ import '../components/more-workflows-dialog.js';
 const REFRESH_MIN_MS = 15 * 1000;
 
 /**
- * Workflows on the case page (docs/workflows-design.md › Workflows in cases), as a helper object
- * the page owns (lit-element 2 has no reactive controllers; it calls host.requestUpdate() itself):
- * the open case's workflows (GET /api/cases/:id/workflows) and the SlicerWeb build's
- * extensions; what opening a file does and the person's picks; the Open ▾ menus and "Open blank
- * viewer ▾"; and the Workflows panel and "More workflows…" dialog.
- *
- * The page keeps what's its own and passes it in:
- *   channel()            the SlicerWeb channel this person launches
- *   accountViewer()      their account viewer setting ('web' | 'full' | 'simplified')
- *   fileName(attachment) / fileTitle(attachment)
- *   isBusy()             a viewer is opening (menus are disabled)
- *   launch(caseRow, attachment, { viewer, workflow })   open it (attachment null: the blank viewer)
+ * Workflows on the case page: loading them, what opening a file does, the Open ▾ menus, the
+ * Workflows panel and "More workflows…". A plain helper object, since lit-element 2 has no
+ * reactive controllers. The page passes in channel(), accountViewer(), fileName(attachment),
+ * fileTitle(attachment), isBusy() and launch(caseRow, attachment, { viewer, workflow }).
  */
 export class CaseWorkflowsController {
     constructor(host, options) {
@@ -49,9 +41,8 @@ export class CaseWorkflowsController {
     }
 
     /**
-     * Load a case's workflows and the SlicerWeb build's extensions. `refresh` keeps what's shown
-     * until the new data arrives. A failure is logged; the menus then offer no workflows, and if
-     * nothing was shown, loadFailed() says so.
+     * Load a case's workflows and the SlicerWeb build's extensions (`refresh` keeps what's shown
+     * meanwhile). On failure the menus offer no workflows, and loadFailed() is true.
      */
     async load(caseId, { refresh = false } = {}) {
         this._loadingCaseId = caseId ? String(caseId) : null;
@@ -84,10 +75,8 @@ export class CaseWorkflowsController {
     // ── Opening a file ─────────────────────────────────────────────────────
 
     /**
-     * What opening a file does (attachment null: the blank viewer), and what its Open ▾ menu
-     * offers: { viewer, workflow, usable, selectedKey, name, label }. `label` is what differs from
-     * the person's own viewer with no workflow; `name` describes the whole thing. The blank viewer
-     * remembers no pick: it starts on the case default each time, chosen from its menu.
+     * What opening a file does (attachment null: the blank viewer) and what its menu offers.
+     * `label`: what differs from the person's usual viewer with no workflow; `name`: all of it.
      */
     openWithFor(caseRow, attachment = null) {
         const loaded = this.loaded?.caseId === String(caseRow.id) ? this.loaded : null;
@@ -109,10 +98,7 @@ export class CaseWorkflowsController {
         };
     }
 
-    /**
-     * A pick from a menu (a workflow key or NO_WORKFLOW): for a file, remember it and open; for
-     * the blank viewer, just open with it.
-     */
+    /** A menu pick (workflow key or NO_WORKFLOW): files remember it, the blank viewer doesn't. */
     pickAndOpen(caseRow, attachment, key) {
         if (attachment) {
             saveOpenPick(caseRow.id, attachment.id, { workflow: key });

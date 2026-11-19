@@ -9,12 +9,9 @@ const ICON_CHEVRON = html`
     </svg>`;
 
 /**
- * Open ▾ for a case file or the blank viewer (docs/workflows-design.md › Opening a file):
- * "Open in" (the viewer, for files), "No workflow", then this case's workflows and mine, and
- * "More workflows…" when there are more than fit. Only what can be used right now is listed;
- * the page works that out with utils/openWith.js and passes it in as `usable`.
- * Emits `switch-viewer` with { viewer } (the menu stays open), `open-workflow` with { key }
- * (a workflow key or NO_WORKFLOW), and `more-workflows`.
+ * Open ▾ for a case file or the blank viewer: "Open in" (files only), "No workflow", the usable
+ * workflows (`usable`, from utils/openWith.js), and "More workflows…" when they don't all fit.
+ * Emits `switch-viewer` { viewer }, `open-workflow` { key } and `more-workflows`.
  */
 export class OpenWithMenu extends PopupMenu {
     static get styles() {

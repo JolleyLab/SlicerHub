@@ -1,7 +1,6 @@
 /**
- * A list searched on the server and loaded a page at a time, with "Load more": the Workflows
- * page's All workflows tab and a case's "Request or Add" list. Only the latest search's replies
- * are kept, so a slow answer to an older query never replaces a newer one.
+ * A list searched on the server and loaded a page at a time, with "Load more". Only the latest
+ * search's replies are kept, so a slow answer to an older query never replaces a newer one.
  *
  *   const list = new PagedList((params) => listSomething(params), () => this.requestUpdate());
  *   list.search({ q, sort });   // first page (searchSoon: after typing pauses)
@@ -37,9 +36,8 @@ function announcement(list) {
 }
 
 /**
- * A PagedList's states, drawn the same everywhere: loading, failed, empty, or the items with a
- * "Load more" button. A live region that's always there (one added along with its text often
- * isn't read) says what changed, so a search's results are announced.
+ * A PagedList drawn the same everywhere: loading, failed, empty, or the items and "Load more".
+ * The live region is always present, since one added along with its text often isn't read.
  * @param {PagedList} list
  * @param {{ render: (items: any[]) => unknown, empty: unknown }} options
  */

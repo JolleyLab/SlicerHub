@@ -44,16 +44,10 @@ export const uploadWorkflowIcon = (id, file) => {
 };
 export const removeWorkflowIcon = (id) => apiRequest(`/api/workflows/${enc(id)}/icon`, { method: 'DELETE' }).then((d) => d.workflow);
 
-/**
- * A case's workflows: { approved, mine, myRequests, defaultWorkflow, allowPersonal, canManage, canRequest },
- * plus for admins `requests` (pending) and `available` (what they could approve).
- */
+/** What members can launch on a case, its settings, and (admins) the pending requests. */
 export const listCaseWorkflows = (caseId) => apiRequest(`/api/cases/${enc(caseId)}/workflows`);
 
-/**
- * "Request or Add": public workflows not yet approved for the case (admins: plus their own), a page
- * at a time, each with `requested` and `requestedByMe`: { q, page } → { items, hasMore }.
- */
+/** "Request or Add": workflows that could join the case, paged: { q, page } → { items, hasMore }. */
 export const listAvailableCaseWorkflows = (caseId, { q, page } = {}) =>
     apiRequest(`/api/cases/${enc(caseId)}/workflows/available${queryString({ q, page })}`).then(toPage);
 export const requestCaseWorkflow = (caseId, workflowId) =>

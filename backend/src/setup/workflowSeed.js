@@ -1,15 +1,9 @@
 /**
- * One-off setup, run by scripts/setup-payload.mjs (not by the server): the workflows every
- * SlicerHub starts with, and setting up cases from before workflows existed
- * (docs/workflows-design.md › Viewers and workflows). Safe to run again.
- *
- * - Two public workflows owned by SYSTEM_OWNER, so no person can edit or delete them:
- *   "SlicerHeart", and "SlicerHeart – Simplified" (SlicerHeart, starting in SimplifiedViewer).
- *   SlicerWeb no longer loads SlicerHeart by itself, so these replace that.
- * - Every case without `workflows_seeded` (only cases from before workflows: new cases are created
- *   with it) gets both approved and SlicerHeart as its default, so nothing changes for it. The
- *   marker is then set, so an admin who later removes them doesn't get them back. This half is a
- *   migration: once every installation has run it, it and `workflows_seeded` can go.
+ * Run by scripts/setup-payload.mjs, not the server; safe to run again.
+ * - The built-in public workflows "SlicerHeart" and "SlicerHeart – Simplified", owned by
+ *   SYSTEM_OWNER so nobody can edit or delete them. They replace SlicerWeb loading SlicerHeart itself.
+ * - A one-off migration (remove once every installation has run it): cases from before workflows
+ *   get both approved, SlicerHeart as default, and `workflows_seeded`, so removing them later sticks.
  */
 
 import { getPayloadClient } from '../payload/index.js';

@@ -39,10 +39,7 @@ const visibilityBadge = (visibility, className = '') => html`
 const extensionCountLabel = (n) => (n === 1 ? t('workflows.oneExtension')
     : n ? t('workflows.extensionCount', { count: n }) : t('workflows.noExtensions'));
 
-/**
- * Sidebar → Workflows, laid out like My Cases: a card grid (yours, or everyone's public ones),
- * a detail view, and a form to create or edit.
- */
+/** Sidebar → Workflows: a card grid (own or all public), a detail view, and a create/edit form. */
 export class WorkflowsPage extends LitElement {
     static get properties() {
         return {
@@ -216,10 +213,7 @@ export class WorkflowsPage extends LitElement {
             || JSON.stringify(this._formFields(this.form)) !== this._formSnapshot;
     }
 
-    /**
-     * True if leaving the form is fine (nothing unsaved, or the person chooses to discard). Called
-     * by this page and by the app shell (header and menu links); one answer covers both callers.
-     */
+    /** True if leaving the form is fine (nothing unsaved, or discarding). The app shell calls it too. */
     confirmLeave() {
         if (!this._isDirty()) return true;
         const recent = this._leaveAnswer && Date.now() - this._leaveAnswer.at < 1000;
@@ -240,11 +234,7 @@ export class WorkflowsPage extends LitElement {
 
     // ── URL and page state ───────────────────────────────────────
 
-    /**
-     * Show what the URL says, so refresh, Back/Forward and shared links work:
-     * ?tab=all (the All workflows tab), ?workflow=<id> (that workflow's page),
-     * &edit=1 (editing it), ?edit=new (creating one).
-     */
+    /** Show what the URL says: ?tab=all, ?workflow=<id> (&edit=1), ?edit=new. */
     async _syncFromUrl() {
         const params = new URLSearchParams(location.search);
         const tab = params.get('tab') === 'all' ? TAB.PUBLIC : TAB.OWN;
@@ -323,11 +313,7 @@ export class WorkflowsPage extends LitElement {
         if (this.tab === TAB.PUBLIC) this._searchEveryone();
     }
 
-    /**
-     * Put a saved workflow into the lists it belongs to (and out of the ones it doesn't). All
-     * workflows only updates or drops what's shown: a new public one appears on its next search,
-     * in the server's order.
-     */
+    /** Put a saved workflow in the lists it belongs to. All workflows only updates what's shown; new ones appear on the next search. */
     _remember(workflow, { removed = false } = {}) {
         if (this.owned !== null) {
             this.owned = [...this.owned.filter((w) => w.id !== workflow.id), ...(removed ? [] : [workflow])];
@@ -422,10 +408,7 @@ export class WorkflowsPage extends LitElement {
         this.form = { ...this.form, iconFile: null, iconPreview: null, iconRemoved: true };
     }
 
-    /**
-     * The workflow's icon, beside the title: click it to pick a file (a pencil shows on hover or
-     * focus); × removes an icon. What's accepted is in its hover text.
-     */
+    /** The icon beside the title: click to pick a file, × to remove it. */
     _renderIconButton(f) {
         const src = f.iconRemoved ? null : (f.iconPreview || f.iconUrl);
         const action = src ? t('workflows.changeIcon') : t('workflows.uploadIcon');
@@ -537,10 +520,7 @@ export class WorkflowsPage extends LitElement {
         this._back();
     }
 
-    /**
-     * Sidebar: Workflows while already here goes back to the list. If the person stays to keep
-     * their edits, the click stops here so the app shell doesn't navigate either.
-     */
+    /** Sidebar → Workflows while here: back to the list, unless the person stays to keep edits. */
     _handleMenu(e) {
         if (e.detail?.selectedKey !== 'workflows') return;
         if (!this._back()) e.stopPropagation();
