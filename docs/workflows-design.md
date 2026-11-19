@@ -336,6 +336,10 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
   - Constants: `REQUEST_STATUS`, `VISIBILITY` (backend); `WORKFLOW_VISIBILITY`, `WORKFLOW_SECTION` with `workflowKey()`, and the Workflows page's `TAB` (browser).
   - `case_workflows.source_updated_at` retired (`RETIRED_SCHEMA`); the retired-schema step runs in one transaction (`psql -1`) and stops setup on failure.
 
+- UX round 2, more icon-led (started 19 Nov, after reviewer feedback; this section of the doc is rewritten once the design settles). Planned: the toolkit's icon before each file name; the chevron opens a grid of icons; the labelled menu moves to an overflow; the viewer becomes part of the toolkit; defaults per file type in Case Settings.
+  - Named "Toolkit" for users (catalog text only; code, keys and routes still say workflow).
+  - Each openable file shows its toolkit's icon before its name (the viewer's initial with no toolkit); clicking it opens the file, as the name does. It's pointer-only: keyboard and screen readers use the name button, so there's no second tab stop. The case's toolkits carry their source's `iconUrl` (not copied: the source's current icon, only when the person can see the source; otherwise the initial).
+
 **Next:** the two waiting items below, when their conditions are met; otherwise ready to merge.
 
 **Open questions and follow-ups:**

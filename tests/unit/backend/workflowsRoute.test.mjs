@@ -335,6 +335,17 @@ test('only the owner can change the icon; anyone who can see the workflow can se
     assert.equal((await call('GET', '/api/workflows/12/icon', { user: STRANGER })).status, 404); // private, someone else's
 });
 
+test("a case's workflows carry the source's icon, only where the member can see the source", async () => {
+    const { iconUrl } = (await call('PUT', '/api/workflows/11/icon', { user: MEMBER, body: { upload: PNG } })).body.workflow;
+    await call('PUT', '/api/workflows/12/icon', { user: ADMIN, body: { upload: PNG } });
+    await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
+    await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 12 } });
+    const icons = async (user) => Object.fromEntries((await call('GET', '/api/cases/1/workflows', { user })).body.approved
+        .map((a) => [a.workflowId, a.iconUrl]));
+    assert.deepEqual(await icons(MEMBER), { 11: iconUrl, 12: null }); // 12 is the admin's private one
+    assert.equal((await icons(ADMIN))[12], `/api/workflows/12/icon?v=${mocks.payload.rows.workflows.find((w) => w.id === 12).icon_key.split('/').pop()}`);
+});
+
 test('removing the icon, or the workflow, deletes the stored file', async () => {
     await call('PUT', '/api/workflows/11/icon', { user: MEMBER, body: { upload: PNG } });
     const res = await call('DELETE', '/api/workflows/11/icon', { user: MEMBER });

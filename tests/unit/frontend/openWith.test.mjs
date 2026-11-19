@@ -86,6 +86,12 @@ describe('usableWorkflows', () => {
         assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'a.seg.nrrd' }).caseWorkflows), ['case:1', 'case:4']);
         assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'brain.nii.gz' }).mine), ['mine:11']);
     });
+    it('entries carry the icon the server sent, or null', () => {
+        const data = { ...DATA, approved: [{ ...DATA.approved[0], iconUrl: '/api/workflows/1/icon?v=a.png' }] };
+        const [entry] = usableWorkflows(data, { fileName: 'heart.mrb' }).caseWorkflows;
+        assert.equal(entry.iconUrl, '/api/workflows/1/icon?v=a.png');
+        assert.equal(usableWorkflows(DATA, { fileName: 'heart.mrb' }).caseWorkflows[0].iconUrl, null);
+    });
     it('hides what the viewer can\'t run', () => {
         assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'heart.mrb', viewer: VIEWER.FULL }).caseWorkflows), ['case:1', 'case:2']);
     });

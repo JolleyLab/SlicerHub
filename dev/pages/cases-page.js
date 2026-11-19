@@ -25,7 +25,8 @@ import '../components/overflow-menu.js';
 import '../components/case-settings.js';
 import { VIEWER, SIMPLIFIED_VIEWER_MODULE, workflowsAddingExtensions } from '../utils/openWith.js';
 import { CaseWorkflowsController } from '../controllers/caseWorkflowsController.js';
-import { ICON_TRASH } from '../utils/icons.js';
+import { ICON_TRASH, ICON_DOWNLOAD } from '../utils/icons.js';
+import { iconTile, iconTileStyles } from '../utils/iconTile.js';
 import { resetSlicerWebExtensions } from '../utils/slicerWebStorage.js';
 import { formatBytes } from '../utils/formatBytes.js';
 import { deepActiveElement } from '../utils/focus.js';
@@ -93,7 +94,7 @@ function writeCaseCommentSeenMap(map) {
  */
 export class CasesPage extends LitElement {
     static get styles() {
-        return [listPageStyles, casesPageStyles];
+        return [listPageStyles, iconTileStyles, casesPageStyles];
     }
 
     static get properties() {
@@ -2625,9 +2626,10 @@ export class CasesPage extends LitElement {
                                                 .nameButtonTitle=${this.attachmentOpenTitle(attachment, openWith)}
                                                 @name-click=${() => this.openWith(caseRow, attachment, openWith)}
                                             >
-                                                ${attachment?.canOpenInSlicer
-                                                    ? this.workflows.renderMenu(caseRow, attachment, openWith, { slot: 'title-trailing' })
-                                                    : ''}
+                                                ${attachment?.canOpenInSlicer ? html`
+                                                    <span slot="leading" title=${openWith.icon.name}>${iconTile(openWith.icon.name, openWith.icon.src)}</span>
+                                                    ${this.workflows.renderMenu(caseRow, attachment, openWith, { slot: 'title-trailing' })}
+                                                ` : ''}
                                                 ${canEdit ? html`
                                                     <button
                                                         slot="actions"
@@ -2641,11 +2643,7 @@ export class CasesPage extends LitElement {
                                                     >
                                                         ${this.downloadingAttachmentIds.has(attachment.id) ? html`
                                                             <span class="download-spinner" aria-hidden="true"></span>
-                                                        ` : html`
-                                                            <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
-                                                                <path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
-                                                            </svg>
-                                                        `}
+                                                        ` : ICON_DOWNLOAD}
                                                     </button>
                                                 ` : ''}
                                                 ${(this.isMyAttachment(attachment) || this.myCaseRole(caseRow) === 'admin') ? html`

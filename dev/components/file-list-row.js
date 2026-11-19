@@ -10,7 +10,7 @@ const LONG_PRESS_MOVE_PX = 10;
 /**
  * One row in a file list: clickable name + meta line + icon actions via <slot name="actions">.
  * `plain`: the name is text, not a button (rows with nothing to open, e.g. workflow extensions).
- * <slot name="leading">: something before the name, e.g. an icon.
+ * <slot name="leading">: something before the name, e.g. an icon; clicking it opens the file, as the name does.
  */
 export class FileListRow extends LitElement {
     static get styles() {
@@ -55,6 +55,15 @@ export class FileListRow extends LitElement {
             .file-main {
                 min-width: 0;
                 flex: 1;
+            }
+
+            /* No box of its own (an empty slot adds no gap); clicks still reach it, and the cursor is inherited. */
+            .leading {
+                display: contents;
+            }
+
+            .leading.opens {
+                cursor: pointer;
             }
 
             .file-title-row {
@@ -342,6 +351,19 @@ export class FileListRow extends LitElement {
         this._pointerStart = null;
     }
 
+    /** Whether clicking the leading icon opens the file, as the name does. */
+    get leadingOpens() {
+        return !this.plain && !this.nameButtonDisabled;
+    }
+
+    // Pointer only: keyboard and screen reader users open with the name button, so the icon
+    // isn't a second tab stop that does the same thing.
+    handleLeadingClick() {
+        if (!this.leadingOpens) return;
+        this.clearNameClickTimer();
+        this.emitNameClick();
+    }
+
     handleEditTitleClick(event) {
         event.stopPropagation();
         this.clearNameClickTimer();
@@ -352,7 +374,7 @@ export class FileListRow extends LitElement {
     render() {
         return html`
             <div class="file-row">
-                <slot name="leading"></slot>
+                <span class="leading ${this.leadingOpens ? 'opens' : ''}" @click=${this.handleLeadingClick}><slot name="leading"></slot></span>
                 <div class="file-main">
                     <div class="file-title-row">
                         ${this.plain ? html`<span class="file-name">${this.fileName}</span>` : html`<button

@@ -35,6 +35,7 @@ const toEntry = (w, section) => ({
     extensions: w.extensions || [],
     fileTypes: w.fileTypes || [],
     startupConfig: w.startupConfig || {},
+    iconUrl: w.iconUrl || null,
 });
 
 /**

@@ -45,7 +45,14 @@ export function sanitizeStartupConfig(value) {
 /** Rows from before requests existed have no status; they were approvals. */
 export const isApproved = (row) => !row.status || row.status === REQUEST_STATUS.APPROVED;
 
-/** An approved case workflow as the API returns it; `source` (if still visible) shows whether it changed. */
+// The key changes with each upload, so it versions the URL: a new icon is never hidden by a cached
+// old one, and editing anything else doesn't make browsers fetch the icon again.
+const iconUrlOf = (doc) => (doc?.icon_key ? `/api/workflows/${doc.id}/icon?v=${encodeURIComponent(doc.icon_key.split('/').pop())}` : null);
+
+/**
+ * An approved case workflow as the API returns it. `source`, if the person can still see it, shows
+ * whether it changed and gives the icon (the icon isn't copied, so it's the source's current one).
+ */
 export const toApproval = (row, source = null) => ({
     id: row.id,
     workflowId: row.workflow,
@@ -56,6 +63,7 @@ export const toApproval = (row, source = null) => ({
     startupConfig: row.startup_config || {},
     approvedAt: row.decided_at ?? null,
     updateAvailable: Boolean(source) && copyDiffers(row, source),
+    iconUrl: iconUrlOf(source),
 });
 
 /** The parts of a workflow a case copies, in a form that compares equal when they match. */
@@ -138,8 +146,6 @@ export const toWorkflow = (doc, req) => ({
     fileTypes: doc.file_types || [],
     startupConfig: doc.startup_config || {},
     isMine: isOwner(doc, req),
-    // The key changes with each upload, so it versions the URL: a new icon is never hidden by a
-    // cached old one, and editing anything else doesn't make browsers fetch the icon again.
-    iconUrl: doc.icon_key ? `/api/workflows/${doc.id}/icon?v=${encodeURIComponent(doc.icon_key.split('/').pop())}` : null,
+    iconUrl: iconUrlOf(doc),
     updatedAt: doc.updatedAt,
 });

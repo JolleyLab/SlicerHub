@@ -76,7 +76,8 @@ export class CaseWorkflowsController {
 
     /**
      * What opening a file does (attachment null: the blank viewer) and what its menu offers.
-     * `label`: what differs from the person's usual viewer with no workflow; `name`: all of it.
+     * `label`: what differs from the person's usual viewer with no workflow; `name`: all of it;
+     * `icon`: { name, src } for the row's icon (the workflow's, else the viewer's initial).
      */
     openWithFor(caseRow, attachment = null) {
         const loaded = this.loaded?.caseId === String(caseRow.id) ? this.loaded : null;
@@ -95,6 +96,7 @@ export class CaseWorkflowsController {
             selectedKey: open.workflow?.key ?? NO_WORKFLOW,
             name: open.workflow ? `${open.workflow.name} · ${viewerName}` : viewerName,
             label: [open.workflow?.name, otherViewer ? viewerName : null].filter(Boolean).join(' · '),
+            icon: { name: open.workflow?.name ?? viewerName, src: open.workflow?.iconUrl ?? null },
         };
     }
 

@@ -19,6 +19,12 @@ export const ICON_TRASH = html`
         <path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"></path>
     </svg>`;
 
+/** Arrow into a tray: download. */
+export const ICON_DOWNLOAD = html`
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"></path>
+    </svg>`;
+
 /** Circled "i": more information. */
 export const ICON_INFO = html`
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
