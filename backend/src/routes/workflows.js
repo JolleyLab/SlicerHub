@@ -13,10 +13,9 @@ import { IMAGE_MIME, sniffImageType, sendStoredImage } from '../utils/storedImag
 import { requireOwnerId, loadOwnedDoc } from '../utils/ownedDocs.js';
 import { sanitizeNameList, sanitizeFileExtensions, sanitizeText, sanitizeChoice } from '../utils/validation.js';
 import {
-    WORKFLOWS, PUBLIC, VISIBILITY, myWorkflows, findWorkflowPage, workflowPageQuery, toWorkflow, sanitizeStartupConfig,
+    WORKFLOWS, PUBLIC, VISIBILITY, VIEWER, myWorkflows, findWorkflowPage, workflowPageQuery, toWorkflow, sanitizeStartupConfig,
 } from '../services/workflows.js';
 
-export const VISIBILITIES = Object.freeze(Object.values(VISIBILITY));
 export const ICON_MAX_BYTES = 256 * 1024;
 
 const iconUploader = multer({ storage: multer.memoryStorage(), limits: { fileSize: ICON_MAX_BYTES, files: 1 } });
@@ -31,10 +30,11 @@ export function workflowFields(body = {}, { partial = false } = {}) {
     const out = {};
     if (has('name')) out.name = sanitizeText(body.name, { field: 'workflow.fields.name', max: 100, required: true });
     if (has('description')) out.description = sanitizeText(body.description, { field: 'workflow.fields.description', max: 1000 });
-    if (has('visibility')) out.visibility = sanitizeChoice(body.visibility ?? VISIBILITY.PRIVATE, VISIBILITIES, { field: 'workflow.fields.visibility' });
+    if (has('visibility')) out.visibility = sanitizeChoice(body.visibility ?? VISIBILITY.PRIVATE, Object.values(VISIBILITY), { field: 'workflow.fields.visibility' });
     if (has('extensions')) out.extensions = sanitizeNameList(body.extensions, { field: 'workflow.fields.extensions' });
     if (has('fileTypes')) out.file_types = sanitizeFileExtensions(body.fileTypes);
     if (has('startupConfig')) out.startup_config = sanitizeStartupConfig(body.startupConfig);
+    if (has('viewer')) out.viewer = sanitizeChoice(body.viewer ?? VIEWER.SLICERWEB, Object.values(VIEWER), { field: 'workflow.fields.viewer' });
     return out;
 }
 

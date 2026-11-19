@@ -275,7 +275,7 @@ These follow the two patterns already in use: pending invites (a live count in t
 
 ### Data model
 
-**`workflows`** gains `startup_config` (json, see [Startup configuration](#startup-configuration)).
+**`workflows`** gains `startup_config` (json, see [Startup configuration](#startup-configuration)) and `viewer` (`slicerweb` | `full`; empty on older rows, read as SlicerWeb). `case-workflows` copies `viewer` like the other fields, so changing it is an update.
 
 **`case-workflows`** (one row per case and workflow; a request or an approval):
 
@@ -341,14 +341,17 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
   - Each openable file shows its toolkit's icon before its name (the viewer's initial with no toolkit); clicking it opens the file, as the name does. It's pointer-only: keyboard and screen readers use the name button, so there's no second tab stop. The case's toolkits carry their source's `iconUrl` (not copied: the source's current icon, only when the person can see the source; otherwise the initial).
   - On file rows the Open ▾ button is a bare chevron (the toolkit's name is in its tooltip) that opens a grid of icons, 4 wide, each named in a tooltip on hover and keyboard focus (names under the icons wrapped badly): No toolkit, the short list, "More…", then "All options…", which shows the labelled list (with "Open in") in the same panel, so there's never a menu on a menu. Arrow keys go through the tiles in order, Left/Right as Up/Down, the same for every popup menu (so sighted keyboard and screen reader users get one behaviour). The chevron still shows when only one choice applies, because "Open in" lives behind it until the viewer becomes part of the toolkit. The blank viewer and the failed-load dialog keep the list.
 
+  - The viewer is part of the toolkit (5a, data and editor): a `viewer` field, chosen on the toolkit form ("Opens in", before Extensions) and shown on its page. "Start in" drops its SlicerWeb notes for Full Slicer toolkits. Seeds: SlicerHeart opens in SlicerWeb, SlicerHeart – Simplified in Full Slicer (SimplifiedViewer only starts there); setup gives older seed rows their viewer. Cases that approved Simplified before this show "Update available" until re-approved. Opening files doesn't use it yet (5b).
+
 **Next:** the two waiting items below, when their conditions are met; otherwise ready to merge.
 
 **Open questions and follow-ups:**
+- SlicerWeb can hang on startup from a broken service-worker cache (seen 19 Nov on latest: after `sw.js` nothing reached nginx; "Clear site data" fixed it). A hard refresh doesn't help and users won't know DevTools, and the latest channel will see real research use. Add a fallback: if SlicerWeb hasn't reported ready after a generous wait, offer "Reset viewer and try again", which unregisters SlicerWeb's service worker and deletes its caches (same origin, so the page can) without signing out. Also report it to SlicerWeb: its service worker should recover from a broken cache itself.
 - "Start in" shows module names (`SegmentEditor`), not the titles Slicer users know ("Segment Editor"); decide together with the core module list once users have said where they start.
 - Report to SlicerWeb: `?module=` should accept its built-in panels and apply after data loads; then remove the workaround.
 - Move the remaining inline icons (download, search, `homeIcons.js`) into `dev/utils/icons.js`.
 - Extract the viewer code (about 900 lines) from `cases-page.js`.
-- A Docker 409 ("removal already in progress") when starting a Full Slicer seat right after a backend restart.
+- **Before release:** a Docker 409 ("removal already in progress") when starting a Full Slicer seat right after a backend restart: the restart's orphan cleanup is still removing the person's old seat, so the user gets "Couldn't start the viewer. Please try again in a moment." (seen again 19 Nov). Handle it: on that 409, wait for the removal to finish (a few seconds), then start the seat; fail only if it's still there.
 - A local test-data script (e.g. `scripts/seed-test-data.mjs`, never run by setup or bootstrap): data for trying things locally that a real installation shouldn't get, such as enough public workflows to page through, with a matching remove step. Paging was tested on 18 Nov with 30 public workflows owned by `test-paging`, added by hand.
 
 **Cleanup agreed before merging:**
@@ -374,6 +377,8 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
 **Workflow variants.** "SlicerHeart" and "SlicerHeart – Simplified" share an extension list and differ only in where they start, and admins approve each. If such variants become common, a workflow could be approved together with the variants based on it (parent/child), or carry several starting points. Not worth the complexity yet.
 
 **Toolkit icons stay optional.** With the icon-only grid, toolkits without an icon fall back to an initial, and several can share one ("S" for SlicerHeart, SlicerHeart – Simplified and SlicerWeb). We won't require an icon, or offer a curated picker: many extensions already have logos authors can use, and we shouldn't be the gate. Revisit if look-alike icons become a real problem. A cheap improvement meanwhile: fall back to the toolkit's main extension's logo (`extensionIconUrl` in `dev/utils/iconTile.js`) before the initial; toolkits on the same extension would still look alike until their authors upload an icon.
+
+**Noticing toolkit updates.** "Update available" only shows inside the case's Toolkits panel ("In this case", admins); the ⋯ menu's badge counts requests, not updates, so admins rarely see one. Updates usually aren't urgent, since the case keeps its approved copy. Later: a passive "look here" for admins (e.g. counting updates in the badge, opening on "In this case" when there are no requests), and a way for an owner to mark an update as a critical fix that does notify (bell, To do) or applies itself.
 
 **Server-side picks.** Per-file picks live in the browser and are cleared on sign-out. Storing them per user on the server would let them follow people between browsers, and would let the account viewer setting go away.
 

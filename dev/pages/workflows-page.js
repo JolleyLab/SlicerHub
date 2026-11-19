@@ -23,12 +23,13 @@ import '../components/tag-input.js';
 import '../components/info-tip.js';
 import { normalizeFileExtension, formatFileExtension } from '../utils/fileTypes.js';
 import { startModuleGroups, isStartModuleMissing } from '../utils/startModules.js';
+import { VIEWER, VIEWER_NAME_KEY } from '../utils/openWith.js';
 
 const { PRIVATE, PUBLIC } = WORKFLOW_VISIBILITY;
 /** The two tabs: the person's own workflows, and everyone's public ones ("All workflows", ?tab=all). */
 const TAB = Object.freeze({ OWN: 'own', PUBLIC: 'public' });
 const TABS = Object.values(TAB);
-const blankForm = () => ({ id: null, name: '', description: '', visibility: PRIVATE, extensions: [], fileTypes: [], startupConfig: {} });
+const blankForm = () => ({ id: null, name: '', description: '', visibility: PRIVATE, viewer: VIEWER.SLICERWEB, extensions: [], fileTypes: [], startupConfig: {} });
 const VISIBILITY_ICONS = Object.freeze({ [PUBLIC]: EYE_PATH, [PRIVATE]: EYE_OFF_PATH });
 
 /** Eye (public) or eye-off (just me) and its label; hovering explains who can use it. */
@@ -203,8 +204,8 @@ export class WorkflowsPage extends LitElement {
     // ── Unsaved changes ──────────────────────────────────────────
 
     _formFields(form) {
-        const { name, description, visibility, extensions, fileTypes, startupConfig } = form;
-        return { name, description, visibility, extensions, fileTypes, startupConfig };
+        const { name, description, visibility, viewer, extensions, fileTypes, startupConfig } = form;
+        return { name, description, visibility, viewer, extensions, fileTypes, startupConfig };
     }
 
     _isDirty() {
@@ -501,6 +502,7 @@ export class WorkflowsPage extends LitElement {
             name: t('workflows.copyName', { name: workflow.name }).slice(0, 100),
             description: workflow.description,
             visibility: PRIVATE,
+            viewer: workflow.viewer,
             extensions: workflow.extensions,
             fileTypes: workflow.fileTypes,
             startupConfig: workflow.startupConfig,
@@ -681,6 +683,10 @@ export class WorkflowsPage extends LitElement {
                                     ? w.fileTypes.map((ext) => html`<span class="type-chip">${formatFileExtension(ext)}</span>`)
                                     : html`<span class="hint">${t('workflows.anyFileType')}</span>`}
                             </div>
+                            <div class="file-types">
+                                <span class="file-types-label">${t('workflows.opensIn')}</span>
+                                <span class="type-chip">${t(VIEWER_NAME_KEY[w.viewer])}</span>
+                            </div>
                             ${w.startupConfig?.module ? html`
                                 <div class="file-types">
                                     <span class="file-types-label">${t('workflows.startIn')}</span>
@@ -720,8 +726,10 @@ export class WorkflowsPage extends LitElement {
         const module = f.startupConfig?.module || '';
         const groups = startModuleGroups(f.extensions, this.startCatalogs || {});
         const missing = this.startCatalogs !== null && isStartModuleMissing(module, groups);
-        const optionLabel = (m) => (m.fullSlicerOnly ? t('workflows.startInFullSlicerOnly', { module: m.name })
-            : m.latestOnly ? t('workflows.startInLatestOnly', { module: m.name }) : m.name);
+        // The notes are about SlicerWeb's limits; Full Slicer starts in any of them.
+        const optionLabel = (m) => (f.viewer === VIEWER.FULL ? m.name
+            : m.fullSlicerOnly ? t('workflows.startInFullSlicerOnly', { module: m.name })
+                : m.latestOnly ? t('workflows.startInLatestOnly', { module: m.name }) : m.name);
         return html`
             <div class="form-group">
                 <span class="form-label"><label for="wf-start">${t('workflows.startIn')}</label>
@@ -791,6 +799,12 @@ export class WorkflowsPage extends LitElement {
                     <p class="hint" aria-live="polite">
                         <strong>${t(`workflows.${f.visibility}`)}</strong>: ${t(`workflows.${f.visibility}Hint`)}
                     </p>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="wf-viewer">${t('workflows.opensIn')}</label>
+                    <select id="wf-viewer" class="form-input" .value=${f.viewer} @change=${(e) => this._setForm('viewer', e.target.value)}>
+                        ${Object.values(VIEWER).map((v) => html`<option value=${v} ?selected=${f.viewer === v}>${t(VIEWER_NAME_KEY[v])}</option>`)}
+                    </select>
                 </div>
                 <div class="form-group">
                     <span class="form-label">${t('workflows.extensions')}</span>

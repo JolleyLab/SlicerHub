@@ -34,6 +34,16 @@ test('creates the two public SlicerHeart workflows once, owned by no person', as
     assert.equal(rows('workflows').length, 2);
 });
 
+test('SlicerHeart opens in SlicerWeb, Simplified in Full Slicer; seeds from before viewers get theirs', async () => {
+    const [heart, simplified] = await ensureSeedWorkflows();
+    assert.equal(heart.viewer, 'slicerweb');
+    assert.equal(simplified.viewer, 'full');
+    delete heart.viewer;
+    delete simplified.viewer;
+    await ensureSeedWorkflows();
+    assert.deepEqual(rows('workflows').map((w) => w.viewer), [undefined, 'full']); // no viewer reads as SlicerWeb
+});
+
 test('cases from before workflows get both approved and SlicerHeart as default; new cases are left alone', async () => {
     const seeds = await ensureSeedWorkflows();
     assert.equal(await seedExistingCases(seeds), 2);

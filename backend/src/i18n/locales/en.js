@@ -271,6 +271,7 @@ export default {
             visibility: 'Visibility',
             extensions: 'Extensions',
             file_types: 'File types',
+            viewer: 'Viewer',
             decline_reason: 'Reason',
         },
         // The workflows every SlicerHub starts with (setup/workflowSeed.js)

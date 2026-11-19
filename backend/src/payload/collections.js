@@ -358,6 +358,17 @@ export const SiteAnnouncement = {
 export const workflowSearchText = (doc) => [doc.name, doc.description, ...(doc.extensions || []), ...(doc.file_types || [])]
     .filter(Boolean).join(' ').toLowerCase();
 
+/** The viewer a workflow opens in; empty on rows from before it was added (read as SlicerWeb). */
+const VIEWER_FIELD = {
+    name: 'viewer',
+    type: 'select',
+    options: [
+        { label: 'SlicerWeb', value: 'slicerweb' },
+        { label: 'Full Slicer', value: 'full' },
+    ],
+    defaultValue: 'slicerweb',
+};
+
 export const Workflows = {
     slug: 'workflows',
     admin: { useAsTitle: 'name' },
@@ -380,8 +391,7 @@ export const Workflows = {
             required: true,
             index: true,
         },
-        // A workflow doesn't name a viewer: which viewers can run it follows from its extensions
-        // and startup keys (docs/workflows-design.md › Viewers and workflows).
+        { ...VIEWER_FIELD }, // a copy each: Payload may add to a field's config
         { name: 'extensions', type: 'json' }, // string[] of extension names
         { name: 'icon_key', type: 'text' },   // storage key of an uploaded icon (routes/workflows.js)
         { name: 'file_types', type: 'json' }, // string[]: data file extensions it's for ("mrb", "nii.gz"); empty = any
@@ -419,6 +429,7 @@ export const CaseWorkflows = {
         { name: 'extensions', type: 'json' },
         { name: 'file_types', type: 'json' },
         { name: 'startup_config', type: 'json' },
+        { ...VIEWER_FIELD },
         // Who asked is in case-workflow-requesters.
         { name: 'requested_at', type: 'date' },
         { name: 'decline_reason', type: 'text' }, // kept until the next request or approval

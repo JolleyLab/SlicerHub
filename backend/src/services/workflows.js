@@ -11,6 +11,10 @@ export const WORKFLOWS = 'workflows';
 export const CASE_WORKFLOWS = 'case-workflows';
 
 export const VISIBILITY = Object.freeze({ PRIVATE: 'private', PUBLIC: 'public' });
+/** The viewer a workflow opens in. */
+export const VIEWER = Object.freeze({ SLICERWEB: 'slicerweb', FULL: 'full' });
+/** Rows from before workflows named a viewer open in SlicerWeb. */
+export const viewerOf = (doc) => doc?.viewer || VIEWER.SLICERWEB;
 /** A case-workflows row: requested, approved (members can use it), or declined. */
 export const REQUEST_STATUS = Object.freeze({ PENDING: 'pending', APPROVED: 'approved', DECLINED: 'declined' });
 
@@ -61,15 +65,17 @@ export const toApproval = (row, source = null) => ({
     extensions: row.extensions || [],
     fileTypes: row.file_types || [],
     startupConfig: row.startup_config || {},
+    viewer: viewerOf(row),
     approvedAt: row.decided_at ?? null,
     updateAvailable: Boolean(source) && copyDiffers(row, source),
     iconUrl: iconUrlOf(source),
 });
 
 /** The parts of a workflow a case copies, in a form that compares equal when they match. */
-const COPIED_FIELDS = ['name', 'description', 'extensions', 'file_types', 'startup_config'];
+const COPIED_FIELDS = ['name', 'description', 'extensions', 'file_types', 'startup_config', 'viewer'];
 const comparable = (doc) => JSON.stringify(COPIED_FIELDS.map((field) => {
     const value = doc[field];
+    if (field === 'viewer') return viewerOf(doc);
     if (field === 'startup_config') return value || {};
     if (field === 'extensions' || field === 'file_types') return value || [];
     return value || '';
@@ -89,6 +95,7 @@ export const workflowCopy = (source) => ({
     extensions: source.extensions || [],
     file_types: source.file_types || [],
     startup_config: source.startup_config || {},
+    viewer: viewerOf(source),
 });
 
 /** At most 200 rows: for lists bounded by one person or one case (public workflows are paged). */
@@ -145,6 +152,7 @@ export const toWorkflow = (doc, req) => ({
     extensions: doc.extensions || [],
     fileTypes: doc.file_types || [],
     startupConfig: doc.startup_config || {},
+    viewer: viewerOf(doc),
     isMine: isOwner(doc, req),
     iconUrl: iconUrlOf(doc),
     updatedAt: doc.updatedAt,

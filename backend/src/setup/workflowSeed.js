@@ -9,7 +9,7 @@
 import { getPayloadClient } from '../payload/index.js';
 import { msg } from '../i18n/index.js';
 import {
-    WORKFLOWS, CASE_WORKFLOWS, REQUEST_STATUS, SIMPLIFIED_VIEWER_MODULE, findAll, workflowCopy, isApproved,
+    WORKFLOWS, CASE_WORKFLOWS, REQUEST_STATUS, SIMPLIFIED_VIEWER_MODULE, VIEWER, viewerOf, findAll, workflowCopy, isApproved,
 } from '../services/workflows.js';
 import { clearRequesters } from '../services/workflowRequests.js';
 
@@ -17,18 +17,25 @@ export const SYSTEM_OWNER = 'system';
 
 /** The seeded workflows, told apart by their start module (names can be reworded in i18n). */
 const SEEDS = [
-    { module: null, name: 'workflow.seed_slicerheart_name', description: 'workflow.seed_slicerheart_description' },
-    { module: SIMPLIFIED_VIEWER_MODULE, name: 'workflow.seed_simplified_name', description: 'workflow.seed_simplified_description' },
+    { module: null, viewer: VIEWER.SLICERWEB, name: 'workflow.seed_slicerheart_name', description: 'workflow.seed_slicerheart_description' },
+    // SimplifiedViewer only starts in Full Slicer.
+    { module: SIMPLIFIED_VIEWER_MODULE, viewer: VIEWER.FULL, name: 'workflow.seed_simplified_name', description: 'workflow.seed_simplified_description' },
 ];
 
 const startModule = (doc) => doc.startup_config?.module || null;
 
-/** The seeded workflows, created if missing: [slicerHeart, simplified]. */
+/** The seeded workflows, created if missing (and given their viewer if it differs): [slicerHeart, simplified]. */
 export async function ensureSeedWorkflows() {
     const payload = getPayloadClient();
     const existing = await findAll(WORKFLOWS, { owner_id: { equals: SYSTEM_OWNER } });
-    return Promise.all(SEEDS.map(async (seed) => existing.find((d) => startModule(d) === seed.module)
-        || payload.create({
+    return Promise.all(SEEDS.map(async (seed) => {
+        const doc = existing.find((d) => startModule(d) === seed.module);
+        if (doc) {
+            return viewerOf(doc) === seed.viewer
+                ? doc
+                : payload.update({ collection: WORKFLOWS, id: doc.id, data: { viewer: seed.viewer } });
+        }
+        return payload.create({
             collection: WORKFLOWS,
             data: {
                 name: msg(seed.name),
@@ -38,8 +45,10 @@ export async function ensureSeedWorkflows() {
                 extensions: ['SlicerHeart'],
                 file_types: [],
                 startup_config: seed.module ? { module: seed.module } : {},
+                viewer: seed.viewer,
             },
-        })));
+        });
+    }));
 }
 
 /** Approve `source` for a case unless it's already approved there; returns the approved row. */

@@ -53,11 +53,13 @@ test.beforeEach(() => {
 test('workflowFields validates and normalizes', () => {
     assert.deepEqual(
         workflowFields({ name: '  Cardiac ', extensions: ['SlicerHeart', 'SlicerHeart', ' SlicerRT '] }),
-        { name: 'Cardiac', description: '', visibility: 'private', extensions: ['SlicerHeart', 'SlicerRT'], file_types: [], startup_config: {} },
+        { name: 'Cardiac', description: '', visibility: 'private', extensions: ['SlicerHeart', 'SlicerRT'], file_types: [], startup_config: {}, viewer: 'slicerweb' },
     );
     assert.deepEqual(workflowFields({ visibility: 'public' }, { partial: true }), { visibility: 'public' });
     assert.throws(() => workflowFields({ name: '' }), /Name is required/);
     assert.throws(() => workflowFields({ name: 'x', visibility: 'everyone' }), /Visibility/);
+    assert.deepEqual(workflowFields({ viewer: 'full' }, { partial: true }), { viewer: 'full' });
+    assert.throws(() => workflowFields({ name: 'x', viewer: 'desktop' }), /Viewer/);
     assert.throws(() => workflowFields({ name: 'x', extensions: 'SlicerHeart' }), /must be a list/);
     assert.throws(() => workflowFields({ name: 'x', extensions: ['../evil'] }), /invalid name/);
     assert.deepEqual(
@@ -188,6 +190,19 @@ test("edits the case doesn't copy aren't an update: visibility, or a copy from b
     await call('PATCH', '/api/workflows/11', { user: MEMBER, body: { startupConfig: { module: 'SimplifiedViewer' } } });
     [approved] = (await call('GET', '/api/cases/1/workflows', { user: ADMIN })).body.approved;
     assert.equal(approved.updateAvailable, true);
+});
+
+test('the viewer is copied on approval, and changing it is an update; rows without one open in SlicerWeb', async () => {
+    assert.equal((await call('GET', '/api/workflows/11', { user: MEMBER })).body.workflow.viewer, 'slicerweb');
+    await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
+    await call('PATCH', '/api/workflows/11', { user: MEMBER, body: { viewer: 'full' } });
+    let [approved] = (await call('GET', '/api/cases/1/workflows', { user: ADMIN })).body.approved;
+    assert.equal(approved.viewer, 'slicerweb');
+    assert.equal(approved.updateAvailable, true);
+    await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
+    [approved] = (await call('GET', '/api/cases/1/workflows', { user: ADMIN })).body.approved;
+    assert.equal(approved.viewer, 'full');
+    assert.equal(approved.updateAvailable, false);
 });
 
 test('removing an approval only works within its own case', async () => {

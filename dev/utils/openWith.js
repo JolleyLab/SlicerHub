@@ -5,6 +5,8 @@
  */
 
 export const VIEWER = Object.freeze({ SLICERWEB: 'slicerweb', FULL: 'full' });
+/** Each viewer's name, as an i18n key. */
+export const VIEWER_NAME_KEY = Object.freeze({ [VIEWER.SLICERWEB]: 'viewers.slicerWeb', [VIEWER.FULL]: 'viewers.fullSlicer' });
 /** SlicerHeart's simplified viewer: Full Slicer starts it through its own simplified mode. */
 export const SIMPLIFIED_VIEWER_MODULE = 'SimplifiedViewer';
 /** The menu's "No workflow" pick. */

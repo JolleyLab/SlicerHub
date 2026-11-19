@@ -10,7 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import { slicerAddonsHostDir, slicerAddonsSyncReady } from '../slicerGui/paths.js';
-import { STARTUP_CONFIG_KEYS, SIMPLIFIED_VIEWER_MODULE } from './workflows.js';
+import { STARTUP_CONFIG_KEYS, SIMPLIFIED_VIEWER_MODULE, VIEWER } from './workflows.js';
 
 /** The manifest Full Slicer seats are built from, mounted read-only (docker-compose.yml). */
 const bundledManifest = () => process.env.SLICER_ADDONS_MANIFEST || '/etc/slicer-addons.json';
@@ -41,6 +41,6 @@ export function fullSlicerExtensions() {
  * (in SlicerWeb its widget fails on fullSlicerInterfaceAction); remove it here once it doesn't.
  */
 export const viewerCapabilities = () => ({
-    slicerweb: { startupKeys: Object.keys(STARTUP_CONFIG_KEYS), unsupportedModules: [SIMPLIFIED_VIEWER_MODULE] },
-    full: { extensions: fullSlicerExtensions(), startupKeys: ['module'], unsupportedModules: [] },
+    [VIEWER.SLICERWEB]: { startupKeys: Object.keys(STARTUP_CONFIG_KEYS), unsupportedModules: [SIMPLIFIED_VIEWER_MODULE] },
+    [VIEWER.FULL]: { extensions: fullSlicerExtensions(), startupKeys: ['module'], unsupportedModules: [] },
 });
