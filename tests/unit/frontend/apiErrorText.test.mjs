@@ -31,7 +31,7 @@ test('an error without a key, or with one the browser catalog lacks, keeps the s
     assert.equal(apiError(response, { error: { key: 'auth.session_invalid', message: 'Server text' } }).message, 'Server text');
     assert.equal(
         apiError(response, { error: { key: 'workflow.already_in_case', message: 'Server text' } }, '', { friendly: true }).message,
-        'This workflow is already available in this case.',
+        'This toolkit is already available in this case.',
     );
 });
 
