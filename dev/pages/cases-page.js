@@ -1950,7 +1950,7 @@ export class CasesPage extends LitElement {
             fileName: this.attachmentTitle(attachment),
             usable: { caseWorkflows: offered, mine: [] },
             selectedKey: offered[0].key,
-            open: (key) => this.workflows.pickAndOpen(caseRow, attachment, key),
+            open: (key) => this.workflows.openChoice(caseRow, attachment, key),
             more: () => this.workflows.openMore(caseRow, attachment, offer, offer.fileName),
         };
         return { title: t('errors.unrecognisedFormatTitle'), message: t('errors.unrecognisedFormatTryWorkflows'), offer };
@@ -2627,7 +2627,7 @@ export class CasesPage extends LitElement {
                                                 @name-click=${() => this.openWith(caseRow, attachment, openWith)}
                                             >
                                                 ${attachment?.canOpenInSlicer ? html`
-                                                    <span slot="leading" title=${openWith.icon.name}>${iconTile(openWith.icon.name, openWith.icon.src)}</span>
+                                                    <span slot="leading" title=${openWith.name}>${iconTile(openWith.icon.name, openWith.icon.src)}</span>
                                                     ${this.workflows.renderMenu(caseRow, attachment, openWith, { slot: 'title-trailing' })}
                                                 ` : ''}
                                                 ${canEdit ? html`
@@ -2908,7 +2908,6 @@ export class CasesPage extends LitElement {
                         .fileName=${offer.fileName}
                         .usable=${offer.usable}
                         .selectedKey=${offer.selectedKey}
-                        .showNoWorkflow=${false}
                         @open-workflow=${(e) => then(() => offer.open(e.detail.key))}
                         @more-workflows=${() => then(offer.more)}
                     ></open-with-menu>

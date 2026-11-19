@@ -1,9 +1,7 @@
 import { html } from 'lit-element';
 import { t } from '../i18n/index.js';
 import { listCaseWorkflows, loadExtensionCatalog } from '../services/workflows.js';
-import {
-    VIEWER, NO_WORKFLOW, viewerFromAccount, usableWorkflows, resolveOpen, readOpenPick, saveOpenPick,
-} from '../utils/openWith.js';
+import { VIEWER_NAME_KEY, choiceFor, resolveOpen } from '../utils/openWith.js';
 import '../components/open-with-menu.js';
 import '../components/case-workflows-panel.js';
 import '../components/more-workflows-dialog.js';
@@ -75,40 +73,29 @@ export class CaseWorkflowsController {
     // ── Opening a file ─────────────────────────────────────────────────────
 
     /**
-     * What opening a file does (attachment null: the blank viewer) and what its menu offers.
-     * `label`: what differs from the person's usual viewer with no workflow; `name`: all of it;
-     * `icon`: { name, src } for the row's icon (the workflow's, else the viewer's initial).
+     * What opening a file does (attachment null: the blank viewer) and what its menu offers
+     * (resolveOpen), plus `name` ("SlicerHeart · SlicerWeb") and `icon` { name, src } for its row.
      */
     openWithFor(caseRow, attachment = null) {
         const loaded = this.loaded?.caseId === String(caseRow.id) ? this.loaded : null;
-        const accountViewer = this.options.accountViewer();
-        const options = {
+        const open = resolveOpen(loaded?.data, {
             fileName: attachment ? this.options.fileName(attachment) : null,
             slicerWebExtensions: loaded?.slicerWebExtensions ?? null,
-        };
-        const pick = attachment ? readOpenPick(caseRow.id, attachment.id) : null;
-        const open = resolveOpen(loaded?.data, { ...options, accountViewer, pick });
-        const viewerName = t(open.viewer === VIEWER.FULL ? 'viewers.fullSlicer' : 'viewers.slicerWeb');
-        const otherViewer = attachment && open.viewer !== viewerFromAccount(accountViewer);
+            accountViewer: this.options.accountViewer(),
+        });
+        const viewerName = t(VIEWER_NAME_KEY[open.viewer]);
         return {
             ...open,
-            usable: usableWorkflows(loaded?.data, { ...options, viewer: open.viewer }),
-            selectedKey: open.workflow?.key ?? NO_WORKFLOW,
+            selectedKey: open.key,
             name: open.workflow ? `${open.workflow.name} · ${viewerName}` : viewerName,
-            label: [open.workflow?.name, otherViewer ? viewerName : null].filter(Boolean).join(' · '),
             icon: { name: open.workflow?.name ?? viewerName, src: open.workflow?.iconUrl ?? null },
         };
     }
 
-    /** A menu pick (workflow key or NO_WORKFLOW): files remember it, the blank viewer doesn't. */
-    pickAndOpen(caseRow, attachment, key) {
-        if (attachment) {
-            saveOpenPick(caseRow.id, attachment.id, { workflow: key });
-            return this.options.launch(caseRow, attachment, this.openWithFor(caseRow, attachment));
-        }
-        const { usable } = this.openWithFor(caseRow);
-        const workflow = [...usable.caseWorkflows, ...usable.mine].find((e) => e.key === key) || null;
-        return this.options.launch(caseRow, null, { viewer: VIEWER.SLICERWEB, workflow });
+    /** Open a file (attachment null: the blank viewer) once with a menu choice (a key); nothing is remembered. */
+    openChoice(caseRow, attachment, key) {
+        const open = this.openWithFor(caseRow, attachment);
+        return this.options.launch(caseRow, attachment, choiceFor(open.usable, key) || open);
     }
 
     // ── Rendering ──────────────────────────────────────────────────────────
@@ -121,15 +108,12 @@ export class CaseWorkflowsController {
                 slot=${slot}
                 .buttonLabel=${buttonLabel}
                 .fileName=${title}
-                .viewer=${openWith.viewer}
-                ?canSwitchViewer=${Boolean(attachment)}
                 ?grid=${Boolean(attachment)}
                 .usable=${openWith.usable}
                 .selectedKey=${openWith.selectedKey}
-                .label=${openWith.label}
+                .label=${openWith.name}
                 ?disabled=${this.options.isBusy()}
-                @switch-viewer=${(e) => { saveOpenPick(caseRow.id, attachment.id, { viewer: e.detail.viewer }); this.host.requestUpdate(); }}
-                @open-workflow=${(e) => this.pickAndOpen(caseRow, attachment, e.detail.key)}
+                @open-workflow=${(e) => this.openChoice(caseRow, attachment, e.detail.key)}
                 @more-workflows=${() => this.openMore(caseRow, attachment, openWith, title)}
             ></open-with-menu>
         `;
@@ -150,7 +134,7 @@ export class CaseWorkflowsController {
                 @workflows-changed=${() => caseRow && this.load(caseRow.id, { refresh: true })}
             ></case-workflows-panel>
             <more-workflows-dialog
-                @open-workflow=${(e) => this._moreFor && this.pickAndOpen(this._moreFor.caseRow, this._moreFor.attachment, e.detail.key)}
+                @open-workflow=${(e) => this._moreFor && this.openChoice(this._moreFor.caseRow, this._moreFor.attachment, e.detail.key)}
             ></more-workflows-dialog>
         `;
     }

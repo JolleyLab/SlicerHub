@@ -1,7 +1,7 @@
 /**
- * Opening a case file: which viewer, which workflow, and what the Open ▾ menu offers. Pure
- * functions over GET /api/cases/:id/workflows, plus per-file picks kept in the browser
- * (docs/workflows-design.md › Workflows in cases).
+ * Opening a case file: which toolkit (each opens in its own viewer), or a plain viewer, and what
+ * the Open ▾ menu offers. Pure functions over GET /api/cases/:id/workflows (docs/workflows-design.md
+ * › Workflows in cases). A choice from the menu opens the file once; nothing is remembered.
  */
 
 export const VIEWER = Object.freeze({ SLICERWEB: 'slicerweb', FULL: 'full' });
@@ -9,12 +9,12 @@ export const VIEWER = Object.freeze({ SLICERWEB: 'slicerweb', FULL: 'full' });
 export const VIEWER_NAME_KEY = Object.freeze({ [VIEWER.SLICERWEB]: 'viewers.slicerWeb', [VIEWER.FULL]: 'viewers.fullSlicer' });
 /** SlicerHeart's simplified viewer: Full Slicer starts it through its own simplified mode. */
 export const SIMPLIFIED_VIEWER_MODULE = 'SimplifiedViewer';
-/** The menu's "No workflow" pick. */
-export const NO_WORKFLOW = 'none';
-/** The menu's sections. The values are in the keys of stored picks, so they mustn't change. */
-export const WORKFLOW_SECTION = Object.freeze({ CASE: 'case', OWN: 'mine' });
-/** A menu entry's key, what picks store: "case:<approval id>" or "mine:<workflow id>". */
+/** The menu's sections, the first part of each entry's key. */
+export const WORKFLOW_SECTION = Object.freeze({ VIEWER: 'viewer', CASE: 'case', OWN: 'mine' });
+/** A menu entry's key: "case:<approval id>", "mine:<workflow id>" or "viewer:<viewer>". */
 export const workflowKey = (section, id) => `${section}:${id}`;
+/** A plain viewer's key: opening with no toolkit. */
+export const viewerKey = (viewer) => workflowKey(WORKFLOW_SECTION.VIEWER, viewer);
 /** Workflows shown in the menu before "More workflows…". */
 export const MENU_LIMIT = 5;
 
@@ -37,6 +37,7 @@ const toEntry = (w, section) => ({
     extensions: w.extensions || [],
     fileTypes: w.fileTypes || [],
     startupConfig: w.startupConfig || {},
+    viewer: w.viewer === VIEWER.FULL ? VIEWER.FULL : VIEWER.SLICERWEB,
     iconUrl: w.iconUrl || null,
 });
 
@@ -56,21 +57,34 @@ export function canRun(workflow, viewer, { viewers = null, slicerWebExtensions =
 }
 
 /**
- * What can open this file (fileName null: the blank viewer) in this viewer: the case's workflows,
- * then the person's own unless the case turns them off. An own workflow the case has approved is
- * listed only as the case's, since its approved copy is what the case uses.
+ * What can open this file (fileName null: the blank viewer): `viewers`, the plain viewers; then
+ * the case's workflows and the person's own (unless the case turns them off) that fit the file
+ * and can run in their own viewer. An own workflow the case has approved is listed only as the
+ * case's, since its approved copy is what the case uses. The blank viewer is SlicerWeb only, and
+ * Full Slicer is offered once the case's data has loaded (canRun's rule).
  */
-export function usableWorkflows(data, { fileName = null, viewer = VIEWER.SLICERWEB, slicerWebExtensions = null } = {}) {
-    const types = fileName == null ? [] : fileTypesOf(fileName);
-    const fits = (w) => fileName == null || !w.fileTypes.length || w.fileTypes.some((t) => types.includes(t));
-    const usable = (w) => fits(w) && canRun(w, viewer, { viewers: data?.viewers, slicerWebExtensions });
+export function usableWorkflows(data, { fileName = null, slicerWebExtensions = null } = {}) {
+    const blank = fileName == null;
+    const types = blank ? [] : fileTypesOf(fileName);
+    const fits = (w) => blank || !w.fileTypes.length || w.fileTypes.some((t) => types.includes(t));
+    const usable = (w) => fits(w) && (!blank || w.viewer === VIEWER.SLICERWEB)
+        && canRun(w, w.viewer, { viewers: data?.viewers, slicerWebExtensions });
     const caseWorkflows = (data?.approved || []).map((a) => toEntry(a, WORKFLOW_SECTION.CASE));
     const inCase = new Set(caseWorkflows.map((e) => e.workflowId));
     const mine = data?.allowPersonal === false ? [] : (data?.mine || []).map((w) => toEntry(w, WORKFLOW_SECTION.OWN));
     return {
+        viewers: blank || !data?.viewers?.[VIEWER.FULL] ? [VIEWER.SLICERWEB] : Object.values(VIEWER),
         caseWorkflows: caseWorkflows.filter(usable),
         mine: mine.filter((e) => !inCase.has(e.workflowId) && usable(e)),
     };
+}
+
+/** What a menu key opens, if `usable` offers it: { key, viewer, workflow } (workflow null for a plain viewer). */
+export function choiceFor(usable, key) {
+    const viewer = usable.viewers.find((v) => viewerKey(v) === key);
+    if (viewer) return { key, viewer, workflow: null };
+    const workflow = [...usable.caseWorkflows, ...usable.mine].find((e) => e.key === key);
+    return workflow ? { key, viewer: workflow.viewer, workflow } : null;
 }
 
 /** The workflows that add an extension a launch didn't have: what may read a file it couldn't. */
@@ -78,21 +92,16 @@ export const workflowsAddingExtensions = (workflows, extensions = []) =>
     workflows.filter((w) => w.extensions.some((ext) => !extensions.includes(ext)));
 
 /**
- * What opening a file does: { viewer, workflow (entry or null), from: 'pick' | 'default' | 'none' }.
- * Viewer: the file's pick, else the account setting (the blank viewer is always SlicerWeb).
- * Workflow: the file's pick, else the case default, if usable here.
+ * What clicking a file opens: { key, viewer, workflow (entry or null), from: 'default' | 'none',
+ * usable }. The case default, if usable here; else the person's account viewer with no workflow
+ * (the blank viewer: SlicerWeb).
  */
-export function resolveOpen(data, { fileName = null, pick = null, accountViewer = 'web', slicerWebExtensions = null } = {}) {
-    const blank = fileName == null;
-    const pickedViewer = Object.values(VIEWER).includes(pick?.viewer) ? pick.viewer : null;
-    const viewer = blank ? VIEWER.SLICERWEB : pickedViewer || viewerFromAccount(accountViewer);
-    if (pick?.workflow === NO_WORKFLOW) return { viewer, workflow: null, from: 'pick' };
-    const usable = usableWorkflows(data, { fileName, viewer, slicerWebExtensions });
-    const picked = pick?.workflow && [...usable.caseWorkflows, ...usable.mine].find((e) => e.key === pick.workflow);
-    if (picked) return { viewer, workflow: picked, from: 'pick' };
-    const byDefault = data?.defaultWorkflow && usable.caseWorkflows.find((e) => e.key === workflowKey(WORKFLOW_SECTION.CASE, data.defaultWorkflow));
-    if (byDefault) return { viewer, workflow: byDefault, from: 'default' };
-    return { viewer, workflow: null, from: 'none' };
+export function resolveOpen(data, { fileName = null, accountViewer = 'web', slicerWebExtensions = null } = {}) {
+    const usable = usableWorkflows(data, { fileName, slicerWebExtensions });
+    const byDefault = data?.defaultWorkflow && choiceFor(usable, workflowKey(WORKFLOW_SECTION.CASE, data.defaultWorkflow));
+    if (byDefault) return { ...byDefault, from: 'default', usable };
+    const viewer = fileName == null ? VIEWER.SLICERWEB : viewerFromAccount(accountViewer);
+    return { key: viewerKey(viewer), viewer, workflow: null, from: 'none', usable };
 }
 
 /** The first MENU_LIMIT workflows, keeping the selected one: { caseWorkflows, mine, hidden }. */
@@ -106,48 +115,4 @@ export function shortList(usable, selectedKey = null, limit = MENU_LIMIT) {
         mine: usable.mine.filter((e) => shown.includes(e)),
         hidden: all.length - shown.length,
     };
-}
-
-// ── Picks per file ─────────────────────────────────────────────────────────
-
-// Under slicerweb.* so sign-out clears it with SlicerWeb's own state (utils/slicerWebStorage.js).
-const PICKS_KEY = 'slicerweb.hub.openPicks';
-const MAX_PICKS = 500;
-const pickId = (caseId, attachmentId) => `${caseId}:${attachmentId ?? 'blank'}`;
-
-// If storage fails, files still open, just without picks: warn once per page load.
-const warned = new Set();
-function warnOnce(what, err) {
-    if (warned.has(what)) return;
-    warned.add(what);
-    console.warn(`[openWith] couldn't ${what} per-file picks; files will open with their defaults:`, err);
-}
-
-function readPicks(storage) {
-    try {
-        const picks = JSON.parse(storage?.getItem(PICKS_KEY) || '{}');
-        if (picks && typeof picks === 'object' && !Array.isArray(picks)) return picks;
-        warnOnce('read', new Error('stored picks are not an object'));
-    } catch (err) {
-        warnOnce('read', err);
-    }
-    return {};
-}
-
-/** This person's pick for a file (attachmentId null: the blank viewer): { viewer?, workflow? }, or null. */
-export const readOpenPick = (caseId, attachmentId, storage = globalThis.localStorage) =>
-    readPicks(storage)[pickId(caseId, attachmentId)] ?? null;
-
-/** Remember part of a pick ({ viewer } or { workflow }); keeps the most recent MAX_PICKS files. */
-export function saveOpenPick(caseId, attachmentId, change, storage = globalThis.localStorage) {
-    const picks = readPicks(storage);
-    const id = pickId(caseId, attachmentId);
-    const merged = { ...picks[id], ...change };
-    delete picks[id]; // re-adding moves it to the end, the newest
-    picks[id] = merged;
-    try {
-        storage?.setItem(PICKS_KEY, JSON.stringify(Object.fromEntries(Object.entries(picks).slice(-MAX_PICKS))));
-    } catch (err) {
-        warnOnce('save', err); // storage full, or blocked (e.g. a private window)
-    }
 }

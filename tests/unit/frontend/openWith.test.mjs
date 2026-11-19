@@ -1,16 +1,16 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    VIEWER, NO_WORKFLOW, viewerFromAccount, fileTypesOf, canRun, usableWorkflows, resolveOpen, shortList,
-    workflowsAddingExtensions, readOpenPick, saveOpenPick,
+    VIEWER, viewerKey, viewerFromAccount, fileTypesOf, canRun, usableWorkflows, choiceFor, resolveOpen, shortList,
+    workflowsAddingExtensions,
 } from '../../../dev/utils/openWith.js';
 
 // GET /api/cases/:id/workflows, as the server sends it. Names are made up.
-const W = (id, name, extensions, fileTypes = [], startupConfig = {}) => ({ id, name, extensions, fileTypes, startupConfig });
+const W = (id, name, extensions, fileTypes = [], startupConfig = {}, viewer) => ({ id, name, extensions, fileTypes, startupConfig, viewer });
 const DATA = {
     approved: [
         W(1, 'SlicerHeart', ['SlicerHeart']),
-        W(2, 'SlicerHeart – Simplified', ['SlicerHeart'], [], { module: 'SimplifiedViewer' }),
+        W(2, 'SlicerHeart – Simplified', ['SlicerHeart'], [], { module: 'SimplifiedViewer' }, 'full'),
         W(3, 'Cardiac segmentation', ['SlicerHeart', 'SegmentEditorExtraEffects'], ['mrb']),
         W(4, 'Segment review', ['SegmentEditorExtraEffects'], ['seg.nrrd']),
     ],
@@ -36,7 +36,7 @@ describe('viewerFromAccount', () => {
 describe('workflowsAddingExtensions', () => {
     it('keeps the workflows that add an extension the launch did not have', () => {
         const { caseWorkflows } = usableWorkflows(DATA, { fileName: 'scan.mrb' });
-        assert.deepEqual(keys(workflowsAddingExtensions(caseWorkflows)), ['case:1', 'case:3']);
+        assert.deepEqual(keys(workflowsAddingExtensions(caseWorkflows)), ['case:1', 'case:2', 'case:3']);
         // SlicerHeart was already in: only Cardiac segmentation adds something
         assert.deepEqual(keys(workflowsAddingExtensions(caseWorkflows, ['SlicerHeart'])), ['case:3']);
     });
@@ -79,24 +79,35 @@ describe('canRun', () => {
 });
 
 describe('usableWorkflows', () => {
-    it('lists the case\'s workflows then mine, for this file type, in this viewer', () => {
+    it('lists the plain viewers, then the case\'s workflows and mine that fit this file type', () => {
         const mrb = usableWorkflows(DATA, { fileName: 'heart.mrb' });
-        assert.deepEqual(keys(mrb.caseWorkflows), ['case:1', 'case:3']); // 2 starts in SimplifiedViewer
+        assert.deepEqual(mrb.viewers, [VIEWER.SLICERWEB, VIEWER.FULL]);
+        assert.deepEqual(keys(mrb.caseWorkflows), ['case:1', 'case:2', 'case:3']);
         assert.deepEqual(keys(mrb.mine), []);
-        assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'a.seg.nrrd' }).caseWorkflows), ['case:1', 'case:4']);
+        assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'a.seg.nrrd' }).caseWorkflows), ['case:1', 'case:2', 'case:4']);
         assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'brain.nii.gz' }).mine), ['mine:11']);
     });
-    it('entries carry the icon the server sent, or null', () => {
-        const data = { ...DATA, approved: [{ ...DATA.approved[0], iconUrl: '/api/workflows/1/icon?v=a.png' }] };
-        const [entry] = usableWorkflows(data, { fileName: 'heart.mrb' }).caseWorkflows;
-        assert.equal(entry.iconUrl, '/api/workflows/1/icon?v=a.png');
-        assert.equal(usableWorkflows(DATA, { fileName: 'heart.mrb' }).caseWorkflows[0].iconUrl, null);
+    it('entries carry their viewer (SlicerWeb when none is given) and the icon the server sent', () => {
+        const data = { ...DATA, approved: [{ ...DATA.approved[0], iconUrl: '/api/workflows/1/icon?v=a.png' }, DATA.approved[1]] };
+        const [heart, simplified] = usableWorkflows(data, { fileName: 'heart.mrb' }).caseWorkflows;
+        assert.deepEqual([heart.viewer, heart.iconUrl], [VIEWER.SLICERWEB, '/api/workflows/1/icon?v=a.png']);
+        assert.deepEqual([simplified.viewer, simplified.iconUrl], [VIEWER.FULL, null]);
     });
-    it('hides what the viewer can\'t run', () => {
-        assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'heart.mrb', viewer: VIEWER.FULL }).caseWorkflows), ['case:1', 'case:2']);
+    it('checks each workflow in its own viewer', () => {
+        const data = {
+            ...DATA,
+            approved: [
+                W(5, 'Simplified in SlicerWeb', ['SlicerHeart'], [], { module: 'SimplifiedViewer' }), // SlicerWeb can't start there
+                W(6, 'RT in Full Slicer', ['SlicerRT'], [], {}, 'full'),                              // not in Full Slicer's manifest
+                W(7, 'Heart in Full Slicer', ['SlicerHeart'], [], {}, 'full'),
+            ],
+        };
+        assert.deepEqual(keys(usableWorkflows(data, { fileName: 'heart.mrb' }).caseWorkflows), ['case:7']);
     });
-    it('the blank viewer lists every workflow', () => {
-        assert.equal(usableWorkflows(DATA).caseWorkflows.length, 3); // all but the SimplifiedViewer one
+    it('the blank viewer is SlicerWeb only: its plain viewer and SlicerWeb workflows', () => {
+        const blank = usableWorkflows(DATA);
+        assert.deepEqual(blank.viewers, [VIEWER.SLICERWEB]);
+        assert.deepEqual(keys(blank.caseWorkflows), ['case:1', 'case:3', 'case:4']);
     });
     it("one of mine the case has approved is listed only as the case's", () => {
         const data = { ...DATA, approved: [...DATA.approved, { ...W(7, 'My TAVR setup (approved)', ['SlicerRT'], ['nii.gz']), workflowId: 11 }] };
@@ -104,45 +115,40 @@ describe('usableWorkflows', () => {
         assert.deepEqual(keys(usable.caseWorkflows).includes('case:7'), true);
         assert.deepEqual(usable.mine, []);
     });
-    it('a public workflow of mine that the case has not approved stays under Mine', () => {
-        assert.deepEqual(keys(usableWorkflows(DATA, { fileName: 'brain.nii.gz' }).mine), ['mine:11']);
-    });
     it('personal workflows disappear when the case turns them off', () => {
         assert.deepEqual(usableWorkflows({ ...DATA, allowPersonal: false }, { fileName: 'b.nii.gz' }).mine, []);
     });
-    it('works before the case data has loaded', () => {
-        assert.deepEqual(usableWorkflows(null, { fileName: 'x.mrb' }), { caseWorkflows: [], mine: [] });
+    it('before the case data has loaded: SlicerWeb only', () => {
+        assert.deepEqual(usableWorkflows(null, { fileName: 'x.mrb' }), { viewers: [VIEWER.SLICERWEB], caseWorkflows: [], mine: [] });
+    });
+});
+
+describe('choiceFor', () => {
+    const usable = usableWorkflows(DATA, { fileName: 'heart.mrb' });
+    it('a plain viewer opens with no workflow; a workflow opens in its own viewer', () => {
+        assert.deepEqual(choiceFor(usable, viewerKey(VIEWER.FULL)), { key: 'viewer:full', viewer: VIEWER.FULL, workflow: null });
+        const simplified = choiceFor(usable, 'case:2');
+        assert.deepEqual([simplified.viewer, simplified.workflow.name], [VIEWER.FULL, 'SlicerHeart – Simplified']);
+    });
+    it("is null for what isn't offered", () => {
+        assert.equal(choiceFor(usable, 'case:4'), null);
+        assert.equal(choiceFor(usableWorkflows(DATA), viewerKey(VIEWER.FULL)), null); // the blank viewer
     });
 });
 
 describe('resolveOpen', () => {
-    const open = (fileName, pick, accountViewer = 'web') => resolveOpen(DATA, { fileName, pick, accountViewer });
-    it('with no pick: your account viewer and the case default', () => {
-        const r = open('heart.mrb', null);
-        assert.equal(r.viewer, VIEWER.SLICERWEB);
-        assert.equal(r.workflow.key, 'case:1');
-        assert.equal(r.from, 'default');
+    it('the case default, in its own viewer, whatever the account says', () => {
+        const r = resolveOpen(DATA, { fileName: 'heart.mrb', accountViewer: 'full' });
+        assert.deepEqual([r.key, r.viewer, r.from], ['case:1', VIEWER.SLICERWEB, 'default']);
+        assert.equal(resolveOpen({ ...DATA, defaultWorkflow: '2' }, { fileName: 'heart.mrb' }).viewer, VIEWER.FULL);
     });
-    it('your pick for this file wins, for the workflow and the viewer separately', () => {
-        assert.equal(open('heart.mrb', { workflow: 'case:3' }).workflow.key, 'case:3');
-        assert.equal(open('heart.mrb', { workflow: NO_WORKFLOW }).workflow, null);
-        assert.equal(open('heart.mrb', { viewer: VIEWER.FULL }).viewer, VIEWER.FULL);
-        assert.equal(open('heart.mrb', { viewer: VIEWER.SLICERWEB }, 'full').viewer, VIEWER.SLICERWEB);
+    it('with nothing usable: your account viewer, no workflow', () => {
+        const r = resolveOpen({ ...DATA, defaultWorkflow: '4' }, { fileName: 'heart.mrb', accountViewer: 'full' });
+        assert.deepEqual([r.key, r.viewer, r.workflow, r.from], ['viewer:full', VIEWER.FULL, null, 'none']);
     });
-    it('a pick or default that can\'t be used here is skipped', () => {
-        assert.equal(open('heart.mrb', { workflow: 'case:4' }).workflow.key, 'case:1'); // 4 is for .seg.nrrd
-        assert.equal(open('heart.mrb', { workflow: 'case:99' }).workflow.key, 'case:1'); // removed from the case
-        const full = open('heart.mrb', { workflow: 'case:3' }, 'full');                  // Full Slicer can't run 3
-        assert.equal(full.viewer, VIEWER.FULL);
-        assert.equal(full.workflow.key, 'case:1');
-        const noDefault = resolveOpen({ ...DATA, defaultWorkflow: '4' }, { fileName: 'heart.mrb' });
-        assert.deepEqual([noDefault.workflow, noDefault.from], [null, 'none']);
-    });
-    it('the blank viewer is always SlicerWeb', () => {
-        assert.equal(resolveOpen(DATA, { pick: { viewer: VIEWER.FULL }, accountViewer: 'full' }).viewer, VIEWER.SLICERWEB);
-    });
-    it('ignores a stored viewer it doesn\'t know', () => {
-        assert.equal(open('heart.mrb', { viewer: 'simplified' }).viewer, VIEWER.SLICERWEB);
+    it('the blank viewer is SlicerWeb, whatever the account says', () => {
+        const r = resolveOpen({ ...DATA, defaultWorkflow: '2' }, { accountViewer: 'full' }); // 2 opens in Full Slicer
+        assert.deepEqual([r.viewer, r.workflow], [VIEWER.SLICERWEB, null]);
     });
 });
 
@@ -165,38 +171,5 @@ describe('shortList', () => {
     });
     it('nothing hidden when it fits', () => {
         assert.equal(shortList({ caseWorkflows: [{ key: 'case:1' }], mine: [] }).hidden, 0);
-    });
-});
-
-describe('picks', () => {
-    const storage = () => {
-        const map = new Map();
-        return { getItem: (k) => map.get(k) ?? null, setItem: (k, v) => map.set(k, v), map };
-    };
-    it('keeps the viewer and workflow picks for a file together', () => {
-        const s = storage();
-        saveOpenPick('1', '20', { viewer: VIEWER.FULL }, s);
-        saveOpenPick('1', '20', { workflow: 'case:3' }, s);
-        assert.deepEqual(readOpenPick('1', '20', s), { viewer: VIEWER.FULL, workflow: 'case:3' });
-        assert.equal(readOpenPick('1', null, s), null);
-        assert.match([...s.map.keys()][0], /^slicerweb\./); // cleared on sign-out
-    });
-    it('keeps only the most recent 500 files', () => {
-        const s = storage();
-        for (let i = 0; i < 502; i += 1) saveOpenPick('1', String(i), { workflow: NO_WORKFLOW }, s);
-        assert.equal(readOpenPick('1', '1', s), null);
-        assert.deepEqual(readOpenPick('1', '2', s), { workflow: NO_WORKFLOW });
-    });
-    it('survives unreadable or blocked storage, and says so once per page load', (t) => {
-        const warn = t.mock.method(console, 'warn', () => {});
-        const broken = { getItem: () => '[1]', setItem: () => { throw new Error('blocked'); } };
-        assert.equal(readOpenPick('1', '2', broken), null);
-        assert.doesNotThrow(() => saveOpenPick('1', '2', { viewer: VIEWER.FULL }, broken));
-        saveOpenPick('1', '3', { viewer: VIEWER.FULL }, broken);
-        const messages = warn.mock.calls.map((c) => c.arguments[0]);
-        assert.deepEqual(messages, [
-            "[openWith] couldn't read per-file picks; files will open with their defaults:",
-            "[openWith] couldn't save per-file picks; files will open with their defaults:",
-        ]);
     });
 });

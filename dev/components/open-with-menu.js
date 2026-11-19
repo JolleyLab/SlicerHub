@@ -1,7 +1,7 @@
 import { html, css } from 'lit-element';
 import { t } from '../i18n/index.js';
 import { PopupMenu } from './popup-menu.js';
-import { VIEWER, NO_WORKFLOW, shortList } from '../utils/openWith.js';
+import { VIEWER_NAME_KEY, viewerKey, shortList } from '../utils/openWith.js';
 import { iconTile, iconTileStyles } from '../utils/iconTile.js';
 
 /** What the open panel shows. */
@@ -13,22 +13,15 @@ const ICON_CHEVRON = html`
     </svg>`;
 
 /**
- * Open ▾ for a case file or the blank viewer: "Open in" (files only), "No workflow", the usable
- * workflows (`usable`, from utils/openWith.js), and "More workflows…" when they don't all fit.
+ * Open ▾ for a case file or the blank viewer: the plain viewers, the usable workflows (`usable`,
+ * from utils/openWith.js), and "More workflows…" when they don't all fit.
  * `grid` (file rows): a bare chevron opening an icon grid; "All options…" shows the list instead.
- * Emits `switch-viewer` { viewer }, `open-workflow` { key } and `more-workflows`.
+ * Emits `open-workflow` { key } and `more-workflows`.
  */
 export class OpenWithMenu extends PopupMenu {
     static get styles() {
         return [PopupMenu.triggerStyles, css`
             .trigger { max-width: 220px; }
-
-            .trigger-label {
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-                padding-left: 4px;
-            }
 
             /* With buttonLabel: a whole secondary button (styles/buttons.js) that opens the menu. */
             .trigger.as-button {
@@ -111,26 +104,10 @@ export class OpenWithMenu extends PopupMenu {
 .popup-menu-panel.open-with .tile .icon-tile { --icon-tile-size: 32px; }
 ${iconTileStyles.cssText}
 .popup-menu-panel.open-with .more { color: var(--color-text-secondary, #666); }
-.popup-menu-panel.open-with .viewer-switch {
-  display: flex;
-  margin: 2px 12px 6px;
-  border: 1px solid var(--color-border, #ccc);
-  border-radius: var(--radius-md, 6px);
-  overflow: hidden;
-}
-.popup-menu-panel.open-with .viewer-switch .item {
-  flex: 1;
-  justify-content: center;
-  padding: 5px 8px;
-}
-.popup-menu-panel.open-with .viewer-switch .item[aria-checked='true'] {
-  background: var(--color-primary, #3366cc);
-  color: var(--color-on-primary, #fff);
-}
 `;
     }
 
-    static get contentProperties() { return ['viewer', 'usable', 'selectedKey', '_view']; }
+    static get contentProperties() { return ['usable', 'selectedKey', '_view']; }
 
     static get properties() {
         return {
@@ -139,17 +116,12 @@ ${iconTileStyles.cssText}
             buttonLabel: { type: String },
             /** The attachment this menu belongs to; makes the button's accessible name specific. */
             fileName: { type: String },
-            /** The viewer this file opens in (VIEWER); `canSwitchViewer` shows "Open in" (files, not the blank viewer). */
-            viewer: { type: String },
-            canSwitchViewer: { type: Boolean },
-            /** { caseWorkflows, mine } from usableWorkflows(): what can open it in that viewer. */
+            /** { viewers, caseWorkflows, mine } from usableWorkflows(): what can open it. */
             usable: { attribute: false },
-            /** What the main button opens: a workflow key, or NO_WORKFLOW (checked in the menu). */
+            /** What the main button opens (a key; checked in the menu). */
             selectedKey: { type: String },
-            /** Shown next to the chevron: what differs from the person's own viewer with no workflow. */
+            /** What it opens with, for the button's tooltip ("SlicerHeart · SlicerWeb"). */
             label: { type: String },
-            /** List "No workflow" first (true by default; off where only workflows are offered). */
-            showNoWorkflow: { type: Boolean },
             /** Icon grid behind a bare chevron (file rows). */
             grid: { type: Boolean },
             /** VIEW; resets to the grid on close. */
@@ -161,12 +133,9 @@ ${iconTileStyles.cssText}
         super();
         this.fileName = '';
         this.buttonLabel = '';
-        this.viewer = VIEWER.SLICERWEB;
-        this.canSwitchViewer = false;
         this.usable = null;
-        this.selectedKey = NO_WORKFLOW;
+        this.selectedKey = '';
         this.label = '';
-        this.showNoWorkflow = true;
         this.grid = false;
         this._view = VIEW.GRID;
     }
@@ -177,8 +146,6 @@ ${iconTileStyles.cssText}
 
     updated(changed) {
         super.updated(changed);
-        // Switching the viewer keeps focus on the viewer now chosen.
-        if (this.open && !changed.has('open') && changed.has('viewer')) this._menuContainer?.querySelector('[aria-checked="true"]')?.focus();
         if (this.open && !changed.has('open') && changed.has('_view')) this.focusOnOpen();
         if (changed.has('open') && !this.open) this._view = VIEW.GRID;
     }
@@ -194,11 +161,17 @@ ${iconTileStyles.cssText}
 
     panelClass() { return 'open-with'; }
 
-    /** Second line: the description's first line, else where it starts. */
+    /** Second line: its viewer, then the description's first line, else where it starts. */
     entryHint(entry) {
         const description = (entry.description || '').split('\n')[0].trim();
-        if (description) return description;
-        return entry.startupConfig?.module ? t('viewers.startsIn', { module: entry.startupConfig.module }) : '';
+        const detail = description || (entry.startupConfig?.module ? t('viewers.startsIn', { module: entry.startupConfig.module }) : '');
+        return [t(VIEWER_NAME_KEY[entry.viewer]), detail].filter(Boolean).join(' · ');
+    }
+
+    /** What's offered, the workflows cut to the short list: { viewers, caseWorkflows, mine, hidden }. */
+    choices() {
+        const usable = this.usable || { viewers: [], caseWorkflows: [], mine: [] };
+        return { viewers: usable.viewers || [], ...shortList(usable, this.selectedKey) };
     }
 
     itemTemplate(key, name, hint) {
@@ -215,22 +188,6 @@ ${iconTileStyles.cssText}
         `;
     }
 
-    viewerSwitchTemplate() {
-        const option = (viewer, nameKey) => html`
-            <button class="item" type="button" role="menuitemradio" tabindex="-1"
-                aria-checked=${this.viewer === viewer ? 'true' : 'false'}
-                @click=${() => this.emit('switch-viewer', { viewer })}>${t(nameKey)}</button>
-        `;
-        return html`
-            <div class="heading" id="open-in-heading">${t('viewers.openIn')}</div>
-            <div class="viewer-switch" role="group" aria-labelledby="open-in-heading">
-                ${option(VIEWER.SLICERWEB, 'viewers.slicerWeb')}
-                ${option(VIEWER.FULL, 'viewers.fullSlicer')}
-            </div>
-            <div class="divider" role="separator"></div>
-        `;
-    }
-
     tileTemplate(key, name, iconName, iconSrc) {
         const selected = key === this.selectedKey;
         return html`
@@ -242,12 +199,11 @@ ${iconTileStyles.cssText}
     }
 
     gridContent() {
-        const list = shortList(this.usable || { caseWorkflows: [], mine: [] }, this.selectedKey);
-        const viewerName = t(this.viewer === VIEWER.FULL ? 'viewers.fullSlicer' : 'viewers.slicerWeb');
+        const list = this.choices();
         return html`
             <div class="tiles">
-                ${this.showNoWorkflow ? this.tileTemplate(NO_WORKFLOW, t('viewers.noWorkflow'), viewerName, null) : ''}
-                ${[...list.caseWorkflows, ...list.mine].map((e) => this.tileTemplate(e.key, e.name, e.name, e.iconUrl))}
+                ${list.viewers.map((v) => this.tileTemplate(viewerKey(v), t(VIEWER_NAME_KEY[v]), t(VIEWER_NAME_KEY[v]), null))}
+                ${[...list.caseWorkflows, ...list.mine].map((e) => this.tileTemplate(e.key, `${e.name} · ${t(VIEWER_NAME_KEY[e.viewer])}`, e.name, e.iconUrl))}
                 ${list.hidden ? html`
                     <button class="tile" type="button" role="menuitem" tabindex="-1"
                         aria-label=${t('viewers.moreWorkflows', { count: list.hidden })} data-name=${t('viewers.moreWorkflows', { count: list.hidden })}
@@ -265,8 +221,7 @@ ${iconTileStyles.cssText}
 
     menuContent() {
         if (this.showingGrid) return this.gridContent();
-        const list = shortList(this.usable || { caseWorkflows: [], mine: [] }, this.selectedKey);
-        const viewerName = t(this.viewer === VIEWER.FULL ? 'viewers.fullSlicer' : 'viewers.slicerWeb');
+        const list = this.choices();
         const section = (headingKey, entries) => (entries.length ? html`
             <div role="group" aria-label=${t(headingKey)}>
                 <div class="heading" aria-hidden="true">${t(headingKey)}</div>
@@ -274,8 +229,7 @@ ${iconTileStyles.cssText}
             </div>
         ` : '');
         return html`
-            ${this.canSwitchViewer ? this.viewerSwitchTemplate() : ''}
-            ${this.showNoWorkflow ? this.itemTemplate(NO_WORKFLOW, t('viewers.noWorkflow'), t('viewers.justViewer', { viewer: viewerName })) : ''}
+            ${list.viewers.map((v) => this.itemTemplate(viewerKey(v), t(VIEWER_NAME_KEY[v]), t('viewers.noWorkflow')))}
             ${section('viewers.thisCase', list.caseWorkflows)}
             ${section('viewers.mine', list.mine)}
             ${list.hidden ? html`
@@ -306,7 +260,7 @@ ${iconTileStyles.cssText}
                 @click=${(e) => this.toggleMenu(e)}
                 @keydown=${(e) => this.onTriggerKeydown(e)}
             >
-                ${this.buttonLabel ? this.buttonLabel : this.label && !this.grid ? html`<span class="trigger-label">${this.label}</span>` : ''}
+                ${this.buttonLabel}
                 ${ICON_CHEVRON}
             </button>
         `;

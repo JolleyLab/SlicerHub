@@ -5,6 +5,7 @@ import { workflowStyles } from '../styles/workflows.js';
 import { listPageStyles } from '../styles/listPage.js';
 import './toggle-switch.js';
 import { updateCaseWorkflowSettings } from '../services/workflows.js';
+import { VIEWER_NAME_KEY } from '../utils/openWith.js';
 
 /**
  * Case Settings, for case admins (docs/workflows-design.md › Case Settings): its header
@@ -108,7 +109,7 @@ export class CaseSettings extends LitElement {
                 <select id="default-workflow" class="default-select" .value=${value} ?disabled=${this.busy}
                     @change=${(e) => this._save({ defaultWorkflow: e.target.value })}>
                     <option value="" ?selected=${!value}>${t('caseSettings.noWorkflow')}</option>
-                    ${approved.map((a) => html`<option value=${String(a.id)} ?selected=${value === String(a.id)}>${a.name}</option>`)}
+                    ${approved.map((a) => html`<option value=${String(a.id)} ?selected=${value === String(a.id)}>${a.name} · ${t(VIEWER_NAME_KEY[a.viewer])}</option>`)}
                 </select>
 
                 <h4>${t('caseSettings.personalWorkflows')}</h4>

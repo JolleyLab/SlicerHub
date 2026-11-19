@@ -8,7 +8,7 @@ import {
     listAvailableCaseWorkflows, requestCaseWorkflow, cancelCaseWorkflowRequest, approveCaseWorkflow,
     removeCaseWorkflow, declineCaseWorkflowRequest,
 } from '../services/workflows.js';
-import { VIEWER, canRun } from '../utils/openWith.js';
+import { VIEWER, VIEWER_NAME_KEY, canRun } from '../utils/openWith.js';
 import { formatFileExtension } from '../utils/fileTypes.js';
 import { ICON_TRASH } from '../utils/icons.js';
 import { requesterText } from '../utils/activityItems.js';
@@ -131,13 +131,11 @@ export class CaseWorkflowsPanel extends LitElement {
         }
     }
 
-    /** "Runs in SlicerWeb and Full Slicer", with the same rule as the Open ▾ menu. */
+    /** "Opens in Full Slicer", or that it can't here, with the same rule as the Open ▾ menu. */
     _runsIn(workflow) {
+        const viewer = workflow.viewer === VIEWER.FULL ? VIEWER.FULL : VIEWER.SLICERWEB;
         const opts = { viewers: this.data?.viewers, slicerWebExtensions: this.slicerWebExtensions };
-        const web = canRun(workflow, VIEWER.SLICERWEB, opts);
-        const full = canRun(workflow, VIEWER.FULL, opts);
-        const key = web && full ? 'runsBoth' : web ? 'runsSlicerWeb' : full ? 'runsFullSlicer' : 'runsNowhere';
-        return t(`caseWorkflows.${key}`);
+        return t(canRun(workflow, viewer, opts) ? 'caseWorkflows.opensIn' : 'caseWorkflows.cantOpen', { viewer: t(VIEWER_NAME_KEY[viewer]) });
     }
 
     /** Name, description, then "file types · runs in · starts in", and any `tags` (shown as pills). */

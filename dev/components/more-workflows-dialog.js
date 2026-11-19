@@ -3,6 +3,7 @@ import { t } from '../i18n/index.js';
 import { buttonStyles } from '../styles/buttons.js';
 import { workflowStyles } from '../styles/workflows.js';
 import { filterByText } from '../utils/listSort.js';
+import { VIEWER_NAME_KEY } from '../utils/openWith.js';
 import './app-dialog.js';
 
 /**
@@ -59,7 +60,7 @@ export class MoreWorkflowsDialog extends LitElement {
                 <li>
                     <button class="pick" type="button" aria-current=${e.key === this.selectedKey ? 'true' : 'false'}
                         @click=${() => this._pick(e.key)}>
-                        <span class="item-name">${e.name}</span>
+                        <span class="item-name">${e.name} · ${t(VIEWER_NAME_KEY[e.viewer])}</span>
                         ${e.description ? html`<span class="muted">${e.description.split('\n')[0]}</span>` : ''}
                     </button>
                 </li>`)}
