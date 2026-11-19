@@ -2758,6 +2758,7 @@ export class CasesPage extends LitElement {
                     .caseId=${String(caseRow.id)}
                     .caseTitle=${caseRow.title || ''}
                     .data=${this.workflows.dataFor(caseRow.id)}
+                    ?loadFailed=${this.workflows.loadFailed(caseRow.id)}
                     @back=${() => { this.showCaseSettings = false; }}
                     @workflows-changed=${() => this.workflows.load(caseRow.id, { refresh: true })}
                     @open-workflows=${() => this.workflows.openPanel(caseRow)}

@@ -30,6 +30,7 @@ export class CaseWorkflowsController {
         this.host = host;
         this.options = options;
         this.loaded = null;   // { caseId, data, slicerWebExtensions }
+        this._failedCaseId = null; // the case whose workflows couldn't be loaded, while none are shown
         this._loadingCaseId = null;
         this._loadedAt = 0;
         this._moreFor = null; // the file "More workflows…" was opened for
@@ -42,12 +43,19 @@ export class CaseWorkflowsController {
         return this.loaded?.caseId === String(caseId) ? this.loaded.data : null;
     }
 
+    /** Whether this case's workflows couldn't be loaded (Case Settings then offers "Try again"). */
+    loadFailed(caseId) {
+        return this._failedCaseId === String(caseId);
+    }
+
     /**
      * Load a case's workflows and the SlicerWeb build's extensions. `refresh` keeps what's shown
-     * until the new data arrives. A failure is logged; the menus then offer no workflows.
+     * until the new data arrives. A failure is logged; the menus then offer no workflows, and if
+     * nothing was shown, loadFailed() says so.
      */
     async load(caseId, { refresh = false } = {}) {
         this._loadingCaseId = caseId ? String(caseId) : null;
+        this._failedCaseId = null;
         if (!refresh) this.loaded = null;
         this.host.requestUpdate();
         if (!caseId) return;
@@ -62,6 +70,9 @@ export class CaseWorkflowsController {
             this.host.requestUpdate();
         } catch (err) {
             console.warn('[cases] workflows load failed; files open with no workflow:', err);
+            if (String(caseId) !== this._loadingCaseId || this.dataFor(caseId)) return;
+            this._failedCaseId = String(caseId);
+            this.host.requestUpdate();
         }
     }
 

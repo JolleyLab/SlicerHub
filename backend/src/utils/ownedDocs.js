@@ -10,7 +10,7 @@ import { isDocId } from './validation.js';
 /** The requester's Keycloak sub; owned documents need one. */
 export function requireOwnerId(req) {
     const sub = req.user?.keycloakSub;
-    if (!sub) throw new ForbiddenError('A Keycloak identity is required');
+    if (!sub) throw ForbiddenError.fromKey('owned_doc.identity_required');
     return sub;
 }
 
@@ -23,9 +23,9 @@ export const canView = (doc, req) => doc?.visibility === 'public' || isOwner(doc
  * Someone else's private document is reported as not found, so its existence isn't revealed.
  */
 export async function loadOwnedDoc(collection, id, req, { write = true } = {}) {
-    if (!isDocId(id)) throw new NotFoundError('Not found');
+    if (!isDocId(id)) throw NotFoundError.fromKey('owned_doc.not_found');
     const doc = await getPayloadClient().findByID({ collection, id, depth: 0, disableErrors: true });
-    if (!doc || !canView(doc, req)) throw new NotFoundError('Not found');
-    if (write && !isOwner(doc, req)) throw new ForbiddenError('Only the owner can change this');
+    if (!doc || !canView(doc, req)) throw NotFoundError.fromKey('owned_doc.not_found');
+    if (write && !isOwner(doc, req)) throw ForbiddenError.fromKey('owned_doc.owner_only');
     return doc;
 }

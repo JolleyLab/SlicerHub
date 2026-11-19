@@ -20,11 +20,16 @@ export class AppError extends Error {
 
     /**
      * An error with a catalog message (backend/src/i18n) and its key, e.g.
-     * ValidationError.fromKey('workflow.startup_config_key', { key }). For the subclasses below,
-     * which all take (message, code, messageKey).
+     * ValidationError.fromKey('workflow.startup_config_key', { key }). The key and `vars` go to the
+     * browser (errorHandler), which shows its own translation. A `field` var is the catalog key of
+     * a field's name ('workflow.fields.name'), so each side names the field in its own language.
+     * For the subclasses below, which all take (message, code, messageKey).
      */
     static fromKey(key, vars) {
-        return new this(msg(key, vars), null, key);
+        const named = vars?.field ? { ...vars, field: msg(vars.field) } : vars;
+        const err = new this(msg(key, named), null, key);
+        err.vars = vars || null;
+        return err;
     }
 }
 

@@ -11,7 +11,7 @@ import { isDocId } from '../utils/validation.js';
 import { getCaseRoleForSub } from '../utils/caseAccess.js';
 import { getKeycloakUser, kcDisplayName } from './keycloakAdmin.js';
 import { createNotification } from './notifications.js';
-import { WORKFLOWS, CASE_WORKFLOWS, findAll } from './workflows.js';
+import { WORKFLOWS, CASE_WORKFLOWS, REQUEST_STATUS, VISIBILITY, findAll, copyDiffers } from './workflows.js';
 
 export const CASE_WORKFLOW_REQUESTERS = 'case-workflow-requesters';
 
@@ -19,8 +19,26 @@ export const CASE_WORKFLOW_REQUESTERS = 'case-workflow-requesters';
 export const REQUEST_MIN_ROLE = 'collaborator';
 const CAN_REQUEST = new Set(['collaborator', 'admin']);
 
+/**
+ * After a decline, members can ask for the same workflow again this long after (admins can still
+ * add it). Long enough that nobody asks again straight away; the per-person rate limit and
+ * MAX_PENDING_PER_MEMBER are what keep the load down.
+ */
+export const REQUEST_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+/** How many requests one member can have waiting on one case. */
+export const MAX_PENDING_PER_MEMBER = 10;
+
 export const canRequest = (role) => CAN_REQUEST.has(role);
-export const isPending = (row) => row.status === 'pending';
+export const isPending = (row) => row.status === REQUEST_STATUS.PENDING;
+
+/**
+ * Whether a declined row can't be asked for again yet: it was declined less than
+ * REQUEST_COOLDOWN_MS ago, and the workflow (`source`) hasn't changed since. A changed workflow
+ * (say, fixed after the decline's reason) is a new proposal, so it can be asked for at once.
+ */
+export const inCooldown = (row, source, now = Date.now()) => row?.status === REQUEST_STATUS.DECLINED
+    && Boolean(row.decided_at) && now - Date.parse(row.decided_at) < REQUEST_COOLDOWN_MS
+    && !copyDiffers(row, source);
 
 // ── Requesters ─────────────────────────────────────────────────────────────
 
@@ -87,7 +105,7 @@ export async function loadCaseWorkflowRow(caseId, rowId) {
     const row = isDocId(rowId)
         ? await getPayloadClient().findByID({ collection: CASE_WORKFLOWS, id: rowId, depth: 0, disableErrors: true })
         : null;
-    if (!row || String(row.case) !== String(caseId)) throw new NotFoundError('Not found');
+    if (!row || String(row.case) !== String(caseId)) throw NotFoundError.fromKey('workflow.request_not_found');
     return row;
 }
 
@@ -111,7 +129,7 @@ export async function describeRequests(rows, caseById) {
     const sourceIds = [...new Set(pending.map((r) => r.workflow))];
     const [publicIds, requesters] = await Promise.all([
         sourceIds.length
-            ? findAll(WORKFLOWS, { id: { in: sourceIds } }).then((docs) => new Set(docs.filter((d) => d.visibility === 'public').map((d) => String(d.id))))
+            ? findAll(WORKFLOWS, { id: { in: sourceIds } }).then((docs) => new Set(docs.filter((d) => d.visibility === VISIBILITY.PUBLIC).map((d) => String(d.id))))
             : new Set(),
         requestersByRequest(pending),
     ]);
@@ -149,7 +167,7 @@ export async function decideRequesters(row, caseDoc, outcome, reason = '') {
 
 function notifyRequesters(subs, row, caseDoc, outcome, reason) {
     const caseTitle = caseDoc?.title || 'a case';
-    const approved = outcome === 'approved';
+    const approved = outcome === REQUEST_STATUS.APPROVED;
     return Promise.all(subs.map((userId) => createNotification({
         userId,
         type: approved ? 'workflow_request_approved' : 'workflow_request_declined',

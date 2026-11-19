@@ -934,4 +934,51 @@ avatarUpload: 'Upload photo',
         decline: 'Decline',
         declineReason: 'Reason (optional)',
     },
+    /**
+     * API errors, by the key the server sends (backend/src/i18n/locales/en.js, which keeps the
+     * English for logs and other clients). Keys match the server's, so they're snake_case.
+     * Moved over a section at a time; an error whose key isn't here shows the server's message.
+     */
+    api: {
+        workflow: {
+            startup_config_object: 'The startup configuration isn’t valid.',
+            startup_config_key: 'The startup configuration can’t include “{key}”.',
+            startup_config_value: 'The startup configuration has an invalid {key}.',
+            default_not_in_case: 'The default workflow must be one of this case’s workflows.',
+            allow_personal_boolean: 'That setting couldn’t be saved. Please try again.',
+            icon_too_large: 'The icon can be at most {max} KB.',
+            icon_type: 'The icon must be a PNG, JPEG, GIF or WebP image.',
+            icon_not_found: 'This workflow has no icon.',
+            request_not_public: 'Only public workflows can be requested.',
+            already_in_case: 'This workflow is already available in this case.',
+            declined_recently: 'This workflow was declined less than a day ago. It can be requested again after that, or sooner if its owner updates it.',
+            too_many_pending: 'You can have at most {max} requests waiting in this case. Cancel one to ask for another.',
+            too_many_requests: 'Too many requests in a short time. Please wait a few minutes and try again.',
+            request_not_found: 'This request no longer exists.',
+            decline_not_pending: 'This request has already been decided.',
+            remove_pending: 'Decline this request instead of removing it.',
+            fields: {
+                name: 'Name',
+                description: 'Description',
+                visibility: 'Visibility',
+                extensions: 'Extensions',
+                file_types: 'File types',
+                decline_reason: 'Reason',
+            },
+        },
+        validation: {
+            value: 'Value',
+            required: '{field} is required.',
+            too_long: '{field} can be at most {max} characters.',
+            not_a_list: '{field} must be a list.',
+            invalid_name: '{field} has an invalid name: {name}',
+            too_many: '{field} can have at most {max} entries.',
+            not_one_of: '{field} must be one of: {allowed}',
+        },
+        owned_doc: {
+            identity_required: 'Your account isn’t fully set up. Please sign out and sign in again.',
+            not_found: 'This item no longer exists, or isn’t shared with you.',
+            owner_only: 'Only its owner can change this.',
+        },
+    },
 };

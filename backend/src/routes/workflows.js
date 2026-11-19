@@ -15,26 +15,26 @@ import { IMAGE_MIME, sniffImageType, sendStoredImage } from '../utils/storedImag
 import { requireOwnerId, loadOwnedDoc } from '../utils/ownedDocs.js';
 import { sanitizeNameList, sanitizeFileExtensions, sanitizeText, sanitizeChoice } from '../utils/validation.js';
 import {
-    WORKFLOWS, PUBLIC, myWorkflows, findWorkflowPage, workflowPageQuery, toWorkflow, sanitizeStartupConfig,
+    WORKFLOWS, PUBLIC, VISIBILITY, myWorkflows, findWorkflowPage, workflowPageQuery, toWorkflow, sanitizeStartupConfig,
 } from '../services/workflows.js';
 
-export const VISIBILITIES = ['private', 'public'];
+export const VISIBILITIES = Object.freeze(Object.values(VISIBILITY));
 export const ICON_MAX_BYTES = 256 * 1024;
 
 const iconUploader = multer({ storage: multer.memoryStorage(), limits: { fileSize: ICON_MAX_BYTES, files: 1 } });
 /** Multipart field "icon"; too large is a 400, not a 500. */
 const iconUpload = (req, res, next) => iconUploader.single('icon')(req, res, (err) => next(
-    err?.code === 'LIMIT_FILE_SIZE' ? new ValidationError(`The icon can be at most ${ICON_MAX_BYTES / 1024} KB`) : err,
+    err?.code === 'LIMIT_FILE_SIZE' ? ValidationError.fromKey('workflow.icon_too_large', { max: ICON_MAX_BYTES / 1024 }) : err,
 ));
 
 /** Validated fields from a request body; `partial` (PATCH) only takes the fields present. */
 export function workflowFields(body = {}, { partial = false } = {}) {
     const has = (key) => !partial || key in body;
     const out = {};
-    if (has('name')) out.name = sanitizeText(body.name, { label: 'Name', max: 100, required: true });
-    if (has('description')) out.description = sanitizeText(body.description, { label: 'Description', max: 1000 });
-    if (has('visibility')) out.visibility = sanitizeChoice(body.visibility ?? 'private', VISIBILITIES, { label: 'Visibility' });
-    if (has('extensions')) out.extensions = sanitizeNameList(body.extensions, { label: 'Extensions' });
+    if (has('name')) out.name = sanitizeText(body.name, { field: 'workflow.fields.name', max: 100, required: true });
+    if (has('description')) out.description = sanitizeText(body.description, { field: 'workflow.fields.description', max: 1000 });
+    if (has('visibility')) out.visibility = sanitizeChoice(body.visibility ?? VISIBILITY.PRIVATE, VISIBILITIES, { field: 'workflow.fields.visibility' });
+    if (has('extensions')) out.extensions = sanitizeNameList(body.extensions, { field: 'workflow.fields.extensions' });
     if (has('fileTypes')) out.file_types = sanitizeFileExtensions(body.fileTypes);
     if (has('startupConfig')) out.startup_config = sanitizeStartupConfig(body.startupConfig);
     return out;
@@ -47,7 +47,7 @@ export default function workflowRoutes(app) {
     // searches and sorts it). ?scope=public is everyone's public workflows, which can grow without
     // limit, so the server searches and sorts them and returns one page at a time (?q=&sort=&page=).
     app.get('/api/workflows', ...auth, asyncHandler(async (req, res) => {
-        if (req.query.scope !== 'public') {
+        if (req.query.scope !== VISIBILITY.PUBLIC) {
             const docs = await myWorkflows(req);
             return res.json({ workflows: docs.map((d) => toWorkflow(d, req)), hasMore: false });
         }
@@ -84,14 +84,14 @@ export default function workflowRoutes(app) {
     // Icon: anyone who can see the workflow can see it; only the owner can change it.
     app.get('/api/workflows/:id/icon', ...auth, asyncHandler(async (req, res) => {
         const doc = await loadOwnedDoc(WORKFLOWS, req.params.id, req, { write: false });
-        if (!doc.icon_key) throw new NotFoundError('Not found');
+        if (!doc.icon_key) throw NotFoundError.fromKey('workflow.icon_not_found');
         await sendStoredImage(res, doc.icon_key, { cacheControl: 'private, max-age=86400' });
     }));
 
     app.put('/api/workflows/:id/icon', ...auth, iconUpload, asyncHandler(async (req, res) => {
         const doc = await loadOwnedDoc(WORKFLOWS, req.params.id, req);
         const type = sniffImageType(req.file?.buffer);
-        if (!type) throw new ValidationError('The icon must be a PNG, JPEG, GIF or WebP image');
+        if (!type) throw ValidationError.fromKey('workflow.icon_type');
         const key = storage.workflowIconKey(doc.id, Date.now().toString(36), type);
         await storage.write({ key, buffer: req.file.buffer, contentType: IMAGE_MIME[type] });
         if (doc.icon_key) await storage.delete(doc.icon_key).catch(() => {});

@@ -14,7 +14,9 @@
 
 import { getPayloadClient } from '../payload/index.js';
 import { msg } from '../i18n/index.js';
-import { WORKFLOWS, CASE_WORKFLOWS, SIMPLIFIED_VIEWER_MODULE, findAll, workflowCopy, isApproved } from '../services/workflows.js';
+import {
+    WORKFLOWS, CASE_WORKFLOWS, REQUEST_STATUS, SIMPLIFIED_VIEWER_MODULE, findAll, workflowCopy, isApproved,
+} from '../services/workflows.js';
 import { clearRequesters } from '../services/workflowRequests.js';
 
 export const SYSTEM_OWNER = 'system';
@@ -51,7 +53,7 @@ async function approveOnce(caseId, source) {
     const payload = getPayloadClient();
     const [row] = await findAll(CASE_WORKFLOWS, { case: { equals: caseId }, workflow: { equals: String(source.id) } });
     if (row && isApproved(row)) return row;
-    const data = { ...workflowCopy(source), status: 'approved', decided_by: SYSTEM_OWNER, decided_at: new Date().toISOString() };
+    const data = { ...workflowCopy(source), status: REQUEST_STATUS.APPROVED, decided_by: SYSTEM_OWNER, decided_at: new Date().toISOString() };
     if (row) await clearRequesters(caseId, source.id); // a request for it is simply met
     return row
         ? payload.update({ collection: CASE_WORKFLOWS, id: row.id, data })

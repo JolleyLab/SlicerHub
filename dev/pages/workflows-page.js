@@ -7,6 +7,7 @@ import { PagedList, renderPagedList, pagedListStyles } from '../utils/pagedList.
 import {
     getWorkflow, listMyWorkflows, listPublicWorkflows, createWorkflow, updateWorkflow, deleteWorkflow,
     loadExtensionCatalog, uploadWorkflowIcon, removeWorkflowIcon, WORKFLOW_ICON_TYPES, WORKFLOW_ICON_MAX_BYTES,
+    WORKFLOW_VISIBILITY,
 } from '../services/workflows.js';
 import { updateUrlParams } from '../components/app-views.js';
 import { setPageTitle } from '../utils/pageTitle.js';
@@ -23,9 +24,12 @@ import '../components/info-tip.js';
 import { normalizeFileExtension, formatFileExtension } from '../utils/fileTypes.js';
 import { startModuleGroups, isStartModuleMissing } from '../utils/startModules.js';
 
-const TABS = ['mine', 'public'];
-const blankForm = () => ({ id: null, name: '', description: '', visibility: 'private', extensions: [], fileTypes: [], startupConfig: {} });
-const VISIBILITY_ICONS = { public: EYE_PATH, private: EYE_OFF_PATH };
+const { PRIVATE, PUBLIC } = WORKFLOW_VISIBILITY;
+/** The two tabs: the person's own workflows, and everyone's public ones ("All workflows", ?tab=all). */
+const TAB = Object.freeze({ OWN: 'own', PUBLIC: 'public' });
+const TABS = Object.values(TAB);
+const blankForm = () => ({ id: null, name: '', description: '', visibility: PRIVATE, extensions: [], fileTypes: [], startupConfig: {} });
+const VISIBILITY_ICONS = Object.freeze({ [PUBLIC]: EYE_PATH, [PRIVATE]: EYE_OFF_PATH });
 
 /** Eye (public) or eye-off (just me) and its label; hovering explains who can use it. */
 const visibilityIcon = (visibility) => html`<svg class="visibility-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d=${VISIBILITY_ICONS[visibility]}></path></svg>`;
@@ -161,7 +165,7 @@ export class WorkflowsPage extends LitElement {
 
     constructor() {
         super();
-        this.tab = 'mine';
+        this.tab = TAB.OWN;
         /** My workflows: all of them, searched and sorted here. */
         this.owned = null;
         /** All workflows: everyone's public ones, searched and sorted on the server, a page at a time. */
@@ -243,7 +247,7 @@ export class WorkflowsPage extends LitElement {
      */
     async _syncFromUrl() {
         const params = new URLSearchParams(location.search);
-        const tab = params.get('tab') === 'all' ? 'public' : 'mine';
+        const tab = params.get('tab') === 'all' ? TAB.PUBLIC : TAB.OWN;
         if (tab !== this.tab || this._items(tab) === null) this._loadTab(tab);
         this.error = '';
         const id = params.get('workflow');
@@ -274,7 +278,7 @@ export class WorkflowsPage extends LitElement {
     }
 
     _selectTab(tab) {
-        updateUrlParams({ tab: tab === 'public' ? 'all' : null }, { replace: true });
+        updateUrlParams({ tab: tab === TAB.PUBLIC ? 'all' : null }, { replace: true });
         this._loadTab(tab);
     }
 
@@ -294,12 +298,12 @@ export class WorkflowsPage extends LitElement {
 
     /** The tab's loaded workflows, or null before they arrive. */
     _items(tab = this.tab) {
-        return tab === 'public' ? this.everyone.items : this.owned;
+        return tab === TAB.PUBLIC ? this.everyone.items : this.owned;
     }
 
     _loadTab(tab) {
         this.tab = tab;
-        if (tab === 'public') return this._searchEveryone();
+        if (tab === TAB.PUBLIC) return this._searchEveryone();
         return this._run(async () => { this.owned = await listMyWorkflows(); });
     }
 
@@ -311,12 +315,12 @@ export class WorkflowsPage extends LitElement {
 
     _onSearch(query) {
         this.query = query;
-        if (this.tab === 'public') this._searchEveryone({ soon: true });
+        if (this.tab === TAB.PUBLIC) this._searchEveryone({ soon: true });
     }
 
     _onSort(order) {
         this.sortOrder = order;
-        if (this.tab === 'public') this._searchEveryone();
+        if (this.tab === TAB.PUBLIC) this._searchEveryone();
     }
 
     /**
@@ -328,7 +332,7 @@ export class WorkflowsPage extends LitElement {
         if (this.owned !== null) {
             this.owned = [...this.owned.filter((w) => w.id !== workflow.id), ...(removed ? [] : [workflow])];
         }
-        const keep = !removed && workflow.visibility === 'public';
+        const keep = !removed && workflow.visibility === PUBLIC;
         if (this.everyone.items) {
             this.everyone.items = this.everyone.items.flatMap((w) => (w.id !== workflow.id ? [w] : keep ? [workflow] : []));
             this.requestUpdate();
@@ -513,13 +517,13 @@ export class WorkflowsPage extends LitElement {
         const saved = await this._run(() => createWorkflow({
             name: t('workflows.copyName', { name: workflow.name }).slice(0, 100),
             description: workflow.description,
-            visibility: 'private',
+            visibility: PRIVATE,
             extensions: workflow.extensions,
             fileTypes: workflow.fileTypes,
             startupConfig: workflow.startupConfig,
         }));
         if (!saved) return;
-        this._selectTab('mine');
+        this._selectTab(TAB.OWN);
         this._remember(saved);
         this._open(saved);
         this._edit(saved);
@@ -572,7 +576,7 @@ export class WorkflowsPage extends LitElement {
                     <div class="with-icon-body">
                         <div class="card-title-row">
                             <span class="card-title">${w.name}</span>
-                            ${this.tab === 'public' && w.isMine ? html`<span class="card-badge">${t('workflows.yours')}</span>` : ''}
+                            ${this.tab === TAB.PUBLIC && w.isMine ? html`<span class="card-badge">${t('workflows.yours')}</span>` : ''}
                         </div>
                         ${w.description ? html`<p class="card-desc">${w.description}</p>` : ''}
                         <div class="card-meta-row">
@@ -614,13 +618,13 @@ export class WorkflowsPage extends LitElement {
                     <button role="tab" type="button" id="wf-tab-${tab}" aria-controls="wf-tabpanel"
                         aria-selected=${String(this.tab === tab)} tabindex=${this.tab === tab ? '0' : '-1'}
                         @click=${() => this._selectTab(tab)}>
-                        ${t(tab === 'mine' ? 'workflows.tabMine' : 'workflows.tabPublic')}
+                        ${t(tab === TAB.OWN ? 'workflows.tabMine' : 'workflows.tabPublic')}
                     </button>
                 `)}
             </div>
             <div id="wf-tabpanel" role="tabpanel" aria-labelledby="wf-tab-${this.tab}">
             ${this._renderError()}
-            ${this.tab === 'mine' ? this._renderOwned() : renderPagedList(this.everyone, {
+            ${this.tab === TAB.OWN ? this._renderOwned() : renderPagedList(this.everyone, {
                 empty: searching ? this._noMatch() : html`<page-content-message variant="empty"
                     message=${t('workflows.noPublic')}></page-content-message>`,
                 render: (rows) => html`<div class="card-grid">${rows.map((w) => this._renderCard(w))}</div>`,
@@ -656,7 +660,7 @@ export class WorkflowsPage extends LitElement {
 
     /** My workflows, in a "Just me" and a "Public" section (each shown only when it has any). */
     _renderSections(rows) {
-        return ['private', 'public'].map((visibility) => {
+        return [PRIVATE, PUBLIC].map((visibility) => {
             const group = rows.filter((w) => w.visibility === visibility);
             return group.length ? html`
                 <section class="visibility-section">
@@ -703,7 +707,7 @@ export class WorkflowsPage extends LitElement {
                                     <span class="type-chip">${w.startupConfig.module}</span>
                                 </div>` : ''}
                             <div class="card-meta-row detail-meta">
-                                ${visibilityBadge(w.isMine ? w.visibility : 'public', 'card-meta-item')}
+                                ${visibilityBadge(w.isMine ? w.visibility : PUBLIC, 'card-meta-item')}
                             </div>
                         </div>
                     </div>
@@ -796,13 +800,13 @@ export class WorkflowsPage extends LitElement {
                     <span class="form-label">${t('workflows.visibility')}</span>
                     <toggle-switch
                         aria-label=${t('workflows.makePublic')}
-                        .checked=${f.visibility === 'public'}
+                        .checked=${f.visibility === PUBLIC}
                         .trueLabel=${''}
                         .falseLabel=${''}
-                        @toggle-change=${(e) => this._setForm('visibility', e.detail.checked ? 'public' : 'private')}
+                        @toggle-change=${(e) => this._setForm('visibility', e.detail.checked ? PUBLIC : PRIVATE)}
                     >
-                        <span slot="off" class="visibility" title=${t('workflows.private')}>${visibilityIcon('private')}</span>
-                        <span slot="on" class="visibility" title=${t('workflows.public')}>${visibilityIcon('public')}</span>
+                        <span slot="off" class="visibility" title=${t('workflows.private')}>${visibilityIcon(PRIVATE)}</span>
+                        <span slot="on" class="visibility" title=${t('workflows.public')}>${visibilityIcon(PUBLIC)}</span>
                     </toggle-switch>
                     <p class="hint" aria-live="polite">
                         <strong>${t(`workflows.${f.visibility}`)}</strong>: ${t(`workflows.${f.visibility}Hint`)}

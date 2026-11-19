@@ -81,8 +81,16 @@ export async function getCaseRoleForSub(caseDoc, kcSub) {
 }
 
 /**
- * Throws ForbiddenError if the user doesn't have at least `minRole` on the case.
- * Returns the effective role on success.
+ * The error for a case that doesn't exist. Also given to anyone with no role on a case, so a case
+ * id can't be used to learn whether that case exists; it must stay the same as the routes'
+ * own `new NotFoundError('Case not found')` for a missing case (no key, same message).
+ */
+export const caseNotFound = () => new NotFoundError('Case not found');
+
+/**
+ * Throws if the user doesn't have at least `minRole` on the case: NotFoundError (caseNotFound)
+ * when they have no role on it at all, ForbiddenError when their role is too low (members know
+ * the case exists). Returns the effective role on success.
  *
  * @param {object} caseDoc
  * @param {object} req
@@ -91,9 +99,8 @@ export async function getCaseRoleForSub(caseDoc, kcSub) {
  */
 export async function assertCaseAccess(caseDoc, req, minRole = 'read_only') {
     const role = await getCaseRole(caseDoc, req);
-    if (!role || (ROLE_RANK[role] ?? 0) < (ROLE_RANK[minRole] ?? 0)) {
-        throw new ForbiddenError();
-    }
+    if (!role) throw caseNotFound();
+    if ((ROLE_RANK[role] ?? 0) < (ROLE_RANK[minRole] ?? 0)) throw new ForbiddenError();
     return role;
 }
 
@@ -107,7 +114,7 @@ export async function loadCaseWithAccess(caseId, req, minRole = 'read_only') {
     const caseDoc = isDocId(caseId)
         ? await getPayloadClient().findByID({ collection: 'cases', id: caseId, depth: 0, disableErrors: true })
         : null;
-    if (!caseDoc) throw new NotFoundError('Case not found');
+    if (!caseDoc) throw caseNotFound();
     const role = await assertCaseAccess(caseDoc, req, minRole);
     return { caseDoc, role };
 }

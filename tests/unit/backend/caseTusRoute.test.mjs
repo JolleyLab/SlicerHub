@@ -108,7 +108,7 @@ test.beforeEach(() => {
 
 test('someone with no access to the case cannot start an upload', async () => {
     const r = await dispatch('POST', '/api/cases/5/files/tus', STRANGER);
-    assert.equal(r.error?.statusCode, 403);
+    assert.equal(r.error?.statusCode, 404); // as if the case didn't exist
     assert.deepEqual(tusHandled, []);
 });
 

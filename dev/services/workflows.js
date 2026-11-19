@@ -7,6 +7,9 @@ import { NO_TODOS, toBellCount } from '../utils/bellCount.js';
 
 const enc = encodeURIComponent;
 
+/** Who can use a workflow: its owner only, or everyone (backend VISIBILITY). */
+export const WORKFLOW_VISIBILITY = Object.freeze({ PRIVATE: 'private', PUBLIC: 'public' });
+
 /** A query string from `params`, leaving out empty values and page 1: '' or '?scope=public&q=…'. */
 function queryString(params) {
     const kept = Object.entries(params).filter(([key, value]) => value && !(key === 'page' && Number(value) <= 1));
@@ -18,7 +21,7 @@ const toPage = (d) => ({ items: d.workflows || [], hasMore: d.hasMore === true }
 export const listMyWorkflows = () => apiRequest('/api/workflows').then((d) => d.workflows);
 /** Everyone's public workflows, a page at a time: { q, sort ('title' | 'newest' | 'oldest'), page } → { items, hasMore }. */
 export const listPublicWorkflows = ({ q, sort, page } = {}) =>
-    apiRequest(`/api/workflows${queryString({ scope: 'public', q, sort, page })}`).then(toPage);
+    apiRequest(`/api/workflows${queryString({ scope: WORKFLOW_VISIBILITY.PUBLIC, q, sort, page })}`).then(toPage);
 export const getWorkflow = (id) => apiRequest(`/api/workflows/${enc(id)}`).then((d) => d.workflow);
 export const createWorkflow = (fields) => apiRequest('/api/workflows', { method: 'POST', body: fields }).then((d) => d.workflow);
 export const updateWorkflow = (id, fields) => apiRequest(`/api/workflows/${enc(id)}`, { method: 'PATCH', body: fields }).then((d) => d.workflow);

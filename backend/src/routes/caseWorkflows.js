@@ -18,7 +18,7 @@ import { ConflictError, ValidationError } from '../utils/errors.js';
 import { loadCaseWithAccess } from '../utils/caseAccess.js';
 import { requireOwnerId, canView, loadOwnedDoc } from '../utils/ownedDocs.js';
 import {
-    WORKFLOWS, CASE_WORKFLOWS, findAll, myWorkflows, toWorkflow, isApproved, toApproval, workflowCopy,
+    WORKFLOWS, CASE_WORKFLOWS, REQUEST_STATUS, findAll, myWorkflows, toWorkflow, isApproved, toApproval, workflowCopy,
 } from '../services/workflows.js';
 import {
     canRequest, isPending, loadCaseWorkflowRow, describeRequests, decideRequesters, requestedBy,
@@ -76,7 +76,7 @@ export default function caseWorkflowRoutes(app) {
         const data = {
             case: Number(req.params.id),
             ...workflowCopy(source),
-            status: 'approved',
+            status: REQUEST_STATUS.APPROVED,
             requested_at: null,
             decline_reason: null,
             decided_by: requireOwnerId(req),
@@ -86,7 +86,7 @@ export default function caseWorkflowRoutes(app) {
         const [existing] = await findAll(CASE_WORKFLOWS, {
             case: { equals: data.case }, workflow: { equals: data.workflow },
         });
-        if (existing && isPending(existing)) await decideRequesters(existing, caseDoc, 'approved');
+        if (existing && isPending(existing)) await decideRequesters(existing, caseDoc, REQUEST_STATUS.APPROVED);
         const row = existing
             ? await payload.update({ collection: CASE_WORKFLOWS, id: existing.id, data })
             : await payload.create({ collection: CASE_WORKFLOWS, data });
@@ -98,7 +98,7 @@ export default function caseWorkflowRoutes(app) {
     app.delete('/api/cases/:id/workflows/:approvalId', ...auth, asyncHandler(async (req, res) => {
         const { caseDoc } = await loadCaseWithAccess(req.params.id, req, 'admin');
         const row = await loadCaseWorkflowRow(req.params.id, req.params.approvalId);
-        if (isPending(row)) throw new ConflictError('Decline a pending request instead of removing it');
+        if (isPending(row)) throw ConflictError.fromKey('workflow.remove_pending');
         const payload = getPayloadClient();
         await payload.delete({ collection: CASE_WORKFLOWS, id: row.id });
         if (String(caseDoc.default_workflow) === String(row.id)) {

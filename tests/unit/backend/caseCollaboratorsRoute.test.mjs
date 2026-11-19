@@ -333,10 +333,12 @@ test('GET collaborators 404s for an unknown case', async () => {
     assert.equal(res.error.statusCode, 404);
 });
 
-test('GET collaborators is forbidden for someone with no role on the case', async () => {
+test('to someone with no role on it, a case answers exactly as one that does not exist', async () => {
     payloadClient = fakePayload({ cases: [makeCase({ owner_id: 'someone-else' })] });
     const res = await call('GET', '/api/cases/1/collaborators', { user: COLLAB_USER });
-    assert.equal(res.error.statusCode, 403);
+    const missing = await call('GET', '/api/cases/404/collaborators', { user: COLLAB_USER });
+    assert.equal(res.error.statusCode, 404);
+    assert.deepEqual([res.error.message, res.error.messageKey], [missing.error.message, missing.error.messageKey]);
 });
 
 test('GET collaborators merges individual Keycloak collaborators with SlicerHub group collaborators', async () => {
@@ -392,7 +394,7 @@ test('a case admin sees only group managers, org/site admins and members who sha
 test('an org admin sees no case they are not in', async () => {
     payloadClient = fakePayload({ cases: [makeCase()] });
     const res = await call('GET', '/api/cases/1/collaborators', { user: ORG_ADMIN });
-    assert.equal(res.error.statusCode, 403);
+    assert.equal(res.error.statusCode, 404);
 });
 
 test('an org admin in a case sees every group member with their email, to audit membership', async () => {

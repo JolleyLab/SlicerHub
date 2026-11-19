@@ -419,8 +419,6 @@ export const CaseWorkflows = {
         { name: 'extensions', type: 'json' },
         { name: 'file_types', type: 'json' },
         { name: 'startup_config', type: 'json' },
-        // The source's updatedAt when approved: a later one means "Update available".
-        { name: 'source_updated_at', type: 'date' },
         // Who asked is in case-workflow-requesters.
         { name: 'requested_at', type: 'date' },
         { name: 'decline_reason', type: 'text' }, // kept until the next request or approval

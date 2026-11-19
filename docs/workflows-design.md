@@ -77,7 +77,6 @@ Both are new collections. Dev push creates them; nothing goes in `RETIRED_SCHEMA
 | `extensions` | json (string[]) | copied at approval |
 | `approved_by` | text | Keycloak sub |
 | `approved_at` | date | when it was approved |
-| `source_updated_at` | date | the source's `updatedAt` when approved; a later `updatedAt` shows "Update available". Comparing two database timestamps avoids clock skew between the app and the database. |
 
 A default workflow per case can be added later as an `is_default` field; it isn't needed for the first pass.
 
@@ -287,7 +286,7 @@ These follow the two patterns already in use: pending invites (a live count in t
 | `decline_reason` | text | optional, up to 500 characters, plain text; shown to the admin if the workflow is requested again, cleared on approval |
 | `decided_by`, `decided_at` | text, date | replaced `approved_by` / `approved_at` |
 
-`name`, `description`, `extensions`, `file_types`, `startup_config` and `source_updated_at` are copied from the source on request and again on approval. A unique index on (case, workflow) enforces one row each; when two people make the first request at once, the second gets the first's row. Requesters are rows in a small `case-workflow-requesters` collection, keyed like the request by (case, workflow), plus `user_sub` (Keycloak sub only), unique on all three. So joining and cancelling are an insert and a delete, which two people at once can't overwrite; one person's rows can be found (and deleted) by `user_sub`; and the requesters go with the case without a reference between the two collections that would block deleting it. They're deleted once the request is decided. Names are looked up from Keycloak when shown, as the People dialog does.
+`name`, `description`, `extensions`, `file_types` and `startup_config` are copied (and compared, for "Update available") from the source on request and again on approval. A unique index on (case, workflow) enforces one row each; when two people make the first request at once, the second gets the first's row. Requesters are rows in a small `case-workflow-requesters` collection, keyed like the request by (case, workflow), plus `user_sub` (Keycloak sub only), unique on all three. So joining and cancelling are an insert and a delete, which two people at once can't overwrite; one person's rows can be found (and deleted) by `user_sub`; and the requesters go with the case without a reference between the two collections that would block deleting it. They're deleted once the request is decided. Names are looked up from Keycloak when shown, as the People dialog does.
 
 **`cases`** gains:
 
@@ -330,7 +329,14 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
 
 - Server-side search and paging (18 Nov, uncommitted): the Workflows page's "All workflows" tab and the case panel's "Request or Add" list ask the server for 24 at a time (`?q=&sort=&page=`, `findWorkflowPage` in `services/workflows.js`), with "Load more" (`dev/utils/pagedList.js`). Search matches every word in the name, description, extensions or file types, through a `search_text` field that a Payload hook rebuilds on every save (Payload can't search inside json fields). No backfill: workflows exist only on this branch, and the one local database with older rows was filled in by hand. "My workflows" stays loaded whole and searched in the browser, since it's one person's. The case panel's unused `fileTypes` filter is gone.
 
-**Next:** the cleanup below.
+- Cleanup (19 Nov, uncommitted):
+  - Request limits (`services/workflowRequests.js`): a declined workflow can be asked for again a day later (`REQUEST_COOLDOWN_MS`), or at once if it has changed since in anything a case copies (admins can always add it); at most `MAX_PENDING_PER_MEMBER` (10) requests waiting per member per case; request and cancel share a per-person rate limit (30 per 10 minutes).
+  - Workflow API errors have keys (`AppError.fromKey`), and the browser shows its own text for them from the `api` section of `dev/i18n/locales/en.js` (`apiErrorText` in `dev/services/apiResponse.js`), falling back to the server's message for keys it doesn't have. Validation messages name the field by a catalog key (`field`), so both sides translate it. A test checks every workflow key the server sends has browser text.
+  - Case Settings shows "Workflows could not be loaded" with "Try again" instead of "Loading…" forever.
+  - Constants: `REQUEST_STATUS`, `VISIBILITY` (backend); `WORKFLOW_VISIBILITY`, `WORKFLOW_SECTION` with `workflowKey()`, and the Workflows page's `TAB` (browser).
+  - `case_workflows.source_updated_at` retired (`RETIRED_SCHEMA`); the retired-schema step runs in one transaction (`psql -1`) and stops setup on failure.
+
+**Next:** the two waiting items below, when their conditions are met; otherwise ready to merge.
 
 **Open questions and follow-ups:**
 - "Start in" shows module names (`SegmentEditor`), not the titles Slicer users know ("Segment Editor"); decide together with the core module list once users have said where they start.
@@ -341,15 +347,13 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
 - A local test-data script (e.g. `scripts/seed-test-data.mjs`, never run by setup or bootstrap): data for trying things locally that a real installation shouldn't get, such as enough public workflows to page through, with a matching remove step. Paging was tested on 18 Nov with 30 public workflows owned by `test-paging`, added by hand.
 
 **Cleanup agreed before merging:**
-- Requests: ~~unique index on (case, workflow); requesters as rows; no writes inside GETs (ex-members filtered on read)~~ (done 16 Nov); a cooldown before re-requesting a declined workflow; a cap on pending requests per member per case; optionally a per-user rate limit on request and cancel.
-- Backend error messages for workflows go through `msg()` and the backend `en.js`, with keys (`AppError.fromKey`).
-- Translate API errors in the browser: the SPA maps `error.key` to text from its own catalog (an `api.` section in `dev/i18n/locales/en.js`), keeping the backend's English message only as a fallback for logs and non-browser clients. Then a new language only touches `dev/i18n`, and the backend catalog stays English as the source of keys. Move existing API messages over key by key, starting with the workflow ones.
-- `loadCaseWorkflows()` in `cases-page.js`: log failures and show them in Case Settings with "Try again", instead of "Loading…" forever.
-- Bare strings in the new code become frozen constants (`WORKFLOW_TARGET`, `REQUEST_STATUS`, menu-key helpers).
+- ~~Requests: unique index, requesters as rows, no writes inside GETs (16 Nov); cooldown after a decline, cap per member per case, rate limit on request and cancel (19 Nov).~~
+- ~~Workflow error messages with keys; the browser translates keyed API errors from its `api` catalog section (19 Nov).~~ Other API messages (auth, cases, …) move over key by key later; until then they show the server's English.
+- ~~Case Settings: load failures shown with "Try again" (19 Nov).~~
+- ~~Frozen constants for statuses, visibility, menu sections and keys (19 Nov).~~
 - Retire the `use_simplified_viewer` preference and its "Use simplified viewer" checkbox (cases ignore it since the Open ▾ menu rework; Projects, their GPU route, share links and the seat loader still read it), together with Projects' move off SQLite. Then `accountDefaultViewer()` returns a `VIEWER` directly and `viewerFromAccount()` goes.
 - Once every installation has run `setup-payload.mjs` with workflows: delete `seedExistingCases` from `backend/src/setup/workflowSeed.js` and retire `cases.workflows_seeded` (via `RETIRED_SCHEMA`, and stop setting it in case creation). Creating the two built-in workflows stays, for new installations.
-- "Update available" now compares the copied fields (name, description, extensions, file types, startup configuration) instead of timestamps, so edits a case doesn't copy (visibility, icon) aren't an update. `case_workflows.source_updated_at` is no longer read: stop writing it in `workflowCopy` and retire the column via `RETIRED_SCHEMA`.
-- Optional: `psql -1` and stop on failure for the `RETIRED_SCHEMA` step in `scripts/setup-payload.mjs`.
+- ~~Retire `case_workflows.source_updated_at`; `psql -1` and stop on failure for `RETIRED_SCHEMA` (19 Nov).~~
 
 ## To think about later
 

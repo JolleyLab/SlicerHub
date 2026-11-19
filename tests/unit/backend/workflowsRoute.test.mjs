@@ -143,7 +143,7 @@ test('collaborators cannot approve or remove', async () => {
     assert.equal((await call('DELETE', `/api/cases/1/workflows/${row.id}`, { user: MEMBER })).status, 403);
 });
 
-test('members see approved workflows plus their own; non-members are refused', async () => {
+test('members see approved workflows plus their own; to non-members the case does not exist', async () => {
     await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
     const res = await call('GET', '/api/cases/1/workflows', { user: MEMBER });
     assert.deepEqual(res.body.approved.map((a) => a.name), ['WF 11']);
@@ -151,7 +151,7 @@ test('members see approved workflows plus their own; non-members are refused', a
     assert.equal(res.body.canManage, false);
     assert.deepEqual(Object.keys(res.body.viewers), ['slicerweb', 'full']); // what each viewer can run
     assert.equal((await call('GET', '/api/cases/1/workflows', { user: ADMIN })).body.canManage, true);
-    assert.equal((await call('GET', '/api/cases/1/workflows', { user: STRANGER })).status, 403);
+    assert.equal((await call('GET', '/api/cases/1/workflows', { user: STRANGER })).status, 404);
 });
 
 test('the approved copy survives source edits and deletion; re-approving refreshes it', async () => {

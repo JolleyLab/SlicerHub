@@ -6,6 +6,9 @@ import { ADMIN, MEMBER, READER, STRANGER, workflow, seedWorkflows } from './help
 
 const { default: caseWorkflowRoutes } = await import('../../../backend/src/routes/caseWorkflows.js');
 const { default: caseWorkflowRequestRoutes } = await import('../../../backend/src/routes/caseWorkflowRequests.js');
+const { REQUEST_COOLDOWN_MS, MAX_PENDING_PER_MEMBER } = await import('../../../backend/src/services/workflowRequests.js');
+/** When a decline at `msAgo` happened. */
+const ago = (msAgo) => new Date(Date.now() - msAgo).toISOString();
 
 const app = makeApp();
 caseWorkflowRoutes(app);
@@ -37,7 +40,7 @@ test('a collaborator can request a public workflow; read_only members and strang
     assert.equal(row.name, 'WF 11');
 
     assert.equal((await request(READER)).status, 403);
-    assert.equal((await request(STRANGER)).status, 403);
+    assert.equal((await request(STRANGER)).status, 404); // the case doesn't exist, as far as they can tell
     assert.equal((await caseView(READER)).canRequest, false);
     assert.equal((await caseView(MEMBER)).canRequest, true);
 });
@@ -129,6 +132,7 @@ test('requesting again after a decline reopens the row and shows the admin the e
     await request(MEMBER);
     const [row] = rows();
     await call('POST', `/api/cases/1/workflows/${row.id}/decline`, { user: ADMIN, body: { reason: 'Not yet' } });
+    row.decided_at = ago(REQUEST_COOLDOWN_MS + 60_000); // past the cooldown
     assert.equal((await request(OTHER)).status, 201);
     assert.equal(rows().length, 1);
     assert.deepEqual(requesters(), ['kc-other']);
@@ -139,6 +143,77 @@ test('requesting again after a decline reopens the row and shows the admin the e
 
     await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });
     assert.equal(row.decline_reason, null);
+});
+
+// ── limits ─────────────────────────────────────────────────────────────────
+// Each uses its own requester: the rate limit counts per person across this whole file.
+
+/** A collaborator on case 1 with a fresh rate-limit count. */
+const collaborator = (sub) => {
+    mocks.caseRoles[`${sub}:1`] = 'collaborator';
+    return { id: 90, role: 'user', keycloakSub: sub };
+};
+const addPublicWorkflows = (ids) => ids.forEach((id) => mocks.payload.rows.workflows.push(workflow(id, 'kc-stranger', 'public')));
+
+test('a declined workflow can be asked for again a day later, by anyone in the case', async () => {
+    const asker = collaborator('kc-cooldown');
+    await request(asker);
+    const [row] = rows();
+    await call('POST', `/api/cases/1/workflows/${row.id}/decline`, { user: ADMIN, body: {} });
+
+    const refused = await request(collaborator('kc-cooldown-2'));
+    assert.equal(refused.status, 409);
+    assert.equal(refused.error.messageKey, 'workflow.declined_recently');
+    assert.equal(row.status, 'declined');
+
+    row.decided_at = ago(REQUEST_COOLDOWN_MS - 60_000);
+    assert.equal((await request(asker)).status, 409);
+    row.decided_at = ago(REQUEST_COOLDOWN_MS + 60_000);
+    assert.equal((await request(asker)).status, 201);
+
+    // An admin can still add it directly.
+    await call('POST', `/api/cases/1/workflows/${row.id}/decline`, { user: ADMIN, body: {} });
+    assert.equal((await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } })).status, 200);
+});
+
+test('a declined workflow that has been changed since can be asked for again at once', async () => {
+    const asker = collaborator('kc-changed');
+    await request(asker);
+    const [row] = rows();
+    await call('POST', `/api/cases/1/workflows/${row.id}/decline`, { user: ADMIN, body: { reason: 'Needs a description' } });
+    const source = mocks.payload.rows.workflows.find((w) => w.id === 11);
+
+    source.icon_key = 'workflows/11/new.png'; // not something a case copies
+    assert.equal((await request(asker)).status, 409);
+    source.description = 'Radiotherapy and cardiac tools';
+    assert.equal((await request(asker)).status, 201);
+    assert.equal(row.description, 'Radiotherapy and cardiac tools', 'the request carries the new copy');
+});
+
+test('a member can have only so many requests waiting on a case; cancelling one makes room', async () => {
+    const asker = collaborator('kc-cap');
+    const ids = Array.from({ length: MAX_PENDING_PER_MEMBER + 1 }, (_, i) => 100 + i);
+    addPublicWorkflows(ids);
+    for (const id of ids.slice(0, -1)) assert.equal((await request(asker, id)).status, 201);
+
+    const refused = await request(asker, ids.at(-1));
+    assert.equal(refused.status, 409);
+    assert.equal(refused.error.messageKey, 'workflow.too_many_pending');
+    assert.equal((await request(asker, ids[0])).status, 200, 'asking again for one already asked for is fine');
+
+    await call('DELETE', `/api/cases/1/workflows/requests/${ids[0]}`, { user: asker });
+    assert.equal((await request(asker, ids.at(-1))).status, 201);
+});
+
+test('requesting and cancelling are rate limited per person', async () => {
+    const asker = collaborator('kc-busy');
+    let last;
+    for (let i = 0; i < 31; i += 1) {
+        last = await call('DELETE', '/api/cases/1/workflows/requests/11', { user: asker });
+    }
+    assert.equal(last.status, 429);
+    assert.equal(last.error.messageKey, 'workflow.too_many_requests');
+    assert.equal((await request(collaborator('kc-calm'))).status, 201, 'someone else is not held back');
 });
 
 test('a pending request cannot be removed, only declined', async () => {

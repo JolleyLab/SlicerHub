@@ -10,6 +10,13 @@ export const VIEWER = Object.freeze({ SLICERWEB: 'slicerweb', FULL: 'full' });
 export const SIMPLIFIED_VIEWER_MODULE = 'SimplifiedViewer';
 /** The menu's "No workflow" pick. */
 export const NO_WORKFLOW = 'none';
+/**
+ * The menu's two sections: the case's approved workflows, and the person's own. The values are
+ * part of the keys picks store in the browser, so they stay as they are.
+ */
+export const WORKFLOW_SECTION = Object.freeze({ CASE: 'case', OWN: 'mine' });
+/** A menu entry's key, what picks store: "case:<approval id>" or "mine:<workflow id>". */
+export const workflowKey = (section, id) => `${section}:${id}`;
 /** Workflows shown in the menu before "More workflows…". */
 export const MENU_LIMIT = 5;
 
@@ -26,14 +33,11 @@ export function fileTypesOf(fileName) {
     return parts.map((_, i) => parts.slice(i).join('.')).filter((ext) => ext.split('.').length <= 4);
 }
 
-/**
- * A workflow as the menu lists it. `key` is what picks store: "case:<approval id>" or
- * "mine:<workflow id>"; `workflowId` is the source workflow either way.
- */
+/** A workflow as the menu lists it (`key`: workflowKey); `workflowId` is the source workflow either way. */
 const toEntry = (w, section) => ({
-    key: `${section}:${w.id}`,
+    key: workflowKey(section, w.id),
     section,
-    workflowId: String(section === 'case' ? w.workflowId : w.id),
+    workflowId: String(section === WORKFLOW_SECTION.CASE ? w.workflowId : w.id),
     name: w.name,
     description: w.description || '',
     extensions: w.extensions || [],
@@ -68,9 +72,9 @@ export function usableWorkflows(data, { fileName = null, viewer = VIEWER.SLICERW
     const types = fileName == null ? [] : fileTypesOf(fileName);
     const fits = (w) => fileName == null || !w.fileTypes.length || w.fileTypes.some((t) => types.includes(t));
     const usable = (w) => fits(w) && canRun(w, viewer, { viewers: data?.viewers, slicerWebExtensions });
-    const caseWorkflows = (data?.approved || []).map((a) => toEntry(a, 'case'));
+    const caseWorkflows = (data?.approved || []).map((a) => toEntry(a, WORKFLOW_SECTION.CASE));
     const inCase = new Set(caseWorkflows.map((e) => e.workflowId));
-    const mine = data?.allowPersonal === false ? [] : (data?.mine || []).map((w) => toEntry(w, 'mine'));
+    const mine = data?.allowPersonal === false ? [] : (data?.mine || []).map((w) => toEntry(w, WORKFLOW_SECTION.OWN));
     return {
         caseWorkflows: caseWorkflows.filter(usable),
         mine: mine.filter((e) => !inCase.has(e.workflowId) && usable(e)),
@@ -95,7 +99,7 @@ export function resolveOpen(data, { fileName = null, pick = null, accountViewer 
     const usable = usableWorkflows(data, { fileName, viewer, slicerWebExtensions });
     const picked = pick?.workflow && [...usable.caseWorkflows, ...usable.mine].find((e) => e.key === pick.workflow);
     if (picked) return { viewer, workflow: picked, from: 'pick' };
-    const byDefault = data?.defaultWorkflow && usable.caseWorkflows.find((e) => e.key === `case:${data.defaultWorkflow}`);
+    const byDefault = data?.defaultWorkflow && usable.caseWorkflows.find((e) => e.key === workflowKey(WORKFLOW_SECTION.CASE, data.defaultWorkflow));
     if (byDefault) return { viewer, workflow: byDefault, from: 'default' };
     return { viewer, workflow: null, from: 'none' };
 }

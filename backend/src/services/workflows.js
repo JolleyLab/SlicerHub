@@ -10,6 +10,10 @@ import { ValidationError } from '../utils/errors.js';
 export const WORKFLOWS = 'workflows';
 export const CASE_WORKFLOWS = 'case-workflows';
 
+export const VISIBILITY = Object.freeze({ PRIVATE: 'private', PUBLIC: 'public' });
+/** A case-workflows row: requested, approved (members can use it), or declined. */
+export const REQUEST_STATUS = Object.freeze({ PENDING: 'pending', APPROVED: 'approved', DECLINED: 'declined' });
+
 /**
  * A workflow's startup configuration: what's passed to the viewer once it has started. Only
  * these keys are accepted, so a public workflow can't make a viewer do anything we haven't
@@ -39,7 +43,7 @@ export function sanitizeStartupConfig(value) {
 }
 
 /** Rows from before requests existed have no status; they were approvals. */
-export const isApproved = (row) => !row.status || row.status === 'approved';
+export const isApproved = (row) => !row.status || row.status === REQUEST_STATUS.APPROVED;
 
 /** An approved case workflow as the API returns it; `source` (if still visible) shows whether it changed. */
 export const toApproval = (row, source = null) => ({
@@ -77,7 +81,6 @@ export const workflowCopy = (source) => ({
     extensions: source.extensions || [],
     file_types: source.file_types || [],
     startup_config: source.startup_config || {},
-    source_updated_at: source.updatedAt,
 });
 
 /** At most 200 rows: for lists bounded by one person or one case (public workflows are paged). */
@@ -87,7 +90,7 @@ export async function findAll(collection, where, sort) {
 }
 
 export const myWorkflows = (req) => findAll(WORKFLOWS, { owner_id: { equals: requireOwnerId(req) } }, 'name');
-export const PUBLIC = { visibility: { equals: 'public' } };
+export const PUBLIC = { visibility: { equals: VISIBILITY.PUBLIC } }; // not frozen: Payload may rewrite a where in place
 
 export const WORKFLOW_PAGE_SIZE = 24;
 const MAX_PAGE = 1000;

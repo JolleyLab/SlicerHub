@@ -10,8 +10,8 @@ import { updateCaseWorkflowSettings } from '../services/workflows.js';
  * Case Settings, for case admins (docs/workflows-design.md › Case Settings): its header
  * ("← Back to case", title, the case's name), the case's default workflow, and whether members
  * may use their own. Adding, removing and requests are in the case's Workflows panel. `data` is
- * the case page's GET /api/cases/:id/workflows.
- * Emits `back`, `workflows-changed` after a change, and `open-workflows` for the panel.
+ * the case page's GET /api/cases/:id/workflows (null while it loads); `loadFailed` when it couldn't be.
+ * Emits `back`, `workflows-changed` after a change (and for "Try again"), and `open-workflows` for the panel.
  */
 export class CaseSettings extends LitElement {
     static get properties() {
@@ -19,6 +19,7 @@ export class CaseSettings extends LitElement {
             caseId: { type: String },
             caseTitle: { type: String },
             data: { attribute: false },
+            loadFailed: { type: Boolean },
             busy: { state: true },
             error: { state: true },
         };
@@ -31,6 +32,7 @@ export class CaseSettings extends LitElement {
             h3 { margin: 0; font-size: 1rem; }
             h4 { margin: 8px 0 0; font-size: 0.9rem; }
             .default-select { max-width: 320px; }
+            .try-again { align-self: flex-start; }
             .hint { padding: 8px 10px; border-radius: var(--radius-sm, 6px); background: color-mix(in srgb, var(--color-primary) 8%, transparent); }
             .link { background: none; border: 0; padding: 0; font: inherit; color: var(--color-focus); cursor: pointer; text-decoration: underline; }
         `];
@@ -41,6 +43,7 @@ export class CaseSettings extends LitElement {
         this.caseId = '';
         this.caseTitle = '';
         this.data = null;
+        this.loadFailed = false;
         this.busy = false;
         this.error = '';
     }
@@ -71,7 +74,19 @@ export class CaseSettings extends LitElement {
                 <h2 class="detail-title">${t('caseSettings.title')}</h2>
                 <p class="detail-desc">${this.caseTitle || t('cases.untitledCase')}</p>
             </div>
-            ${this.data ? this._renderWorkflows() : html`<span class="muted">${t('common.loading')}</span>`}
+            ${this.data ? this._renderWorkflows() : this._renderNotLoaded()}
+        `;
+    }
+
+    _renderNotLoaded() {
+        if (!this.loadFailed) return html`<span class="muted" role="status">${t('common.loading')}</span>`;
+        return html`
+            <section>
+                <span class="error" role="alert">${t('workflows.loadFailed')}</span>
+                <button class="secondary-button try-again" type="button" @click=${() => this._emit('workflows-changed')}>
+                    ${t('common.tryAgain')}
+                </button>
+            </section>
         `;
     }
 

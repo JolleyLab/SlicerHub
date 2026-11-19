@@ -47,7 +47,6 @@ const ENV_FILE = path.join(ROOT, '.env');
 function ok(msg)   { console.log(`  ✔  ${msg}`); }
 function skip(msg) { console.log(`  –  ${msg} (already set)`); }
 function step(msg) { console.log(`\n  ${msg}`); }
-function warn(msg) { console.warn(`  ⚠  ${msg}`); }
 
 // ---------------------------------------------------------------------------
 // .env helpers
@@ -174,20 +173,26 @@ const RETIRED_SCHEMA = [
             );
         END IF;
     END $$`,
+    // "Update available" compares the copied fields, not the source's updatedAt.
+    'ALTER TABLE IF EXISTS case_workflows DROP COLUMN IF EXISTS source_updated_at',
 ];
 
+/**
+ * All of RETIRED_SCHEMA in one transaction (psql -1): if any statement fails, none is applied,
+ * and setup stops here, since Payload's schema sync would otherwise stop on the leftovers.
+ */
 function dropRetiredSchema(dbUser) {
     step('Removing schema of retired features');
     const sql = RETIRED_SCHEMA.map((q) => `${q};`).join(' ');
     try {
         execSync(
-            `docker compose exec -T payload-db psql -v ON_ERROR_STOP=1 -q -U ${dbUser} -d payload`,
+            `docker compose exec -T payload-db psql -1 -v ON_ERROR_STOP=1 -q -U ${dbUser} -d payload`,
             { cwd: ROOT, input: sql, stdio: ['pipe', 'pipe', 'pipe'] }
         );
         ok('tables and columns of retired features are gone');
     } catch (err) {
         const detail = String(err.stderr || err.message || '').trim().split(/\r?\n/)[0];
-        warn(`Could not remove retired schema (${detail}). The backend may stop at startup asking about it.`);
+        throw new Error(`Could not remove retired schema, so nothing was changed (${detail})`);
     }
 }
 

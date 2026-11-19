@@ -2,6 +2,7 @@
  * Reading API responses the same way everywhere.
  *
  *   readJson(response)                      the JSON body, or {} when there is none
+ *   apiErrorText(error)                     the browser's own text for a keyed API error, or null
  *   apiError(response, data, fallback, opts) an Error with .status, .code and .payload (the body)
  *   parseApiResponse(response, fallback)    the body of a successful response, else throws apiError
  *   apiRequest(path, { method, body })      fetch an /api path with the session cookie, then parseApiResponse
@@ -108,13 +109,28 @@ export async function readJson(response) {
     }
 }
 
+/**
+ * The browser's own text for an API error with a key (backend utils/errors.js fromKey): the
+ * catalog's `api.<key>`, filled in with the error's `vars`. A `field` var is itself a key (a
+ * field's name, e.g. 'workflow.fields.name') and is translated too. Null when the catalog
+ * doesn't have the key yet; the server's English message is used then.
+ */
+export function apiErrorText(error) {
+    const key = typeof error?.key === 'string' ? `api.${error.key}` : null;
+    if (!key) return null;
+    const vars = { ...(error.vars || {}) };
+    if (typeof vars.field === 'string') vars.field = t(`api.${vars.field}`);
+    const text = t(key, vars);
+    return text === key ? null : text;
+}
+
 export function apiError(response, data, fallback, { friendly = false } = {}) {
     const raw = data?.error?.message || data?.message || '';
     const text = typeof raw === 'string' ? raw : '';
     const code = data?.error?.code || null;
-    const message = friendly
+    const message = apiErrorText(data?.error) || (friendly
         ? friendlyCasesError(text, fallback, response.status, code)
-        : (text || fallback || `Request failed (${response.status})`);
+        : (text || fallback || `Request failed (${response.status})`));
     const err = new Error(message);
     err.status = response.status;
     err.code = code;
