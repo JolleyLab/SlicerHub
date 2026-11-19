@@ -241,7 +241,10 @@ export class PopupMenu extends LitElement {
     onMenuKeydown(event) {
         const items = this.menuItems();
         const current = items.indexOf(event.target.closest?.(MENU_ITEMS));
-        const moves = { ArrowDown: current + 1, ArrowUp: current - 1, Home: 0, End: items.length - 1 };
+        // Right/Left move to the next/previous item, like Down/Up, so menus shown side by side work too.
+        const moves = {
+            ArrowDown: current + 1, ArrowRight: current + 1, ArrowUp: current - 1, ArrowLeft: current - 1, Home: 0, End: items.length - 1,
+        };
         if (event.key in moves) {
             event.preventDefault();
             this.focusMenuItem(moves[event.key]);

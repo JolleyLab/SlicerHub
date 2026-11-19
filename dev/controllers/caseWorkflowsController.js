@@ -123,6 +123,7 @@ export class CaseWorkflowsController {
                 .fileName=${title}
                 .viewer=${openWith.viewer}
                 ?canSwitchViewer=${Boolean(attachment)}
+                ?grid=${Boolean(attachment)}
                 .usable=${openWith.usable}
                 .selectedKey=${openWith.selectedKey}
                 .label=${openWith.label}

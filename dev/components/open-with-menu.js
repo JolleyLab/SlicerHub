@@ -2,6 +2,10 @@ import { html, css } from 'lit-element';
 import { t } from '../i18n/index.js';
 import { PopupMenu } from './popup-menu.js';
 import { VIEWER, NO_WORKFLOW, shortList } from '../utils/openWith.js';
+import { iconTile, iconTileStyles } from '../utils/iconTile.js';
+
+/** What the open panel shows. */
+const VIEW = Object.freeze({ GRID: 'grid', LIST: 'list' });
 
 const ICON_CHEVRON = html`
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -11,6 +15,7 @@ const ICON_CHEVRON = html`
 /**
  * Open ▾ for a case file or the blank viewer: "Open in" (files only), "No workflow", the usable
  * workflows (`usable`, from utils/openWith.js), and "More workflows…" when they don't all fit.
+ * `grid` (file rows): a bare chevron opening an icon grid; "All options…" shows the list instead.
  * Emits `switch-viewer` { viewer }, `open-workflow` { key } and `more-workflows`.
  */
 export class OpenWithMenu extends PopupMenu {
@@ -53,6 +58,58 @@ export class OpenWithMenu extends PopupMenu {
     static get portalCss() {
         return `
 .popup-menu-panel.open-with { min-width: 240px; }
+.popup-menu-panel.open-with .tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 48px);
+  gap: 4px;
+  padding: 4px 8px;
+}
+.popup-menu-panel.open-with .tile {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--radius-md, 6px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+/* Name tooltip on hover and focus (title doesn't show on focus). */
+.popup-menu-panel.open-with .tile::after {
+  content: attr(data-name);
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 200px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: var(--color-text-primary, #1a1a1a);
+  color: var(--color-panel, #fff);
+  font-size: 0.72rem;
+  line-height: 1.3;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 1;
+}
+.popup-menu-panel.open-with .tile:hover::after,
+.popup-menu-panel.open-with .tile:focus-visible::after { opacity: 1; }
+.popup-menu-panel.open-with .tile:hover,
+.popup-menu-panel.open-with .tile:focus-visible {
+  background: color-mix(in srgb, var(--color-primary, #3366cc) 10%, transparent);
+  outline: none;
+}
+.popup-menu-panel.open-with .tile[aria-checked='true'] { border-color: var(--color-focus, #0057c2); }
+.popup-menu-panel.open-with .tile:focus-visible { border-color: var(--color-text-primary, #1a1a1a); }
+.popup-menu-panel.open-with .tile .icon-tile { --icon-tile-size: 32px; }
+${iconTileStyles.cssText}
 .popup-menu-panel.open-with .more { color: var(--color-text-secondary, #666); }
 .popup-menu-panel.open-with .viewer-switch {
   display: flex;
@@ -73,7 +130,7 @@ export class OpenWithMenu extends PopupMenu {
 `;
     }
 
-    static get contentProperties() { return ['viewer', 'usable', 'selectedKey']; }
+    static get contentProperties() { return ['viewer', 'usable', 'selectedKey', '_view']; }
 
     static get properties() {
         return {
@@ -93,6 +150,10 @@ export class OpenWithMenu extends PopupMenu {
             label: { type: String },
             /** List "No workflow" first (true by default; off where only workflows are offered). */
             showNoWorkflow: { type: Boolean },
+            /** Icon grid behind a bare chevron (file rows). */
+            grid: { type: Boolean },
+            /** VIEW; resets to the grid on close. */
+            _view: { attribute: false },
         };
     }
 
@@ -106,12 +167,20 @@ export class OpenWithMenu extends PopupMenu {
         this.selectedKey = NO_WORKFLOW;
         this.label = '';
         this.showNoWorkflow = true;
+        this.grid = false;
+        this._view = VIEW.GRID;
+    }
+
+    get showingGrid() {
+        return this.grid && this._view === VIEW.GRID;
     }
 
     updated(changed) {
         super.updated(changed);
         // Switching the viewer keeps focus on the viewer now chosen.
         if (this.open && !changed.has('open') && changed.has('viewer')) this._menuContainer?.querySelector('[aria-checked="true"]')?.focus();
+        if (this.open && !changed.has('open') && changed.has('_view')) this.focusOnOpen();
+        if (changed.has('open') && !this.open) this._view = VIEW.GRID;
     }
 
     /** Focus the checked workflow choice (so Enter opens with it), else the first item. */
@@ -162,7 +231,40 @@ export class OpenWithMenu extends PopupMenu {
         `;
     }
 
+    tileTemplate(key, name, iconName, iconSrc) {
+        const selected = key === this.selectedKey;
+        return html`
+            <button class="tile" type="button" role="menuitemradio" data-choice aria-checked=${selected ? 'true' : 'false'} tabindex="-1"
+                aria-label=${name} data-name=${name} @click=${() => this.closeAndEmit('open-workflow', { key })}>
+                ${iconTile(iconName, iconSrc)}
+            </button>
+        `;
+    }
+
+    gridContent() {
+        const list = shortList(this.usable || { caseWorkflows: [], mine: [] }, this.selectedKey);
+        const viewerName = t(this.viewer === VIEWER.FULL ? 'viewers.fullSlicer' : 'viewers.slicerWeb');
+        return html`
+            <div class="tiles">
+                ${this.showNoWorkflow ? this.tileTemplate(NO_WORKFLOW, t('viewers.noWorkflow'), viewerName, null) : ''}
+                ${[...list.caseWorkflows, ...list.mine].map((e) => this.tileTemplate(e.key, e.name, e.name, e.iconUrl))}
+                ${list.hidden ? html`
+                    <button class="tile" type="button" role="menuitem" tabindex="-1"
+                        aria-label=${t('viewers.moreWorkflows', { count: list.hidden })} data-name=${t('viewers.moreWorkflows', { count: list.hidden })}
+                        @click=${() => this.closeAndEmit('more-workflows')}>
+                        <span class="icon-tile" aria-hidden="true">⋯</span>
+                    </button>
+                ` : ''}
+            </div>
+            <div class="divider" role="separator"></div>
+            <button class="item" type="button" role="menuitem" tabindex="-1" @click=${() => { this._view = VIEW.LIST; }}>
+                <span class="item-label">${t('viewers.allOptions')}</span>
+            </button>
+        `;
+    }
+
     menuContent() {
+        if (this.showingGrid) return this.gridContent();
         const list = shortList(this.usable || { caseWorkflows: [], mine: [] }, this.selectedKey);
         const viewerName = t(this.viewer === VIEWER.FULL ? 'viewers.fullSlicer' : 'viewers.slicerWeb');
         const section = (headingKey, entries) => (entries.length ? html`
@@ -204,7 +306,7 @@ export class OpenWithMenu extends PopupMenu {
                 @click=${(e) => this.toggleMenu(e)}
                 @keydown=${(e) => this.onTriggerKeydown(e)}
             >
-                ${this.buttonLabel ? this.buttonLabel : this.label ? html`<span class="trigger-label">${this.label}</span>` : ''}
+                ${this.buttonLabel ? this.buttonLabel : this.label && !this.grid ? html`<span class="trigger-label">${this.label}</span>` : ''}
                 ${ICON_CHEVRON}
             </button>
         `;

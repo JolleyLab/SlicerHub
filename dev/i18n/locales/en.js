@@ -74,6 +74,7 @@ export default {
         startsIn: 'Starts in {module}',
         moreWorkflows: 'More toolkits… ({count} more)',
         moreWorkflowsTitle: 'Open {name} with…',
+        allOptions: 'All options…',
         useFullSlicer: 'Use Full Slicer instead of the in-browser viewer',
         useSimplifiedViewer: 'Use simplified viewer',
         simplifiedHint: 'Opens Full Slicer with a simplified interface.',
