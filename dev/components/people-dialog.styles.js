@@ -59,9 +59,10 @@ export const peopleDialogStyles = css`
     }
 
     /* A row waiting for a case admin to assign a role. Only the person is dimmed; the
-       note beside them keeps full contrast. */
+       note beside them keeps full contrast. 0.7 keeps the name at about 7:1 (light) and
+       6:1 (dark) against the dialog; 0.55 fell below WCAG AA's 4.5:1. */
     .row.needs-role person-chip {
-        opacity: 0.55;
+        opacity: 0.7;
     }
 
     .role-note {

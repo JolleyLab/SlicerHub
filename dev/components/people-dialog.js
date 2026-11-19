@@ -470,7 +470,10 @@ export class PeopleDialog extends LitElement {
                                 ...(askForRole ? [{ value: '', label: t('people.chooseRole'), disabled: true }] : []),
                                 ...this.effectiveRoleOptions.filter((o) => o.value)
                             ]}
-                            aria-label=${t('people.roleForPerson', { name })}
+                            aria-label=${askForRole
+                                // The note is outside the picker's shadow DOM, so aria-describedby can't reach it.
+                                ? `${t('people.roleForPerson', { name })}. ${t('people.assignNewRole')}`
+                                : t('people.roleForPerson', { name })}
                             @change=${(e) => this.handleRoleChange(member.id, e)}
                         ></dropdown-select>
                     ` : member.siteAdmin ? '' : html`
