@@ -92,12 +92,15 @@ export const workflowsAddingExtensions = (workflows, extensions = []) =>
     workflows.filter((w) => w.extensions.some((ext) => !extensions.includes(ext)));
 
 /**
- * What clicking a file opens: { key, viewer, workflow (entry or null), from: 'default' | 'none',
- * usable }. The case default, if usable here; else the person's account viewer with no workflow
- * (the blank viewer: SlicerWeb).
+ * What clicking a file opens: { key, viewer, workflow (entry or null), from: 'file' | 'default' |
+ * 'none', usable }. The file's own default (`fileDefault`, a key set at upload), else the case
+ * default, if usable here; else the person's account viewer with no workflow (the blank viewer:
+ * SlicerWeb). A file default that no longer applies is skipped, not cleared.
  */
-export function resolveOpen(data, { fileName = null, accountViewer = 'web', slicerWebExtensions = null } = {}) {
+export function resolveOpen(data, { fileName = null, fileDefault = null, accountViewer = 'web', slicerWebExtensions = null } = {}) {
     const usable = usableWorkflows(data, { fileName, slicerWebExtensions });
+    const forFile = fileDefault && choiceFor(usable, fileDefault);
+    if (forFile) return { ...forFile, from: 'file', usable };
     const byDefault = data?.defaultWorkflow && choiceFor(usable, workflowKey(WORKFLOW_SECTION.CASE, data.defaultWorkflow));
     if (byDefault) return { ...byDefault, from: 'default', usable };
     const viewer = fileName == null ? VIEWER.SLICERWEB : viewerFromAccount(accountViewer);

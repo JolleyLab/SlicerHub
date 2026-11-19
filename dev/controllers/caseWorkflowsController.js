@@ -80,6 +80,7 @@ export class CaseWorkflowsController {
         const loaded = this.loaded?.caseId === String(caseRow.id) ? this.loaded : null;
         const open = resolveOpen(loaded?.data, {
             fileName: attachment ? this.options.fileName(attachment) : null,
+            fileDefault: attachment?.open_with ?? null,
             slicerWebExtensions: loaded?.slicerWebExtensions ?? null,
             accountViewer: this.options.accountViewer(),
         });

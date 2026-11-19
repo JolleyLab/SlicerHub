@@ -288,6 +288,8 @@ These follow the two patterns already in use: pending invites (a live count in t
 
 `name`, `description`, `extensions`, `file_types` and `startup_config` are copied (and compared, for "Update available") from the source on request and again on approval. A unique index on (case, workflow) enforces one row each; when two people make the first request at once, the second gets the first's row. Requesters are rows in a small `case-workflow-requesters` collection, keyed like the request by (case, workflow), plus `user_sub` (Keycloak sub only), unique on all three. So joining and cancelling are an insert and a delete, which two people at once can't overwrite; one person's rows can be found (and deleted) by `user_sub`; and the requesters go with the case without a reference between the two collections that would block deleting it. They're deleted once the request is decided. Names are looked up from Keycloak when shown, as the People dialog does.
 
+**`attachments`** gains `open_with` (text): the file's default for everyone, as a menu key (`case:<case-workflows id>`, `viewer:slicerweb` or `viewer:full`; not personal toolkits). Empty: the case default.
+
 **`cases`** gains:
 
 | Field | Type | Notes |
@@ -344,6 +346,8 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
   - The viewer is part of the toolkit (5a, data and editor): a `viewer` field, chosen on the toolkit form ("Opens in", before Extensions) and shown on its page. "Start in" drops its SlicerWeb notes for Full Slicer toolkits. Seeds: SlicerHeart opens in SlicerWeb, SlicerHeart – Simplified in Full Slicer (SimplifiedViewer only starts there); setup gives older seed rows their viewer. Cases that approved Simplified before this show "Update available" until re-approved. Opening files doesn't use it yet (5b).
 
   - Opening follows the toolkit's viewer (5b; replaces "Open in" and the viewer step in [Which workflow opens](#which-workflow-opens) and [Opening a file](#opening-a-file-open-)). Clicking a file opens it with the case default, in that toolkit's viewer; else the person's account viewer with no toolkit. A menu choice opens it once and isn't remembered (per-file picks in the browser were removed). Plain **SlicerWeb** and **Full Slicer** entries (keys `viewer:slicerweb` / `viewer:full`) replace "No toolkit" and the "Open in" switch; Full Slicer is offered once the case's data has loaded. The blank viewer offers only SlicerWeb and SlicerWeb toolkits. Menus, "More toolkits…" and Case Settings show each toolkit's viewer; the case panel says "Opens in …" or "Can't open in … here". The chevron always shows (there are always two plain viewers), so "hide it when only one choice applies" is dropped.
+
+  - Each file has its own default (6a, data): `attachments.open_with`, set from the upload's tus metadata (`openWith`; a malformed key is dropped, the upload still succeeds) and changed later with `PATCH /api/cases/:id/attachments/:attachmentId/open-with` `{ openWith }` (null: back to the case default) by its uploader or a case admin. Only the key's form is checked. Clicking a file opens with its default, else the case default, else the person's account viewer; a file default that no longer applies (removed from the case, other file types) is skipped, not cleared. Next: the upload dialog that sets it (6b), "Default toolkit…" on the row and "Save as new" keeping the source's (6c).
 
 **Next:** the two waiting items below, when their conditions are met; otherwise ready to merge.
 

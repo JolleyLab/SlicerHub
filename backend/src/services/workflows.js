@@ -15,6 +15,13 @@ export const VISIBILITY = Object.freeze({ PRIVATE: 'private', PUBLIC: 'public' }
 export const VIEWER = Object.freeze({ SLICERWEB: 'slicerweb', FULL: 'full' });
 /** Rows from before workflows named a viewer open in SlicerWeb. */
 export const viewerOf = (doc) => doc?.viewer || VIEWER.SLICERWEB;
+
+const OPEN_WITH_KEY = new RegExp(`^(case:\\d{1,12}|viewer:(${Object.values(VIEWER).join('|')}))$`);
+/**
+ * A file's default (attachments.open_with): one of the case's workflows or a plain viewer, as the
+ * Open menu keys them. Only the form is checked: one that no longer applies is skipped when opening.
+ */
+export const isOpenWithKey = (value) => typeof value === 'string' && OPEN_WITH_KEY.test(value);
 /** A case-workflows row: requested, approved (members can use it), or declined. */
 export const REQUEST_STATUS = Object.freeze({ PENDING: 'pending', APPROVED: 'approved', DECLINED: 'declined' });
 

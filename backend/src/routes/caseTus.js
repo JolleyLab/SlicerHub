@@ -19,6 +19,7 @@ import { Server as TusServer } from '@tus/server';
 import { FileStore } from '@tus/file-store';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { assertCaseAccess } from '../utils/caseAccess.js';
+import { isOpenWithKey } from '../services/workflows.js';
 
 // FileStore writes files flat under this directory as {uploadId}.
 // The storage key is caseFiles/{uploadId} — matches CASE_KEY_PREFIX in contract.js.
@@ -106,6 +107,8 @@ export function registerCaseTusRoute(app, payload) {
                         mime_type:         mimeType,
                         size_bytes:        upload.size ?? null,
                         uploaded_by:       userId,
+                        // The uploader's choice of default; anything malformed is dropped, not fatal.
+                        open_with:         isOpenWithKey(meta.openWith) ? meta.openWith : null,
                     },
                 });
             } catch (err) {

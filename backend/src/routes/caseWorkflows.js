@@ -6,16 +6,17 @@
  *   POST   /api/cases/:id/workflows               admins: approve, or re-approve to refresh the copy
  *   DELETE /api/cases/:id/workflows/:approvalId   admins
  *   PATCH  /api/cases/:id/workflow-settings       admins: { defaultWorkflow?, allowPersonal? }
+ *   PATCH  /api/cases/:id/attachments/:attachmentId/open-with   the uploader or admins: { openWith }
  */
 
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { getPayloadClient, requirePayload } from '../payload/index.js';
-import { ConflictError, ValidationError } from '../utils/errors.js';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../utils/errors.js';
 import { loadCaseWithAccess } from '../utils/caseAccess.js';
 import { requireOwnerId, canView, loadOwnedDoc } from '../utils/ownedDocs.js';
 import {
-    WORKFLOWS, CASE_WORKFLOWS, REQUEST_STATUS, findAll, myWorkflows, toWorkflow, isApproved, toApproval, workflowCopy,
+    WORKFLOWS, CASE_WORKFLOWS, REQUEST_STATUS, isOpenWithKey, findAll, myWorkflows, toWorkflow, isApproved, toApproval, workflowCopy,
 } from '../services/workflows.js';
 import {
     canRequest, isPending, loadCaseWorkflowRow, describeRequests, decideRequesters, requestedBy,
@@ -114,5 +115,18 @@ export default function caseWorkflowRoutes(app) {
             ? await getPayloadClient().update({ collection: 'cases', id: caseDoc.id, data })
             : caseDoc;
         res.json(caseSettings(saved));
+    }));
+
+    // A file's default for everyone; null goes back to the case default. Its uploader or an admin.
+    app.patch('/api/cases/:id/attachments/:attachmentId/open-with', ...auth, asyncHandler(async (req, res) => {
+        const { role } = await loadCaseWithAccess(req.params.id, req, 'collaborator');
+        const payload = getPayloadClient();
+        const att = await payload.findByID({ collection: 'attachments', id: req.params.attachmentId, depth: 0, disableErrors: true });
+        if (!att || String(att.case?.id ?? att.case) !== String(req.params.id)) throw NotFoundError.fromKey('workflow.open_with_file_not_found');
+        if (role !== 'admin' && att.uploaded_by !== requireOwnerId(req)) throw ForbiddenError.fromKey('workflow.open_with_not_allowed');
+        const openWith = req.body?.openWith ?? null;
+        if (openWith !== null && !isOpenWithKey(openWith)) throw ValidationError.fromKey('workflow.open_with_invalid');
+        const saved = await payload.update({ collection: 'attachments', id: att.id, data: { open_with: openWith } });
+        res.json({ openWith: saved.open_with || null });
     }));
 }

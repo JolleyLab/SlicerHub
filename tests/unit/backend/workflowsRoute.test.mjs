@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { mocks } from './helpers/caseRouteMocks.mjs';
 import { makeApp, dispatch } from './helpers/routeHarness.mjs';
-import { ADMIN, MEMBER, STRANGER, seedWorkflows } from './helpers/workflowFixtures.mjs';
+import { ADMIN, MEMBER, STRANGER, READER, seedWorkflows } from './helpers/workflowFixtures.mjs';
 
 // In-memory storage, and multer replaced by a stand-in that takes req.body.upload as the file.
 const stored = new Map(); // key -> Buffer
@@ -234,6 +234,29 @@ test('rows that are not approved are not offered; rows without a status count as
     ];
     const res = await call('GET', '/api/cases/1/workflows', { user: MEMBER });
     assert.deepEqual(res.body.approved.map((a) => a.name), ['Old row']);
+});
+
+// ── a file's default ───────────────────────────────────────────────────────
+
+test("a file's uploader or a case admin sets what it opens with; others can't", async () => {
+    mocks.payload.rows.attachments = [
+        { id: 30, case: 1, original_filename: 'heart.mrb', uploaded_by: 'kc-member' },
+        { id: 31, case: 1, original_filename: 'other.mrb', uploaded_by: 'kc-admin' },
+        { id: 32, case: 2, original_filename: 'elsewhere.mrb', uploaded_by: 'kc-member' },
+    ];
+    const set = (user, id, openWith) => call('PATCH', `/api/cases/1/attachments/${id}/open-with`, { user, body: { openWith } });
+    const stored = (id) => mocks.payload.rows.attachments.find((a) => a.id === id).open_with;
+
+    assert.deepEqual((await set(MEMBER, 30, 'viewer:full')).body, { openWith: 'viewer:full' });
+    assert.equal((await set(MEMBER, 31, 'viewer:full')).status, 403); // not theirs
+    assert.equal((await set(ADMIN, 31, 'case:7')).status, 200);
+    assert.equal(stored(31), 'case:7');
+    assert.equal((await set(READER, 30, 'case:7')).status, 403);
+    assert.equal((await set(STRANGER, 30, 'case:7')).status, 404); // the case doesn't exist, as far as they can tell
+    assert.equal((await set(MEMBER, 32, 'case:7')).status, 404); // another case's file
+    assert.equal((await set(MEMBER, 30, 'mine:11')).status, 400); // personal toolkits aren't for everyone
+    assert.equal((await set(MEMBER, 30, null)).status, 200);
+    assert.equal(stored(30), null); // back to the case default
 });
 
 // ── case settings ──────────────────────────────────────────────────────────

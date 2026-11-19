@@ -142,6 +142,13 @@ describe('resolveOpen', () => {
         assert.deepEqual([r.key, r.viewer, r.from], ['case:1', VIEWER.SLICERWEB, 'default']);
         assert.equal(resolveOpen({ ...DATA, defaultWorkflow: '2' }, { fileName: 'heart.mrb' }).viewer, VIEWER.FULL);
     });
+    it("the file's own default comes first; one that no longer applies is skipped", () => {
+        const open = (fileDefault) => resolveOpen(DATA, { fileName: 'heart.mrb', fileDefault });
+        assert.deepEqual([open('case:3').key, open('case:3').from], ['case:3', 'file']);
+        assert.deepEqual([open('viewer:full').viewer, open('viewer:full').workflow], [VIEWER.FULL, null]);
+        assert.equal(open('case:4').key, 'case:1'); // 4 is for .seg.nrrd: the case default instead
+        assert.equal(open('case:99').key, 'case:1'); // removed from the case
+    });
     it('with nothing usable: your account viewer, no workflow', () => {
         const r = resolveOpen({ ...DATA, defaultWorkflow: '4' }, { fileName: 'heart.mrb', accountViewer: 'full' });
         assert.deepEqual([r.key, r.viewer, r.workflow, r.from], ['viewer:full', VIEWER.FULL, null, 'none']);

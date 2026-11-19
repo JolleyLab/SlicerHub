@@ -296,6 +296,9 @@ export const Attachments = {
             label: 'Uploaded by (Keycloak sub)',
             required: true,
         },
+        // What the file opens with by default, for everyone: a menu key ("case:<case-workflows id>"
+        // or "viewer:slicerweb" / "viewer:full"; services/workflows.js isOpenWithKey). Empty: the case default.
+        { name: 'open_with', type: 'text' },
     ],
 };
 

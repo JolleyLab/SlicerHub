@@ -58,7 +58,8 @@ const payload = {
         if (collection === 'cases' && cases[id]) return cases[id];
         throw new Error('not found');
     },
-    async create() { return {}; }
+    created: [],
+    async create({ data }) { this.created.push(data); return data; }
 };
 
 const routes = [];
@@ -153,6 +154,17 @@ test('new uploads are stamped with the case and uploader, overriding client meta
         { metadata: { filename: 'scan.mrb', caseId: '999', uploaderSub: 'kc-owner' } }
     );
     assert.deepEqual(out.metadata, { filename: 'scan.mrb', caseId: '5', uploaderSub: 'kc-collab' });
+});
+
+test("a finished upload stores the uploader's choice of default; a malformed one is dropped", async () => {
+    const req = { runtime: { node: { req: { params: { caseId: '5' }, tusUploaderSub: 'kc-collab' } } } };
+    const finish = (openWith) => tusOptions.onUploadFinish(req, { id: 'u1', size: 3, metadata: { filename: 'scan.mrb', openWith } });
+    payload.created.length = 0;
+    await finish('case:12');
+    await finish('viewer:full');
+    await finish('case:12; drop table');
+    await finish(undefined);
+    assert.deepEqual(payload.created.map((d) => d.open_with), ['case:12', 'viewer:full', null, null]);
 });
 
 test('finished uploads cannot be deleted through TUS', () => {
