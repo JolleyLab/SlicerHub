@@ -753,7 +753,8 @@ export class CasesPage extends LitElement {
             mimeType: att.mime_type || 'application/octet-stream',
             modifiedAt: att.updatedAt || att.createdAt || null,
             uploadedBy: att.uploaded_by ?? null,
-            isMrb:              att.isMrb              ?? false,
+            openWith: att.open_with || null, // the file's default (a menu key); null: the case default
+            isMrb:             att.isMrb              ?? false,
             canOpenInSlicer:    att.canOpenInSlicer    ?? false,
             canPreviewInBrowser: att.canPreviewInBrowser ?? false,
             _source: 'payload',
@@ -1280,26 +1281,30 @@ export class CasesPage extends LitElement {
     }
 
     /**
-     * Upload files to the case one at a time (resumable TUS), with progress shown on the case.
+     * Upload files to the case one at a time (resumable TUS), with progress shown on the case,
+     * after asking what each opens with by default (cancelling that uploads nothing).
      * The server records each attachment when its upload finishes.
      */
-    uploadFiles(caseRow, files) {
+    async uploadFiles(caseRow, files) {
         if (!files.length || !caseRow?.id) return;
         if (!this.canEditCaseContent(caseRow)) return;
+        const openWith = await this.workflows.askOpenWith(caseRow, files);
+        if (!openWith) return;
         this.uploadError = '';
-        this.uploadFilesPayload(caseRow, files);
+        this.uploadFilesPayload(caseRow, files, openWith);
     }
 
-    async uploadFilesPayload(caseRow, files) {
+    async uploadFilesPayload(caseRow, files, openWith = []) {
         // Upload files one at a time, reporting inline progress.
         // The server creates the attachment record in onUploadFinish, so there's no separate attach step.
-        for (const file of files) {
+        for (const [i, file] of files.entries()) {
             if (this.uploadError) break;
             this.uploadingFile = true;
             this.uploadProgress = 0;
             this.uploadStatusText = t('cases.uploadingFile', { name: file.name });
             try {
                 await uploadCaseAttachment(caseRow.id, file, {
+                    openWith: openWith[i] || undefined,
                     onProgress: (sent, total) => {
                         this.uploadProgress = total > 0 ? sent / total : 0;
                     },

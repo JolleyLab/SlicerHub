@@ -7,6 +7,7 @@ import { t } from '../i18n/index.js';
 /** Default outside-click safe zone (px) for motor/touch forgiveness. */
 const DEFAULT_LIGHT_DISMISS_BUFFER_PX = 28;
 
+/** A modal dialog. Emits `dialog-closed` whenever it closes (×, Escape, outside click or closeDialog()). */
 export class AppDialog extends LitElement {
     static get styles() {
         return appDialogStyles;
@@ -141,6 +142,7 @@ export class AppDialog extends LitElement {
     render() {
         return html`
             <dialog class="dialog"
+                @close=${() => this.dispatchEvent(new CustomEvent('dialog-closed'))}
                 aria-labelledby=${ifDefined(this.title ? 'dialog-title' : undefined)}
                 aria-describedby=${ifDefined(this.message ? 'dialog-message' : undefined)}>
                 ${this.title ? html`<h2 class="dialog-title" id="dialog-title">${this.title}</h2>` : ''}

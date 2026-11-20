@@ -22,6 +22,7 @@ import {
     canRequest, isPending, loadCaseWorkflowRow, describeRequests, decideRequesters, requestedBy,
 } from '../services/workflowRequests.js';
 import { viewerCapabilities } from '../services/viewerCapabilities.js';
+import { SLICER_FILE_TYPES } from '../utils/attachmentFlags.js';
 
 const caseRows = (caseId) => findAll(CASE_WORKFLOWS, { case: { equals: Number(caseId) } }, 'name');
 
@@ -56,6 +57,7 @@ export default function caseWorkflowRoutes(app) {
             canManage,
             canRequest: canRequest(role),
             viewers: viewerCapabilities(),
+            slicerFileTypes: SLICER_FILE_TYPES, // which uploads get asked what they open with
             ...(canManage ? { requests: await describeRequests(pending, new Map([[String(caseDoc.id), caseDoc]])) } : {}),
         });
     }));

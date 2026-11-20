@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     VIEWER, viewerKey, viewerFromAccount, fileTypesOf, canRun, usableWorkflows, choiceFor, resolveOpen, shortList,
+    opensInSlicer, uploadChoices,
     workflowsAddingExtensions,
 } from '../../../dev/utils/openWith.js';
 
@@ -156,6 +157,25 @@ describe('resolveOpen', () => {
     it('the blank viewer is SlicerWeb, whatever the account says', () => {
         const r = resolveOpen({ ...DATA, defaultWorkflow: '2' }, { accountViewer: 'full' }); // 2 opens in Full Slicer
         assert.deepEqual([r.viewer, r.workflow], [VIEWER.SLICERWEB, null]);
+    });
+});
+
+describe('uploads', () => {
+    const data = { ...DATA, slicerFileTypes: ['mrb', 'nrrd', 'seg.nrrd', 'nii.gz'] };
+    it('only files that open in Slicer are asked about', () => {
+        assert.equal(opensInSlicer(data, 'Heart.SEG.nrrd'), true);
+        assert.equal(opensInSlicer(data, 'report.pdf'), false);
+        assert.equal(opensInSlicer(DATA, 'heart.mrb'), false); // the list hasn't loaded: not asked
+    });
+    it("offers the plain viewers and the case's toolkits for the file, not personal ones; the case default is chosen", () => {
+        const { usable, selectedKey } = uploadChoices(data, { fileName: 'brain.nii.gz' });
+        assert.deepEqual(usable.viewers, [VIEWER.SLICERWEB, VIEWER.FULL]);
+        assert.deepEqual(keys(usable.caseWorkflows), ['case:1', 'case:2']);
+        assert.deepEqual(usable.mine, []); // mine:11 fits .nii.gz, but others couldn't open with it
+        assert.equal(selectedKey, 'case:1');
+    });
+    it('when the case default does not fit the file, SlicerWeb is chosen', () => {
+        assert.equal(uploadChoices({ ...data, defaultWorkflow: '4' }, { fileName: 'heart.mrb' }).selectedKey, 'viewer:slicerweb');
     });
 });
 

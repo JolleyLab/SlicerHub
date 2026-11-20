@@ -276,7 +276,8 @@ export function hasActiveUploads() {
     return activeUploads > 0;
 }
 
-export async function uploadCaseAttachment(caseId, file, { signal, onProgress } = {}) {
+/** `openWith`: the file's default for everyone (a menu key, utils/openWith.js); omit for the case default. */
+export async function uploadCaseAttachment(caseId, file, { signal, onProgress, openWith } = {}) {
     const endpoint = `${API_URL}/api/cases/${encodeURIComponent(caseId)}/files/tus`;
     activeUploads += 1;
     try {
@@ -286,6 +287,7 @@ export async function uploadCaseAttachment(caseId, file, { signal, onProgress } 
             metadata: {
                 filename: file.name,
                 filetype: file.type || 'application/octet-stream',
+                ...(openWith ? { openWith } : {}),
             },
             signal,
             onProgress,

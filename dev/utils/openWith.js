@@ -107,6 +107,20 @@ export function resolveOpen(data, { fileName = null, fileDefault = null, account
     return { key: viewerKey(viewer), viewer, workflow: null, from: 'none', usable };
 }
 
+/** Whether a file opens in Slicer, by the file types the server sent (data.slicerFileTypes). */
+export const opensInSlicer = (data, fileName) => fileTypesOf(fileName).some((type) => (data?.slicerFileTypes || []).includes(type));
+
+/**
+ * What an upload of this file can choose as its default, for everyone: { usable, selectedKey }.
+ * The plain viewers and the case's workflows that fit it (not personal ones: others can't use
+ * them); the case default is chosen if it fits, else SlicerWeb.
+ */
+export function uploadChoices(data, { fileName, slicerWebExtensions = null }) {
+    const usable = { ...usableWorkflows(data, { fileName, slicerWebExtensions }), mine: [] };
+    const byDefault = data?.defaultWorkflow && choiceFor(usable, workflowKey(WORKFLOW_SECTION.CASE, data.defaultWorkflow));
+    return { usable, selectedKey: byDefault?.key ?? viewerKey(VIEWER.SLICERWEB) };
+}
+
 /** The first MENU_LIMIT workflows, keeping the selected one: { caseWorkflows, mine, hidden }. */
 export function shortList(usable, selectedKey = null, limit = MENU_LIMIT) {
     const all = [...usable.caseWorkflows, ...usable.mine];

@@ -16,6 +16,9 @@ const SLICER_OPEN_EXTENSIONS = Object.freeze([
     '.seg.nrrd',
 ]);
 
+/** The same, as file types without the dot ("nii.gz"), for the browser (GET /api/cases/:id/workflows). */
+export const SLICER_FILE_TYPES = Object.freeze(SLICER_OPEN_EXTENSIONS.map((ext) => ext.slice(1)));
+
 const BROWSER_PREVIEW_EXTENSIONS = Object.freeze([
     '.pdf', '.txt', '.csv', '.json', '.md',
     '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg',

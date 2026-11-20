@@ -1,10 +1,11 @@
 import { html } from 'lit-element';
 import { t } from '../i18n/index.js';
 import { listCaseWorkflows, loadExtensionCatalog } from '../services/workflows.js';
-import { VIEWER_NAME_KEY, choiceFor, resolveOpen } from '../utils/openWith.js';
+import { VIEWER_NAME_KEY, choiceFor, resolveOpen, opensInSlicer, uploadChoices } from '../utils/openWith.js';
 import '../components/open-with-menu.js';
 import '../components/case-workflows-panel.js';
 import '../components/more-workflows-dialog.js';
+import '../components/upload-open-with-dialog.js';
 
 /** Background refreshes at most this often (focus also fires when moving in and out of the viewer). */
 const REFRESH_MIN_MS = 15 * 1000;
@@ -80,7 +81,7 @@ export class CaseWorkflowsController {
         const loaded = this.loaded?.caseId === String(caseRow.id) ? this.loaded : null;
         const open = resolveOpen(loaded?.data, {
             fileName: attachment ? this.options.fileName(attachment) : null,
-            fileDefault: attachment?.open_with ?? null,
+            fileDefault: attachment?.openWith ?? null,
             slicerWebExtensions: loaded?.slicerWebExtensions ?? null,
             accountViewer: this.options.accountViewer(),
         });
@@ -97,6 +98,25 @@ export class CaseWorkflowsController {
     openChoice(caseRow, attachment, key) {
         const open = this.openWithFor(caseRow, attachment);
         return this.options.launch(caseRow, attachment, choiceFor(open.usable, key) || open);
+    }
+
+    /**
+     * Before an upload: ask each file's default, for the files that open in Slicer, unless the
+     * case has no toolkit for any of them (then there's nothing to choose but a viewer). Resolves
+     * to a key (or null: the case default) per file, or null if the person cancelled.
+     */
+    async askOpenWith(caseRow, files) {
+        const data = this.dataFor(caseRow.id);
+        const slicerWebExtensions = this.loaded?.slicerWebExtensions ?? null;
+        const asked = files.map((file) => (opensInSlicer(data, file.name)
+            ? { name: file.name, ...uploadChoices(data, { fileName: file.name, slicerWebExtensions }) }
+            : null));
+        const rows = asked.filter(Boolean);
+        if (!rows.some((row) => row.usable.caseWorkflows.length)) return files.map(() => null);
+        const keys = await this.host.renderRoot.querySelector('upload-open-with-dialog')?.ask(rows);
+        if (!keys) return null;
+        let next = 0;
+        return asked.map((row) => (row ? keys[next++] : null));
     }
 
     // ── Rendering ──────────────────────────────────────────────────────────
@@ -134,6 +154,7 @@ export class CaseWorkflowsController {
                 .slicerWebExtensions=${this.loaded?.slicerWebExtensions ?? null}
                 @workflows-changed=${() => caseRow && this.load(caseRow.id, { refresh: true })}
             ></case-workflows-panel>
+            <upload-open-with-dialog></upload-open-with-dialog>
             <more-workflows-dialog
                 @open-workflow=${(e) => this._moreFor && this.openChoice(this._moreFor.caseRow, this._moreFor.attachment, e.detail.key)}
             ></more-workflows-dialog>

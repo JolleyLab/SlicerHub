@@ -82,6 +82,12 @@ test('the startup configuration only takes known keys', () => {
     assert.throws(() => workflowFields({ startupConfig: ['module'] }, { partial: true }), /must be an object/);
 });
 
+test("the case's workflows say which file types open in Slicer (uploads are asked about those)", async () => {
+    const { slicerFileTypes } = (await call('GET', '/api/cases/1/workflows', { user: MEMBER })).body;
+    for (const type of ['mrb', 'nii.gz', 'seg.nrrd']) assert.ok(slicerFileTypes.includes(type), type);
+    assert.equal(slicerFileTypes.includes('pdf'), false);
+});
+
 test('approving copies the startup configuration; members see it', async () => {
     await call('PATCH', '/api/workflows/11', { user: MEMBER, body: { startupConfig: { module: 'SimplifiedViewer' } } });
     await call('POST', '/api/cases/1/workflows', { user: ADMIN, body: { workflowId: 11 } });

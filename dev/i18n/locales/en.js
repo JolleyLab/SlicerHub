@@ -72,6 +72,12 @@ export default {
         startsIn: 'Starts in {module}',
         moreWorkflows: 'More toolkits… ({count} more)',
         moreWorkflowsTitle: 'Open {name} with…',
+        // Asked when uploading (upload-open-with-dialog)
+        uploadTitle: 'Choose the default toolkit for this file',
+        uploadTitleMany: 'Choose the default toolkit for these files',
+        uploadHint: 'This is what the file opens with for everyone in this case. Anyone can still open it another way from its menu.',
+        uploadAction: 'Upload',
+        plainViewer: '{viewer}, no toolkit',
         allOptions: 'All options…',
         useFullSlicer: 'Use Full Slicer instead of the in-browser viewer',
         useSimplifiedViewer: 'Use simplified viewer',
