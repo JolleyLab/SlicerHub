@@ -365,10 +365,13 @@ export class NotificationBell extends LitElement {
             loading: { type: Boolean },
             notifications: { type: Array },
             unreadCount: { type: Number },
+            newCount: { type: Number },
+            _newTodo: { type: Boolean },
             error: { type: String },
             isRegistrationReviewer: { type: Boolean },
             _pendingRegCount: { type: Number },
-            _pendingInviteCount: { type: Number }
+            _pendingInviteCount: { type: Number },
+            _pendingWorkflowRequestCount: { type: Number }
         };
     }
 
@@ -379,10 +382,13 @@ export class NotificationBell extends LitElement {
         this.loading = false;
         this.notifications = [];
         this.unreadCount = 0;
+        this.newCount = 0;
+        this._newTodo = false;
         this.error = '';
         this.isRegistrationReviewer = false;
         this._pendingRegCount = 0;
         this._pendingInviteCount = 0;
+        this._pendingWorkflowRequestCount = 0;
         this._unsub = null;
         this._onDocPointer = (e) => this.handleDocPointer(e);
     }
@@ -405,12 +411,16 @@ export class NotificationBell extends LitElement {
         super.disconnectedCallback();
     }
 
-    _onStoreUpdate({ notifications, unreadCount, pendingRegCount, pendingInviteCount, loading }) {
+    _onStoreUpdate({ notifications, unreadCount, newCount, newTodo, pendingRegCount, pendingInviteCount, pendingWorkflowRequestCount, loading }) {
         this.notifications = notifications;
         this.unreadCount = unreadCount;
+        this.newCount = newCount;
+        this._newTodo = newTodo;
         this._pendingRegCount = pendingRegCount;
         this._pendingInviteCount = pendingInviteCount;
+        this._pendingWorkflowRequestCount = pendingWorkflowRequestCount;
         this.loading = loading;
+        if (this.open && (newCount || newTodo)) notificationStore.markSeen(); // arrived while the bell is open
     }
 
     handleDocPointer(event) {
@@ -421,29 +431,46 @@ export class NotificationBell extends LitElement {
 
     async toggleOpen() {
         this.open = !this.open;
-        if (this.open) await notificationStore.refresh();
+        if (!this.open) return;
+        await notificationStore.markSeen();
+        await notificationStore.refresh();
     }
 
+    /**
+     * The dot: what arrived since the bell was last opened, as on most sites. Notifications stay
+     * unread inside, and to-dos stay listed until handled, but neither keeps the dot lit.
+     */
     hasUnread() {
-        return this.unreadCount > 0 || this._pendingRegCount > 0 || this._pendingInviteCount > 0;
+        return this.newCount > 0 || this._newTodo;
     }
 
-    _firePendingRegistrations() {
+    /** To-dos waiting (registrations, case invites, workflow requests), listed in the bell until handled. */
+    get _pendingCount() {
+        return this._pendingRegCount + this._pendingInviteCount + this._pendingWorkflowRequestCount;
+    }
+
+    _goTo(selectedKey) {
         this.open = false;
         this.dispatchEvent(new CustomEvent('menu-selection-change', {
-            detail: { selectedKey: 'admin-registrations' },
+            detail: { selectedKey },
             bubbles: true,
             composed: true
         }));
     }
 
-    _fireCases() {
-        this.open = false;
-        this.dispatchEvent(new CustomEvent('menu-selection-change', {
-            detail: { selectedKey: 'cases' },
-            bubbles: true,
-            composed: true
-        }));
+    /** One line for a kind of to-do waiting, when there are any: `key` names its strings (`One`, plural, `Body`). */
+    _pendingLine(count, key, selectedKey) {
+        if (!count) return '';
+        return html`
+            <ul class="list">
+                <li class="item-row">
+                    <button type="button" class="item unread" @click=${() => this._goTo(selectedKey)}>
+                        <span class="item-title">${count === 1 ? t(`notifications.${key}One`) : t(`notifications.${key}`, { count })}</span>
+                        <span class="item-body">${t(`notifications.${key}Body`)}</span>
+                    </button>
+                </li>
+            </ul>
+        `;
     }
 
     formatWhen(value) {
@@ -534,43 +561,12 @@ export class NotificationBell extends LitElement {
                         >${t('notifications.markAllRead')}</button>
                     </div>
                     ${this.error ? html`<p class="error">${this.error}</p>` : ''}
-                    ${this._pendingRegCount > 0 ? html`
-                        <ul class="list">
-                            <li class="item-row">
-                                <button
-                                    type="button"
-                                    class="item unread"
-                                    @click=${() => this._firePendingRegistrations()}
-                                >
-                                    <span class="item-title">${this._pendingRegCount === 1
-                                        ? t('notifications.pendingRegistration')
-                                        : t('notifications.pendingRegistrations', { count: this._pendingRegCount })
-                                    }</span>
-                                    <span class="item-body">${t('notifications.pendingRegistrationsBody')}</span>
-                                </button>
-                            </li>
-                        </ul>
-                    ` : ''}
-                    ${this._pendingInviteCount > 0 ? html`
-                        <ul class="list">
-                            <li class="item-row">
-                                <button
-                                    type="button"
-                                    class="item unread"
-                                    @click=${() => this._fireCases()}
-                                >
-                                    <span class="item-title">${this._pendingInviteCount === 1
-                                        ? t('notifications.pendingCaseInvite')
-                                        : t('notifications.pendingCaseInvites', { count: this._pendingInviteCount })
-                                    }</span>
-                                    <span class="item-body">${t('notifications.pendingCaseInvitesBody')}</span>
-                                </button>
-                            </li>
-                        </ul>
-                    ` : ''}
+                    ${this._pendingLine(this._pendingRegCount, 'pendingRegistrations', 'admin-registrations')}
+                    ${this._pendingLine(this._pendingInviteCount, 'pendingCaseInvites', 'cases')}
+                    ${this._pendingLine(this._pendingWorkflowRequestCount, 'pendingWorkflowRequests', 'home')}
                     ${this.loading && !this.notifications.length
                         ? html`<p class="empty">${t('common.loading')}</p>`
-                        : (!this.notifications.length && !this._pendingRegCount && !this._pendingInviteCount
+                        : (!this.notifications.length && !this._pendingCount
                             ? html`<p class="empty">${t('notifications.empty')}</p>`
                             : this.notifications.length > 0 ? html`
                                 <ul class="list">

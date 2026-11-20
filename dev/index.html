@@ -11,6 +11,11 @@
   <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
   <script type="module" src="./app-shell.js"></script>
   <style>
+    html {
+      /* Room for sticky Save bars (styles/stickyActions.js) when a focused field scrolls into view (WCAG 2.4.11). */
+      scroll-padding-bottom: 80px;
+    }
+
     :root {
       --font-family-base: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
       --font-feature-defaults: 'liga' 1, 'calt' 1;

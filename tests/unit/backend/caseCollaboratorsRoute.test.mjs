@@ -61,6 +61,7 @@ mock.module('../../../backend/src/services/keycloakAdmin.js', {
         },
         getKeycloakUser: async (sub) => kc.usersBySub[sub] || null,
         getUserCaseRoleMap: async (sub) => kc.caseRoleMap[sub] || {},
+        isSiteAdminAccount: async () => false,
         getUserCaseRole: async (sub, caseId) => kc.userCaseRole[`${sub}:${caseId}`] ?? null,
         getUsersWithRealmRole: async (role) => kc.realmRoleUsers[role] || [],
         kcDisplayName: (user) => {
@@ -195,6 +196,7 @@ function fakePayload(initial = {}) {
             if (key === 'or') return cond.some((c) => matches(row, c));
             if ('equals' in cond) return String(row[key]) === String(cond.equals);
             if ('in' in cond) return cond.in.map(String).includes(String(row[key]));
+            if ('exists' in cond) return (row[key] != null) === cond.exists;
             return false;
         });
     };
@@ -217,6 +219,9 @@ function fakePayload(initial = {}) {
             data[collection] = data[collection] || [];
             data[collection].push(doc);
             return doc;
+        },
+        async count({ collection, where }) {
+            return { totalDocs: (data[collection] || []).filter((d) => matches(d, where)).length };
         },
         async update({ collection, id, data: fields }) {
             const doc = (data[collection] || []).find((d) => String(d.id) === String(id));
@@ -270,20 +275,38 @@ test('lookup-user rejects a value with no @', async () => {
 // GET /api/cases/invites/pending-count and pending-approval
 // --------------------------------------------------------------------------
 
-test('pending-count is always 0 for a non-admin, without querying Payload', async () => {
-    payloadClient = fakePayload({ 'case-invites': [{ id: 1, status: 'pending_approval' }] });
-    const res = await call('GET', '/api/cases/invites/pending-count', { user: COLLAB_USER });
-    assert.equal(res.body.count, 0);
+const ORG_ADMIN = { id: 9, role: 'org-admin', keycloakSub: 'kc-some-org-admin' };
+const invitesOnThreeCases = () => fakePayload({
+    cases: [{ id: '1', owner_id: 'someone-else' }, { id: '2', owner_id: 'kc-admin' }, { id: '3', owner_id: 'someone-else' }],
+    'case-invites': [
+        { id: 1, case: '1', status: 'pending_approval', invitee_email: 'a@x.org', role: 'collaborator', inviter_id: 'kc-admin' },
+        { id: 2, case: '2', status: 'pending_approval', invitee_email: 'b@x.org', role: 'collaborator', inviter_id: 'kc-admin' },
+        { id: 3, case: '3', status: 'pending_approval', invitee_email: 'c@x.org', role: 'collaborator', inviter_id: 'kc-admin' },
+        { id: 4, case: '2', status: 'accepted', invitee_email: 'd@x.org', role: 'collaborator', inviter_id: 'kc-admin' }
+    ]
+});
+const pendingCount = async (user) => (await call('GET', '/api/cases/invites/pending-count', { user })).body.count;
+const pendingIds = async (user) => (await call('GET', '/api/cases/invites/pending-approval', { user })).body.invites.map((i) => i.id).sort();
+
+test("the bell's invite count covers the same cases as the list: those the user administers", async () => {
+    payloadClient = invitesOnThreeCases();
+    kc.caseRoleMap['kc-admin'] = { '1': 'admin' };
+    assert.equal(await pendingCount(ADMIN_USER), 2);
+    assert.equal(await pendingCount(COLLAB_USER), 0);
 });
 
-test('pending-count reflects all pending_approval invites for a site admin', async () => {
-    payloadClient = fakePayload({ 'case-invites': [
-        { id: 1, status: 'pending_approval' },
-        { id: 2, status: 'pending_approval' },
-        { id: 3, status: 'accepted' }
-    ] });
-    const res = await call('GET', '/api/cases/invites/pending-count', { user: SITE_ADMIN });
-    assert.equal(res.body.count, 2);
+test('a site admin administers every case: every pending invite, in the count and the list', async () => {
+    payloadClient = invitesOnThreeCases();
+    assert.equal(await pendingCount(SITE_ADMIN), 3);
+    assert.deepEqual(await pendingIds(SITE_ADMIN), ['1', '2', '3']);
+});
+
+test("an org admin is no case admin: only the cases their membership makes them admin of", async () => {
+    payloadClient = invitesOnThreeCases();
+    assert.equal(await pendingCount(ORG_ADMIN), 0);
+    kc.caseRoleMap['kc-some-org-admin'] = { '3': 'admin' };
+    assert.equal(await pendingCount(ORG_ADMIN), 1);
+    assert.deepEqual(await pendingIds(ORG_ADMIN), ['3']);
 });
 
 test('pending-approval lists invites only for cases the requester admins (KC role, group role, or ownership)', async () => {
@@ -310,10 +333,12 @@ test('GET collaborators 404s for an unknown case', async () => {
     assert.equal(res.error.statusCode, 404);
 });
 
-test('GET collaborators is forbidden for someone with no role on the case', async () => {
+test('to someone with no role on it, a case answers exactly as one that does not exist', async () => {
     payloadClient = fakePayload({ cases: [makeCase({ owner_id: 'someone-else' })] });
     const res = await call('GET', '/api/cases/1/collaborators', { user: COLLAB_USER });
-    assert.equal(res.error.statusCode, 403);
+    const missing = await call('GET', '/api/cases/404/collaborators', { user: COLLAB_USER });
+    assert.equal(res.error.statusCode, 404);
+    assert.deepEqual([res.error.message, res.error.messageKey], [missing.error.message, missing.error.messageKey]);
 });
 
 test('GET collaborators merges individual Keycloak collaborators with SlicerHub group collaborators', async () => {
@@ -366,10 +391,17 @@ test('a case admin sees only group managers, org/site admins and members who sha
     assert.equal(group.memberCount, 4);
 });
 
-test('an org admin sees every group member with their email, to audit membership', async () => {
+test('an org admin sees no case they are not in', async () => {
+    payloadClient = fakePayload({ cases: [makeCase()] });
+    const res = await call('GET', '/api/cases/1/collaborators', { user: ORG_ADMIN });
+    assert.equal(res.error.statusCode, 404);
+});
+
+test('an org admin in a case sees every group member with their email, to audit membership', async () => {
     payloadClient = fakePayload({ cases: [makeCase()] });
     groupWithMixedMembers();
-    const res = await call('GET', '/api/cases/1/collaborators', { user: { id: 9, role: 'org-admin', keycloakSub: 'kc-some-org-admin' } });
+    groupAccess.roleFromGroups['kc-some-org-admin:1'] = 'read_only';
+    const res = await call('GET', '/api/cases/1/collaborators', { user: ORG_ADMIN });
     const group = res.body.collaborators.find((c) => c.type === 'group');
     assert.equal(group.hiddenMemberCount, 0);
     assert.deepEqual(group.members.find((m) => m.id === 'kc-private'), { id: 'kc-private', displayName: 'Pat Private', email: 'pat@x.org' });
@@ -785,4 +817,57 @@ test('approving a signup invite for someone who has since set up an account adds
     assert.equal(kc.calls.sendExecuteActionsEmail.length, 0);
     assert.deepEqual(kc.calls.addUserToCaseGroup[0], { userId: 'kc-active', caseId: '1', role: 'collaborator' });
     assert.equal(payloadClient.rows['case-invites'][0].status, 'accepted');
+});
+
+// --------------------------------------------------------------------------
+// Site admins on cases: the site_admin marker (backend utils/caseRoles.js)
+// --------------------------------------------------------------------------
+
+const FORMER_SITE_ADMIN = { id: 11, role: 'user', keycloakSub: 'kc-former' };
+
+test('a former site admin keeps read only through their site_admin membership', async () => {
+    payloadClient = fakePayload({ cases: [makeCase()] });
+    kc.userCaseRole['kc-former:1'] = 'site_admin';
+    const res = await call('GET', '/api/cases/1/collaborators', { user: FORMER_SITE_ADMIN });
+    assert.equal(res.status, 200);
+    const share = await call('PUT', '/api/cases/1/collaborators', { user: FORMER_SITE_ADMIN, body: { collaborators: [] } });
+    assert.equal(share.error.statusCode, 403);
+});
+
+test('the list labels site admins, and flags a former one as needing a role', async () => {
+    payloadClient = fakePayload({ cases: [makeCase()] });
+    kc.realmRoleUsers['app-admin'] = [{ id: 'kc-site' }];
+    kc.collaborators = [
+        { id: 'kc-site', role: 'site_admin' },
+        { id: 'kc-site-before-marker', role: 'collaborator' },
+        { id: 'kc-former', role: 'site_admin' },
+        { id: 'kc-plain', role: 'collaborator' },
+    ];
+    kc.realmRoleUsers['app-admin'].push({ id: 'kc-site-before-marker' });
+    const res = await call('GET', '/api/cases/1/collaborators', { user: ADMIN_USER });
+    const flags = Object.fromEntries(res.body.collaborators.map((c) => [c.id, [c.siteAdmin, c.needsRole]]));
+    assert.deepEqual(flags, {
+        'kc-site': [true, false],
+        'kc-site-before-marker': [true, false],
+        'kc-former': [false, true],
+        'kc-plain': [false, false],
+    });
+});
+
+test('saving keeps a site_admin marker as it is, never lets one be chosen, and re-shares a former site admin', async () => {
+    payloadClient = fakePayload({ cases: [makeCase()] });
+    kc.collaborators = [{ id: 'kc-site', role: 'site_admin' }, { id: 'kc-former', role: 'site_admin' }, { id: 'kc-plain', role: 'collaborator' }];
+    const save = (collaborators) => call('PUT', '/api/cases/1/collaborators', { user: ADMIN_USER, body: { collaborators } });
+
+    const chosen = await save([{ id: 'kc-plain', role: 'site_admin' }]);
+    assert.equal(chosen.error.statusCode, 400);
+
+    const res = await save([
+        { id: 'kc-site', role: 'site_admin' },
+        { id: 'kc-former', role: 'read_only' },
+        { id: 'kc-plain', role: 'collaborator' },
+    ]);
+    assert.equal(res.status, 200);
+    assert.deepEqual(kc.calls.addUserToCaseGroup, [{ userId: 'kc-former', caseId: '1', role: 'read_only' }]);
+    assert.deepEqual(kc.calls.removeUserFromAllCaseGroups, []);
 });

@@ -1,6 +1,8 @@
-import { listNotifications } from './notifications.js';
+import { listNotifications, markNotificationsSeen } from './notifications.js';
 import { getPendingRegistrationsCount } from './registrations.js';
 import { getPendingCaseInvitesCount } from './cases.js';
+import { pendingWorkflowRequestCount } from './workflows.js';
+import { NO_TODOS, hasNewTodo } from '../utils/bellCount.js';
 
 const POLL_MS = 60_000;
 
@@ -9,8 +11,14 @@ class NotificationStore {
         this._state = {
             notifications: [],
             unreadCount: 0,
+            /** Unread and not yet seen in an open bell: lights the bell's dot */
+            newCount: 0,
+            /** A to-do arrived since the bell was last opened: also lights the dot */
+            newTodo: false,
             pendingRegCount: 0,
             pendingInviteCount: 0,
+            /** Workflow requests waiting on cases the user administers */
+            pendingWorkflowRequestCount: 0,
             loading: false
         };
         this._subscribers = new Set();
@@ -61,19 +69,35 @@ class NotificationStore {
         for (const cb of this._subscribers) cb(this._state);
     }
 
+    /** The bell was opened: its dot clears at once, on every device once saved. */
+    async markSeen() {
+        if (!this._state.newCount && !this._state.newTodo) return;
+        this._notify({ newCount: 0, newTodo: false });
+        try {
+            await markNotificationsSeen();
+        } catch {
+            this.refresh({ quiet: true }); // not saved: the dot comes back
+        }
+    }
+
     async refresh({ quiet = false } = {}) {
         if (!quiet) this._notify({ loading: true });
         try {
-            const [data, pendingRegCount, pendingInviteCount] = await Promise.all([
+            const [data, ...todos] = await Promise.all([
                 listNotifications(),
-                this._isRegistrationReviewer ? getPendingRegistrationsCount() : Promise.resolve(0),
-                getPendingCaseInvitesCount()
+                this._isRegistrationReviewer ? getPendingRegistrationsCount() : Promise.resolve(NO_TODOS),
+                getPendingCaseInvitesCount(),
+                pendingWorkflowRequestCount()
             ]);
+            const [registrations, invites, workflowRequests] = todos;
             this._notify({
                 notifications: Array.isArray(data.notifications) ? data.notifications : [],
                 unreadCount: Number(data.unreadCount) || 0,
-                pendingRegCount,
-                pendingInviteCount,
+                newCount: Number(data.newCount) || 0,
+                newTodo: hasNewTodo(todos, data.bellOpenedAt ?? null),
+                pendingRegCount: registrations.count,
+                pendingInviteCount: invites.count,
+                pendingWorkflowRequestCount: workflowRequests.count,
                 loading: false
             });
         } catch {

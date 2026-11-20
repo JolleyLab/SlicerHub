@@ -3953,7 +3953,7 @@ export class ProjectReviewPage extends LitElement {
                     </div>
                 ` : ''}
             </page-layout-template>
-            <app-dialog id="error-alert-dialog" title=${this.errorAlertTitle || t('common.somethingWentWrong')}>
+            <app-dialog id="error-alert-dialog" .title=${this.errorAlertTitle || t('common.somethingWentWrong')}>
                 <p class="error-alert-message">${this.errorAlertMessage}</p>
                 <button
                     slot="actions"
@@ -3964,13 +3964,13 @@ export class ProjectReviewPage extends LitElement {
                     ${this.errorAlertDismissLabel}
                 </button>
             </app-dialog>
-            <app-dialog id="collaborator-dialog" title=${t('projects.addCollaboratorsTitle')}>
+            <app-dialog id="collaborator-dialog" .title=${t('projects.addCollaboratorsTitle')}>
                 <collaborator-search
                     @collaborators-cancel=${() => this.closeCollaboratorDialog()}
                     @collaborators-done=${(event) => this.handleCollaboratorsDone(event)}
                 ></collaborator-search>
             </app-dialog>
-            <app-dialog id="file-upload-dialog" title=${t('projects.addFilesToProject')}>
+            <app-dialog id="file-upload-dialog" .title=${t('projects.addFilesToProject')}>
                 <div class="upload-area ${this.dragOver ? 'drag-over' : ''}"
                     @dragover=${this.handleDragOver}
                     @dragleave=${this.handleDragLeave}
@@ -4016,7 +4016,7 @@ export class ProjectReviewPage extends LitElement {
                     ` : ''}
                 </div>
             </app-dialog>
-            <app-dialog id="edit-file-title-dialog" title=${t('projects.editSceneTitle')}>
+            <app-dialog id="edit-file-title-dialog" .title=${t('projects.editSceneTitle')}>
                 <div class="gpu-dialog-form">
                     <div class="gpu-field">
                         <label for="edit-file-title-input">${t('files.editTitle')}</label>
@@ -4058,7 +4058,7 @@ export class ProjectReviewPage extends LitElement {
                     </div>
                 </div>
             </app-dialog>
-            <app-dialog id="gpu-provider-dialog" title=${this.gpuProviderDialogTitle}>
+            <app-dialog id="gpu-provider-dialog" .title=${this.gpuProviderDialogTitle}>
                 <div class="gpu-dialog-form">
                     <div class="gpu-field">
                         <label for="gpu-dialog-provider">${t('projects.gpuProvider')}</label>
@@ -4112,7 +4112,7 @@ export class ProjectReviewPage extends LitElement {
                     </div>
                 </div>
             </app-dialog>
-            <app-dialog id="gpu-stop-billing-dialog" title=${t('projects.stopGpuBilling')}>
+            <app-dialog id="gpu-stop-billing-dialog" .title=${t('projects.stopGpuBilling')}>
                 <div class="gpu-dialog-form">
                     <p class="error-alert-message">
                         Stopping billing will impact
@@ -4149,7 +4149,7 @@ export class ProjectReviewPage extends LitElement {
             </app-dialog>
             <app-dialog
                 id="gpu-owner-billing-prompt"
-                title=${this.ownerBillingPromptStep === 'remind' ? t('projects.rememberStopBilling') : t('projects.youOwnSession')}
+                .title=${this.ownerBillingPromptStep === 'remind' ? t('projects.rememberStopBilling') : t('projects.youOwnSession')}
                 .lightDismiss=${this.ownerBillingPromptStep !== 'remind'}
             >
                 <div class="gpu-dialog-form">

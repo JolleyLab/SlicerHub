@@ -12,7 +12,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getPayloadClient } from '../payload/index.js';
-import { getCaseRoleForSub } from '../utils/caseAccess.js';
+import { getCaseRoleForSub, isSiteAdmin } from '../utils/caseAccess.js'; // site admins can open every case
 import { getSlicerGuiMaxSeatsPerUser, slicerGuiUserDir } from './paths.js';
 import { stopSlicerGuiSession } from './sessionManager.js';
 
@@ -28,11 +28,6 @@ function stagedCopies(userId, seatId) {
         .map((name) => ({ name, attachmentId: name.match(STAGED_FILE)?.[1] }))
         .filter((f) => f.attachmentId)
         .map((f) => ({ ...f, path: path.join(dir, f.name) }));
-}
-
-/** Site/org admins can open every case, like getCaseRole(). */
-function isSiteAdmin(user) {
-    return user?.role === 'admin' || user?.role === 'org-admin';
 }
 
 /**

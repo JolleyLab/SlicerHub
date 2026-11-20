@@ -7,8 +7,11 @@
 
 import config from '../config/index.js';
 import { AppError, NotFoundError } from '../utils/errors.js';
+import { SITE_ADMIN_CASE_ROLE, SITE_ADMIN_REALM_ROLE } from '../utils/caseRoles.js';
 
 export const CASE_ROLES = ['admin', 'collaborator', 'read_only'];
+/** What a case membership can be stored as: a role people choose, or the site admin marker. */
+const STORED_CASE_ROLES = [...CASE_ROLES, SITE_ADMIN_CASE_ROLE];
 
 // ---------------------------------------------------------------------------
 // Admin token — cached until near expiry
@@ -28,9 +31,9 @@ export async function getAdminToken() {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
             grant_type: 'password',
-            client_id:  'admin-cli',
-            username:   adminUser,
-            password:   adminPassword,
+            client_id: 'admin-cli',
+            username: adminUser,
+            password: adminPassword,
         }),
     });
 
@@ -152,11 +155,11 @@ export async function findUserByEmail(email) {
     const user = results?.find(u => u.email?.toLowerCase() === email.toLowerCase());
     if (!user) return null;
     const shaped = {
-        id:           user.id,
-        email:        user.email,
-        firstName:    user.firstName || '',
-        lastName:     user.lastName  || '',
-        username:     user.username  || '',
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
+        username: user.username || '',
         preferredName: user.attributes?.preferredName?.[0] || '',
     };
     return { ...shaped, displayName: kcDisplayName(shaped) };
@@ -204,11 +207,11 @@ export async function getKeycloakUser(keycloakUserId) {
         const user = await keycloakGet(`/users/${encodeURIComponent(keycloakUserId)}`);
         if (!user) return null;
         const shaped = {
-            id:            user.id,
-            email:         user.email,
-            firstName:     user.firstName || '',
-            lastName:      user.lastName  || '',
-            username:      user.username  || '',
+            id: user.id,
+            email: user.email,
+            firstName: user.firstName || '',
+            lastName: user.lastName || '',
+            username: user.username || '',
             preferredName: user.attributes?.preferredName?.[0] || '',
         };
         return { ...shaped, displayName: kcDisplayName(shaped) };
@@ -238,14 +241,14 @@ export async function updateKeycloakUserProfile(keycloakUserId, { firstName, las
     // left out read as cleared, and a missing email fails "error-user-attribute-required".
     // Send the current username/email/names back unchanged alongside the edit.
     const update = {
-        username:  current?.username,
-        email:     current?.email,
+        username: current?.username,
+        email: current?.email,
         firstName: current?.firstName,
-        lastName:  current?.lastName,
+        lastName: current?.lastName,
         attributes,
     };
     if (firstName !== undefined) update.firstName = String(firstName || '').trim();
-    if (lastName  !== undefined) update.lastName  = String(lastName  || '').trim();
+    if (lastName !== undefined) update.lastName = String(lastName || '').trim();
 
     await keycloakPut(`/users/${encodeURIComponent(keycloakUserId)}`, update);
 }
@@ -381,11 +384,11 @@ export async function getUsersWithRealmRole(roleName) {
         console.log(`[keycloakAdmin] getUsersWithRealmRole(${roleName}): ${Array.isArray(users) ? users.length : 0} user(s)`);
         return (Array.isArray(users) ? users : []).map(u => {
             const shaped = {
-                id:            u.id,
-                email:         u.email        || '',
-                firstName:     u.firstName    || '',
-                lastName:      u.lastName     || '',
-                username:      u.username     || '',
+                id: u.id,
+                email: u.email || '',
+                firstName: u.firstName || '',
+                lastName: u.lastName || '',
+                username: u.username || '',
                 preferredName: u.attributes?.preferredName?.[0] || '',
             };
             return { ...shaped, displayName: kcDisplayName(shaped) };
@@ -450,6 +453,20 @@ export async function listRealmRoleMemberIds(roleName, { pageSize = 100 } = {}) 
         if (page.length < pageSize) break;
     }
     return ids;
+}
+
+/**
+ * Whether an account is a site admin now (including through Keycloak groups). If Keycloak can't
+ * say, false: the chosen role is stored as for anyone else.
+ */
+export async function isSiteAdminAccount(keycloakUserId) {
+    try {
+        const state = await getUserAccountState(keycloakUserId);
+        return state.exists && state.realmRoles.includes(SITE_ADMIN_REALM_ROLE);
+    } catch (err) {
+        console.warn('[keycloakAdmin] could not check site admin role:', err?.message);
+        return false;
+    }
 }
 
 /** Permanently delete a Keycloak user (used when a reviewer rejects an account). */
@@ -522,9 +539,11 @@ export async function ensureCaseGroup(caseId, role) {
  * Removes them from all other role groups for this case first (one role per case).
  */
 export async function addUserToCaseGroup(keycloakUserId, caseId, role) {
+    // A site admin is stored with the marker, whatever role was chosen (utils/caseRoles.js).
+    const stored = (await isSiteAdminAccount(keycloakUserId)) ? SITE_ADMIN_CASE_ROLE : role;
     // Remove from any existing role groups for this case
     await removeUserFromAllCaseGroups(keycloakUserId, caseId);
-    const groupId = await ensureCaseGroup(caseId, role);
+    const groupId = await ensureCaseGroup(caseId, stored);
     await keycloakPut(`/users/${encodeURIComponent(keycloakUserId)}/groups/${encodeURIComponent(groupId)}`, {});
 }
 
@@ -532,7 +551,7 @@ export async function addUserToCaseGroup(keycloakUserId, caseId, role) {
  * Remove a Keycloak user from all role groups for a given case.
  */
 export async function removeUserFromAllCaseGroups(keycloakUserId, caseId) {
-    for (const role of CASE_ROLES) {
+    for (const role of STORED_CASE_ROLES) {
         const group = await findCaseGroup(caseId, role);
         if (!group) continue;
         try {
@@ -545,7 +564,7 @@ export async function removeUserFromAllCaseGroups(keycloakUserId, caseId) {
 
 /**
  * Get the case role for a Keycloak user (by checking their group membership).
- * Returns 'admin' | 'collaborator' | 'read_only' | null.
+ * Returns 'admin' | 'collaborator' | 'read_only' | 'site_admin' | null.
  */
 export async function getUserCaseRole(keycloakUserId, caseId) {
     const groups = await keycloakGet(`/users/${encodeURIComponent(keycloakUserId)}/groups`);
@@ -553,7 +572,7 @@ export async function getUserCaseRole(keycloakUserId, caseId) {
     for (const g of groups ?? []) {
         if (g.name?.startsWith(prefix)) {
             const role = g.name.slice(prefix.length);
-            if (CASE_ROLES.includes(role)) return role;
+            if (STORED_CASE_ROLES.includes(role)) return role;
         }
     }
     return null;
@@ -568,7 +587,7 @@ export async function getUserCaseRoleMap(keycloakUserId) {
     const map = {};
     for (const g of groups ?? []) {
         const m = g.name?.match(/^case:(\d+):(\w+)$/);
-        if (m && CASE_ROLES.includes(m[2])) {
+        if (m && STORED_CASE_ROLES.includes(m[2])) {
             map[m[1]] = m[2];
         }
     }
@@ -581,7 +600,7 @@ export async function getUserCaseRoleMap(keycloakUserId) {
  */
 export async function listCaseCollaborators(caseId) {
     const results = [];
-    for (const role of CASE_ROLES) {
+    for (const role of STORED_CASE_ROLES) {
         const group = await findCaseGroup(caseId, role);
         if (!group) continue;
         // briefRepresentation=false fetches full user objects including attributes
@@ -590,11 +609,11 @@ export async function listCaseCollaborators(caseId) {
         );
         for (const m of members ?? []) {
             const shaped = {
-                id:           m.id,
-                email:        m.email     || '',
-                firstName:    m.firstName || '',
-                lastName:     m.lastName  || '',
-                username:     m.username  || '',
+                id: m.id,
+                email: m.email || '',
+                firstName: m.firstName || '',
+                lastName: m.lastName || '',
+                username: m.username || '',
                 preferredName: m.attributes?.preferredName?.[0] || '',
             };
             results.push({

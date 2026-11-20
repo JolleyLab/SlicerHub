@@ -1,4 +1,5 @@
 import { LitElement, html } from 'lit-element';
+import { ifDefined } from 'lit-html/directives/if-defined.js';
 import { appDialogStyles } from './app-dialog.styles.js';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
@@ -6,6 +7,7 @@ import { t } from '../i18n/index.js';
 /** Default outside-click safe zone (px) for motor/touch forgiveness. */
 const DEFAULT_LIGHT_DISMISS_BUFFER_PX = 28;
 
+/** A modal dialog. Emits `dialog-closed` whenever it closes (×, Escape, outside click or closeDialog()). */
 export class AppDialog extends LitElement {
     static get styles() {
         return appDialogStyles;
@@ -14,6 +16,11 @@ export class AppDialog extends LitElement {
     static get properties() {
         return {
             title: { type: String },
+            /**
+             * Text the dialog is about (e.g. an error), announced with its title when it opens
+             * (aria-describedby). Content in the slot can't be: references don't cross the shadow root.
+             */
+            message: { type: String },
             showDefaultCloseButton: { type: Boolean },
             /** When false, Escape and outside click do not close the dialog. */
             lightDismiss: { type: Boolean },
@@ -29,6 +36,7 @@ export class AppDialog extends LitElement {
         super();
         initializeTheme();
         this.title = '';
+        this.message = '';
         this.showDefaultCloseButton = true;
         this.lightDismiss = true;
         this.lightDismissBuffer = DEFAULT_LIGHT_DISMISS_BUFFER_PX;
@@ -133,8 +141,12 @@ export class AppDialog extends LitElement {
 
     render() {
         return html`
-            <dialog class="dialog">
-                ${this.title ? html`<h2 class="dialog-title">${this.title}</h2>` : ''}
+            <dialog class="dialog"
+                @close=${() => this.dispatchEvent(new CustomEvent('dialog-closed'))}
+                aria-labelledby=${ifDefined(this.title ? 'dialog-title' : undefined)}
+                aria-describedby=${ifDefined(this.message ? 'dialog-message' : undefined)}>
+                ${this.title ? html`<h2 class="dialog-title" id="dialog-title">${this.title}</h2>` : ''}
+                ${this.message ? html`<p class="dialog-message" id="dialog-message">${this.message}</p>` : ''}
                 ${this.showDefaultCloseButton ? html`
                     <button class="close-button" aria-label=${t('dialog.closeAria')} @click=${() => this.closeDialog()}>×</button>
                 ` : ''}

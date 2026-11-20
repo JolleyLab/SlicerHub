@@ -3,6 +3,7 @@ import config from '../config/index.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { checkAndUpdate, getInstalledSha, peekChannelUpdate, getUpdateProgress } from '../services/slicerWebUpdater.js';
+import { resolveExtensionIcon } from '../services/extensionIcons.js';
 
 const VALID_CHANNELS = new Set(['stable', 'latest']);
 
@@ -110,5 +111,20 @@ export default function slicerWebRoutes(app) {
             config.slicerWeb.devModeEnabled ? getInstalledSha('latest') : Promise.resolve(null)
         ]);
         res.json({ stable, latest: config.slicerWeb.devModeEnabled ? latest : undefined });
+    }));
+
+    // GET /api/slicerweb/extension-icon/:channel/:name — an extension's icon, served from
+    // SlicerHub's own copy so browsers never contact the icon's host (services/extensionIcons.js).
+    app.get('/api/slicerweb/extension-icon/:channel/:name', authenticateToken, asyncHandler(async (req, res) => {
+        const { channel, name } = req.params;
+        const allowed = VALID_CHANNELS.has(channel) && (channel === 'stable' || config.slicerWeb.devModeEnabled);
+        const icon = allowed ? await resolveExtensionIcon(channel, name) : null;
+        if (!icon) return res.status(404).end();
+        res.set({
+            'Content-Type': icon.contentType,
+            'Cache-Control': 'private, max-age=86400',
+            'X-Content-Type-Options': 'nosniff',
+        });
+        res.sendFile(icon.file);
     }));
 }

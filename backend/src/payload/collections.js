@@ -44,6 +44,13 @@ export const Cases = {
             defaultValue: 'active',
             required: true,
         },
+        // Case Settings (docs/workflows-design.md): what files open with unless someone picks something
+        // else, as a case-workflows id (empty: no workflow).
+        { name: 'default_workflow', type: 'text' },
+        { name: 'allow_personal_workflows', type: 'checkbox', defaultValue: true },
+        // Set once a case has its workflows set up (setup/workflowSeed.js): new cases at creation,
+        // cases from before workflows by the one-off step. No default, so existing rows stay empty.
+        { name: 'workflows_seeded', type: 'checkbox' },
     ],
 };
 
@@ -187,6 +194,8 @@ export const UserPreferences = {
         // Show my name in group member lists (e.g. when a case admin reviews a group), even as a regular member
         { name: 'share_name_in_groups',         type: 'checkbox', defaultValue: false },
         { name: 'activity_filters', type: 'json' },
+        // When the notification bell was last opened: to-dos older than this don't light its dot
+        { name: 'bell_opened_at', type: 'date' },
     ],
 };
 
@@ -287,6 +296,9 @@ export const Attachments = {
             label: 'Uploaded by (Keycloak sub)',
             required: true,
         },
+        // What the file opens with by default, for everyone: a menu key ("case:<case-workflows id>"
+        // or "viewer:slicerweb" / "viewer:full"; services/workflows.js isOpenWithKey). Empty: the case default.
+        { name: 'open_with', type: 'text' },
     ],
 };
 
@@ -307,6 +319,8 @@ export const UserNotifications = {
         { name: 'case_id',   type: 'text', index: true },
         { name: 'invite_id', type: 'text', index: true },
         { name: 'read_at',   type: 'date', index: true },
+        // When the bell was opened with this one in it: the bell's dot is for unread and unseen.
+        { name: 'seen_at',   type: 'date', index: true },
     ],
 };
 
@@ -335,3 +349,118 @@ export const SiteAnnouncement = {
         { name: 'expires_at', type: 'date', label: 'Hide after', admin: { date: { pickerAppearance: 'dayAndTime' }, description: 'Optional. E.g. the end of the maintenance window.' } },
     ],
 };
+
+/**
+ * Saved viewer setups (docs/workflows-design.md). Anyone can make one; `public` ones can be
+ * approved for a case by its admin. First pass: SlicerWeb extensions only.
+ */
+/**
+ * What workflow search matches (services/workflows.js): name, description, extensions and file
+ * types, lowercased. Payload can't search inside json fields, so this is kept as plain text.
+ */
+export const workflowSearchText = (doc) => [doc.name, doc.description, ...(doc.extensions || []), ...(doc.file_types || [])]
+    .filter(Boolean).join(' ').toLowerCase();
+
+/** The viewer a workflow opens in; empty on rows from before it was added (read as SlicerWeb). */
+const VIEWER_FIELD = {
+    name: 'viewer',
+    type: 'select',
+    options: [
+        { label: 'SlicerWeb', value: 'slicerweb' },
+        { label: 'Full Slicer', value: 'full' },
+    ],
+    defaultValue: 'slicerweb',
+};
+
+export const Workflows = {
+    slug: 'workflows',
+    admin: { useAsTitle: 'name' },
+    // On every save, the Payload admin's included, so search always matches what's stored.
+    hooks: {
+        beforeChange: [({ data, originalDoc }) => ({ ...data, search_text: workflowSearchText({ ...originalDoc, ...data }) })],
+    },
+    fields: [
+        { name: 'name', type: 'text', required: true },
+        { name: 'description', type: 'textarea' },
+        { name: 'owner_id', type: 'text', label: 'Owner (Keycloak sub)', required: true, index: true },
+        {
+            name: 'visibility',
+            type: 'select',
+            options: [
+                { label: 'Just me', value: 'private' },
+                { label: 'Public',  value: 'public' },
+            ],
+            defaultValue: 'private',
+            required: true,
+            index: true,
+        },
+        { ...VIEWER_FIELD }, // a copy each: Payload may add to a field's config
+        { name: 'extensions', type: 'json' }, // string[] of extension names
+        { name: 'icon_key', type: 'text' },   // storage key of an uploaded icon (routes/workflows.js)
+        { name: 'file_types', type: 'json' }, // string[]: data file extensions it's for ("mrb", "nii.gz"); empty = any
+        { name: 'startup_config', type: 'json' }, // { module? }: known keys only (services/workflows.js)
+        { name: 'search_text', type: 'text', admin: { hidden: true } }, // set by the hook above
+    ],
+};
+
+/**
+ * A workflow on a case: requested by members, or approved by a case admin. One row per
+ * (case, workflow), enforced by a unique index. An approved row holds a copy of the workflow as
+ * approved, so later edits (or deletion) by its owner don't change the case until it is re-approved.
+ */
+export const CaseWorkflows = {
+    slug: 'case-workflows',
+    admin: { useAsTitle: 'name' },
+    indexes: [{ fields: ['case', 'workflow'], unique: true }],
+    fields: [
+        { name: 'case', type: 'relationship', relationTo: 'cases', required: true, index: true },
+        { name: 'workflow', type: 'text', label: 'Source workflow ID', required: true, index: true },
+        {
+            name: 'status',
+            type: 'select',
+            options: [
+                { label: 'Pending',  value: 'pending' },
+                { label: 'Approved', value: 'approved' },
+                { label: 'Declined', value: 'declined' },
+            ],
+            defaultValue: 'approved',
+            index: true,
+        },
+        // Copied from the source on request, and again on approval.
+        { name: 'name', type: 'text', required: true },
+        { name: 'description', type: 'textarea' },
+        { name: 'extensions', type: 'json' },
+        { name: 'file_types', type: 'json' },
+        { name: 'startup_config', type: 'json' },
+        { ...VIEWER_FIELD },
+        // Who asked is in case-workflow-requesters.
+        { name: 'requested_at', type: 'date' },
+        { name: 'decline_reason', type: 'text' }, // kept until the next request or approval
+        { name: 'decided_by', type: 'text', label: 'Decided by (Keycloak sub)' },
+        { name: 'decided_at', type: 'date' },
+    ],
+};
+
+/**
+ * Who asked for a pending request: one row per person, keyed like the request by (case,
+ * workflow), so joining is an insert and cancelling a delete (two people asking at once can't
+ * overwrite each other), and one person's rows are found by user_sub. Keycloak subs only; names
+ * are looked up when shown. Deleted once the request is decided, or with the case.
+ */
+export const CaseWorkflowRequesters = {
+    slug: 'case-workflow-requesters',
+    admin: { useAsTitle: 'user_sub' },
+    indexes: [{ fields: ['case', 'workflow', 'user_sub'], unique: true }],
+    fields: [
+        { name: 'case', type: 'relationship', relationTo: 'cases', required: true, index: true },
+        { name: 'workflow', type: 'text', label: 'Source workflow ID', required: true },
+        { name: 'user_sub', type: 'text', label: 'Requester (Keycloak sub)', required: true, index: true },
+    ],
+};
+
+/** Every collection, in one list for both Payload configs (backend + payload-admin). */
+export const ALL_COLLECTIONS = [
+    Users, Cases, Attachments, CaseComments, CaseInvites, CaseGroupAccess, UserPreferences,
+    RegistrationRequests, Groups, GroupMembers, UserNotifications, Workflows, CaseWorkflows,
+    CaseWorkflowRequesters,
+];

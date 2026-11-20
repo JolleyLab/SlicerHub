@@ -173,13 +173,13 @@ If nothing arrives, check `docker compose logs keycloak` and `docker compose log
 git pull
 docker compose build                              # only if Dockerfiles or dependencies changed
 node scripts/setup-keycloak.mjs --settings-only   # apply realm changes; keeps the client secret
-node scripts/setup-payload.mjs                    # create or update Payload tables
+node scripts/setup-payload.mjs                    # create or update Payload tables, and seed built-in data
 docker compose up -d
 docker compose up -d --force-recreate backend     # the backend runs the mounted source; restart it to pick up changes
 docker exec nginx nginx -s reload                 # pick up nginx config changes
 ```
 
-> **Always run `setup-payload.mjs` after an update.** The backend runs with `NODE_ENV=production`, and in that mode Payload never creates or changes its tables. This script is what applies schema changes. It does nothing if the tables are already up to date.
+> **Always run `setup-payload.mjs` after an update.** The backend runs with `NODE_ENV=production`, and in that mode Payload never creates or changes its tables. This script is what applies schema changes. It also seeds data the app needs, such as the built-in SlicerHeart workflows (and, once, sets up cases from before workflows existed with SlicerHeart, so they open as they did). It only adds what's missing, so it does nothing if everything is already up to date.
 
 If the Full Slicer image changed (`slicer-gui-gpu/`), also rebuild it:
 

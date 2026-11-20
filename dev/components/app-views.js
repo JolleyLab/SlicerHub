@@ -7,7 +7,8 @@ export const APP_VIEWS = Object.freeze({
     SETTINGS: 'settings',
     CASES: 'cases',
     ADMIN_REGISTRATIONS: 'admin-registrations',
-    MY_GROUPS: 'my-groups'
+    MY_GROUPS: 'my-groups',
+    WORKFLOWS: 'workflows'
 });
 
 export const DEFAULT_APP_VIEW = APP_VIEWS.HOME;
@@ -50,17 +51,23 @@ export function readAppViewFromUrl(search = window.location.search) {
     };
 }
 
+/** Deep-link params each view owns (an open case, an open workflow…). */
+const VIEW_DEEP_LINK_PARAMS = Object.freeze({
+    [APP_VIEWS.CASES]: ['case', 'viewer'],
+    [APP_VIEWS.WORKFLOWS]: ['workflow', 'tab', 'edit'],
+});
+
 /**
  * Write SPA view state into the URL without reloading.
  * Keeps unrelated query params (e.g. share) intact.
- * Clears case deep-link params when not viewing Cases, and when
- * returning to Cases via the app shell (menu), so users land on the list.
+ * Drops other views' deep-link params, and with `clearDeepLink` (returning to a view via
+ * the menu) the current view's too, so people land on its list.
  */
 export function writeAppViewToUrl({
     currentView,
     selectedProjectId = null,
     replace = true,
-    clearCaseDeepLink = false
+    clearDeepLink = false
 } = {}) {
     const url = new URL(window.location.href);
     const params = url.searchParams;
@@ -79,12 +86,10 @@ export function writeAppViewToUrl({
         params.delete(PROJECT_ID_QUERY_KEY);
     }
 
-    // Case detail (?case=) is only meaningful on the Cases view. Leaving Cases
-    // (or explicitly asking for the list) must drop it — otherwise remounting
-    // Cases restores the old detail and looks like "only one case".
-    if (currentView !== APP_VIEWS.CASES || clearCaseDeepLink) {
-        params.delete('case');
-        params.delete('viewer');
+    // A deep link only means something on its own view. Leaving the view (or asking for its
+    // list) must drop it — otherwise remounting restores the old detail (e.g. "only one case").
+    for (const [view, keys] of Object.entries(VIEW_DEEP_LINK_PARAMS)) {
+        if (currentView !== view || clearDeepLink) keys.forEach((key) => params.delete(key));
     }
 
     const next = `${url.pathname}${params.toString() ? `?${params}` : ''}${url.hash}`;
@@ -93,4 +98,18 @@ export function writeAppViewToUrl({
     } else {
         history.pushState(null, '', next);
     }
+}
+
+/**
+ * Set query params on the current URL (null or '' removes one) without reloading.
+ * Adds a history entry (so Back undoes it) unless `replace`; does nothing if nothing changes.
+ */
+export function updateUrlParams(updates, { replace = false } = {}) {
+    const url = new URL(window.location.href);
+    for (const [key, value] of Object.entries(updates)) {
+        if (value == null || value === '') url.searchParams.delete(key);
+        else url.searchParams.set(key, String(value));
+    }
+    if (url.href === window.location.href) return;
+    history[replace ? 'replaceState' : 'pushState'](null, '', url.pathname + url.search + url.hash);
 }

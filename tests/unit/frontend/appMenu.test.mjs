@@ -6,7 +6,7 @@ import { MY_FILES_VISIBLE, PROJECT_VIEWS, APP_VIEWS } from '../../../dev/compone
 const keys = (options) => getAppMenuItems(options).map((item) => item.key);
 
 test('menu has no My Projects item (removed with the project-case-migrate cutover)', () => {
-    assert.deepEqual(keys(), ['cases', 'my-groups']);
+    assert.deepEqual(keys(), ['cases', 'workflows', 'my-groups']);
 });
 
 test('My Files is hidden while MY_FILES_VISIBLE is false', () => {
@@ -17,11 +17,11 @@ test('My Files is hidden while MY_FILES_VISIBLE is false', () => {
 test('Pending Registrations is not a nav item — it lives in My Groups task section', () => {
     assert.deepEqual(
         keys({ isRegistrationReviewer: true }),
-        ['cases', 'my-groups']
+        ['cases', 'workflows', 'my-groups']
     );
     assert.deepEqual(
         keys({ isRegistrationReviewer: false }),
-        ['cases', 'my-groups']
+        ['cases', 'workflows', 'my-groups']
     );
 });
 

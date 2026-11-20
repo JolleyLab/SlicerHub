@@ -9,7 +9,7 @@ import { authenticateToken } from '../middleware/authMiddleware.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { getPayloadClient, requirePayload } from '../payload/index.js';
 import { NotFoundError, ValidationError } from '../utils/errors.js';
-import { assertCaseAccess, getCaseRole } from '../utils/caseAccess.js';
+import { assertCaseAccess, getCaseRole, administeredCasesWhere } from '../utils/caseAccess.js';
 import {
     CASE_ROLES,
     findUserByEmail,
@@ -21,7 +21,6 @@ import {
     prepareAccountSetup,
     assignRealmRole,
     getKeycloakUser,
-    getUserCaseRoleMap,
     getUsersWithRealmRole,
     kcDisplayName,
 } from '../services/keycloakAdmin.js';
@@ -29,12 +28,13 @@ import {
     listGroupAccessForCase,
     setGroupAccessForCase,
     removeGroupAccessForCase,
-    getCaseRoleMapFromGroups,
 } from '../services/caseGroupAccess.js';
 import { getGroup } from '../services/groupStore.js';
 import { removeUnusedInviteeAccount } from '../services/inviteExpiry.js';
 import config from '../config/index.js';
 import { avatarUrlFor } from '../services/avatars.js';
+import { SITE_ADMIN_CASE_ROLE, SITE_ADMIN_REALM_ROLE } from '../utils/caseRoles.js';
+import { bellCount } from '../utils/bellCount.js';
 
 const GROUP_ID_PREFIX = 'group:';
 
@@ -54,9 +54,10 @@ function groupIdFromCollaboratorId(id) {
  */
 async function buildMergedCollaborators(caseId, req) {
     const describeMembers = makeGroupMemberDescriber(req);
-    const [userCollaborators, groupAccess] = await Promise.all([
+    const [userCollaborators, groupAccess, siteAdmins] = await Promise.all([
         listCaseCollaborators(caseId),
         listGroupAccessForCase(caseId),
+        getUsersWithRealmRole(SITE_ADMIN_REALM_ROLE).then((users) => new Set(users.map((u) => u.id))),
     ]);
 
     const groupCollaborators = await Promise.all(groupAccess.map(async (access) => {
@@ -74,8 +75,15 @@ async function buildMergedCollaborators(caseId, req) {
         };
     }));
 
+    // A site admin's row says so rather than a role (they're admin here whatever is stored). A
+    // marker left by someone who no longer is gives read only until a role is assigned; the row
+    // asks for one without saying why (their job change isn't the case's business).
     const withAvatars = await Promise.all(userCollaborators.map(async (c) => ({
-        ...c, type: 'user', avatarUrl: await avatarUrlFor(c.id),
+        ...c,
+        type: 'user',
+        avatarUrl: await avatarUrlFor(c.id),
+        siteAdmin: siteAdmins.has(c.id),
+        needsRole: c.role === SITE_ADMIN_CASE_ROLE && !siteAdmins.has(c.id),
     })));
     return [...withAvatars, ...groupCollaborators];
 }
@@ -202,25 +210,21 @@ export default function caseCollaboratorsRoutes(app) {
         res.json({ user });
     }));
 
-    /**
-     * Count pending invites across all cases for the current user.
-     * Org-admins and site-admins see all pending_approval invites.
-     * Everyone else gets 0 (case-level admin scoping is a future enhancement).
-     */
+    /** The bell: invites awaiting approval on the cases the requester administers (the same cases as the list below). */
     app.get('/api/cases/invites/pending-count', ...auth, asyncHandler(async (req, res) => {
-        const isAdmin = req.user?.role === 'admin' || req.user?.role === 'org-admin';
-        if (!isAdmin) {
-            res.set('Cache-Control', 'no-store');
-            return res.json({ count: 0 });
-        }
-        const payload = getPayloadClient();
-        const result = await payload.find({
-            collection: 'case-invites',
-            where: { status: { equals: 'pending_approval' } },
-            limit: 0,
-        });
         res.set('Cache-Control', 'no-store');
-        res.json({ count: result.totalDocs });
+        const administered = await administeredCasesWhere(req);
+        if (!administered) return res.json(bellCount([]));
+        // Fetch only the newest pending invite: its createdAt is when the latest one arrived, and
+        // totalDocs still counts every match, so one small query gives both numbers the bell needs.
+        const result = await getPayloadClient().find({
+            collection: 'case-invites',
+            where: { and: [administered, { status: { equals: 'pending_approval' } }] },
+            sort: '-createdAt',
+            limit: 1,
+            depth: 0,
+        });
+        res.json({ count: Number(result?.totalDocs) || 0, latestAt: result.docs[0]?.createdAt ?? null });
     }));
 
     /**
@@ -228,35 +232,12 @@ export default function caseCollaboratorsRoutes(app) {
      */
     app.get('/api/cases/invites/pending-approval', ...auth, asyncHandler(async (req, res) => {
         const payload = getPayloadClient();
-        const kcSub = req.user.keycloakSub;
-        if (!kcSub) return res.json({ invites: [] });
-
-        const [kcRoleMap, groupRoleMap] = await Promise.all([
-            getUserCaseRoleMap(kcSub),
-            getCaseRoleMapFromGroups(kcSub),
-        ]);
-        const adminCaseIds = [...new Set([
-            ...Object.entries(kcRoleMap).filter(([, role]) => role === 'admin').map(([id]) => id),
-            ...Object.entries(groupRoleMap).filter(([, role]) => role === 'admin').map(([id]) => id),
-        ])].map(String);
-
-        const ownedResult = await payload.find({
-            collection: 'cases',
-            where: { owner_id: { equals: kcSub } },
-            limit: 200,
-            depth: 0,
-        });
-        const allAdminIds = [...new Set([...adminCaseIds, ...ownedResult.docs.map(d => String(d.id))])];
-        if (!allAdminIds.length) return res.json({ invites: [] });
+        const administered = await administeredCasesWhere(req);
+        if (!administered) return res.json({ invites: [] });
 
         const result = await payload.find({
             collection: 'case-invites',
-            where: {
-                and: [
-                    { case: { in: allAdminIds } },
-                    { status: { equals: 'pending_approval' } },
-                ],
-            },
+            where: { and: [administered, { status: { equals: 'pending_approval' } }] },
             sort: '-createdAt',
             limit: 100,
             depth: 1,
@@ -726,11 +707,15 @@ export default function caseCollaboratorsRoutes(app) {
         const incoming = req.body?.collaborators;
         if (!Array.isArray(incoming)) throw new ValidationError('collaborators must be an array');
 
+        const currentUsers = await listCaseCollaborators(req.params.id);
         const userEntries = [];
         const groupEntries = [];
         for (const entry of incoming) {
             if (!entry.id) throw new ValidationError('Each collaborator must have an id');
-            if (!CASE_ROLES.includes(entry.role)) {
+            // The site admin marker can be kept as it is, never chosen.
+            const keepsMarker = entry.role === SITE_ADMIN_CASE_ROLE
+                && currentUsers.some((c) => c.id === String(entry.id) && c.role === SITE_ADMIN_CASE_ROLE);
+            if (!keepsMarker && !CASE_ROLES.includes(entry.role)) {
                 throw new ValidationError(`Invalid role "${entry.role}". Must be one of: ${CASE_ROLES.join(', ')}`);
             }
             if (isGroupCollaboratorId(entry.id)) {
@@ -748,7 +733,6 @@ export default function caseCollaboratorsRoutes(app) {
         }
 
         // ── Reconcile individual Keycloak-group collaborators ────────────────
-        const currentUsers = await listCaseCollaborators(req.params.id);
         const incomingUserIds = new Set(userEntries.map(c => c.id));
 
         for (const c of currentUsers) {

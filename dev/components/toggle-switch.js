@@ -1,6 +1,12 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
 
+/**
+ * On/off switch. Shows trueLabel/falseLabel after it (leave both empty for none), and
+ * optional icons either side via <slot name="off"> and <slot name="on">: the current side's
+ * icon is full strength, the other faded (like the theme toggle). Emits `toggle-change`
+ * with { checked }.
+ */
 export class ToggleSwitch extends LitElement {
     static get styles() {
         return css`
@@ -46,6 +52,15 @@ export class ToggleSwitch extends LitElement {
                 transition: transform 0.2s ease;
             }
 
+            .switch input:focus-visible + .slider {
+                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+                outline-offset: 2px;
+            }
+
+            :host-context([data-theme='dark']) .slider {
+                box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-text-secondary) 55%, var(--color-panel));
+            }
+
             .switch input:checked + .slider {
                 background-color: var(--color-primary);
             }
@@ -57,6 +72,23 @@ export class ToggleSwitch extends LitElement {
             .switch-label {
                 color: var(--color-text-primary);
                 font-weight: 500;
+            }
+
+            .side {
+                display: inline-flex;
+                color: var(--color-text-secondary);
+                opacity: 0.5;
+                transition: opacity 0.2s ease, transform 0.2s ease, color 0.2s ease;
+            }
+
+            .side.active {
+                opacity: 1;
+                color: var(--color-text-primary);
+                transform: scale(1.08);
+            }
+
+            .side:not(.has-icon) {
+                display: none;
             }
         `;
     }
@@ -81,6 +113,10 @@ export class ToggleSwitch extends LitElement {
         this.ariaLabel = 'Toggle switch';
     }
 
+    _hasSlot(name) {
+        return Boolean(this.querySelector(`[slot="${name}"]`));
+    }
+
     handleChange(event) {
         this.checked = event.target.checked;
         this.dispatchEvent(new CustomEvent('toggle-change', {
@@ -92,16 +128,22 @@ export class ToggleSwitch extends LitElement {
 
     render() {
         return html`
-            <label class="switch" aria-label=${this.ariaLabel}>
+            <span class="side ${this.checked ? '' : 'active'} ${this._hasSlot('off') ? 'has-icon' : ''}"><slot name="off"></slot></span>
+            <label class="switch">
                 <input
                     type="checkbox"
+                    role="switch"
+                    aria-label=${this.ariaLabel}
                     .checked=${this.checked}
                     ?disabled=${this.disabled}
                     @change=${this.handleChange}
                 >
                 <span class="slider"></span>
             </label>
-            <span class="switch-label">${this.checked ? this.trueLabel : this.falseLabel}</span>
+            <span class="side ${this.checked ? 'active' : ''} ${this._hasSlot('on') ? 'has-icon' : ''}"><slot name="on"></slot></span>
+            ${this.trueLabel || this.falseLabel
+                ? html`<span class="switch-label">${this.checked ? this.trueLabel : this.falseLabel}</span>`
+                : ''}
         `;
     }
 }

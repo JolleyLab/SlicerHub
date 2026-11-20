@@ -100,14 +100,12 @@ import { isUserInCapabilityGroup, CAPABILITIES } from '../services/groupCapabili
 import { getPreferencesByKcSub, updatePreferencesByKcSub, hasCustomPreferences } from '../services/payloadPreferences.js';
 import storage from '../storage/index.js';
 import { findAvatarKey, forgetAvatar } from '../services/avatars.js';
+import { IMAGE_MIME, sniffImageType, sendStoredImage } from '../utils/storedImage.js';
 
 const avatarUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 5 * 1024 * 1024 }
 });
-
-const AVATAR_MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
-
 
 
 function publicUser(user) {
@@ -481,19 +479,19 @@ export default function authRoutes(app) {
     /** Upload or replace the current user's avatar (object storage, keyed by Keycloak sub). */
     app.post('/api/auth/avatar', authenticateToken, avatarUpload.single('avatar'), asyncHandler(async (req, res) => {
         if (!req.file) throw new ValidationError(msg('avatar.required'), null, 'avatar.required');
-        let { buffer, mimetype, originalname } = req.file;
-        const ext = (originalname || '').split('.').pop().toLowerCase();
+        let { buffer } = req.file;
+        const ext = (req.file.originalname || '').split('.').pop().toLowerCase();
         if (ext === 'heic' || ext === 'heif') {
             const converted = await heicConvert({ buffer, format: 'JPEG', quality: 0.85 });
             buffer = Buffer.from(converted);
-            mimetype = 'image/jpeg';
-            originalname = originalname.replace(/\.(heic|heif)$/i, '.jpg');
         }
-        const finalExt = (originalname || '').split('.').pop().toLowerCase() || 'jpg';
+        // Stored and served by what the file is, not what it's called: others see this picture.
+        const finalExt = sniffImageType(buffer);
+        if (!finalExt) throw new ValidationError(msg('avatar.invalid_type'), null, 'avatar.invalid_type');
         const existingKey = await findAvatarKey(req.user.keycloakSub);
         if (existingKey) await storage.delete(existingKey);
         const key = storage.avatarKeyForSub(req.user.keycloakSub, finalExt);
-        await storage.write({ key, buffer, contentType: AVATAR_MIME[finalExt] || 'application/octet-stream' });
+        await storage.write({ key, buffer, contentType: IMAGE_MIME[finalExt] });
         forgetAvatar(req.user.keycloakSub);
         res.json({ ok: true, avatarUrl: `/api/auth/avatar?v=${Date.now()}` });
     }));
@@ -502,12 +500,7 @@ export default function authRoutes(app) {
     app.get('/api/auth/avatar', authenticateToken, asyncHandler(async (req, res) => {
         const key = await findAvatarKey(req.user.keycloakSub);
         if (!key) return res.status(404).end();
-        const presigned = await storage.getPresignedReadUrl(key, 300);
-        if (presigned) return res.redirect(302, presigned);
-        const ext = key.split('.').pop().toLowerCase();
-        res.setHeader('Content-Type', AVATAR_MIME[ext] || 'application/octet-stream');
-        res.setHeader('Cache-Control', 'public, max-age=300');
-        return (await storage.openReadStream(key)).pipe(res);
+        return sendStoredImage(res, key);
     }));
 
     /** Remove the current user's avatar. */
