@@ -302,10 +302,11 @@ export async function uploadCaseAttachment(caseId, file, { signal, onProgress, o
  * Uploads the file, finds the new attachment record, and deletes the old one for overwrite mode.
  * Returns { attachment } with the raw Payload attachment object.
  */
-export async function savePayloadSlicerWebScene(caseId, attachmentId, file, { saveMode = 'overwrite', name, signal, onProgress } = {}) {
+export async function savePayloadSlicerWebScene(caseId, attachmentId, file, { saveMode = 'overwrite', name, signal, onProgress, openWith } = {}) {
     const uploadFile = name ? new File([file], name, { type: file.type }) : file;
     const startedAt = Date.now();
-    await uploadCaseAttachment(caseId, uploadFile, { signal, onProgress });
+    // The saved file keeps the source's default (`openWith`), overwritten or saved as new.
+    await uploadCaseAttachment(caseId, uploadFile, { signal, onProgress, openWith });
 
     // Find the attachment this upload created: same name, created since the save began.
     // (Not just "the newest one": if the server failed to record the upload, the newest

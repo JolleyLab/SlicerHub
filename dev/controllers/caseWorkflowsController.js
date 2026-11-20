@@ -1,11 +1,11 @@
 import { html } from 'lit-element';
 import { t } from '../i18n/index.js';
-import { listCaseWorkflows, loadExtensionCatalog } from '../services/workflows.js';
+import { listCaseWorkflows, loadExtensionCatalog, setFileOpenWith } from '../services/workflows.js';
 import { VIEWER_NAME_KEY, choiceFor, resolveOpen, opensInSlicer, uploadChoices } from '../utils/openWith.js';
 import '../components/open-with-menu.js';
 import '../components/case-workflows-panel.js';
 import '../components/more-workflows-dialog.js';
-import '../components/upload-open-with-dialog.js';
+import '../components/default-toolkit-dialog.js';
 
 /** Background refreshes at most this often (focus also fires when moving in and out of the viewer). */
 const REFRESH_MIN_MS = 15 * 1000;
@@ -14,7 +14,8 @@ const REFRESH_MIN_MS = 15 * 1000;
  * Workflows on the case page: loading them, what opening a file does, the Open ▾ menus, the
  * Workflows panel and "More workflows…". A plain helper object, since lit-element 2 has no
  * reactive controllers. The page passes in channel(), accountViewer(), fileName(attachment),
- * fileTitle(attachment), isBusy() and launch(caseRow, attachment, { viewer, workflow }).
+ * fileTitle(attachment), isBusy(), launch(caseRow, attachment, { viewer, workflow }),
+ * canSetFileDefault(caseRow, attachment) and fileDefaultChanged(caseRow, attachment, openWith).
  */
 export class CaseWorkflowsController {
     constructor(host, options) {
@@ -113,10 +114,49 @@ export class CaseWorkflowsController {
             : null));
         const rows = asked.filter(Boolean);
         if (!rows.some((row) => row.usable.caseWorkflows.length)) return files.map(() => null);
-        const keys = await this.host.renderRoot.querySelector('upload-open-with-dialog')?.ask(rows);
+        const keys = await this._defaultDialog()?.ask({
+            title: t(rows.length > 1 ? 'viewers.uploadTitleMany' : 'viewers.uploadTitle'),
+            hint: t('viewers.uploadHint'),
+            action: t('viewers.uploadAction'),
+            rows,
+        });
         if (!keys) return null;
         let next = 0;
         return asked.map((row) => (row ? keys[next++] : null));
+    }
+
+    /** "Default for this file…": change (or clear) what a file opens with for everyone. */
+    async setFileDefault(caseRow, attachment) {
+        const data = this.dataFor(caseRow.id);
+        const name = this.options.fileTitle(attachment);
+        const row = { name, ...uploadChoices(data, { fileName: this.options.fileName(attachment), slicerWebExtensions: this.loaded?.slicerWebExtensions ?? null }) };
+        // One that no longer applies (e.g. removed from the case) can't be shown: start on the case default.
+        row.selectedKey = attachment.openWith && choiceFor(row.usable, attachment.openWith) ? attachment.openWith : '';
+        const [key] = await this._defaultDialog()?.ask({
+            title: t('viewers.defaultTitle', { name }),
+            hint: t('viewers.defaultHint'),
+            action: t('common.save'),
+            rows: [row],
+            caseDefault: this._caseDefaultLabel(data),
+        }) || [];
+        if (key === undefined || key === (attachment.openWith || '')) return;
+        try {
+            const { openWith } = await setFileOpenWith(caseRow.id, attachment.id, key || null);
+            this.options.fileDefaultChanged(caseRow, attachment, openWith);
+        } catch (err) {
+            this.options.showError(err);
+        }
+    }
+
+    /** "Case default: SlicerHeart · SlicerWeb", or the person's usual viewer when there's none. */
+    _caseDefaultLabel(data) {
+        const approved = (data?.approved || []).find((a) => String(a.id) === String(data?.defaultWorkflow));
+        const what = approved ? `${approved.name} · ${t(VIEWER_NAME_KEY[approved.viewer])}` : t('viewers.usualViewer');
+        return t('viewers.caseDefaultOption', { name: what });
+    }
+
+    _defaultDialog() {
+        return this.host.renderRoot.querySelector('default-toolkit-dialog');
     }
 
     // ── Rendering ──────────────────────────────────────────────────────────
@@ -130,12 +170,14 @@ export class CaseWorkflowsController {
                 .buttonLabel=${buttonLabel}
                 .fileName=${title}
                 ?grid=${Boolean(attachment)}
+                ?canSetDefault=${Boolean(attachment) && this.options.canSetFileDefault(caseRow, attachment)}
                 .usable=${openWith.usable}
                 .selectedKey=${openWith.selectedKey}
                 .label=${openWith.name}
                 ?disabled=${this.options.isBusy()}
                 @open-workflow=${(e) => this.openChoice(caseRow, attachment, e.detail.key)}
                 @more-workflows=${() => this.openMore(caseRow, attachment, openWith, title)}
+                @set-default=${() => this.setFileDefault(caseRow, attachment)}
             ></open-with-menu>
         `;
     }
@@ -154,7 +196,7 @@ export class CaseWorkflowsController {
                 .slicerWebExtensions=${this.loaded?.slicerWebExtensions ?? null}
                 @workflows-changed=${() => caseRow && this.load(caseRow.id, { refresh: true })}
             ></case-workflows-panel>
-            <upload-open-with-dialog></upload-open-with-dialog>
+            <default-toolkit-dialog></default-toolkit-dialog>
             <more-workflows-dialog
                 @open-workflow=${(e) => this._moreFor && this.openChoice(this._moreFor.caseRow, this._moreFor.attachment, e.detail.key)}
             ></more-workflows-dialog>

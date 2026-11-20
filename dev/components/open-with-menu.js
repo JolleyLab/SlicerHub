@@ -16,7 +16,8 @@ const ICON_CHEVRON = html`
  * Open ▾ for a case file or the blank viewer: the plain viewers, the usable workflows (`usable`,
  * from utils/openWith.js), and "More workflows…" when they don't all fit.
  * `grid` (file rows): a bare chevron opening an icon grid; "All options…" shows the list instead.
- * Emits `open-workflow` { key } and `more-workflows`.
+ * `canSetDefault`: also offer "Default for this file…".
+ * Emits `open-workflow` { key }, `more-workflows` and `set-default`.
  */
 export class OpenWithMenu extends PopupMenu {
     static get styles() {
@@ -122,6 +123,8 @@ ${iconTileStyles.cssText}
             selectedKey: { type: String },
             /** What it opens with, for the button's tooltip ("SlicerHeart · SlicerWeb"). */
             label: { type: String },
+            /** Offer "Default for this file…" (its uploader or a case admin). */
+            canSetDefault: { type: Boolean },
             /** Icon grid behind a bare chevron (file rows). */
             grid: { type: Boolean },
             /** VIEW; resets to the grid on close. */
@@ -137,6 +140,7 @@ ${iconTileStyles.cssText}
         this.selectedKey = '';
         this.label = '';
         this.grid = false;
+        this.canSetDefault = false;
         this._view = VIEW.GRID;
     }
 
@@ -216,7 +220,19 @@ ${iconTileStyles.cssText}
             <button class="item" type="button" role="menuitem" tabindex="-1" @click=${() => { this._view = VIEW.LIST; }}>
                 <span class="item-label">${t('viewers.allOptions')}</span>
             </button>
+            ${this.setDefaultItem()}
         `;
+    }
+
+    /** "Default for this file…", below a divider; `inList` lines it up with the list's ✓ column. */
+    setDefaultItem({ inList = false } = {}) {
+        return this.canSetDefault ? html`
+            ${inList ? html`<div class="divider" role="separator"></div>` : ''}
+            <button class="item" type="button" role="menuitem" tabindex="-1" @click=${() => this.closeAndEmit('set-default')}>
+                ${inList ? html`<span class="check is-empty" aria-hidden="true">✓</span>` : ''}
+                <span class="item-label">${t('viewers.defaultForFile')}</span>
+            </button>
+        ` : '';
     }
 
     menuContent() {
@@ -238,6 +254,7 @@ ${iconTileStyles.cssText}
                     <span class="item-label">${t('viewers.moreWorkflows', { count: list.hidden })}</span>
                 </button>
             ` : ''}
+            ${this.setDefaultItem({ inList: true })}
         `;
     }
 

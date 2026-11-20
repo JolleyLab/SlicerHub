@@ -55,6 +55,9 @@ export const requestCaseWorkflow = (caseId, workflowId) =>
 export const declineCaseWorkflowRequest = (caseId, rowId, reason = '') =>
     apiRequest(`/api/cases/${enc(caseId)}/workflows/${enc(rowId)}/decline`, { method: 'POST', body: { reason } });
 /** Case Settings: { defaultWorkflow?, allowPersonal? } → the saved { defaultWorkflow, allowPersonal }. */
+/** A file's default for everyone (a menu key), or null for the case default: resolves to { openWith }. */
+export const setFileOpenWith = (caseId, attachmentId, openWith) =>
+    apiRequest(`/api/cases/${enc(caseId)}/attachments/${enc(attachmentId)}/open-with`, { method: 'PATCH', body: { openWith } });
 export const updateCaseWorkflowSettings = (caseId, settings) =>
     apiRequest(`/api/cases/${enc(caseId)}/workflow-settings`, { method: 'PATCH', body: settings });
 export const cancelCaseWorkflowRequest = (caseId, workflowId) =>

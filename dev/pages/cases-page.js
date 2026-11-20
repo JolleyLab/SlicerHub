@@ -198,6 +198,11 @@ export class CasesPage extends LitElement {
             fileTitle: (attachment) => this.attachmentTitle(attachment),
             isBusy: () => Boolean(this.openingAttachmentId) || this.viewerLoading,
             launch: (caseRow, attachment, open) => this.openWith(caseRow, attachment, open),
+            // The uploader (while they can still edit the case) or an admin, as the server allows.
+            canSetFileDefault: (caseRow, attachment) => this.myCaseRole(caseRow) === 'admin'
+                || (this.isMyAttachment(attachment) && this.canEditCaseContent(caseRow)),
+            fileDefaultChanged: (caseRow, attachment, openWith) => this._patchAttachment(caseRow.id, attachment.id, { openWith }),
+            showError: (err) => { this.errorMessage = this.userFacingError(err, t('common.somethingWentWrong')); },
         });
         this.showCaseSettings = false;
         this.viewerClosing = false;
@@ -732,6 +737,20 @@ export class CasesPage extends LitElement {
     canEditCaseContent(caseRow) {
         const role = this.myCaseRole(caseRow);
         return role === 'admin' || role === 'collaborator';
+    }
+
+    /** A loaded attachment of a case, by id. */
+    _attachment(caseId, attachmentId) {
+        const caseRow = this.cases.find((c) => String(c.id) === String(caseId));
+        return (caseRow?.attachments || []).find((a) => String(a.id) === String(attachmentId)) || null;
+    }
+
+    /** Change fields of one loaded attachment, in place in this.cases. */
+    _patchAttachment(caseId, attachmentId, fields) {
+        this.cases = this.cases.map((c) => (String(c.id) !== String(caseId) || !Array.isArray(c.attachments) ? c : {
+            ...c,
+            attachments: c.attachments.map((a) => (String(a.id) === String(attachmentId) ? { ...a, ...fields } : a)),
+        }));
     }
 
     isMyAttachment(attachment) {
@@ -2063,7 +2082,8 @@ export class CasesPage extends LitElement {
         const abortCtrl = new AbortController();
         this._backgroundSave = { file, caseId, attachmentId, saveMode, name, onNewAttachment, error: null, abortCtrl };
         this.hasUnsavedChanges = false;
-        savePayloadSlicerWebScene(caseId, attachmentId, file, { saveMode, name, signal: abortCtrl.signal })
+        const openWith = this._attachment(caseId, attachmentId)?.openWith || undefined;
+        savePayloadSlicerWebScene(caseId, attachmentId, file, { saveMode, name, openWith, signal: abortCtrl.signal })
             .then((result) => {
                 if (abortCtrl.signal.aborted) return;
                 this._backgroundSave = null;
