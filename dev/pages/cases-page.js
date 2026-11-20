@@ -2652,8 +2652,17 @@ export class CasesPage extends LitElement {
                                                 @name-click=${() => this.openWith(caseRow, attachment, openWith)}
                                             >
                                                 ${attachment?.canOpenInSlicer ? html`
-                                                    <span slot="leading" title=${openWith.name}>${iconTile(openWith.icon.name, openWith.icon.src)}</span>
-                                                    ${this.workflows.renderMenu(caseRow, attachment, openWith, { slot: 'title-trailing' })}
+                                                    <span slot="actions" class="open-with-split">
+                                                        <button
+                                                            class="open-with-icon"
+                                                            type="button"
+                                                            title=${openWith.name}
+                                                            aria-label=${t('cases.openFileWith', { file: this.attachmentTitle(attachment), name: openWith.name })}
+                                                            ?disabled=${!!this.openingAttachmentId || this.viewerLoading}
+                                                            @click=${() => this.openWith(caseRow, attachment, openWith)}
+                                                        >${iconTile(openWith.icon.name, openWith.icon.src)}</button>
+                                                        ${this.workflows.renderMenu(caseRow, attachment, openWith)}
+                                                    </span>
                                                 ` : ''}
                                                 ${canEdit ? html`
                                                     <button

@@ -469,5 +469,59 @@ export const casesPageStyles = css`
         overflow: hidden;
         text-overflow: ellipsis;
     }
-    .file-icon-button svg { width: 15px; height: 15px; }
+    .file-icon-button svg { width: 18px; height: 18px; } /* balances the 24px toolkit icon beside them */
+    /* The toolkit icon and its chevron: one split button, open with the default | choose another.
+       Like the other row actions, its outline (and the divider) only shows on hover or focus. */
+    .open-with-split {
+        box-sizing: border-box;
+        display: inline-flex;
+        align-items: stretch;
+        height: 34px;
+        border: 1px solid transparent;
+        border-radius: var(--radius-lg);
+    }
+    .open-with-split:hover,
+    .open-with-split:focus-within {
+        border-color: var(--color-border);
+    }
+    .open-with-icon {
+        width: 30px; /* 3px around the 24px icon: room for the hover tint, not so wide it drifts from the ▾ */
+        padding: 0;
+        border: none;
+        border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+        background: transparent;
+        color: inherit;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+    }
+    .open-with-icon .icon-tile { --icon-tile-size: 24px; }
+    .open-with-split open-with-menu::part(trigger) {
+        height: 100%;
+        min-width: 24px;
+        border-left: 1px solid transparent;
+        border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+    }
+    /* A smaller ▾ to look at; the button stays 24px wide (WCAG 2.5.8: it touches the icon button). */
+    .open-with-split open-with-menu::part(chevron) {
+        width: 12px;
+        height: 12px;
+    }
+    .open-with-split:hover open-with-menu::part(trigger),
+    .open-with-split:focus-within open-with-menu::part(trigger) {
+        border-left-color: var(--color-border);
+    }
+    .open-with-icon:hover:not(:disabled),
+    .open-with-icon:focus-visible {
+        background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    }
+    .open-with-icon:focus-visible {
+        outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+        outline-offset: var(--focus-ring-offset, 2px);
+    }
+    .open-with-icon:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+    }
 `;

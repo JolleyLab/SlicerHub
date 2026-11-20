@@ -8,7 +8,7 @@ import { iconTile, iconTileStyles } from '../utils/iconTile.js';
 const VIEW = Object.freeze({ GRID: 'grid', LIST: 'list' });
 
 const ICON_CHEVRON = html`
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <svg part="chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <path fill="currentColor" d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4z"/>
     </svg>`;
 
@@ -16,7 +16,7 @@ const ICON_CHEVRON = html`
  * Open ▾ for a case file or the blank viewer: the plain viewers, the usable workflows (`usable`,
  * from utils/openWith.js), and "More workflows…" when they don't all fit.
  * `grid` (file rows): a bare chevron opening an icon grid; "All options…" shows the list instead.
- * `canSetDefault`: also offer "Default for this file…".
+ * `canSetDefault`: also offer "Default for this file…". The button and its ▾ are exposed as ::part(trigger) and ::part(chevron).
  * Emits `open-workflow` { key }, `more-workflows` and `set-default`.
  */
 export class OpenWithMenu extends PopupMenu {
@@ -268,6 +268,7 @@ ${iconTileStyles.cssText}
         return html`
             <button
                 class="trigger ${this.buttonLabel ? 'as-button' : ''}"
+                part="trigger"
                 type="button"
                 title=${this.label ? `${this.triggerLabel()} (${this.label})` : this.triggerLabel()}
                 aria-label=${this.buttonLabel || this.triggerLabel()}

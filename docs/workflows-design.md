@@ -353,6 +353,8 @@ Fields removed on the way (into `RETIRED_SCHEMA` first): `case_workflows.approve
 
   - Changing a file's default and keeping it on save (6c): "Default for this file…" at the end of the Open ▾ menu (grid and list), for its uploader while they can still edit the case, or a case admin. It opens the same dialog (`default-toolkit-dialog`) with one row and a first option, "Case default: …", which clears it. Saving from a viewer, overwritten or saved as new, uploads the scene with the source file's default, so neither loses it (overwrite is a new upload plus deleting the old file, so it lost it before).
 
+  - The toolkit icon moved next to download and remove (20 Nov), leaving the space before the name for thumbnails: an action button (a real one now, in the tab order: "Open MRHead.nrrd with SlicerHeart · SlicerWeb") and the chevron in one outlined split button (`.open-with-split`, with a divider; the menu's button is styled through `::part(trigger)`): the icon opens with the file's default, the chevron chooses. The file name still opens, as before. The menu lines up with the chevron's right edge. `file-list-row`'s leading slot still opens the file when clicked (for thumbnails); its unused `title-trailing` slot is gone.
+
 **Next:** the two waiting items below, when their conditions are met; otherwise ready to merge.
 
 **Open questions and follow-ups:**

@@ -170,6 +170,7 @@ export class CaseWorkflowsController {
                 .buttonLabel=${buttonLabel}
                 .fileName=${title}
                 ?grid=${Boolean(attachment)}
+                ?alignEnd=${Boolean(attachment)}
                 ?canSetDefault=${Boolean(attachment) && this.options.canSetFileDefault(caseRow, attachment)}
                 .usable=${openWith.usable}
                 .selectedKey=${openWith.selectedKey}

@@ -10,7 +10,7 @@ const LONG_PRESS_MOVE_PX = 10;
 /**
  * One row in a file list: clickable name + meta line + icon actions via <slot name="actions">.
  * `plain`: the name is text, not a button (rows with nothing to open, e.g. workflow extensions).
- * <slot name="leading">: something before the name, e.g. an icon; clicking it opens the file, as the name does.
+ * <slot name="leading">: something before the name, e.g. an icon or thumbnail; clicking it opens the file, as the name does.
  */
 export class FileListRow extends LitElement {
     static get styles() {
@@ -179,7 +179,7 @@ export class FileListRow extends LitElement {
             .file-action-group {
                 display: inline-flex;
                 align-items: center;
-                gap: 10px;
+                gap: 4px; /* the buttons' own padding already spaces their icons; each stays ≥ 24px to hit */
                 padding: 2px;
             }
 
@@ -189,8 +189,10 @@ export class FileListRow extends LitElement {
                 outline-offset: var(--focus-ring-offset, 2px);
             }
 
+            /* Row actions: plain at rest; an outline and a tint on hover or focus. */
             ::slotted(.file-icon-button) {
-                border: none;
+                box-sizing: border-box;
+                border: 1px solid transparent;
                 border-radius: var(--radius-lg);
                 background: transparent;
                 color: var(--color-text-primary);
@@ -203,11 +205,13 @@ export class FileListRow extends LitElement {
                 cursor: pointer;
             }
 
-            ::slotted(.file-icon-button:hover) {
+            ::slotted(.file-icon-button:hover:not(:disabled)) {
+                border-color: var(--color-border);
                 background: color-mix(in srgb, var(--color-primary) 12%, transparent);
             }
 
             ::slotted(.file-icon-button:focus-visible) {
+                border-color: var(--color-border);
                 background: color-mix(in srgb, var(--color-primary) 12%, transparent);
                 outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
                 outline-offset: var(--focus-ring-offset, 2px);
@@ -351,7 +355,7 @@ export class FileListRow extends LitElement {
         this._pointerStart = null;
     }
 
-    /** Whether clicking the leading icon opens the file, as the name does. */
+    /** Whether clicking the leading slot opens the file, as the name does. */
     get leadingOpens() {
         return !this.plain && !this.nameButtonDisabled;
     }
@@ -392,7 +396,6 @@ export class FileListRow extends LitElement {
                         >
                             ${this.fileName}
                         </button>`}
-                        <slot name="title-trailing"></slot>
                         ${this.showEditTitle ? html`
                             <button
                                 class="edit-title-button"
