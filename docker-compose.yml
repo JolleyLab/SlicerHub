@@ -2,7 +2,11 @@ services:
   # Session image: same TRAME_IMAGE for build tag and for trame-service (avoids remote "wrong image" drift).
   # Override in `.env`, e.g. TRAME_IMAGE=slicer-web-trame:dev-savebtn then: docker compose build trame-job
   trame-job:
-    build: ./trame-server
+    build:
+      context: ./trame-server
+      # Optional corporate CA certs (see certs/README.md)
+      additional_contexts:
+        certs: ./certs
     image: ${TRAME_IMAGE:-slicer-web-trame:local}
     container_name: trame-job
     environment:
@@ -22,7 +26,11 @@ services:
 
   # Trame session manager service
   trame-service:
-    build: ./trame-service
+    build:
+      context: ./trame-service
+      # Optional corporate CA certs (see certs/README.md)
+      additional_contexts:
+        certs: ./certs
     container_name: trame-service
     ports:
       # Localhost only — demo users reach the app via nginx:8000, not these ports.
@@ -54,7 +62,11 @@ services:
 
   # Backend API
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      # Optional corporate CA certs (see certs/README.md)
+      additional_contexts:
+        certs: ./certs
     container_name: backend
     ports:
       # Localhost only — use nginx:8000 or SSH tunnel for direct API access.
@@ -168,7 +180,11 @@ services:
 
   # Frontend
   frontend:
-    build: ./dev
+    build:
+      context: ./dev
+      # Optional corporate CA certs (see certs/README.md)
+      additional_contexts:
+        certs: ./certs
     container_name: frontend
     # No external port - accessed only via nginx
     volumes:
@@ -283,6 +299,7 @@ services:
       - ./payload-admin:/app
       - payload-admin-modules:/app/node_modules
       - ./backend:/backend:ro
+      - ./certs:/certs:ro
     ports:
       - "127.0.0.1:3001:3001"
     command: ["sh", "-c", "test -d node_modules/next && test -d node_modules/payload || npm install --legacy-peer-deps; exec npm run dev -- -p 3001"]
@@ -290,6 +307,9 @@ services:
       - PAYLOAD_DATABASE_URI=${PAYLOAD_DATABASE_URI}
       - PAYLOAD_SECRET=${PAYLOAD_SECRET}
       - NODE_ENV=development
+      # Corporate TLS inspection: set CONTAINER_EXTRA_CA_CERTS=/certs/corporate-ca-bundle.pem in .env
+      # (see certs/README.md). Empty = Node's default CA store.
+      - NODE_EXTRA_CA_CERTS=${CONTAINER_EXTRA_CA_CERTS:-}
       # Force polling for file-watch across Docker volume mounts on Windows
       - WATCHPACK_POLLING=true
       - CHOKIDAR_USEPOLLING=true
@@ -347,6 +367,8 @@ services:
     build:
       context: ./slicer-gui-gpu
       dockerfile: Dockerfile.base
+      additional_contexts:
+        certs: ./certs
     image: ${SLICER_GUI_BASE_IMAGE:-slicer-web-slicer-gui-base:local}
     profiles:
       - slicer-gui

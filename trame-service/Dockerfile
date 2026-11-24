@@ -1,4 +1,14 @@
+# Optional extra CA certs (corporate TLS inspection). Empty unless the build is given
+# a "certs" context — docker compose passes ./certs; see certs/README.md.
+FROM scratch AS certs
+
 FROM python:3.11-slim
+
+COPY --from=certs . /usr/local/share/ca-certificates/extra/
+RUN if ls /usr/local/share/ca-certificates/extra/*.crt >/dev/null 2>&1; then update-ca-certificates; fi
+ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # Install Docker CLI only (not the daemon)
 RUN apt-get update && apt-get install -y \

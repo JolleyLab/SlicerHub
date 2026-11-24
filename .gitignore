@@ -2,6 +2,10 @@
 .secrets/*
 !.secrets/.gitkeep
 
+# Machine-local extra CA certs for Docker builds (corporate TLS inspection) — see certs/README.md
+certs/*
+!certs/README.md
+
 # Dependencies
 node_modules/
 /node_modules/

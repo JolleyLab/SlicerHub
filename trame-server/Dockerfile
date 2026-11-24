@@ -1,6 +1,16 @@
+# Optional extra CA certs (corporate TLS inspection). Empty unless the build is given
+# a "certs" context — docker compose passes ./certs; see certs/README.md.
+FROM scratch AS certs
+
 # GPU base image — NVIDIA CUDA runtime (separate license terms).
 # See licenses/NVIDIA-NOTICE.md and THIRD_PARTY_RUNTIME.md in the repo root.
 FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
+
+COPY --from=certs . /usr/local/share/ca-certificates/extra/
+RUN if ls /usr/local/share/ca-certificates/extra/*.crt >/dev/null 2>&1; then update-ca-certificates; fi
+ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # NVIDIA redistribution notice (also in licenses/NVIDIA-NOTICE.md at repo root).
 LABEL org.opencontainers.image.licenses="BSD-3-Clause AND NVIDIA-CUDA-container-terms"
