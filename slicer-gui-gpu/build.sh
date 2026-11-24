@@ -21,7 +21,7 @@ should_build_base() {
 
 if should_build_base; then
   echo "Building base image: $BASE_IMAGE"
-  docker build -f Dockerfile.base -t "$BASE_IMAGE" .
+  docker build -f Dockerfile.base --build-context certs=../certs -t "$BASE_IMAGE" .
 else
   echo "Skipping base build; using published/prebuilt: $BASE_IMAGE"
   docker pull "$BASE_IMAGE" || true

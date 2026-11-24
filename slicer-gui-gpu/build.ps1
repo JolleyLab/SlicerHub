@@ -20,7 +20,7 @@ function Should-BuildBase {
 
 if (Should-BuildBase) {
     Write-Host "Building base image: $BaseImage"
-    docker build -f Dockerfile.base -t $BaseImage .
+    docker build -f Dockerfile.base --build-context certs=../certs -t $BaseImage .
 } else {
     Write-Host "Skipping base build; using published/prebuilt: $BaseImage"
     docker pull $BaseImage 2>$null

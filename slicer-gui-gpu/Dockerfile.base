@@ -3,7 +3,17 @@
 #
 # This is the layer we hope to replace with a published Hub/GHCR image someday.
 # Product session wiring (open-request poller, SimplifiedViewer) lives in Dockerfile.
+
+# Optional extra CA certs (corporate TLS inspection). Empty unless the build is given
+# a "certs" context — docker compose / build.ps1 / build.sh pass ../certs; see certs/README.md.
+FROM scratch AS certs
+
 FROM nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04 AS slicer-base
+
+COPY --from=certs . /usr/local/share/ca-certificates/extra/
+RUN if ls /usr/local/share/ca-certificates/extra/*.crt >/dev/null 2>&1; then update-ca-certificates; fi
+ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NVIDIA_VISIBLE_DEVICES=all
@@ -82,6 +92,12 @@ RUN wget -q -O /opt/Slicer-linux-amd64.tar.gz \
     test -n "$SLICER_DIR" && \
     mv "$SLICER_DIR" /opt/Slicer && \
     rm -f /opt/Slicer-linux-amd64.tar.gz
+
+# Slicer's launcher points SSL_CERT_FILE at its own bundled Slicer.crt (extension
+# manager, PythonSlicer), so extra CA certs must be appended there too.
+RUN if ls /usr/local/share/ca-certificates/extra/*.crt >/dev/null 2>&1; then \
+      find /opt/Slicer -name 'Slicer.crt' -type f | while read -r f; do \
+        cat /usr/local/share/ca-certificates/extra/*.crt >> "$f"; done; fi
 
 RUN chmod +x /opt/Slicer/Slicer && \
     chown -R slicer:slicer /opt/Slicer

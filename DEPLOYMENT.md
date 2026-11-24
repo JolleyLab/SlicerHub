@@ -27,6 +27,7 @@ One script, `scripts/bootstrap.mjs`, sets all of this up and is safe to run agai
 - **Git.**
 - **For the viewers, an NVIDIA GPU** with drivers and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/). See [THIRD_PARTY_RUNTIME.md](THIRD_PARTY_RUNTIME.md) for the runtime license terms.
 - **Disk space:** about 30 GB for images, plus room for uploaded case files.
+- **Optional: your network's CA certificates.** Most installs don't need this. If your network intercepts HTTPS (for example with Netskope or Zscaler), put its CA certificates in `certs/` before the first build. See [certs/README.md](certs/README.md).
 
 ## Fresh install: local development
 
@@ -312,6 +313,9 @@ Once you're confident in the new version:
 - **Sign-in or email links point to `localhost`.** `PUBLIC_APP_URL` is wrong. Fix it, then run `node scripts/setup-keycloak.mjs --settings-only` and restart the backend.
 - **No emails arrive.** Check that `SMTP_*` and `SMTP_ENABLED=true` are set, then run `node scripts/setup-keycloak.mjs --settings-only`, which copies SMTP into Keycloak. Locally, look in Mailpit at http://localhost:8025.
 - **A viewer won't start.** Run `docker compose logs backend`, and check that `nvidia-smi` works inside Docker (`docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`).
+- **Builds or downloads fail with certificate errors.** Typical messages are `CERTIFICATE_VERIFY_FAILED` (pip), `SELF_SIGNED_CERT_IN_CHAIN` or `unable to get local issuer certificate` (npm/Node), or wget exiting with code 5. Your network probably intercepts HTTPS with its own CA (for example Netskope or Zscaler), which the containers don't trust. Add that CA as described in [certs/README.md](certs/README.md), then rebuild. Running Full Slicer sessions keep the old image until their containers are removed. Removing them (`docker rm -f <name>`; list them with `docker ps --filter name=slicer-gui-`) **closes the session and loses unsaved work**.
+- **Image pulls fail with `x509: certificate signed by unknown authority`.** Same cause, but the fix is on the host: Docker itself must trust the CA. With Docker Desktop on Windows, make sure the CA is in the Windows certificate store, then restart Docker Desktop.
+- **Compose builds fail with `failed to get build context certs`.** The `certs/` folder is missing. Restore it with `git checkout -- certs/README.md`; it doesn't need to contain any certificates.
 - **Logs:** `docker compose logs -f backend` and `docker compose logs -f keycloak`.
 
 ## More detail

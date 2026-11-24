@@ -33,7 +33,7 @@ try {
 Write-Host "`nChecking trame-slicer Docker image..." -ForegroundColor Yellow
 Write-Host "Building trame-slicer image (this may take a few minutes)..." -ForegroundColor Yellow
 $buildPath = Join-Path $PSScriptRoot "trame-server"
-docker build -t trame-slicer $buildPath
+docker build --build-context "certs=$(Join-Path $PSScriptRoot 'certs')" -t trame-slicer $buildPath
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Failed to build trame-slicer image!" -ForegroundColor Red
