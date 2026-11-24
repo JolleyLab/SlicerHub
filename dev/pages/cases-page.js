@@ -42,7 +42,7 @@ import {
     viewerDisplayName
 } from '../utils/viewerLaunch.js';
 import { getCachedLocalSlicerViewerOptions, getCachedUserPreferences } from '../utils/userPreferences.js';
-import { isSlicerWebDevModeEnabled, loadAppFeatures } from '../services/features.js';
+import { resolveSlicerWebChannel } from '../services/features.js';
 import { listAllGroups } from '../services/groups.js';
 import { sendViewerHeartbeat } from '../utils/viewerHeartbeat.js';
 import { stopViewerSession } from '../utils/viewerSessionLifecycle.js';
@@ -210,7 +210,6 @@ export class CasesPage extends LitElement {
         this._focusBeforeViewer = null;
         this._slicerWebRun = 0;
         this._slicerWebPending = null;
-        this._slicerWebDownloadPromise = null;
         this.isSavingScene = false;
         this.hasUnsavedChanges = false;
         this._backgroundSave = null;
@@ -365,28 +364,6 @@ export class CasesPage extends LitElement {
 
         this.loadCases();
         this._startCaseAccessWatch();
-
-        // Peek for a new SlicerWeb build. If one is found, clone runs in the background
-        // and a toast notifies when done. Features load async so we wait before checking.
-        loadAppFeatures().then(() => {
-            if (isSlicerWebDevModeEnabled() && getCachedUserPreferences().slicerWebChannel === 'latest') {
-                fetch('/api/slicerweb/check-update?channel=latest', { credentials: 'include' })
-                    .then(r => r.ok ? r.json() : null)
-                    .then(data => {
-                        if (data && !data.upToDate) {
-                            this._slicerWebDownloadPromise = fetch('/api/slicerweb/check-update?channel=latest', {
-                                method: 'POST', credentials: 'include'
-                            })
-                                .then(() => {
-                                    this._slicerWebDownloadPromise = null;
-                                    this.showToast(t('cases.slicerWebUpdated'));
-                                })
-                                .catch(() => { this._slicerWebDownloadPromise = null; });
-                        }
-                    })
-                    .catch(() => {});
-            }
-        });
     }
 
     showToast(message) {
@@ -1665,9 +1642,9 @@ export class CasesPage extends LitElement {
         }
     }
 
-    /** The SlicerWeb channel this person launches: latest only in developer mode. */
+    /** The SlicerWeb channel this person launches: their Settings choice, or the app default. */
     slicerWebChannel() {
-        return isSlicerWebDevModeEnabled() && getCachedUserPreferences().slicerWebChannel === 'latest' ? 'latest' : 'stable';
+        return resolveSlicerWebChannel(getCachedUserPreferences().slicerWebChannel);
     }
 
     /**

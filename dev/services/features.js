@@ -14,6 +14,7 @@ let featuresLoaded = false;
 let features = Object.freeze({
     inviteEmail: false,
     slicerWebDevMode: false,
+    slicerWebDefaultChannel: 'stable',
     auth: DEFAULT_AUTH
 });
 
@@ -28,6 +29,12 @@ export function areAppFeaturesLoaded() {
 /** Allow users to opt into the SlicerWeb latest channel from Settings. */
 export function isSlicerWebDevModeEnabled() {
     return features.slicerWebDevMode === true;
+}
+
+/** The channel a Settings choice ('default' | 'latest' | 'stable') opens: latest only in dev mode. */
+export function resolveSlicerWebChannel(choice) {
+    const channel = choice === 'latest' || choice === 'stable' ? choice : features.slicerWebDefaultChannel;
+    return channel === 'latest' && isSlicerWebDevModeEnabled() ? 'latest' : 'stable';
 }
 
 /**
@@ -61,6 +68,7 @@ export function loadAppFeatures() {
             features = Object.freeze({
                 inviteEmail: data?.inviteEmail === true,
                 slicerWebDevMode: data?.slicerWebDevMode === true,
+                slicerWebDefaultChannel: data?.slicerWebDefaultChannel === 'latest' ? 'latest' : 'stable',
                 myFiles: data?.myFiles === true,
                 auth: Object.freeze(auth)
             });

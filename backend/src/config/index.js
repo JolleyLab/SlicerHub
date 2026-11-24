@@ -46,6 +46,9 @@ function resolveJwtSecret(dbPath) {
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/users.db');
 
+/** Private repo of prebuilt SlicerWeb sites, one branch per channel (deploy/stable, deploy/latest). */
+const DEFAULT_SLICERWEB_REPO_URL = 'https://github.com/JolleyLab/SlicerHeartWebViewer-app.git';
+
 /**
  * Central configuration for the application
  * All environment-dependent values should be defined here
@@ -183,12 +186,12 @@ const config = {
     caseInviteTtlDays: Math.max(1, Math.min(30, Number(process.env.CASE_INVITE_TTL_DAYS || 7) || 7)),
 
     /**
-     * SlicerWeb channel update service.
-     * Requires SLICERWEB_GITHUB_TOKEN (fine-grained PAT, read-only Contents on the deploy repo).
+     * SlicerWeb channel update service. Reads the deploy repo (SLICERWEB_REPO_URL, default the
+     * SlicerHeart viewer builds) with a deploy key, GitHub App or token; the repo is private.
      * ENABLE_SLICERWEB_DEV_MODE=true exposes the latest-channel opt-in in user settings.
      */
     slicerWeb: (() => {
-        const repoUrl = (process.env.SLICERWEB_REPO_URL || '').trim();
+        const repoUrl = (process.env.SLICERWEB_REPO_URL || DEFAULT_SLICERWEB_REPO_URL).trim();
         // Parse "https://github.com/Owner/Repo.git" or "Owner/Repo"
         const match = repoUrl.match(/github\.com[/:]([\w-]+)\/([\w.-]+?)(?:\.git)?$/)
             || repoUrl.match(/^([\w-]+)\/([\w.-]+)$/);
@@ -237,6 +240,12 @@ const config = {
             })(),
             /** Allow users to opt into the latest channel from Settings. */
             devModeEnabled,
+            /**
+             * Channel for people whose Settings choice is "Default". Latest while the app is in
+             * development; switch to 'stable' once researchers should get the vetted release.
+             * Falls back to stable when the latest channel isn't available (dev mode off).
+             */
+            defaultChannel: 'latest',
             /** Shared secret for GitHub push webhook signature verification. */
             webhookSecret: (process.env.SLICERWEB_WEBHOOK_SECRET || '').trim()
         };

@@ -30,8 +30,8 @@ describe('DEFAULT_USER_PREFERENCES', () => {
         assert.equal(DEFAULT_USER_PREFERENCES.useSimplifiedViewer, false);
     });
 
-    it('defaults to stable channel', () => {
-        assert.equal(DEFAULT_USER_PREFERENCES.slicerWebChannel, 'stable');
+    it('defaults to the app-chosen channel', () => {
+        assert.equal(DEFAULT_USER_PREFERENCES.slicerWebChannel, 'default');
     });
 });
 
@@ -41,7 +41,7 @@ describe('normalizeUserPreferences', () => {
         assert.equal(result.theme, 'light');
         assert.equal(result.useFullSlicer, false);
         assert.equal(result.useSimplifiedViewer, false);
-        assert.equal(result.slicerWebChannel, 'stable');
+        assert.equal(result.slicerWebChannel, 'default');
     });
 
     it('accepts dark theme', () => {
@@ -53,13 +53,15 @@ describe('normalizeUserPreferences', () => {
         assert.equal(normalizeUserPreferences({ theme: null }).theme, 'light');
     });
 
-    it('accepts slicerWebChannel latest', () => {
-        assert.equal(normalizeUserPreferences({ slicerWebChannel: 'latest' }).slicerWebChannel, 'latest');
+    it('accepts each slicerWebChannel choice', () => {
+        for (const choice of ['default', 'latest', 'stable']) {
+            assert.equal(normalizeUserPreferences({ slicerWebChannel: choice }).slicerWebChannel, choice);
+        }
     });
 
-    it('rejects unknown slicerWebChannel, falls back to stable', () => {
-        assert.equal(normalizeUserPreferences({ slicerWebChannel: 'nightly' }).slicerWebChannel, 'stable');
-        assert.equal(normalizeUserPreferences({ slicerWebChannel: null }).slicerWebChannel, 'stable');
+    it('rejects unknown slicerWebChannel, falls back to default', () => {
+        assert.equal(normalizeUserPreferences({ slicerWebChannel: 'nightly' }).slicerWebChannel, 'default');
+        assert.equal(normalizeUserPreferences({ slicerWebChannel: null }).slicerWebChannel, 'default');
     });
 
     it('passes useFullSlicer through normalization', () => {
@@ -101,7 +103,7 @@ describe('getCachedUserPreferences / applyUserPreferences / clearCachedUserPrefe
         const prefs = getCachedUserPreferences();
         assert.equal(prefs.theme, 'light');
         assert.equal(prefs.useFullSlicer, false);
-        assert.equal(prefs.slicerWebChannel, 'stable');
+        assert.equal(prefs.slicerWebChannel, 'default');
     });
 
     it('applyUserPreferences updates the cache', () => {
@@ -116,7 +118,7 @@ describe('getCachedUserPreferences / applyUserPreferences / clearCachedUserPrefe
         applyUserPreferences({ theme: 'invalid', slicerWebChannel: 'unknown' });
         const prefs = getCachedUserPreferences();
         assert.equal(prefs.theme, 'light');
-        assert.equal(prefs.slicerWebChannel, 'stable');
+        assert.equal(prefs.slicerWebChannel, 'default');
     });
 
     it('clearCachedUserPreferences resets to defaults', () => {

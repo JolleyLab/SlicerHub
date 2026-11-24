@@ -187,8 +187,12 @@ export const UserPreferences = {
         {
             name: 'slicer_web_channel',
             type: 'select',
-            options: [{ label: 'Stable', value: 'stable' }, { label: 'Latest (dev)', value: 'latest' }],
-            defaultValue: 'stable',
+            options: [
+                { label: 'Default', value: 'default' },
+                { label: 'Latest (dev)', value: 'latest' },
+                { label: 'Stable', value: 'stable' },
+            ],
+            defaultValue: 'default',
         },
         { name: 'notify_registration_approval', type: 'checkbox', defaultValue: true },
         // Show my name in group member lists (e.g. when a case admin reviews a group), even as a regular member

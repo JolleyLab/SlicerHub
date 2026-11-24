@@ -19,7 +19,9 @@ export const UI_COLOR_SCHEMES = {
         statusErrorBorder: '#c43c32',
         statusSuccessBg: '#e6f6ed',
         statusSuccessFg: '#0b5c38',
-        statusSuccessBorder: '#2f8f63'
+        statusSuccessBorder: '#2f8f63',
+        // Warning text on panels/page: 7.1:1 on #ffffff, 6.4:1 on #ecf4f9
+        statusWarningFg: '#92400e'
     },
     dark: {
         // Same hierarchy as light (shared page base + lifted panels), cooler slate-indigo.
@@ -41,7 +43,9 @@ export const UI_COLOR_SCHEMES = {
         statusErrorBorder: '#e06b5f',
         statusSuccessBg: '#0f2a1c',
         statusSuccessFg: '#b6f0cf',
-        statusSuccessBorder: '#3d9a6a'
+        statusSuccessBorder: '#3d9a6a',
+        // Warning text on panels/page: 11.9:1 on #161b2c, 13.6:1 on #090b14
+        statusWarningFg: '#fcd34d'
     }
 };
 

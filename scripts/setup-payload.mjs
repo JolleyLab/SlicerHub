@@ -178,6 +178,18 @@ const RETIRED_SCHEMA = [
     // When the bell was last opened moved to its own collection (bell-state); it isn't a preference.
     'ALTER TABLE IF EXISTS user_preferences DROP COLUMN IF EXISTS bell_opened_at',
     'ALTER TABLE IF EXISTS user_preferences DROP COLUMN IF EXISTS preferences_saved',
+    // The SlicerWeb version setting gained "Default". Before it, 'stable' only meant the latest
+    // box was left unticked, so those rows move to Default (NULL reads as default). Runs only
+    // while the column's type still lacks 'default', so a deliberate Stable is never touched.
+    `DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_user_preferences_slicer_web_channel')
+            AND NOT EXISTS (
+                SELECT 1 FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+                WHERE t.typname = 'enum_user_preferences_slicer_web_channel' AND e.enumlabel = 'default'
+            ) THEN
+            UPDATE user_preferences SET slicer_web_channel = NULL WHERE slicer_web_channel = 'stable';
+        END IF;
+    END $$`,
 ];
 
 /**

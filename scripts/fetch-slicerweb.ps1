@@ -9,6 +9,11 @@
 #   stable  →  deploy/stable   →  data/slicerweb-stable/
 #   latest  →  deploy/latest   →  data/slicerweb-latest/
 #
+# With credentials configured (.env), the backend downloads and updates both channels itself
+# (slicerWebUpdater.js); this fills a channel by hand, e.g. without them or with the backend stopped.
+#
+# Repo: $env:SLICERWEB_REPO_URL, default the SlicerHeart viewer builds. The repo is private, so git needs
+# read access: your own GitHub login, or the deploy key the backend uses.
 # Override the destination with $env:SLICERWEB_STABLE_DIR or $env:SLICERWEB_LATEST_DIR.
 # Set the same value in .env so docker compose mounts the same folder.
 #
@@ -24,7 +29,7 @@ if ($Channel -notin @('stable', 'latest')) {
 }
 
 $root    = Split-Path -Parent $PSScriptRoot
-$repoUrl = if ($env:SLICERWEB_REPO_URL) { $env:SLICERWEB_REPO_URL } else { 'https://github.com/lassoan/slicerweb-app.git' }
+$repoUrl = if ($env:SLICERWEB_REPO_URL) { $env:SLICERWEB_REPO_URL } else { 'https://github.com/JolleyLab/SlicerHeartWebViewer-app.git' }
 $ref     = "deploy/$Channel"
 
 $destEnvVar = if ($Channel -eq 'stable') { $env:SLICERWEB_STABLE_DIR } else { $env:SLICERWEB_LATEST_DIR }

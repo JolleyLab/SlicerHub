@@ -22,7 +22,7 @@ export const DEFAULT_USER_PREFERENCES = Object.freeze({
     theme: 'light',
     ...DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS,
     homeLayout: DEFAULT_HOME_LAYOUT,
-    slicerWebChannel: 'stable',
+    slicerWebChannel: 'default',
     notifyRegistrationApproval: true,
     shareNameInGroups: false,
     activityFilters: ['comment'],
@@ -35,10 +35,13 @@ let cachedPreferences = { ...DEFAULT_USER_PREFERENCES };
 // Incremented on every explicit user-initiated save; hydration skips applying if it changed.
 let _saveGeneration = 0;
 
+/** SlicerWeb channel choices in Settings; 'default' defers to the server's default channel. */
+export const SLICERWEB_CHANNEL_CHOICES = Object.freeze(['default', 'latest', 'stable']);
+
 export function normalizeUserPreferences(input = {}) {
     const theme = input?.theme === 'dark' ? 'dark' : 'light';
     const viewer = normalizeLocalSlicerViewerOptions(input);
-    const slicerWebChannel = input?.slicerWebChannel === 'latest' ? 'latest' : 'stable';
+    const slicerWebChannel = SLICERWEB_CHANNEL_CHOICES.includes(input?.slicerWebChannel) ? input.slicerWebChannel : 'default';
     return {
         theme,
         useFullSlicer: viewer.useFullSlicer,

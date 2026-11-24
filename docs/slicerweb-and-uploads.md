@@ -5,21 +5,26 @@
 "Open with… → SlicerWeb" on a case attachment runs 3D Slicer compiled to WebAssembly in the browser
 ([lassoan/SlicerWeb](https://github.com/lassoan/SlicerWeb)). No server session, GPU seat or heartbeat is used.
 
-- **Build output is not in this repo.** `slicerweb/VERSION` pins a commit of the prebuilt site
-  ([lassoan/slicerweb-app](https://github.com/lassoan/slicerweb-app), which keeps a single commit, so the pin can
-  disappear when upstream republishes). `scripts/fetch-slicerweb.sh` / `.ps1` download that commit into
-  `data/slicerweb/` (git-ignored, about 640 MB). To upgrade, put a new SHA in `slicerweb/VERSION` and re-run the script.
-  If `data/` is not writable by you (Docker creates it root-owned on some hosts), set `SLICERWEB_DIR` to another
-  folder, both when running the script and in `.env` so compose mounts it (`SLICERWEB_DIR=$HOME/slicerweb-site`).
-  Run the fetch **before** `docker compose up -d` (and use `up -d`, not `restart`: the nginx mount only changes on
+- **Build output is not in this repo.** Prebuilt sites live in a deploy repo, one branch per channel: `deploy/stable`
+  and `deploy/latest` of [JolleyLab/SlicerHeartWebViewer-app](https://github.com/JolleyLab/SlicerHeartWebViewer-app)
+  by default (`SLICERWEB_REPO_URL` points elsewhere). Each branch is a single commit, force-pushed per build.
+  With credentials, the backend (`slicerWebUpdater.js`) downloads each channel into `data/slicerweb-stable/` and
+  `data/slicerweb-latest/` (git-ignored, about 640 MB each) and checks for new builds: stable every 4 hours, latest
+  every 5 minutes when `ENABLE_SLICERWEB_DEV_MODE=true`, and on demand from Settings → Check for updates.
+  **The repo is private.** The updater needs a deploy key, GitHub App or token (`.env.example`), which a repo admin
+  has to grant; there is no anonymous fallback yet (distribution to other installs is still to be decided). To fill
+  a channel by hand with your own GitHub access, run `scripts/fetch-slicerweb.sh --channel stable|latest` (or `.ps1`).
+  If `data/` is not writable by you (Docker creates it root-owned on some hosts), set `SLICERWEB_STABLE_DIR` /
+  `SLICERWEB_LATEST_DIR` to another folder, both when running the script and in `.env` so compose mounts it.
+  Run a manual fetch **before** `docker compose up -d` (and use `up -d`, not `restart`: the nginx mount only changes on
   recreate). If compose ran first, Docker creates the missing folder as root, empty; nginx then answers 403
   ("directory index ... is forbidden"). Fix without sudo: `docker compose stop nginx && rmdir <folder>`, run the
   fetch again, then `docker compose up -d nginx`.
   nginx's workers run as the unprivileged `nginx` user (uid 101), not root, so the folder and every directory above
   it must be traversable by it. Home directories are often `750`: use `chmod o+x "$HOME"` (or
   `setfacl -m u:101:x "$HOME"`) and `chmod -R a+rX <folder>`. Check with
-  `docker exec -u nginx nginx ls /usr/share/slicerweb`.
-- **Serving.** nginx serves `data/slicerweb/` at `/slicerweb/` from the same origin as the app, which is what lets
+  `docker exec -u nginx nginx ls /usr/share/slicerweb-stable`.
+- **Serving.** nginx serves the channel folders at `/slicerweb/stable/` and `/slicerweb/latest/` from the same origin as the app, which is what lets
   the cases page reach the frame's `slicerWeb` bridge. The `.mjs` MIME type is declared in `nginx/default.conf`
   (the stock `mime.types` lacks it, and browsers refuse ES modules served as octet-stream).
 - **Loading a file.** The page fetches the attachment from `GET /api/directus/cases/:caseId/attachments/:id/content`,

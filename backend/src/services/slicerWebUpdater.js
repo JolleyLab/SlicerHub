@@ -1,10 +1,12 @@
 /**
  * SlicerWeb channel updater.
  *
- * Two channels: 'stable' and 'latest'.
- * - stable: background poller checks every N hours and updates automatically.
- * - latest: peek fires on page load; if a new build is found the clone runs in the background.
- *   Webhook (POST /api/slicerweb/webhook) triggers the same path immediately on push.
+ * Two channels: 'stable' and 'latest', each a branch of the deploy repo (deploy/<channel>).
+ * - Background pollers check stable every N hours and latest every M minutes (dev mode only).
+ * - POST /api/slicerweb/check-update (Settings → Check for updates) and the push webhook run
+ *   the same check on demand.
+ *
+ * The deploy repo is private: it's read with the SSH deploy key (git), or a GitHub App or token (API).
  *
  * shouldApplyUpdate is the future OrgAdmin approval gate — today it always returns true.
  */

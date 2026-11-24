@@ -148,6 +148,12 @@ export const userSettingsStyles = css`
         color: var(--color-text-secondary);
     }
 
+    .select-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
     .profile-form {
         display: flex;
         flex-direction: column;

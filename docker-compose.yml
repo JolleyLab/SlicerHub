@@ -206,7 +206,7 @@ services:
     volumes:
       - ./nginx:/etc/nginx/conf.d:ro
       # SlicerWeb channels: stable (default) and latest (developer mode).
-      # Populate with: scripts/fetch-slicerweb.ps1 --channel stable  (and --channel latest for dev).
+      # The backend downloads and updates them; by hand: scripts/fetch-slicerweb.sh (or .ps1) --channel stable|latest.
       # Override dirs in .env (e.g. SLICERWEB_STABLE_DIR=~/slicerweb-stable) if ./data isn't writable.
       - ${SLICERWEB_STABLE_DIR:-./data/slicerweb-stable}:/usr/share/slicerweb-stable:ro
       - ${SLICERWEB_LATEST_DIR:-./data/slicerweb-latest}:/usr/share/slicerweb-latest:ro
