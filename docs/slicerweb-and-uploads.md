@@ -10,7 +10,8 @@
   by default (`SLICERWEB_REPO_URL` points elsewhere). Each branch is a single commit, force-pushed per build.
   With credentials, the backend (`slicerWebUpdater.js`) downloads each channel into `data/slicerweb-stable/` and
   `data/slicerweb-latest/` (git-ignored, about 640 MB each) and checks for new builds: stable every 4 hours, latest
-  every 5 minutes when `ENABLE_SLICERWEB_DEV_MODE=true`, and on demand from Settings → Check for updates.
+  every 5 minutes, and on demand from Settings → Check for updates. Everyone can pick Default, Latest or Stable in
+  Settings; until a latest build is present (downloaded, or fetched by hand), latest opens stable and Settings says so.
   **The repo is private.** The updater needs a deploy key, GitHub App or token (`.env.example`), which a repo admin
   has to grant; there is no anonymous fallback yet (distribution to other installs is still to be decided). To fill
   a channel by hand with your own GitHub access, run `scripts/fetch-slicerweb.sh --channel stable|latest` (or `.ps1`).

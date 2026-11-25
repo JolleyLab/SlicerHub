@@ -199,7 +199,6 @@ export class HomeLayoutSettings extends LitElement {
             .choice input {
                 width: 1.05rem;
                 height: 1.05rem;
-                accent-color: var(--color-primary);
                 cursor: pointer;
             }
 

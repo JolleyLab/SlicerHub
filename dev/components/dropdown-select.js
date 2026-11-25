@@ -80,9 +80,8 @@ export class DropdownSelect extends LitElement {
                 cursor: not-allowed;
             }
 
-            /* Dark: the same border as .form-input (listPage.js), >= 3:1 against panel and page (WCAG 1.4.11). */
             :host-context([data-theme='dark']) {
-                --dropdown-border: color-mix(in srgb, var(--color-text-secondary) 55%, var(--color-panel));
+                --dropdown-border: var(--color-control-border);
                 --dropdown-border-hover: var(--color-text-secondary);
             }
 

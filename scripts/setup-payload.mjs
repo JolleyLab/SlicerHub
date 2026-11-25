@@ -266,10 +266,6 @@ async function main() {
   Payload's tables (cases and attachments, case invites, groups, registration
   requests, notifications, user preferences, workflows and case workflow
   approvals, the site announcement) are in place.
-
-  To enable the SlicerWeb developer channel (latest build) in the UI,
-  add to .env (after credentials are configured):
-    ENABLE_SLICERWEB_DEV_MODE=true
   ─────────────────────────────────────────────
 `);
 }

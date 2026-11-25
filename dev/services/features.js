@@ -13,7 +13,7 @@ let featuresPromise = null;
 let featuresLoaded = false;
 let features = Object.freeze({
     inviteEmail: false,
-    slicerWebDevMode: false,
+    slicerWebLatest: false,
     slicerWebDefaultChannel: 'stable',
     auth: DEFAULT_AUTH
 });
@@ -26,15 +26,18 @@ export function areAppFeaturesLoaded() {
     return featuresLoaded;
 }
 
-/** Allow users to opt into the SlicerWeb latest channel from Settings. */
-export function isSlicerWebDevModeEnabled() {
-    return features.slicerWebDevMode === true;
+/** The channel a Settings choice ('default' | 'latest' | 'stable') asks for: Default is the server's. */
+export function requestedSlicerWebChannel(choice) {
+    return choice === 'latest' || choice === 'stable' ? choice : features.slicerWebDefaultChannel;
 }
 
-/** The channel a Settings choice ('default' | 'latest' | 'stable') opens: latest only in dev mode. */
+/**
+ * The channel a Settings choice opens. Latest only once the server can serve it (it downloads
+ * builds, or one was fetched by hand); stable until then.
+ */
 export function resolveSlicerWebChannel(choice) {
-    const channel = choice === 'latest' || choice === 'stable' ? choice : features.slicerWebDefaultChannel;
-    return channel === 'latest' && isSlicerWebDevModeEnabled() ? 'latest' : 'stable';
+    const channel = requestedSlicerWebChannel(choice);
+    return channel === 'latest' && features.slicerWebLatest === true ? 'latest' : 'stable';
 }
 
 /**
@@ -67,7 +70,7 @@ export function loadAppFeatures() {
 
             features = Object.freeze({
                 inviteEmail: data?.inviteEmail === true,
-                slicerWebDevMode: data?.slicerWebDevMode === true,
+                slicerWebLatest: data?.slicerWebLatest === true,
                 slicerWebDefaultChannel: data?.slicerWebDefaultChannel === 'latest' ? 'latest' : 'stable',
                 myFiles: data?.myFiles === true,
                 auth: Object.freeze(auth)

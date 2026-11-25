@@ -35,82 +35,17 @@ export class LocalSlicerViewerOptions extends LitElement {
                 line-height: 1.35;
             }
 
+            /* The browser's own checkbox, as everywhere else (user-settings-page .checkbox-row). */
             .checkbox input {
-                appearance: none;
-                -webkit-appearance: none;
-                width: 18px;
-                height: 18px;
-                margin: 1px 0 0;
-                flex: 0 0 18px;
-                box-sizing: border-box;
-                border: 1.5px solid var(--color-border);
-                border-radius: var(--radius-sm, 4px);
-                background: var(--color-surface, var(--color-background));
+                margin: 2px 0 0;
+                flex-shrink: 0;
+                width: 16px;
+                height: 16px;
                 cursor: pointer;
-                position: relative;
-                transition:
-                    background-color 0.15s ease,
-                    border-color 0.15s ease,
-                    box-shadow 0.15s ease;
-            }
-
-            .checkbox input::after {
-                content: '';
-                position: absolute;
-                left: 5px;
-                top: 1px;
-                width: 5px;
-                height: 9px;
-                border: solid var(--color-on-primary, #fff);
-                border-width: 0 2px 2px 0;
-                transform: rotate(45deg) scale(0);
-                transform-origin: center;
-                transition: transform 0.12s ease;
-                opacity: 0;
-            }
-
-            .checkbox input:hover:not(:disabled) {
-                border-color: var(--color-secondary);
-            }
-
-            .checkbox input:checked {
-                background: var(--color-secondary);
-                border-color: var(--color-secondary);
-            }
-
-            .checkbox input:checked::after {
-                opacity: 1;
-                transform: rotate(45deg) scale(1);
-            }
-
-            .checkbox input:focus-visible {
-                outline: 3px solid var(--color-focus, #0057c2);
-                outline-offset: 2px;
-                box-shadow: var(--focus-ring-shadow, 0 0 0 2px #fff, 0 0 0 5px #0057c2);
             }
 
             .checkbox input:disabled {
-                opacity: 0.55;
                 cursor: not-allowed;
-            }
-
-            :host-context([data-theme='dark']) .checkbox input {
-                background: color-mix(in srgb, var(--color-primary) 14%, var(--color-surface));
-                border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
-            }
-
-            :host-context([data-theme='dark']) .checkbox input:hover:not(:disabled) {
-                border-color: color-mix(in srgb, var(--color-secondary) 50%, var(--color-border));
-                background: color-mix(in srgb, var(--color-primary) 22%, var(--color-surface));
-            }
-
-            :host-context([data-theme='dark']) .checkbox input:checked {
-                background: var(--color-secondary);
-                border-color: color-mix(in srgb, var(--color-secondary) 70%, var(--color-border));
-            }
-
-            :host-context([data-theme='dark']) .checkbox input:checked::after {
-                border-color: var(--color-on-secondary);
             }
 
             .checkbox[aria-disabled='true'] {
@@ -119,15 +54,15 @@ export class LocalSlicerViewerOptions extends LitElement {
             }
 
             .nested {
-                margin-left: 28px;
+                margin-left: 26px;
                 display: flex;
                 flex-direction: column;
                 gap: 6px;
             }
 
-            /* Align under the label text (checkbox 18px + gap 10px). */
+            /* Align under the label text (checkbox 16px + gap 10px). */
             .nested > .hint {
-                margin-left: 28px;
+                margin-left: 26px;
             }
 
             .hint {

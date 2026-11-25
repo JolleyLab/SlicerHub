@@ -7,9 +7,9 @@ export default function featuresRoutes(app) {
         res.json({
             /** Case signup invite email delivery (SMTP). Copy-link works either way. */
             inviteEmail: Boolean(config.mail?.enabled && config.mail?.host),
-            /** Allow users to opt into the SlicerWeb latest channel from Settings. */
-            slicerWebDevMode: Boolean(config.slicerWeb.devModeEnabled && config.slicerWeb.hasCredentials),
-            /** The channel a "Default" SlicerWeb choice opens (the client still needs dev mode for latest). */
+            /** The SlicerWeb latest channel can be opened (otherwise it falls back to stable). */
+            slicerWebLatest: config.slicerWeb.isLatestAvailable(),
+            /** The channel a "Default" SlicerWeb choice opens (when latest is available). */
             slicerWebDefaultChannel: config.slicerWeb.defaultChannel === 'latest' ? 'latest' : 'stable',
             /** Set ENABLE_MY_FILES=false to hide My Files from the sidebar. Default: true. */
             myFiles: Boolean(config.myFiles.enabled),

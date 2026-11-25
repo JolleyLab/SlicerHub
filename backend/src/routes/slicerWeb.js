@@ -15,10 +15,7 @@ export default function slicerWebRoutes(app) {
         if (!VALID_CHANNELS.has(channel)) {
             return res.status(400).json({ error: 'Invalid channel. Must be stable or latest.' });
         }
-        if (channel === 'latest' && !config.slicerWeb.devModeEnabled) {
-            return res.status(403).json({ error: 'Developer mode is not enabled on this server.' });
-        }
-        if (!config.slicerWeb.hasCredentials) {
+        if (!config.slicerWeb.canUpdate) {
             return res.status(503).json({ error: 'No GitHub credentials configured for SlicerWeb updates.' });
         }
         try {
@@ -37,10 +34,9 @@ export default function slicerWebRoutes(app) {
         if (!VALID_CHANNELS.has(channel)) {
             return res.status(400).json({ error: 'Invalid channel. Must be stable or latest.' });
         }
-        if (channel === 'latest' && !config.slicerWeb.devModeEnabled) {
-            return res.status(403).json({ error: 'Developer mode is not enabled on this server.' });
-        }
-        if (!config.slicerWeb.hasCredentials) {
+        if (!config.slicerWeb.canUpdate) {
+            // The person sees "contact your administrator"; the reason is here for the admin.
+            console.warn(`[slicerWeb] check-update refused (${channel}): no deploy key, GitHub App or token configured`);
             return res.status(503).json({ error: 'No GitHub credentials configured for SlicerWeb updates.' });
         }
 
@@ -61,7 +57,7 @@ export default function slicerWebRoutes(app) {
         if (!config.slicerWeb.webhookSecret) {
             return res.status(503).json({ error: 'Webhook not configured (SLICERWEB_WEBHOOK_SECRET unset).' });
         }
-        if (!config.slicerWeb.hasCredentials) {
+        if (!config.slicerWeb.canUpdate) {
             return res.status(503).json({ error: 'No GitHub credentials configured.' });
         }
 
@@ -106,19 +102,15 @@ export default function slicerWebRoutes(app) {
 
     // GET /api/slicerweb/status — installed SHA per channel (null if not populated)
     app.get('/api/slicerweb/status', authenticateToken, asyncHandler(async (_req, res) => {
-        const [stable, latest] = await Promise.all([
-            getInstalledSha('stable'),
-            config.slicerWeb.devModeEnabled ? getInstalledSha('latest') : Promise.resolve(null)
-        ]);
-        res.json({ stable, latest: config.slicerWeb.devModeEnabled ? latest : undefined });
+        const [stable, latest] = await Promise.all([getInstalledSha('stable'), getInstalledSha('latest')]);
+        res.json({ stable, latest });
     }));
 
     // GET /api/slicerweb/extension-icon/:channel/:name — an extension's icon, served from
     // SlicerHub's own copy so browsers never contact the icon's host (services/extensionIcons.js).
     app.get('/api/slicerweb/extension-icon/:channel/:name', authenticateToken, asyncHandler(async (req, res) => {
         const { channel, name } = req.params;
-        const allowed = VALID_CHANNELS.has(channel) && (channel === 'stable' || config.slicerWeb.devModeEnabled);
-        const icon = allowed ? await resolveExtensionIcon(channel, name) : null;
+        const icon = VALID_CHANNELS.has(channel) ? await resolveExtensionIcon(channel, name) : null;
         if (!icon) return res.status(404).end();
         res.set({
             'Content-Type': icon.contentType,

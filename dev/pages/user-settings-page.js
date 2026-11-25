@@ -18,7 +18,7 @@ import {
     normalizeActivityFilters,
     SLICERWEB_CHANNEL_CHOICES,
 } from '../utils/userPreferences.js';
-import { isSlicerWebDevModeEnabled, resolveSlicerWebChannel } from '../services/features.js';
+import { requestedSlicerWebChannel, resolveSlicerWebChannel } from '../services/features.js';
 
 export class UserSettingsPage extends LitElement {
     static get styles() {
@@ -645,38 +645,39 @@ export class UserSettingsPage extends LitElement {
                             ></local-slicer-viewer-options>
                         </section>
 
-                        ${isSlicerWebDevModeEnabled() ? html`
-                            <section class="settings-section">
-                                <h2 class="section-title">${t('settings.slicerWebChannel')}</h2>
-                                <p class="section-description">${t('settings.slicerWebChannelHint')}</p>
-                                <div class="select-row">
-                                    <dropdown-select
-                                        .value=${this.slicerWebChannel}
-                                        .options=${SLICERWEB_CHANNEL_CHOICES.map((value) => ({
-                                            value,
-                                            label: value === 'default'
-                                                ? t('settings.slicerWebChannelOption.defaultCurrently', {
-                                                    channel: t(`settings.slicerWebChannelOption.${resolveSlicerWebChannel('default')}`)
-                                                })
-                                                : t(`settings.slicerWebChannelOption.${value}`)
-                                        }))}
-                                        aria-label=${t('settings.slicerWebChannel')}
-                                        @change=${(e) => this.handleSlicerWebChannelChange(e.target.value)}
-                                    ></dropdown-select>
-                                    ${resolveSlicerWebChannel(this.slicerWebChannel) === 'latest' ? html`
-                                        <info-tip .text=${t('settings.slicerWebLatestWarning')}
-                                            .label=${t('settings.slicerWebLatestInfo')}></info-tip>
-                                    ` : ''}
-                                </div>
-                                <div class="select-row">
-                                    <button type="button" class="small-button" ?disabled=${this._updateCheck?.busy}
-                                        @click=${() => this.handleCheckForUpdates()}>
-                                        ${t('settings.slicerWebCheckUpdates')}
-                                    </button>
-                                    <span class="section-description" role="status">${this._updateCheck?.message ?? ''}</span>
-                                </div>
-                            </section>
-                        ` : ''}
+                        <section class="settings-section">
+                            <h2 class="section-title">${t('settings.slicerWebChannel')}</h2>
+                            <p class="section-description">${t('settings.slicerWebChannelHint')}</p>
+                            <div class="select-row">
+                                <dropdown-select
+                                    .value=${this.slicerWebChannel}
+                                    .options=${SLICERWEB_CHANNEL_CHOICES.map((value) => ({
+                                        value,
+                                        label: value === 'default'
+                                            ? t('settings.slicerWebChannelOption.defaultCurrently', {
+                                                channel: t(`settings.slicerWebChannelOption.${requestedSlicerWebChannel('default')}`)
+                                            })
+                                            : t(`settings.slicerWebChannelOption.${value}`)
+                                    }))}
+                                    aria-label=${t('settings.slicerWebChannel')}
+                                    @change=${(e) => this.handleSlicerWebChannelChange(e.target.value)}
+                                ></dropdown-select>
+                                ${resolveSlicerWebChannel(this.slicerWebChannel) === 'latest' ? html`
+                                    <info-tip .text=${t('settings.slicerWebLatestWarning')}
+                                        .label=${t('settings.slicerWebLatestInfo')}></info-tip>
+                                ` : ''}
+                            </div>
+                            ${requestedSlicerWebChannel(this.slicerWebChannel) !== resolveSlicerWebChannel(this.slicerWebChannel) ? html`
+                                <p class="section-description warning-text">${t('settings.slicerWebLatestUnavailable')}</p>
+                            ` : ''}
+                            <div class="select-row">
+                                <button type="button" class="small-button" ?disabled=${this._updateCheck?.busy}
+                                    @click=${() => this.handleCheckForUpdates()}>
+                                    ${t('settings.slicerWebCheckUpdates')}
+                                </button>
+                                <span class="section-description" role="status">${this._updateCheck?.message ?? ''}</span>
+                            </div>
+                        </section>
                     ` : ''}
 
                     <!-- Unified save bar -->

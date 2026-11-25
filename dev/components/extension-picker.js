@@ -39,7 +39,7 @@ export class ExtensionPicker extends LitElement {
             :host-context([data-theme='dark']) ul { background: var(--color-background); }
             li label { display: flex; gap: 10px; align-items: flex-start; padding: 7px 12px; cursor: pointer; }
             li label:hover { background: color-mix(in srgb, var(--color-primary) 6%, transparent); }
-            input[type='checkbox'] { margin-top: 3px; accent-color: var(--color-primary); flex-shrink: 0; }
+            input[type='checkbox'] { margin-top: 3px; flex-shrink: 0; }
             .name { font-weight: 600; }
             .category, .desc, .note { color: var(--color-text-secondary); font-size: 0.8rem; }
             .desc { display: block; }

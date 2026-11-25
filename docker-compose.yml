@@ -162,7 +162,6 @@ services:
       - CASE_INVITE_TTL_DAYS=${CASE_INVITE_TTL_DAYS:-7}
       # SlicerWeb deploy key (SSH). Set to /run/secrets/slicerweb/slicerweb-deploy-key when key is placed in .secrets/.
       - SLICERWEB_DEPLOY_KEY_PATH=${SLICERWEB_DEPLOY_KEY_PATH:-}
-      - ENABLE_SLICERWEB_DEV_MODE=${ENABLE_SLICERWEB_DEV_MODE:-false}
     depends_on:
       - trame-job
       - mailpit
@@ -205,7 +204,7 @@ services:
       - "8000:80" # Port 8000 is open on Paperspace by default
     volumes:
       - ./nginx:/etc/nginx/conf.d:ro
-      # SlicerWeb channels: stable (default) and latest (developer mode).
+      # SlicerWeb channels: stable and latest (each person picks one in Settings).
       # The backend downloads and updates them; by hand: scripts/fetch-slicerweb.sh (or .ps1) --channel stable|latest.
       # Override dirs in .env (e.g. SLICERWEB_STABLE_DIR=~/slicerweb-stable) if ./data isn't writable.
       - ${SLICERWEB_STABLE_DIR:-./data/slicerweb-stable}:/usr/share/slicerweb-stable:ro

@@ -51,7 +51,7 @@ html.login-pf {
 
 html.login-pf[data-sh-theme="dark"] {
     --sh-bg: #090b14;
-    --sh-panel: #161b2c;
+    --sh-panel: #161b22;         /* app's dark panel (dev/components/theme.js) */
     --sh-text: #f0f2f8;
     --sh-text-secondary: #c2c8d8;
     --sh-primary: #2c3878;
