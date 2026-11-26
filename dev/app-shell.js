@@ -37,6 +37,7 @@ import {
   hydrateUserPreferencesFromUser,
   clearCachedUserPreferences
 } from './utils/userPreferences.js';
+import { claimSlicerWebStorage, clearSlicerWebStorage } from './utils/slicerWebStorage.js';
 import { watchSystemColorScheme } from './components/theme.js';
 import './components/app-dialog.js';
 import { hasActiveUploads } from './services/cases.js';
@@ -301,6 +302,7 @@ export class SlicerApp extends LitElement {
       if (res.ok) {
         const data = await res.json();
         this.user = data.user;
+        await claimSlicerWebStorage(this.user?.id);
         this.isAuthenticated = true;
         this.accessPending = data.accessPending === true;
         this._applySessionInfo(data.session);
@@ -904,6 +906,9 @@ export class SlicerApp extends LitElement {
 
     // Cleanup any running containers
     await this.cleanupContainer();
+
+    // SlicerWeb's extensions and autosaved scenes live in this browser, not the account
+    await clearSlicerWebStorage();
 
     // End the Keycloak sign-in too (shared workstations); Keycloak sends the browser
     // back to the app's start page afterwards.
