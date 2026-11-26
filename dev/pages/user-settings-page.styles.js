@@ -1,4 +1,5 @@
 import { css } from 'lit-element';
+import { phoneMedia } from '../styles/breakpoints.js';
 
 export const userSettingsStyles = css`
     .settings-stack {
@@ -304,5 +305,20 @@ export const userSettingsStyles = css`
     :host-context([data-theme='dark']) .small-button:hover {
         background: color-mix(in srgb, var(--color-accent) 10%, var(--color-panel));
         border-color: color-mix(in srgb, var(--color-accent) 50%, var(--color-border));
+    }
+
+    /* Home page layout: not offered on phones, where Home is a single column. */
+    .home-layout-phone {
+        display: none;
+    }
+
+    @media ${phoneMedia} {
+        .home-layout-wide {
+            display: none;
+        }
+
+        .home-layout-phone {
+            display: block;
+        }
     }
 `;
