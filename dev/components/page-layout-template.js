@@ -3,6 +3,7 @@ import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
 import { getAppMenuItems, DEFAULT_MENU_KEY } from './app-menu.js';
 import { loadAppFeatures } from '../services/features.js';
+import { phoneMedia } from '../styles/breakpoints.js';
 import './navigation-header.js';
 import './side-menu.js';
 import './nav-back-button.js';
@@ -65,7 +66,11 @@ export class PageShellTemplate extends LitElement {
                 border-radius: var(--radius-lg);
                 background: var(--color-surface, var(--color-background));
                 box-shadow: 0 6px 18px var(--color-shadow, rgba(0, 0, 0, 0.08));
-                padding: 20px;
+                /* Published to the page content, so edge-to-edge bars (e.g. Settings' sticky Save) can match it. */
+                --content-pad-top: 20px;
+                --content-pad-x: 20px;
+                --content-pad-bottom: 20px;
+                padding: var(--content-pad-top) var(--content-pad-x) var(--content-pad-bottom);
                 min-height: 320px;
                 min-width: 0;
                 width: 100%;
@@ -101,40 +106,32 @@ export class PageShellTemplate extends LitElement {
                 color: var(--color-text-secondary);
             }
 
-            .compact-nav-bar {
-                display: flex;
-                align-items: center;
-                gap: 10px;
-            }
-
+            /* ☰ sits in the top bar (navigation-header's start slot), styled like its bell and avatar buttons. */
             .hamburger-button {
-                display: inline-flex;
+                display: none;
                 align-items: center;
                 justify-content: center;
-                width: 42px;
-                height: 42px;
+                width: 40px;
+                height: 40px;
                 padding: 0;
-                border: 1px solid var(--color-border);
+                border: 1px solid color-mix(in srgb, var(--color-on-primary) 40%, transparent);
                 border-radius: var(--radius-md, 8px);
-                background: var(--color-surface, var(--color-background));
-                color: var(--color-text-primary);
+                background: color-mix(in srgb, var(--color-on-primary) 12%, transparent);
+                color: var(--color-on-primary);
                 cursor: pointer;
                 flex-shrink: 0;
             }
 
             .hamburger-button:hover,
-            .hamburger-button:focus-visible {
-                background: color-mix(in srgb, var(--color-border) 35%, transparent);
-            }
-
-            .hamburger-button:focus-visible {
-                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
-                outline-offset: var(--focus-ring-offset, 2px);
-            }
-
+            .hamburger-button:focus-visible,
             .hamburger-button[aria-expanded='true'] {
-                border-color: var(--color-primary);
-                background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+                background: color-mix(in srgb, var(--color-on-primary) 24%, transparent);
+            }
+
+            /* On the coloured bar: the bar's text colour (the usual focus blue is 1.6:1 on the light theme's navy). */
+            .hamburger-button:focus-visible {
+                outline: var(--focus-ring-width, 3px) solid var(--color-on-primary);
+                outline-offset: var(--focus-ring-offset, 2px);
             }
 
             .hamburger-icon {
@@ -150,16 +147,6 @@ export class PageShellTemplate extends LitElement {
                 width: 100%;
                 border-radius: 1px;
                 background: currentColor;
-            }
-
-            .compact-nav-label {
-                min-width: 0;
-                font-size: 0.95rem;
-                font-weight: 600;
-                color: var(--color-text-primary);
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
             }
 
             .compact-nav-panel {
@@ -221,14 +208,40 @@ export class PageShellTemplate extends LitElement {
                     display: none;
                 }
 
-                .compact-nav {
+                .compact-nav:not([hidden]) {
                     display: block;
+                }
+
+                .hamburger-button {
+                    display: inline-flex;
                 }
 
                 .content-region {
                     width: 100%;
                     min-height: 240px;
-                    padding: 16px;
+                    --content-pad-top: 16px;
+                    --content-pad-x: 16px;
+                    --content-pad-bottom: 16px;
+                }
+            }
+
+            /* Phone width: no box around the content (its panels have their own), and less padding. */
+            @media ${phoneMedia} {
+                .app-shell {
+                    gap: 12px;
+                    padding: 8px;
+                }
+
+                .content-region,
+                :host-context([data-theme='dark']) .content-region {
+                    min-height: 0;
+                    --content-pad-top: 4px;
+                    --content-pad-x: 4px;
+                    --content-pad-bottom: 12px;
+                    border: none;
+                    border-radius: 0;
+                    background: transparent;
+                    box-shadow: none;
                 }
             }
         `;
@@ -348,8 +361,8 @@ export class PageShellTemplate extends LitElement {
         if (!this.compactNavOpen) return;
         const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
         if (path.includes(this)) {
-            const nav = this.renderRoot?.querySelector('.compact-nav');
-            if (nav && path.includes(nav)) return;
+            const inside = this.renderRoot?.querySelectorAll('.compact-nav, .hamburger-button') || [];
+            if ([...inside].some((el) => path.includes(el))) return;
         }
         this.compactNavOpen = false;
     }
@@ -361,30 +374,30 @@ export class PageShellTemplate extends LitElement {
         }
     }
 
+    /** ☰ for the top bar: opens the side menu's items as a list above the content (when the side menu is hidden). */
+    renderMenuButton() {
+        return html`
+            <button
+                slot="start"
+                class="hamburger-button"
+                type="button"
+                aria-label=${this.compactNavOpen ? t('nav.closeMenu') : t('nav.openMenu')}
+                aria-expanded=${this.compactNavOpen ? 'true' : 'false'}
+                aria-controls="compact-nav-panel"
+                @click=${() => this.toggleCompactNav()}
+            >
+                <span class="hamburger-icon" aria-hidden="true">
+                    <span></span><span></span><span></span>
+                </span>
+            </button>
+        `;
+    }
+
     renderCompactNav() {
         const items = Array.isArray(this.menuItems) ? this.menuItems : [];
         return html`
-            <div class="compact-nav">
-                <div class="compact-nav-bar">
-                    <button
-                        class="hamburger-button"
-                        type="button"
-                        aria-label=${this.compactNavOpen ? t('nav.closeMenu') : t('nav.openMenu')}
-                        aria-expanded=${this.compactNavOpen ? 'true' : 'false'}
-                        aria-controls="compact-nav-panel"
-                        @click=${() => this.toggleCompactNav()}
-                    >
-                        <span class="hamburger-icon" aria-hidden="true">
-                            <span></span><span></span><span></span>
-                        </span>
-                    </button>
-                    <span class="compact-nav-label">${t('common.menu')}</span>
-                </div>
-                <div
-                    id="compact-nav-panel"
-                    class="compact-nav-panel"
-                    ?hidden=${!this.compactNavOpen}
-                >
+            <div class="compact-nav" ?hidden=${!this.compactNavOpen}>
+                <div id="compact-nav-panel" class="compact-nav-panel">
                     <ul class="compact-menu-list">
                         ${items.map((item) => {
                             const selected = item.key === this.selectedMenuKey;
@@ -419,7 +432,7 @@ export class PageShellTemplate extends LitElement {
                     .homeLabel=${this.homeLabel}
                     .isOrgAdmin=${this.isOrgAdmin || false}
                     .isRegistrationReviewer=${this.isRegistrationReviewer || false}
-                ></navigation-header>
+                >${this.renderMenuButton()}</navigation-header>
 
                 ${this._announcement ? html`
                     <announcement-banner

@@ -92,6 +92,11 @@ export function applyTheme(theme = 'light') {
         '--focus-ring',
         '0 0 0 var(--focus-ring-width) var(--color-focus)'
     );
+    // Floating menus: a deeper shadow on dark, where a light one disappears (popup-menu.js).
+    root.style.setProperty(
+        '--popup-shadow',
+        selectedTheme === 'dark' ? '0 12px 32px rgba(0, 0, 0, 0.45)' : '0 8px 22px rgba(0, 0, 0, 0.18)'
+    );
     // Light mode: white halo under the ring so it stays visible on pale panels.
     root.style.setProperty(
         '--focus-ring-shadow',

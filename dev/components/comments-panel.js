@@ -1,5 +1,7 @@
 import { LitElement, html, css } from 'lit-element';
 import { avatarCircleStyles } from '../styles/avatar.js';
+import { collapsibleStyles, collapsibleTitle } from '../styles/collapsible.js';
+import { phoneMedia } from '../styles/breakpoints.js';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
 
@@ -15,12 +17,15 @@ import { t } from '../i18n/index.js';
  *     The posted text contains @id (the server resolves mentions from it); the
  *     textarea shows @Name while the user is composing.
  *
+ *   collapsed — on phones, show only the header (its title becomes a show/hide toggle); wider screens ignore it
+ *
  * Events:
  *   post-comment — detail: { text } (compose submit, mentions already resolved to @uuid)
+ *   collapse-toggle — the phone title toggle was pressed; the owner flips `collapsed`
  */
 export class CommentsPanel extends LitElement {
     static get styles() {
-        return [avatarCircleStyles, css`
+        return [avatarCircleStyles, collapsibleStyles, css`
             :host {
                 display: flex;
                 flex-direction: column;
@@ -180,7 +185,7 @@ export class CommentsPanel extends LitElement {
 
             :host-context([data-theme='dark']) .comment-compose textarea {
                 background: var(--color-background);
-                border-color: var(--color-border);
+                border-color: var(--color-control-border);
                 color: var(--color-text-primary);
             }
 
@@ -256,11 +261,11 @@ export class CommentsPanel extends LitElement {
                 min-height: 36px;
                 max-height: 120px;
                 box-sizing: border-box;
-                border: 1px solid var(--color-border);
+                border: 1px solid var(--color-control-border);
                 border-radius: 6px;
                 padding: 8px 12px;
                 font: inherit;
-                font-size: 0.875rem;
+                font-size: max(0.875rem, var(--field-font-min, 0px));
                 color: var(--color-text-primary);
                 background: var(--color-background);
                 resize: vertical;
@@ -282,7 +287,7 @@ export class CommentsPanel extends LitElement {
                 padding: 4px 0;
                 list-style: none;
                 background: var(--color-panel, #fff);
-                border: 1px solid var(--color-border);
+                border: 1px solid var(--color-control-border);
                 border-radius: var(--radius-md, 8px);
                 box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
                 overflow-y: auto;
@@ -292,7 +297,6 @@ export class CommentsPanel extends LitElement {
 
             :host-context([data-theme='dark']) .mention-dropdown {
                 background: var(--color-panel);
-                border-color: var(--color-border);
                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
             }
 
@@ -352,7 +356,7 @@ export class CommentsPanel extends LitElement {
             .primary-button {
                 border: 1px solid transparent;
                 border-radius: 6px;
-                min-height: 36px;
+                min-height: max(36px, var(--tap-target-min, 0px));
                 padding: 8px 18px;
                 font: inherit;
                 font-size: 0.875rem;
@@ -380,6 +384,17 @@ export class CommentsPanel extends LitElement {
                 opacity: 0.55;
                 cursor: not-allowed;
             }
+
+            /* Collapsed on a phone: just the header. */
+            @media ${phoneMedia} {
+                :host([collapsed]) {
+                    min-height: 0;
+                }
+
+                :host([collapsed]) .chat-header {
+                    border-bottom: none;
+                }
+            }
         `];
     }
 
@@ -394,6 +409,7 @@ export class CommentsPanel extends LitElement {
             submitLabel: { type: String },
             postingLabel: { type: String },
             allowCompose: { type: Boolean },
+            collapsed: { type: Boolean, reflect: true },
             posting: { type: Boolean },
             draft: { type: String },
             /** null = not in a mention; string = active @query */
@@ -416,6 +432,7 @@ export class CommentsPanel extends LitElement {
         this.submitLabel = t('comments.send');
         this.postingLabel = t('comments.sending');
         this.allowCompose = true;
+        this.collapsed = false;
         this.posting = false;
         this.draft = '';
         this._mentionQuery = null;
@@ -656,16 +673,21 @@ export class CommentsPanel extends LitElement {
 
         return html`
             <div class="chat-header">
-                <h3 class="comments-title">${this.title}</h3>
+                <h3 class="comments-title">${collapsibleTitle({
+                    label: this.title,
+                    collapsed: this.collapsed,
+                    controls: 'comments-thread',
+                    onToggle: () => this.dispatchEvent(new CustomEvent('collapse-toggle', { bubbles: true, composed: true })),
+                })}</h3>
                 <span class="comments-count">${comments.length}</span>
             </div>
-            <div class="chat-thread">
+            <div class="chat-thread collapse-body" id="comments-thread">
                 ${comments.length === 0 ? html`
                     <div class="empty-note">${this.emptyMessage}</div>
                 ` : comments.map((comment) => this.renderComment(comment))}
             </div>
             ${this.allowCompose ? html`
-                <div class="comment-compose">
+                <div class="comment-compose collapse-body">
                     <div class="textarea-wrap">
                         <textarea
                             placeholder=${this.placeholder}

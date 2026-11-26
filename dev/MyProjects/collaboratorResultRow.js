@@ -83,6 +83,31 @@ export class CollaboratorResultRow extends LitElement {
                 opacity: 1;
                 visibility: visible;
             }
+
+            /* Touch: a disabled button gets no hover or focus, so the reason shows as a note under it. */
+            @media (hover: none) {
+                .add-button-wrapper.show-tooltip {
+                    flex-direction: column;
+                    align-items: flex-end;
+                    gap: 4px;
+                }
+
+                .tooltip-bubble {
+                    position: static;
+                    opacity: 1;
+                    visibility: visible;
+                    padding: 0;
+                    background: none;
+                    box-shadow: none;
+                    color: var(--color-text-secondary);
+                    font-size: 0.78rem;
+                    text-align: right;
+                }
+
+                .tooltip-bubble::after {
+                    display: none;
+                }
+            }
         `;
     }
 

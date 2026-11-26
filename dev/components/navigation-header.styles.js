@@ -1,4 +1,5 @@
 import { css } from 'lit-element';
+import { phoneMedia } from '../styles/breakpoints.js';
 
 export const navigationHeaderStyles = css`
     :host {
@@ -114,27 +115,42 @@ export const navigationHeaderStyles = css`
         color: var(--color-on-primary);
     }
 
-    @media (max-width: 640px) {
+    /* Phone: a slimmer bar, and Home as just its icon (the link keeps its "Go home" name) to leave room for ☰. */
+    @media ${phoneMedia} {
         .nav-shell {
-            padding: 10px 12px;
-            gap: 10px;
-        }
-
-        .home-link {
-            padding: 7px 10px;
+            padding: 6px 8px;
             gap: 8px;
         }
 
-        .home-text {
-            font-size: 0.9rem;
-            max-width: 130px;
+        .home-link {
+            justify-content: center;
+            width: 40px;
+            height: 40px;
+            padding: 0;
+            box-sizing: border-box;
         }
 
-        .home-icon {
-            width: 24px;
-            height: 24px;
-            font-size: 13px;
-            flex-basis: 24px;
+        .home-text {
+            display: none;
+        }
+
+        /* One shape, like the bell and avatar: the house straight on the button, without its inner square. */
+        .home-icon,
+        .home-link:hover .home-icon,
+        .home-link:focus-visible .home-icon,
+        :host-context([data-theme='dark']) .home-icon,
+        :host-context([data-theme='dark']) .home-link:hover .home-icon,
+        :host-context([data-theme='dark']) .home-link:focus-visible .home-icon {
+            width: auto;
+            height: auto;
+            flex-basis: auto;
+            background: transparent;
+            color: inherit;
+        }
+
+        .home-icon svg {
+            width: 22px;
+            height: 22px;
         }
     }
 `;

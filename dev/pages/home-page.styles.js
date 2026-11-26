@@ -76,6 +76,8 @@ export const homePageStyles = css`
         justify-content: center;
         width: 36px;
         height: 36px;
+        min-width: var(--tap-target-min, 0px);
+        min-height: var(--tap-target-min, 0px);
         padding: 0;
         border: 1px solid transparent;
         border-radius: 50%;
@@ -221,6 +223,7 @@ export const homePageStyles = css`
         align-items: center;
         gap: 5px;
         padding: 4px 10px;
+        min-height: var(--tap-target-min, 0px);
         border: 1px solid var(--color-border);
         border-radius: var(--radius-sm, 6px);
         background: transparent;
@@ -254,7 +257,7 @@ export const homePageStyles = css`
         min-width: 180px;
         padding: 6px;
         background: var(--color-panel, var(--color-surface));
-        border: 1px solid var(--color-border);
+        border: 1px solid var(--color-control-border);
         border-radius: var(--radius-md, 8px);
         box-shadow: 0 4px 12px color-mix(in srgb, var(--color-text-primary) 12%, transparent);
         z-index: 50;
@@ -268,6 +271,7 @@ export const homePageStyles = css`
         align-items: center;
         gap: 8px;
         padding: 7px 10px;
+        min-height: var(--tap-target-min, 0px);
         border-radius: var(--radius-sm, 6px);
         font-size: 0.9rem;
         cursor: pointer;
@@ -425,12 +429,12 @@ export const homePageStyles = css`
         flex: 1 1 200px;
         min-width: 0;
         padding: 5px 8px;
-        border: 1px solid var(--color-border);
+        border: 1px solid var(--color-control-border);
         border-radius: 6px;
         background: var(--color-surface);
         color: var(--color-text-primary);
         font: inherit;
-        font-size: 0.85rem;
+        font-size: max(0.85rem, var(--field-font-min, 0px));
     }
 
     .card-detail {
@@ -500,6 +504,7 @@ export const homePageStyles = css`
     /* ─── Small action buttons (invite approve/reject) ──────── */
     .small-button {
         padding: 5px 14px;
+        min-height: var(--tap-target-min, 0px);
         border: 1px solid var(--color-border);
         border-radius: 6px;
         background: transparent;

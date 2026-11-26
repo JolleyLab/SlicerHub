@@ -47,6 +47,7 @@ export class NavigationHeader extends LitElement {
     render() {
         return html`
             <header class="nav-shell">
+                <slot name="start"></slot>
                 <a
                     class="home-link"
                     href=${this.homeHref}
