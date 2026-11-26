@@ -1,4 +1,5 @@
 import { css } from 'lit-element';
+import { phoneMedia } from '../styles/breakpoints.js';
 
 export const userSettingsStyles = css`
     .settings-stack {
@@ -77,69 +78,6 @@ export const userSettingsStyles = css`
         display: flex;
         align-items: center;
         gap: 8px;
-    }
-
-    .section-hint {
-        position: relative;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 1.15rem;
-        height: 1.15rem;
-        padding: 0;
-        border: 1px solid var(--color-border);
-        border-radius: 50%;
-        background: transparent;
-        color: var(--color-text-secondary);
-        font: inherit;
-        font-size: 0.7rem;
-        font-weight: 600;
-        line-height: 1;
-        cursor: help;
-    }
-
-    .section-hint:hover,
-    .section-hint:focus-visible {
-        color: var(--color-text-primary);
-        border-color: var(--color-text-secondary);
-        outline: none;
-    }
-
-    .section-hint .hint-bubble {
-        position: absolute;
-        left: 50%;
-        bottom: calc(100% + 8px);
-        transform: translateX(-50%);
-        width: max-content;
-        max-width: min(280px, 70vw);
-        padding: 8px 10px;
-        border-radius: 8px;
-        background: var(--color-text-primary);
-        color: var(--color-background, #fff);
-        font-size: 0.8rem;
-        font-weight: 400;
-        line-height: 1.35;
-        text-align: left;
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity 0.12s ease;
-        z-index: 2;
-    }
-
-    .section-hint .hint-bubble::after {
-        content: '';
-        position: absolute;
-        top: 100%;
-        left: 50%;
-        margin-left: -5px;
-        border: 5px solid transparent;
-        border-top-color: var(--color-text-primary);
-    }
-
-    .section-hint:hover .hint-bubble,
-    .section-hint:focus-visible .hint-bubble {
-        opacity: 1;
     }
 
     .section-description {
@@ -244,8 +182,9 @@ export const userSettingsStyles = css`
 
     .form-group input {
         font: inherit;
+        font-size: max(1em, var(--field-font-min, 0px));
         padding: 8px 10px;
-        border: 1px solid var(--color-border);
+        border: 1px solid var(--color-control-border);
         border-radius: var(--radius-md, 8px);
         background: var(--color-background);
         color: var(--color-text-primary);
@@ -264,18 +203,11 @@ export const userSettingsStyles = css`
         border-top: 1px solid var(--color-border);
     }
 
-    /* Pinned (stickyActions.js): reach the content box's edges (page-layout-template padding). */
+    /* Pinned (stickyActions.js): reach the content box's edges, whatever page-layout-template's padding is. */
     .settings-save-bar.is-sticky {
-        margin: 0 -20px -20px;
-        padding: 12px 20px;
+        margin: 0 calc(-1 * var(--content-pad-x, 20px)) calc(-1 * var(--content-pad-bottom, 20px));
+        padding: 12px var(--content-pad-x, 20px);
         border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-    }
-
-    @media (max-width: 1024px) {
-        .settings-save-bar.is-sticky {
-            margin: 0 -16px -16px;
-            padding: 12px 16px;
-        }
     }
 
     .save-status {
@@ -373,5 +305,20 @@ export const userSettingsStyles = css`
     :host-context([data-theme='dark']) .small-button:hover {
         background: color-mix(in srgb, var(--color-accent) 10%, var(--color-panel));
         border-color: color-mix(in srgb, var(--color-accent) 50%, var(--color-border));
+    }
+
+    /* Home page layout: not offered on phones, where Home is a single column. */
+    .home-layout-phone {
+        display: none;
+    }
+
+    @media ${phoneMedia} {
+        .home-layout-wide {
+            display: none;
+        }
+
+        .home-layout-phone {
+            display: block;
+        }
     }
 `;

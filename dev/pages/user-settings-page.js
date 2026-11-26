@@ -490,10 +490,8 @@ export class UserSettingsPage extends LitElement {
                             <section class="settings-section">
                                 <div class="section-title-row">
                                     <h2 class="section-title">${t('settings.profile')}</h2>
-                                    <button type="button" class="section-hint" aria-label=${t('settings.profileHint')}>
-                                        ?
-                                        <span class="hint-bubble" role="tooltip">${t('settings.profileHint')}</span>
-                                    </button>
+                                    <info-tip .text=${t('settings.profileHint')}
+                                        .label=${t('settings.profileInfo')}></info-tip>
                                 </div>
                                 <div class="profile-form">
                                     <div class="avatar-row">
@@ -610,11 +608,14 @@ export class UserSettingsPage extends LitElement {
 
                         <section class="settings-section">
                             <h2 class="section-title">${t('homeLayout.title')}</h2>
-                            <p class="section-description">${t('homeLayout.description')}</p>
+                            <!-- Phones get a note in place of the settings (CSS shows one or the other). -->
+                            <p class="section-description home-layout-wide">${t('homeLayout.description')}</p>
                             <home-layout-settings
+                                class="home-layout-wide"
                                 .layout=${this.homeLayout}
                                 @layout-change=${(e) => this.handleHomeLayoutChange(e)}
                             ></home-layout-settings>
+                            <p class="section-description home-layout-phone">${t('homeLayout.phoneUnavailable')}</p>
                         </section>
 
                         <section class="settings-section">

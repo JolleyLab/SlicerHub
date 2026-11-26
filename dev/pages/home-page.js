@@ -1,5 +1,7 @@
 import { LitElement, html } from 'lit-element';
 import { homePageStyles } from './home-page.styles.js';
+import { homePageMobileStyles } from './home-page.mobile.styles.js';
+import { collapsibleStyles, collapsibleTitle } from '../styles/collapsible.js';
 import { buttonStyles } from '../styles/buttons.js';
 import { t } from '../i18n/index.js';
 import { loadAppFeatures } from '../services/features.js';
@@ -19,6 +21,7 @@ import { condensedTime, fullTime } from '../utils/condensedTime.js';
 import { ICON_CASES, ICON_TODO, ICON_ACTIVITY, ICON_GEAR } from '../utils/homeIcons.js';
 import { visibleColumns, normalizeHomeLayout } from '../utils/homeLayout.js';
 import { getCachedUserPreferences } from '../utils/userPreferences.js';
+import { loadStoredSet, saveStoredSet, toggledSet } from '../utils/storedSet.js';
 import { groupMembersTitle } from '../utils/groupMembersTitle.js';
 import '../components/page-layout-template.js';
 
@@ -139,6 +142,10 @@ function notificationToTodo(notification) {
     };
 }
 
+/** Phones: which sections are folded to their header, kept in this browser. To do starts open, the rest closed. */
+const COLLAPSED_SECTIONS_KEY = 'home-collapsed-sections';
+const DEFAULT_COLLAPSED_SECTIONS = ['home-activity', 'home-recent-cases'];
+
 /**
  * Landing page after sign-in: what needs the user's action (To do), what has happened lately
  * (Recent activity) and their recent cases. Only To do has a data source so far (invites awaiting
@@ -146,7 +153,7 @@ function notificationToTodo(notification) {
  */
 export class HomePage extends LitElement {
     static get styles() {
-        return [buttonStyles, homePageStyles];
+        return [buttonStyles, collapsibleStyles, homePageStyles, homePageMobileStyles];
     }
 
     static get properties() {
@@ -163,6 +170,8 @@ export class HomePage extends LitElement {
             panelFilters: { type: Object },
             _filterMenuOpen: { type: Object },
             homeLayout: { type: Object },
+            /** Phones: ids of the sections folded to their header (COLLAPSED_SECTIONS_KEY) */
+            collapsedSections: { type: Object },
             busyUpdates: { type: Object },
             updateStatus: { type: String },
             updateStatusIsError: { type: Boolean },
@@ -184,6 +193,7 @@ export class HomePage extends LitElement {
         this._filterMenuOpen = {};
         this._onDocClick = (e) => this._handleDocClick(e);
         this.homeLayout = normalizeHomeLayout(getCachedUserPreferences().homeLayout);
+        this.collapsedSections = loadStoredSet(COLLAPSED_SECTIONS_KEY, DEFAULT_COLLAPSED_SECTIONS);
         this._onPreferencesChanged = () => {
             const prefs = getCachedUserPreferences();
             this.homeLayout = normalizeHomeLayout(prefs.homeLayout);
@@ -463,6 +473,24 @@ export class HomePage extends LitElement {
         }));
     }
 
+    toggleSection(id) {
+        this.collapsedSections = toggledSet(this.collapsedSections, id);
+        saveStoredSet(COLLAPSED_SECTIONS_KEY, this.collapsedSections);
+    }
+
+    /** A section's heading text and item count; on phones the text folds the section and the count shows. */
+    renderSectionTitle(id, title, count) {
+        return html`
+            <h2 class="panel-title" id=${id}>${collapsibleTitle({
+                label: title,
+                collapsed: this.collapsedSections.has(id),
+                controls: `${id}-body`,
+                onToggle: () => this.toggleSection(id),
+            })}</h2>
+            <span class="panel-count">${count}</span>
+        `;
+    }
+
     /** A panel of cards, newest first, with a multiselect filter dropdown when more than one category is present. */
     renderCardPanel({ id, title, icon, items, clearKey, clearIcon = null, status = null }) {
         const present = CATEGORIES
@@ -485,10 +513,10 @@ export class HomePage extends LitElement {
         }
 
         return html`
-            <section class="panel" aria-labelledby=${id}>
+            <section class="panel ${this.collapsedSections.has(id) ? 'is-collapsed' : ''}" aria-labelledby=${id}>
                 <div class="panel-header">
                     <span class="panel-icon">${icon}</span>
-                    <h2 class="panel-title" id=${id}>${title}</h2>
+                    ${this.renderSectionTitle(id, title, shown.length)}
                     ${present.length > 1 ? html`
                         <div class="filter-dropdown">
                             <button
@@ -522,13 +550,15 @@ export class HomePage extends LitElement {
                         </div>
                     ` : ''}
                 </div>
-                ${items.length === 0 ? html`
-                    <p class="panel-clear">${clearIcon}<span>${t(clearKey)}</span></p>
-                ` : html`
-                    <ul class="card-list">
-                        ${shown.map((item) => this.renderCard(item))}
-                    </ul>
-                `}
+                <div class="collapse-body" id="${id}-body">
+                    ${items.length === 0 ? html`
+                        <p class="panel-clear">${clearIcon}<span>${t(clearKey)}</span></p>
+                    ` : html`
+                        <ul class="card-list">
+                            ${shown.map((item) => this.renderCard(item))}
+                        </ul>
+                    `}
+                </div>
                 ${status}
             </section>
         `;
@@ -744,11 +774,12 @@ export class HomePage extends LitElement {
     renderRecentCases() {
         const cases = this.recentCases;
         return html`
-            <section class="panel" aria-labelledby="home-recent-cases">
+            <section class="panel ${this.collapsedSections.has('home-recent-cases') ? 'is-collapsed' : ''}" aria-labelledby="home-recent-cases">
                 <div class="panel-header">
                     <span class="panel-icon">${ICON_CASES}</span>
-                    <h2 class="panel-title" id="home-recent-cases">${t('home.recentCases')}</h2>
+                    ${this.renderSectionTitle('home-recent-cases', t('home.recentCases'), cases.length)}
                 </div>
+                <div class="collapse-body" id="home-recent-cases-body">
                 ${cases.length === 0 ? html`
                     <p class="panel-clear"><span>${t('home.recentCasesEmptyTitle')}</span></p>
                 ` : html`
@@ -781,6 +812,7 @@ export class HomePage extends LitElement {
                         `)}
                     </ul>
                 `}
+                </div>
             </section>
         `;
     }

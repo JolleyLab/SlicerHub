@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit-element';
 import { t } from '../i18n/index.js';
 import { buttonStyles } from '../styles/buttons.js';
 import { workflowStyles } from '../styles/workflows.js';
+import { phoneMedia } from '../styles/breakpoints.js';
 import './app-dialog.js';
 import './icon-button.js';
 import {
@@ -44,7 +45,7 @@ export class CaseWorkflowsPanel extends LitElement {
             icon-button svg { width: 15px; height: 15px; }
             .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--color-border); margin-bottom: 12px; }
             .tabs button { border: 0; background: transparent; color: var(--color-text-secondary); font: inherit;
-                padding: 6px 10px; cursor: pointer; border-bottom: 2px solid transparent; }
+                padding: 6px 10px; min-height: var(--tap-target-min, 0px); cursor: pointer; border-bottom: 2px solid transparent; }
             .tabs button[aria-selected='true'] { color: var(--color-text-primary); font-weight: 600; border-bottom-color: var(--color-focus); }
             .results { max-height: min(55vh, 460px); overflow-y: auto; }
             /* Details on the left, actions in their own column on the right, so buttons line up row to row. */
@@ -55,6 +56,14 @@ export class CaseWorkflowsPanel extends LitElement {
             .search { width: 100%; }
             .decline-form { display: flex; gap: 8px; flex-wrap: wrap; grid-column: 1 / -1; }
             .decline-form input { flex: 1 1 240px; }
+            /* Phones: buttons stay beside the details while they fit (an icon does), and move underneath,
+               still on the right, when they don't (Approve and Decline). */
+            @media ${phoneMedia} {
+                .item { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+                .item-text { flex: 1 1 180px; }
+                .actions { flex-wrap: wrap; margin-left: auto; }
+                .decline-form { flex-basis: 100%; }
+            }
         `];
     }
 

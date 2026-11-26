@@ -5,10 +5,6 @@ export const peopleDialogStyles = css`
         display: contents;
     }
 
-    app-dialog {
-        --app-dialog-width: min(560px, calc(100vw - 32px));
-    }
-
     .body {
         display: flex;
         flex-direction: column;
@@ -125,11 +121,11 @@ export const peopleDialogStyles = css`
     .invite-input {
         flex: 1;
         min-width: 0;
-        border: 1px solid var(--color-border);
+        border: 1px solid var(--color-control-border);
         border-radius: 6px;
         padding: 9px 12px;
         font: inherit;
-        font-size: 0.9rem;
+        font-size: max(0.9rem, var(--field-font-min, 0px));
         background: var(--color-background);
         color: var(--color-text-primary);
         box-sizing: border-box;

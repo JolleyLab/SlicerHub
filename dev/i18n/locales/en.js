@@ -38,6 +38,7 @@ export default {
         next: 'Next',
         menu: 'Menu',
         moreOptions: 'More options',
+        moreActionsFor: 'More actions for {name}',
         default: 'Default',
         remove: 'Remove',
         back: 'Back',
@@ -71,6 +72,8 @@ export default {
         mine: 'Mine',
         startsIn: 'Starts in {module}',
         moreWorkflows: 'More toolkits… ({count} more)',
+        // Under the ⋯ tile on touch screens, where tile names show instead of tooltips
+        moreWorkflowsShort: '{count} more',
         moreWorkflowsTitle: 'Open {name} with…',
         // Asked when uploading (default-toolkit-dialog)
         uploadTitle: 'Choose the default toolkit for this file',
@@ -226,6 +229,8 @@ export default {
     homeLayout: {
         title: 'Home page',
         description: 'Choose which sections appear on Home and where they go. Changes save automatically.',
+        // In place of the settings on a phone, where Home is one column
+        phoneUnavailable: 'Customization is not available for mobile view.',
         layoutLabel: 'Layout',
         presetDefault: 'Default',
         presetBalanced: 'Balanced',
@@ -274,6 +279,7 @@ export default {
         unableToSave: 'Unable to save settings.',
         profile: 'Profile',
         profileHint: 'Your name appears in Cases collaboration (People, comments, invites).',
+        profileInfo: 'About your profile',
         firstName: 'First name',
         lastName: 'Last name',
         preferredName: 'Preferred name',

@@ -1,6 +1,7 @@
 import { LitElement, html } from 'lit-element';
 import { listPageStyles } from '../styles/listPage.js';
 import { casesPageStyles } from './cases-page.styles.js';
+import { casesPageMobileStyles } from './cases-page.mobile.styles.js';
 import { LIST_SORT_OPTIONS, filterByText, sortRows } from '../utils/listSort.js';
 import { t } from '../i18n/index.js';
 import '../components/page-layout-template.js';
@@ -27,6 +28,7 @@ import { VIEWER, SIMPLIFIED_VIEWER_MODULE, workflowsAddingExtensions } from '../
 import { CaseWorkflowsController } from '../controllers/caseWorkflowsController.js';
 import { ICON_TRASH, ICON_DOWNLOAD } from '../utils/icons.js';
 import { iconTile, iconTileStyles } from '../utils/iconTile.js';
+import { collapsibleStyles, collapsibleTitle } from '../styles/collapsible.js';
 import { resetSlicerWebExtensions } from '../utils/slicerWebStorage.js';
 import { formatBytes } from '../utils/formatBytes.js';
 import { deepActiveElement } from '../utils/focus.js';
@@ -94,7 +96,7 @@ function writeCaseCommentSeenMap(map) {
  */
 export class CasesPage extends LitElement {
     static get styles() {
-        return [listPageStyles, iconTileStyles, casesPageStyles];
+        return [listPageStyles, iconTileStyles, collapsibleStyles, casesPageStyles, casesPageMobileStyles];
     }
 
     static get properties() {
@@ -151,6 +153,9 @@ export class CasesPage extends LitElement {
             // Attachment sort / search
             attachmentSortOrder: { type: String },
             attachmentSearchQuery: { type: String },
+            // Phones: the case's Attachments and Comments panels can collapse to their headers
+            attachmentsCollapsed: { type: Boolean },
+            commentsCollapsed: { type: Boolean },
             // Cases list sort / search
             caseSortOrder: { type: String },
             caseSearchQuery: { type: String },
@@ -262,6 +267,9 @@ export class CasesPage extends LitElement {
         // Attachment sort / search
         this.attachmentSortOrder = 'newest';
         this.attachmentSearchQuery = '';
+        // Phones open a case with its files showing and its comments folded away (the header keeps their count).
+        this.attachmentsCollapsed = false;
+        this.commentsCollapsed = true;
         // Cases list sort / search
         this.caseSortOrder = 'newest';
         this.caseSearchQuery = '';
@@ -278,7 +286,7 @@ export class CasesPage extends LitElement {
         return this.cases.find((row) => String(row.id) === String(this.selectedCaseId)) || null;
     }
 
-    // â”€â”€ URL / history helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // URL / history helpers
     _getCaseIdFromUrl() {
         return new URLSearchParams(location.search).get('case') || '';
     }
@@ -332,7 +340,7 @@ export class CasesPage extends LitElement {
         super.connectedCallback();
         installViewerActivityListeners();
 
-        // Restore case from URL; strip ?viewer â€” the container is gone after a reload
+        // Restore case from URL; strip ?viewer — the container is gone after a reload
         const initialCaseId = this._getCaseIdFromUrl();
         if (initialCaseId) this.selectedCaseId = initialCaseId;
         if (new URLSearchParams(location.search).has('viewer')) {
@@ -1076,7 +1084,7 @@ export class CasesPage extends LitElement {
         }
     }
 
-    // â”€â”€ New Case form â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // New Case form
     openNewCaseForm() {
         this.showNewCaseForm = true;
         this.newCaseTitle = '';
@@ -1127,7 +1135,7 @@ export class CasesPage extends LitElement {
     }
 
     mergeCaseUpdate(caseRow, updated = {}) {
-        // updateCase remaps with empty nested collections â€” keep local arrays.
+        // updateCase remaps with empty nested collections — keep local arrays.
         const next = { ...caseRow, ...updated };
         next.attachments = Array.isArray(caseRow.attachments) ? caseRow.attachments : [];
         next.comments = Array.isArray(caseRow.comments) ? caseRow.comments : [];
@@ -1156,7 +1164,7 @@ export class CasesPage extends LitElement {
         }
     }
 
-    // â”€â”€ Inline case edit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Inline case edit
     startEditCase(caseRow) {
         if (!this.canEditCaseContent(caseRow)) return;
         this.editingCase = true;
@@ -1201,7 +1209,7 @@ export class CasesPage extends LitElement {
         }
     }
 
-    // â”€â”€ Attachment download â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Attachment download
     async handleDownloadAttachment(caseRow, attachment) {
         if (!attachment?.id || this.downloadingAttachmentIds.has(attachment.id)) return;
         if (!this.canEditCaseContent(caseRow)) return;
@@ -1240,7 +1248,50 @@ export class CasesPage extends LitElement {
         this.downloadingAttachmentIds = next;
     }
 
-    // â”€â”€ Attachment delete â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Attachment delete
+    canRemoveAttachment(caseRow, attachment) {
+        return this.isMyAttachment(attachment) || this.myCaseRole(caseRow) === 'admin';
+    }
+
+    /** A file row's Download / Remove, picked from its phone ⋯ menu. */
+    onAttachmentAction(caseRow, attachment, key) {
+        if (key === 'download') this.handleDownloadAttachment(caseRow, attachment);
+        else if (key === 'remove') this.handleDeleteAttachment(caseRow, attachment);
+    }
+
+    /**
+     * Phones: one ⋯ per file row in place of its icon buttons (CSS shows one or the other): the Open-with
+     * grid when the file opens in a viewer, then Download and Remove.
+     */
+    renderNarrowAttachmentMenu(caseRow, attachment, openWith, canEdit) {
+        const items = [
+            canEdit && {
+                key: 'download',
+                label: t('cases.downloadFile'),
+                disabled: this.downloadingAttachmentIds.has(attachment.id),
+            },
+            this.canRemoveAttachment(caseRow, attachment) && {
+                key: 'remove',
+                label: t('cases.removeFile'),
+                disabled: !!this.deletingAttachmentId,
+            },
+        ].filter(Boolean);
+        if (attachment?.canOpenInSlicer) {
+            return this.workflows.renderMenu(caseRow, attachment, openWith, {
+                slot: 'actions', more: true, extraItems: items, className: 'narrow-only',
+            });
+        }
+        if (!items.length) return '';
+        return html`
+            <overflow-menu
+                slot="actions"
+                class="narrow-only"
+                label=${t('common.moreActionsFor', { name: this.attachmentTitle(attachment) })}
+                .items=${items}
+            ></overflow-menu>
+        `;
+    }
+
     async handleDeleteAttachment(caseRow, attachment) {
         if (!attachment?.id || this.deletingAttachmentId) return;
         if (!this.isMyAttachment(attachment) && this.myCaseRole(caseRow) !== 'admin') return;
@@ -1264,7 +1315,7 @@ export class CasesPage extends LitElement {
         }
     }
 
-    // â”€â”€ File upload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // File upload
     triggerFileUpload() {
         this.shadowRoot?.querySelector('#attach-file-input')?.click();
     }
@@ -1330,7 +1381,7 @@ export class CasesPage extends LitElement {
         });
     }
 
-    // â”€â”€ Drag-and-drop attach â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Drag-and-drop attach
     isFileDrag(event) {
         return Array.from(event.dataTransfer?.types || []).includes('Files');
     }
@@ -1457,7 +1508,7 @@ export class CasesPage extends LitElement {
             }, 0));
         } else if (this._viewerPushedState) {
             this._viewerPushedState = false;
-            history.back(); // popstate fires â†’ _handlePopState â†’ _doCloseViewer
+            history.back(); // popstate fires → _handlePopState → _doCloseViewer
         } else {
             this._doCloseViewer();
         }
@@ -1470,11 +1521,14 @@ export class CasesPage extends LitElement {
         this._replaceUrlWithCase();
     }
 
+    /** Name, size and date; for a file that can't be opened, also why (else only a hover tooltip, out of reach by touch or keyboard). */
     attachmentMetaLine(attachment) {
         const originalName = attachment.filenameDownload || '';
         const size = formatBytes(attachment.filesize);
         const modified = formatDateTime(attachment.modifiedAt);
-        return [originalName, size, modified].filter(Boolean).join(' - ');
+        const details = [originalName, size, modified].filter(Boolean).join(' - ');
+        if (this.attachmentCanActivate(attachment)) return details;
+        return [details, this.attachmentOpenTitle(attachment)].filter(Boolean).join(' · ');
     }
 
     attachmentTitle(attachment) {
@@ -1660,7 +1714,8 @@ export class CasesPage extends LitElement {
     }
 
     onCaseAction(caseRow, key) {
-        if (key === 'workflows') this.workflows.openPanel(caseRow);
+        if (key === 'people') this.openPeopleDialog(caseRow);
+        else if (key === 'workflows') this.workflows.openPanel(caseRow);
         else if (key === 'edit') this.startEditCase(caseRow);
         else if (key === 'settings') this.showCaseSettings = true;
     }
@@ -2492,7 +2547,7 @@ export class CasesPage extends LitElement {
                         </button>
                         <div class="detail-toolbar-actions">
                             <button
-                                class="quiet-button"
+                                class="quiet-button wide-only"
                                 type="button"
                                 ?disabled=${this.savingCollaborators}
                                 @click=${() => this.openPeopleDialog(caseRow)}
@@ -2502,8 +2557,19 @@ export class CasesPage extends LitElement {
                                     : ''}
                             </button>
                             <overflow-menu
+                                class="wide-only"
                                 label=${t('cases.moreActions')}
                                 .items=${this.caseActions(caseRow, { canEdit, canManage })}
+                                @menu-select=${(e) => this.onCaseAction(caseRow, e.detail.key)}
+                            ></overflow-menu>
+                            <!-- Phones: Share moves into ⋯ (its pending-invite count shows on the ⋯ button). -->
+                            <overflow-menu
+                                class="narrow-only"
+                                label=${t('cases.moreActions')}
+                                .items=${[
+                                    { key: 'people', label: peopleLabel, badge: pendingInvites, disabled: this.savingCollaborators },
+                                    ...this.caseActions(caseRow, { canEdit, canManage }),
+                                ]}
                                 @menu-select=${(e) => this.onCaseAction(caseRow, e.detail.key)}
                             ></overflow-menu>
                         </div>
@@ -2573,10 +2639,15 @@ export class CasesPage extends LitElement {
 
 
                     <div class="case-detail-grid">
-                        <div class="list-panel">
+                        <div class="list-panel ${this.attachmentsCollapsed ? 'is-collapsed' : ''}">
                             <div class="panel-header">
                                 <div class="panel-header-start">
-                                    <h3 class="panel-title">${t('cases.attachments')}</h3>
+                                    <h3 class="panel-title">${collapsibleTitle({
+                                        label: t('cases.attachments'),
+                                        collapsed: this.attachmentsCollapsed,
+                                        controls: 'case-attachments-body',
+                                        onToggle: () => { this.attachmentsCollapsed = !this.attachmentsCollapsed; },
+                                    })}</h3>
                                     <span
                                         class="panel-count"
                                         title=${searchActive
@@ -2600,7 +2671,8 @@ export class CasesPage extends LitElement {
                                 ` : ''}
                             </div>
                             <div
-                                class="list-panel-body ${this.attachmentDragOver ? 'drag-over' : ''}"
+                                id="case-attachments-body"
+                                class="list-panel-body collapse-body ${this.attachmentDragOver ? 'drag-over' : ''}"
                                 @dragenter=${(e) => this.handleAttachmentDragEnter(e, caseRow)}
                                 @dragover=${(e) => this.handleAttachmentDragOver(e, caseRow)}
                                 @dragleave=${(e) => this.handleAttachmentDragLeave(e)}
@@ -2627,9 +2699,10 @@ export class CasesPage extends LitElement {
                                                     || this.viewerLoading}
                                                 .nameButtonTitle=${this.attachmentOpenTitle(attachment, openWith)}
                                                 @name-click=${() => this.openWith(caseRow, attachment, openWith)}
+                                                @menu-select=${(e) => this.onAttachmentAction(caseRow, attachment, e.detail.key)}
                                             >
                                                 ${attachment?.canOpenInSlicer ? html`
-                                                    <span slot="actions" class="open-with-split">
+                                                    <span slot="actions" class="open-with-split wide-only">
                                                         <button
                                                             class="open-with-icon"
                                                             type="button"
@@ -2644,7 +2717,7 @@ export class CasesPage extends LitElement {
                                                 ${canEdit ? html`
                                                     <button
                                                         slot="actions"
-                                                        class="file-icon-button"
+                                                        class="file-icon-button wide-only"
                                                         type="button"
                                                         title=${t('cases.downloadFileNamed', { name: this.attachmentTitle(attachment) })}
                                                         aria-label=${t('cases.downloadFileNamed', { name: this.attachmentTitle(attachment) })}
@@ -2657,10 +2730,10 @@ export class CasesPage extends LitElement {
                                                         ` : ICON_DOWNLOAD}
                                                     </button>
                                                 ` : ''}
-                                                ${(this.isMyAttachment(attachment) || this.myCaseRole(caseRow) === 'admin') ? html`
+                                                ${this.canRemoveAttachment(caseRow, attachment) ? html`
                                                     <button
                                                         slot="actions"
-                                                        class="file-icon-button"
+                                                        class="file-icon-button wide-only"
                                                         type="button"
                                                         title=${t('cases.removeFileNamed', { name: this.attachmentTitle(attachment) })}
                                                         aria-label=${t('cases.removeFileNamed', { name: this.attachmentTitle(attachment) })}
@@ -2670,6 +2743,7 @@ export class CasesPage extends LitElement {
                                                         ${ICON_TRASH}
                                                     </button>
                                                 ` : ''}
+                                                ${this.renderNarrowAttachmentMenu(caseRow, attachment, openWith, canEdit)}
                                             </file-list-row>
                                         `;
                                         })}
@@ -2736,6 +2810,8 @@ export class CasesPage extends LitElement {
                             placeholder=${t('cases.writeComment')}
                             ?posting=${this.postingComment}
                             ?allowCompose=${canComment}
+                            ?collapsed=${this.commentsCollapsed}
+                            @collapse-toggle=${() => { this.commentsCollapsed = !this.commentsCollapsed; }}
                             @post-comment=${(e) => this.handlePostComment(e, caseRow)}
                         ></comments-panel>
                     </div>

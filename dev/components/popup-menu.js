@@ -21,9 +21,10 @@ const BASE_CSS = `
   font-size: 0.875rem;
   color: var(--color-text-primary, #1a1a1a);
   background: var(--color-panel, #fff);
-  border: 1px solid var(--color-border, #ccc);
+  /* A floating panel's edge needs 3:1 against what it covers (WCAG 1.4.11); --color-border is too faint on dark. */
+  border: 1px solid var(--color-control-border, #224f6b);
   border-radius: var(--radius-md, 6px);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--popup-shadow, 0 8px 22px rgba(0, 0, 0, 0.18));
 }
 .popup-menu-panel .item {
   display: flex;
@@ -36,6 +37,7 @@ const BASE_CSS = `
   font: inherit;
   text-align: left;
   padding: 8px 12px;
+  min-height: var(--tap-target-min, 0px);
   cursor: pointer;
   box-sizing: border-box;
 }
@@ -44,6 +46,8 @@ const BASE_CSS = `
   background: color-mix(in srgb, var(--color-primary, #3366cc) 10%, transparent);
   outline: none;
 }
+/* Disabled items use aria-disabled, not disabled: they stay focusable so the arrow keys can move past them. */
+.popup-menu-panel .item[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
 .popup-menu-panel .item-label { flex: 1; min-width: 0; }
 .popup-menu-panel .check {
   flex: 0 0 14px;
@@ -133,8 +137,9 @@ export class PopupMenu extends LitElement {
                 border-radius: var(--radius-lg, 8px);
                 background: transparent;
                 color: var(--color-text-secondary);
-                min-width: 28px;
+                min-width: max(28px, var(--tap-target-min, 0px));
                 height: 28px;
+                min-height: var(--tap-target-min, 0px);
                 padding: 0 4px;
                 gap: 2px;
                 display: inline-flex;
@@ -354,6 +359,21 @@ export class PopupMenu extends LitElement {
 
     emit(type, detail = {}) {
         this.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
+    }
+
+    /**
+     * Menu items that emit `menu-select` { key }: [{ key, label, badge?, disabled? }]. A disabled one stays
+     * focusable (aria-disabled) so the arrow keys move past it. `checkColumn`: line up with a list of ✓ items.
+     */
+    actionItemsTemplate(items, { checkColumn = false } = {}) {
+        return (items || []).map((item) => html`
+            <button class="item" type="button" role="menuitem" tabindex="-1" aria-disabled=${item.disabled ? 'true' : 'false'}
+                @click=${() => { if (!item.disabled) this.closeAndEmit('menu-select', { key: item.key }); }}>
+                ${checkColumn ? html`<span class="check is-empty" aria-hidden="true">✓</span>` : ''}
+                <span class="item-label">${item.label}</span>
+                ${item.badge ? html`<span class="badge">${item.badge}</span>` : ''}
+            </button>
+        `);
     }
 
     /** Close, then emit. Focus goes back to the button first, so whatever opens next knows where to return to. */

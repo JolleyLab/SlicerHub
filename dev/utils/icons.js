@@ -25,6 +25,18 @@ export const ICON_DOWNLOAD = html`
         <path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"></path>
     </svg>`;
 
+/** Chevron pointing down: expanded (rotate it to show collapsed). */
+export const ICON_EXPAND = html`
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M16.59 8.59 12 13.17 7.41 8.59 6 10l6 6 6-6z"></path>
+    </svg>`;
+
+/** Three dots: more actions. */
+export const ICON_MORE = html`
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M6 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
+    </svg>`;
+
 /** Circled "i": more information. */
 export const ICON_INFO = html`
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">

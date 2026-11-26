@@ -65,9 +65,10 @@ export class FileManager extends LitElement {
                 min-width: 180px;
                 max-width: 320px;
                 padding: 8px 12px;
-                border: 1px solid var(--color-border);
+                border: 1px solid var(--color-control-border);
                 border-radius: var(--radius-sm);
                 font: inherit;
+                font-size: max(1em, var(--field-font-min, 0px));
                 color: var(--color-text-primary);
                 background: var(--color-surface, var(--color-background));
                 box-sizing: border-box;
@@ -386,11 +387,12 @@ export class FileManager extends LitElement {
             .share-field input {
                 width: 100%;
                 padding: 8px 10px;
-                border: 1px solid var(--color-border);
+                border: 1px solid var(--color-control-border);
                 border-radius: var(--radius-md);
                 box-sizing: border-box;
                 font-size: 14px;
                 font: inherit;
+                font-size: max(1em, var(--field-font-min, 0px));
                 color: var(--color-text-primary);
                 background: var(--color-surface, var(--color-background));
             }

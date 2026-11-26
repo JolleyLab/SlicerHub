@@ -83,12 +83,13 @@ export class CreateProjectForm extends LitElement {
                 width: 100%;
                 max-width: 420px;
                 box-sizing: border-box;
-                border: 1px solid var(--color-border);
+                border: 1px solid var(--color-control-border);
                 border-radius: var(--radius-sm);
                 background: var(--color-surface, var(--color-background));
                 color: var(--color-text-primary);
                 padding: 10px 12px;
                 font: inherit;
+                font-size: max(1em, var(--field-font-min, 0px));
                 transition: border-color 0.2s ease, box-shadow 0.2s ease;
             }
 

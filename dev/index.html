@@ -4,6 +4,8 @@
 
 <head>
   <meta charset="utf-8">
+  <!-- Phones lay the page out at their real width (not a zoomed-out ~980px desktop), which the embedded viewers rely on for their phone layouts. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SlicerHub</title>
   <!-- No favicon yet: an empty inline icon stops the browser's /favicon.ico 404. -->
   <link rel="icon" href="data:,">
@@ -26,6 +28,15 @@
     @supports (font-variation-settings: normal) {
       :root {
         --font-family-base: InterVariable, Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      }
+    }
+
+    /* Touch screens only (components fall back to their desktop sizes when unset):
+       tap targets of at least 44px, and text fields of at least 16px, below which iOS zooms in on focus. */
+    @media (pointer: coarse) {
+      :root {
+        --tap-target-min: 44px;
+        --field-font-min: 16px;
       }
     }
 

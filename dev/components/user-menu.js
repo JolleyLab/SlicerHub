@@ -80,7 +80,7 @@ export class UserMenu extends LitElement {
                 /* Fit "Signed in as " + up to 35 name chars; longer names wrap inside this cap. */
                 max-width: min(92vw, calc(24px + 14ch + 35ch));
                 background-color: var(--color-panel, var(--color-surface, var(--color-background)));
-                border: 1px solid var(--color-border);
+                border: 1px solid var(--color-control-border);
                 border-radius: var(--radius-lg);
                 overflow: hidden;
                 box-shadow: 0 10px 28px var(--color-shadow, rgba(0, 0, 0, 0.16));
@@ -108,7 +108,6 @@ export class UserMenu extends LitElement {
 
             :host-context([data-theme='dark']) .menu {
                 top: calc(100% + 18px);
-                border-color: color-mix(in srgb, var(--color-border) 75%, var(--color-primary));
                 box-shadow:
                     0 0 0 1px color-mix(in srgb, var(--color-primary) 28%, transparent),
                     0 14px 28px rgba(0, 0, 0, 0.35);

@@ -58,7 +58,7 @@ export class TagInput extends LitElement {
             }
             input {
                 flex: 1 1 120px; min-width: 80px; border: 0; outline: none; background: transparent;
-                font: inherit; font-size: 0.925rem; color: var(--color-text-primary); padding: 3px 2px;
+                font: inherit; font-size: max(0.925rem, var(--field-font-min, 0px)); color: var(--color-text-primary); padding: 3px 2px;
             }
             .invalid { margin: 4px 0 0; color: var(--color-status-error-fg, #8a1212); font-size: 0.8rem; }
         `;

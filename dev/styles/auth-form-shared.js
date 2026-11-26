@@ -46,9 +46,9 @@ export const authFormSharedStyles = css`
   input {
     width: 100%;
     padding: 10px 12px;
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--color-control-border);
     border-radius: var(--radius-sm);
-    font-size: 14px;
+    font-size: max(14px, var(--field-font-min, 0px));
     box-sizing: border-box;
     background: var(--color-panel, var(--color-surface, #fff));
     color: var(--color-text-primary);
