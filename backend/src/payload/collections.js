@@ -307,6 +307,8 @@ export const UserNotifications = {
         { name: 'case_id',   type: 'text', index: true },
         { name: 'invite_id', type: 'text', index: true },
         { name: 'read_at',   type: 'date', index: true },
+        // When the bell was opened with this one in it: the bell's dot is for unread and unseen.
+        { name: 'seen_at',   type: 'date', index: true },
     ],
 };
 
