@@ -103,6 +103,31 @@ export class OpenWithMenu extends PopupMenu {
 .popup-menu-panel.open-with .tile[aria-checked='true'] { border-color: var(--color-focus, #0057c2); }
 .popup-menu-panel.open-with .tile:focus-visible { border-color: var(--color-text-primary, #1a1a1a); }
 .popup-menu-panel.open-with .tile .icon-tile { --icon-tile-size: 32px; }
+/* Touch has no hover: name each tile under its icon instead of in a tooltip. */
+.popup-menu-panel.open-with .tile-name { display: none; }
+@media (hover: none) {
+  .popup-menu-panel.open-with .tiles { grid-template-columns: repeat(3, 76px); }
+  .popup-menu-panel.open-with .tile {
+    flex-direction: column;
+    gap: 4px;
+    width: 76px;
+    height: auto;
+    min-height: 76px;
+    padding: 6px 2px;
+  }
+  .popup-menu-panel.open-with .tile::after { display: none; }
+  .popup-menu-panel.open-with .tile-name {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    max-width: 100%;
+    font-size: 0.72rem;
+    line-height: 1.25;
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+}
 ${iconTileStyles.cssText}
 .popup-menu-panel.open-with .more { color: var(--color-text-secondary, #666); }
 `;
@@ -192,12 +217,14 @@ ${iconTileStyles.cssText}
         `;
     }
 
+    /** `name` is the full tooltip ("SlicerHeart · SlicerWeb"); `iconName` is the short name shown under the icon on touch screens. */
     tileTemplate(key, name, iconName, iconSrc) {
         const selected = key === this.selectedKey;
         return html`
             <button class="tile" type="button" role="menuitemradio" data-choice aria-checked=${selected ? 'true' : 'false'} tabindex="-1"
                 aria-label=${name} data-name=${name} @click=${() => this.closeAndEmit('open-workflow', { key })}>
                 ${iconTile(iconName, iconSrc)}
+                <span class="tile-name" aria-hidden="true">${iconName}</span>
             </button>
         `;
     }
@@ -213,6 +240,7 @@ ${iconTileStyles.cssText}
                         aria-label=${t('viewers.moreWorkflows', { count: list.hidden })} data-name=${t('viewers.moreWorkflows', { count: list.hidden })}
                         @click=${() => this.closeAndEmit('more-workflows')}>
                         <span class="icon-tile" aria-hidden="true">⋯</span>
+                        <span class="tile-name" aria-hidden="true">${t('viewers.moreWorkflowsShort', { count: list.hidden })}</span>
                     </button>
                 ` : ''}
             </div>

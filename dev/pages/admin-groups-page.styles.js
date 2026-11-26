@@ -173,11 +173,11 @@ export const adminGroupsStyles = css`
         width: 100%;
         box-sizing: border-box;
         padding: 7px 10px;
-        border: 1px solid var(--color-border);
+        border: 1px solid var(--color-control-border);
         border-radius: 6px;
         background: var(--color-background);
         color: var(--color-text-primary, inherit);
-        font-size: 14px;
+        font-size: max(14px, var(--field-font-min, 0px));
         font-family: inherit;
     }
     .form-group input:focus-visible,

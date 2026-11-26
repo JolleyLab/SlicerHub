@@ -8,13 +8,13 @@ const ICON_MORE = html`
 
 /**
  * A "⋯" button for actions that don't need their own button, e.g. on a toolbar.
- * `items`: [{ key, label, badge? }] (badge: a count, also summed on the button).
+ * `items`: [{ key, label, badge?, disabled? }] (badge: a count, also summed on the button).
  * Emits `menu-select` with { key }.
  */
 export class OverflowMenu extends PopupMenu {
     static get styles() {
         return [PopupMenu.triggerStyles, css`
-            .trigger { width: 32px; height: 32px; padding: 0; position: relative; }
+            .trigger { width: 32px; height: 32px; padding: 0; position: relative; min-width: var(--tap-target-min, 0px); min-height: var(--tap-target-min, 0px); }
             .trigger svg { width: 20px; height: 20px; }
             .trigger-badge {
                 position: absolute;
@@ -58,12 +58,7 @@ export class OverflowMenu extends PopupMenu {
     menuLabel() { return this.label; }
 
     menuContent() {
-        return html`${(this.items || []).map((item) => html`
-            <button class="item" type="button" role="menuitem" tabindex="-1" @click=${() => this.closeAndEmit('menu-select', { key: item.key })}>
-                <span class="item-label">${item.label}</span>
-                ${item.badge ? html`<span class="badge">${item.badge}</span>` : ''}
-            </button>
-        `)}`;
+        return html`${this.actionItemsTemplate(this.items)}`;
     }
 
     render() {

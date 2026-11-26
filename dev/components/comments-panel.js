@@ -180,7 +180,7 @@ export class CommentsPanel extends LitElement {
 
             :host-context([data-theme='dark']) .comment-compose textarea {
                 background: var(--color-background);
-                border-color: var(--color-border);
+                border-color: var(--color-control-border);
                 color: var(--color-text-primary);
             }
 
@@ -256,11 +256,11 @@ export class CommentsPanel extends LitElement {
                 min-height: 36px;
                 max-height: 120px;
                 box-sizing: border-box;
-                border: 1px solid var(--color-border);
+                border: 1px solid var(--color-control-border);
                 border-radius: 6px;
                 padding: 8px 12px;
                 font: inherit;
-                font-size: 0.875rem;
+                font-size: max(0.875rem, var(--field-font-min, 0px));
                 color: var(--color-text-primary);
                 background: var(--color-background);
                 resize: vertical;
@@ -282,7 +282,7 @@ export class CommentsPanel extends LitElement {
                 padding: 4px 0;
                 list-style: none;
                 background: var(--color-panel, #fff);
-                border: 1px solid var(--color-border);
+                border: 1px solid var(--color-control-border);
                 border-radius: var(--radius-md, 8px);
                 box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
                 overflow-y: auto;
@@ -292,7 +292,6 @@ export class CommentsPanel extends LitElement {
 
             :host-context([data-theme='dark']) .mention-dropdown {
                 background: var(--color-panel);
-                border-color: var(--color-border);
                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
             }
 
@@ -352,7 +351,7 @@ export class CommentsPanel extends LitElement {
             .primary-button {
                 border: 1px solid transparent;
                 border-radius: 6px;
-                min-height: 36px;
+                min-height: max(36px, var(--tap-target-min, 0px));
                 padding: 8px 18px;
                 font: inherit;
                 font-size: 0.875rem;

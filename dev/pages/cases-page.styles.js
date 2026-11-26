@@ -101,6 +101,7 @@ export const casesPageStyles = css`
         border: 1px solid var(--color-border);
         border-radius: 6px;
         padding: 6px 12px;
+        min-height: var(--tap-target-min, 0px);
         font: inherit;
         font-size: 0.8rem;
         font-weight: 600;
@@ -267,6 +268,7 @@ export const casesPageStyles = css`
         align-items: center;
         line-height: 1.2;
         white-space: nowrap;
+        min-height: var(--tap-target-min, 0px);
     }
 
     .primary-button {
@@ -403,6 +405,32 @@ export const casesPageStyles = css`
         align-items: center;
     }
 
+    /* Phone width: the title takes its own line and the actions wrap below it. */
+    @media (max-width: 600px) {
+        .iframe-header {
+            flex-wrap: wrap;
+            gap: 6px 10px;
+            padding: 8px 10px;
+        }
+
+        .iframe-title {
+            flex: 1 1 100%;
+        }
+
+        .iframe-header-actions {
+            flex-shrink: 1;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 6px;
+            margin-left: auto;
+        }
+
+        .iframe-header-actions .primary-button,
+        .iframe-header-actions .secondary-button {
+            padding: 6px 12px;
+        }
+    }
+
     .iframe-container {
         flex: 1;
         display: flex;
@@ -477,6 +505,7 @@ export const casesPageStyles = css`
         display: inline-flex;
         align-items: stretch;
         height: 34px;
+        min-height: var(--tap-target-min, 0px);
         border: 1px solid transparent;
         border-radius: var(--radius-lg);
     }
@@ -486,6 +515,7 @@ export const casesPageStyles = css`
     }
     .open-with-icon {
         width: 30px; /* 3px around the 24px icon: room for the hover tint, not so wide it drifts from the ▾ */
+        min-width: var(--tap-target-min, 0px);
         padding: 0;
         border: none;
         border-radius: var(--radius-lg) 0 0 var(--radius-lg);
@@ -499,7 +529,7 @@ export const casesPageStyles = css`
     .open-with-icon .icon-tile { --icon-tile-size: 24px; }
     .open-with-split open-with-menu::part(trigger) {
         height: 100%;
-        min-width: 24px;
+        min-width: max(24px, var(--tap-target-min, 0px));
         border-left: 1px solid transparent;
         border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
     }

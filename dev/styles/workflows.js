@@ -19,8 +19,8 @@ export const workflowStyles = css`
         border: 1px solid var(--color-border); color: var(--color-text-secondary);
     }
     input[type='text'], textarea, select {
-        font: inherit; color: inherit; box-sizing: border-box; max-width: 100%;
-        padding: 6px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm, 4px);
+        font: inherit; color: inherit; box-sizing: border-box; max-width: 100%; font-size: max(1em, var(--field-font-min, 0px));
+        padding: 6px 8px; border: 1px solid var(--color-control-border); border-radius: var(--radius-sm, 4px);
         background: var(--color-panel, var(--color-surface, var(--color-background)));
     }
     label.field { display: flex; flex-direction: column; gap: 4px; font-weight: 600; }
