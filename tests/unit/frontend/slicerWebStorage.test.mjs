@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { clearSlicerWebStorage, claimSlicerWebStorage } from '../../../dev/utils/slicerWebStorage.js';
+import { clearSlicerWebStorage, claimSlicerWebStorage, resetSlicerWebExtensions } from '../../../dev/utils/slicerWebStorage.js';
 
 function fakeStorage(entries = {}) {
     const map = new Map(Object.entries(entries));
@@ -93,5 +93,22 @@ describe('claimSlicerWebStorage', () => {
         const storage = fakeStorage(SLICERWEB_STATE);
         await claimSlicerWebStorage(null, { storage, idb: fakeIdb(DBS) });
         assert.ok(storage.getItem('slicerweb.extensions'));
+    });
+});
+
+describe('resetSlicerWebExtensions', () => {
+    it('forgets the extensions earlier launches left, and nothing else', () => {
+        const storage = fakeStorage({
+            'slicerweb.extensions': '["/slicerweb/stable/extensions/SlicerHeart.whl"]',
+            'slicerweb.settings': '{}',
+        });
+        resetSlicerWebExtensions(storage);
+        assert.deepEqual(storage.keys(), ['slicerweb.settings']);
+    });
+
+    it('never throws when storage is blocked', (t) => {
+        t.mock.method(console, 'warn', () => {});
+        resetSlicerWebExtensions({ removeItem() { throw new Error('blocked'); } });
+        assert.equal(console.warn.mock.callCount(), 1);
     });
 });

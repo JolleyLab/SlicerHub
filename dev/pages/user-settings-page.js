@@ -1,5 +1,6 @@
 import { LitElement, html } from 'lit-element';
 import { userSettingsStyles } from './user-settings-page.styles.js';
+import { stickyActionsStyles } from '../styles/stickyActions.js';
 import { API_URL } from '../config.js';
 import { t } from '../i18n/index.js';
 import '../components/page-layout-template.js';
@@ -18,7 +19,7 @@ import { isSlicerWebDevModeEnabled } from '../services/features.js';
 
 export class UserSettingsPage extends LitElement {
     static get styles() {
-        return userSettingsStyles;
+        return [stickyActionsStyles, userSettingsStyles];
     }
 
     static get properties() {
@@ -647,7 +648,7 @@ export class UserSettingsPage extends LitElement {
                     ` : ''}
 
                     <!-- Unified save bar -->
-                    <div class="settings-save-bar">
+                    <div class="settings-save-bar is-sticky">
                         <span class="save-status" data-state=${this.saveState} aria-live="polite">
                             ${this.saveStatusMessage}
                         </span>

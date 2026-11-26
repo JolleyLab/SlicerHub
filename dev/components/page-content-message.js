@@ -61,7 +61,10 @@ export class PageContentMessage extends LitElement {
         const v = this.variant === 'error' || this.variant === 'success' || this.variant === 'empty'
             ? this.variant
             : 'status';
-        return html`<div class="${v}">${this.message}</div>`;
+        // Errors are announced as they appear (WCAG 4.1.3).
+        return v === 'error'
+            ? html`<div class="${v}" role="alert">${this.message}</div>`
+            : html`<div class="${v}">${this.message}</div>`;
     }
 }
 

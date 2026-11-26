@@ -10,6 +10,7 @@
  * - relativeDbPathForUser(userId, fileName) -> key
  * - relativeDbPathForCase(caseId, fileName) -> key
  * - avatarKeyForSub(kcSub, ext) -> key
+ * - workflowIconKey(workflowId, version, ext) -> key
  * - normalizeKey(filePath) -> key
  * - exists(key) -> boolean
  * - write({ key, buffer, contentType? })
@@ -26,6 +27,7 @@
 export const OBJECT_KEY_PREFIX  = 'userFiles';
 export const CASE_KEY_PREFIX    = 'caseFiles';
 export const AVATAR_KEY_PREFIX  = 'avatars';
+export const WORKFLOW_ICON_KEY_PREFIX = 'workflowIcons';
 
 /** All roots that resolvePath() considers valid. */
-export const ALLOWED_KEY_ROOTS = [OBJECT_KEY_PREFIX, CASE_KEY_PREFIX, AVATAR_KEY_PREFIX];
+export const ALLOWED_KEY_ROOTS = [OBJECT_KEY_PREFIX, CASE_KEY_PREFIX, AVATAR_KEY_PREFIX, WORKFLOW_ICON_KEY_PREFIX];

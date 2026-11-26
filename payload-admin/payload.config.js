@@ -1,7 +1,7 @@
 import { buildConfig } from 'payload'
 import { postgresAdapter } from '@payloadcms/db-postgres'
 import { lexicalEditor } from '@payloadcms/richtext-lexical'
-import { Users, Cases, Attachments, CaseComments, CaseInvites, CaseGroupAccess, UserPreferences, RegistrationRequests, Groups, GroupMembers, UserNotifications, SiteAnnouncement } from '../backend/src/payload/collections.js'
+import { ALL_COLLECTIONS, Users, SiteAnnouncement } from '../backend/src/payload/collections.js'
 import { resolvePayloadSecret } from '../backend/src/payload/secret.js'
 
 // Collection definitions live in backend/src/payload/collections.js — edit there.
@@ -17,6 +17,6 @@ export default buildConfig({
     admin: {
         user: Users.slug,
     },
-    collections: [Users, Cases, Attachments, CaseComments, CaseInvites, CaseGroupAccess, UserPreferences, RegistrationRequests, Groups, GroupMembers, UserNotifications],
+    collections: ALL_COLLECTIONS,
     globals: [SiteAnnouncement],
 })

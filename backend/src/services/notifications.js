@@ -11,6 +11,7 @@
  */
 
 import { getPayloadClient } from '../payload/index.js';
+import { findByKcSub, upsertByKcSub } from '../payload/upsertByKcSub.js';
 
 const COLLECTION = 'user-notifications';
 
@@ -159,4 +160,27 @@ export async function deleteNotificationForUser(userId, notificationId) {
         where: { and: [{ id: { equals: nid } }, { user_id: { equals: uid } }] },
     });
     return (result.docs || []).length > 0;
+}
+
+// ── When the bell was last opened (bell-state): to-dos older than this don't light its dot ──
+
+const BELL_STATE = 'bell-state';
+
+/** When the user last opened the bell (ISO string), or null. */
+export async function getBellOpenedAt(kcSub) {
+    if (!getPayloadClient() || !kcSub) return null;
+    try {
+        return (await findByKcSub(BELL_STATE, kcSub))?.opened_at ?? null;
+    } catch (err) {
+        console.warn('[notifications] getBellOpenedAt failed:', err.message);
+        return null;
+    }
+}
+
+/** Record that the user opened the bell now; returns the time stored. */
+export async function markBellOpened(kcSub) {
+    if (!getPayloadClient() || !kcSub) return null;
+    const at = new Date().toISOString();
+    await upsertByKcSub(BELL_STATE, kcSub, { opened_at: at });
+    return at;
 }

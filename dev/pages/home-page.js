@@ -12,7 +12,9 @@ import {
 } from '../services/cases.js';
 import { invalidateNotifications, listMentionNotifications, markNotificationRead } from '../services/notifications.js';
 import { notificationStore } from '../services/notificationStore.js';
-import { eventToActivity, mentionToActivity, commentToActivity, attachmentToActivity, roleLabel } from '../utils/activityItems.js';
+import { eventToActivity, mentionToActivity, commentToActivity, attachmentToActivity, roleLabel, requesterText } from '../utils/activityItems.js';
+import { listPendingWorkflowRequests, approveCaseWorkflow, declineCaseWorkflowRequest } from '../services/workflows.js';
+import { PANEL_TAB } from '../components/case-workflows-panel.js';
 import { condensedTime, fullTime } from '../utils/condensedTime.js';
 import { ICON_CASES, ICON_TODO, ICON_ACTIVITY, ICON_GEAR } from '../utils/homeIcons.js';
 import { visibleColumns, normalizeHomeLayout } from '../utils/homeLayout.js';
@@ -58,14 +60,27 @@ const ICON_ATTACHMENT = html`
         <path fill="currentColor" d="M16.5 6v11.5a4 4 0 01-8 0V5a2.5 2.5 0 015 0v10.5a1 1 0 01-2 0V6H10v9.5a2.5 2.5 0 005 0V5a4 4 0 00-8 0v12.5a5.5 5.5 0 0011 0V6h-1.5z"></path>
     </svg>`;
 
+const ICON_WORKFLOW = html`
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M20.5 11H19V7a2 2 0 00-2-2h-4V3.5a2.5 2.5 0 00-5 0V5H4a2 2 0 00-2 2v3.8h1.5a2.7 2.7 0 010 5.4H2V20a2 2 0 002 2h3.8v-1.5a2.7 2.7 0 015.4 0V22H17a2 2 0 002-2v-4h1.5a2.5 2.5 0 000-5z"></path>
+    </svg>`;
+
 /** Categories of item, in the order their filter chips appear. */
 const CATEGORIES = [
     { category: 'collaboration', labelKey: 'home.category.collaboration', icon: ICON_PEOPLE },
     { category: 'mention', labelKey: 'home.category.mention', icon: ICON_MENTION },
     { category: 'comment', labelKey: 'home.category.comment', icon: ICON_COMMENT },
     { category: 'attachment', labelKey: 'home.category.attachment', icon: ICON_ATTACHMENT },
+    { category: 'workflow', labelKey: 'home.category.workflow', icon: ICON_WORKFLOW },
     { category: 'task', labelKey: 'home.category.task', icon: ICON_TASK }
 ];
+
+/** Stored notifications that show in To do while unread, and their card category. */
+const TODO_NOTIFICATION_CATEGORY = Object.freeze({
+    mention: 'mention',
+    workflow_request_approved: 'workflow',
+    workflow_request_declined: 'workflow'
+});
 
 /** An invite waiting for a decision, as a card in To do. */
 function inviteToTodo(invite) {
@@ -86,13 +101,35 @@ function inviteToTodo(invite) {
     };
 }
 
-/** An unread @mention, as an actionable card in To do. */
-function mentionToTodo(notification) {
+/** A pending workflow request on a case the user administers, as a card in To do. */
+function workflowRequestToTodo(request) {
+    const caseTitle = request.caseTitle || t('home.invite.untitledCase');
+    const previous = request.previousDecline;
     return {
-        id: `mention:${notification.id}`,
-        kind: 'mention',
+        id: `workflow-request:${request.id}`,
+        kind: 'workflowRequest',
+        category: 'workflow',
+        title: t('home.todo.workflowRequestTitle', { names: requesterText(request.requesterNames, t('home.activity.someone')), workflow: request.name, case: caseTitle }),
+        detail: !request.sourcePublic ? t('caseWorkflows.noLongerPublic')
+            : previous ? t(previous.reason ? 'caseWorkflows.previouslyDeclinedReason' : 'caseWorkflows.previouslyDeclined', {
+                date: new Date(previous.at).toLocaleDateString(), reason: previous.reason
+            })
+            : null,
+        at: request.requestedAt,
+        caseId: request.caseId,
+        caseTitle,
+        actionRequired: true,
+        request
+    };
+}
+
+/** An unread @mention or workflow request outcome, as a card in To do. */
+function notificationToTodo(notification) {
+    return {
+        id: `notification:${notification.id}`,
+        kind: 'notification',
         notificationId: notification.id,
-        category: 'mention',
+        category: TODO_NOTIFICATION_CATEGORY[notification.type],
         title: notification.title || t('home.activity.mentionTitle'),
         detail: notification.body || null,
         at: notification.created_at,
@@ -120,7 +157,7 @@ export class HomePage extends LitElement {
             isRegistrationReviewer: { type: Boolean },
             /** @type {{ id: string, kind: 'invite'|'task', title: string, detail?: string }[]} */
             todo: { type: Array },
-            /** @type {{ id: string, kind: 'mention'|'approval', title: string, detail?: string }[]} */
+            /** @type {{ id: string, kind: 'invite'|'notification'|'registration'|'workflowRequest', title: string, detail?: string }[]} */
             activity: { type: Array },
             recentCases: { type: Array },
             panelFilters: { type: Object },
@@ -128,7 +165,10 @@ export class HomePage extends LitElement {
             homeLayout: { type: Object },
             busyUpdates: { type: Object },
             updateStatus: { type: String },
-            updateStatusIsError: { type: Boolean }
+            updateStatusIsError: { type: Boolean },
+            /** The To do workflow request whose decline form is open, and its reason */
+            decliningId: { type: String },
+            declineReason: { type: String }
         };
     }
 
@@ -152,6 +192,9 @@ export class HomePage extends LitElement {
             this.panelFilters = { ...this.panelFilters, 'home-activity': activitySet };
         };
         this.busyUpdates = {};
+        this.decliningId = '';
+        this.declineReason = '';
+        this._workflowRequestCount = null; // the store's last count; a change reloads the request cards
         this.updateStatus = '';
         this.updateStatusIsError = false;
         this._unsub = null;
@@ -191,10 +234,15 @@ export class HomePage extends LitElement {
     }
 
     /** Sync mention todos and registration item from the shared notification store. */
-    _onStoreUpdate({ notifications, pendingRegCount }) {
+    _onStoreUpdate({ notifications, pendingRegCount, pendingWorkflowRequestCount }) {
         const unreadMentions = notifications
-            .filter((n) => n.type === 'mention' && !n.read_at)
-            .map(mentionToTodo);
+            .filter((n) => TODO_NOTIFICATION_CATEGORY[n.type] && !n.read_at)
+            .map(notificationToTodo);
+        // A request came in or went (another admin decided it): the cards follow the bell's count.
+        if (pendingWorkflowRequestCount !== this._workflowRequestCount) {
+            this._workflowRequestCount = pendingWorkflowRequestCount;
+            this.loadPendingWorkflowRequests();
+        }
 
         const regItems = (this.isRegistrationReviewer && pendingRegCount > 0) ? [{
             id: 'pending-registrations',
@@ -209,7 +257,7 @@ export class HomePage extends LitElement {
         }] : [];
 
         this.todo = [
-            ...this.todo.filter((item) => item.kind !== 'mention' && item.kind !== 'registration'),
+            ...this.todo.filter((item) => item.kind !== 'notification' && item.kind !== 'registration'),
             ...unreadMentions,
             ...regItems
         ];
@@ -231,6 +279,43 @@ export class HomePage extends LitElement {
             ];
         } catch (err) {
             console.warn('Could not load recent activity:', err.message);
+        }
+    }
+
+    async loadPendingWorkflowRequests() {
+        try {
+            const requests = await listPendingWorkflowRequests();
+            this.todo = [
+                ...this.todo.filter((item) => item.kind !== 'workflowRequest'),
+                ...requests.map(workflowRequestToTodo)
+            ];
+        } catch (err) {
+            console.warn('Could not load workflow requests:', err.message);
+        }
+    }
+
+    /** Approve, or decline with the reason typed into the card. */
+    async decideWorkflowRequest(item, decision) {
+        if (this.busyUpdates[item.id]) return;
+        const { request } = item;
+        this.busyUpdates = { ...this.busyUpdates, [item.id]: true };
+        this.updateStatus = '';
+        try {
+            if (decision === 'approve') await approveCaseWorkflow(request.caseId, request.workflowId);
+            else await declineCaseWorkflowRequest(request.caseId, request.id, this.declineReason.trim());
+            this.todo = this.todo.filter((entry) => entry.id !== item.id);
+            this.decliningId = '';
+            this.updateStatusIsError = false;
+            this.updateStatus = t(decision === 'approve' ? 'home.workflowRequest.approved' : 'home.workflowRequest.declined', {
+                workflow: request.name, case: item.caseTitle
+            });
+            invalidateNotifications();
+        } catch (err) {
+            this.updateStatusIsError = true;
+            this.updateStatus = err.message || t('common.somethingWentWrong');
+        } finally {
+            const { [item.id]: _done, ...rest } = this.busyUpdates;
+            this.busyUpdates = rest;
         }
     }
 
@@ -352,6 +437,15 @@ export class HomePage extends LitElement {
         }));
     }
 
+    /** The case's Workflows panel, on its requests. */
+    openWorkflowRequests(item) {
+        this.dispatchEvent(new CustomEvent('notification-open', {
+            detail: { caseId: item.caseId, workflowsTab: PANEL_TAB.REQUESTS },
+            bubbles: true,
+            composed: true
+        }));
+    }
+
     /** Navigate to the case without opening the People dialog (used for mention cards). */
     openCase(item) {
         this.dispatchEvent(new CustomEvent('notification-open', {
@@ -451,12 +545,23 @@ export class HomePage extends LitElement {
                 <time class="card-time" datetime=${item.at} title=${fullTime(item.at)}>${condensedTime(item.at)}</time>
             ` : ''}
             <div class="card-main">
-                <p class="card-title" title=${item.hoverText || ''}>${item.title}</p>
+                <p class="card-title" title=${item.hoverText || ''}>${item.kind === 'workflowRequest' ? html`
+                    <button type="button" class="card-title-link" @click=${() => this.openWorkflowRequests(item)}>${item.title}</button>
+                ` : item.title}</p>
                 ${item.detail ? html`<p class="card-detail">${item.detail}</p>` : ''}
             </div>
         `;
 
-        if (item.kind === 'mention') {
+        if (item.kind === 'workflowRequest') {
+            return html`
+                <li class="card cat-${item.category}">
+                    ${cardInner}
+                    ${this.renderWorkflowRequestActions(item)}
+                </li>
+            `;
+        }
+
+        if (item.kind === 'notification') {
             const busy = this.busyUpdates[item.id] === true;
             return html`
                 <li class="card cat-${item.category}">
@@ -542,6 +647,41 @@ export class HomePage extends LitElement {
             items: this.activity,
             clearKey: 'home.activity.clear'
         });
+    }
+
+    /** Approve / Decline, or the decline form with its optional reason. (The title opens the case's requests.) */
+    renderWorkflowRequestActions(item) {
+        const busy = this.busyUpdates[item.id] === true;
+        const subject = `${item.request.name}, ${item.caseTitle}`;
+        if (this.decliningId === item.id) {
+            return html`
+                <form class="update-actions decline-form" @submit=${(e) => { e.preventDefault(); this.decideWorkflowRequest(item, 'decline'); }}>
+                    <input type="text" maxlength="500" .value=${this.declineReason}
+                        placeholder=${t('caseWorkflows.declineReason')} aria-label=${t('caseWorkflows.declineReason')}
+                        @input=${(e) => { this.declineReason = e.target.value; }} />
+                    <button type="submit" class="small-button" aria-disabled=${busy ? 'true' : 'false'}>${t('caseWorkflows.decline')}</button>
+                    <button type="button" class="small-button" @click=${() => { this.decliningId = ''; }}>${t('common.cancel')}</button>
+                </form>
+            `;
+        }
+        return html`
+            <span class="update-actions">
+                <button
+                    type="button"
+                    class="small-button is-primary"
+                    aria-disabled=${busy || !item.request.sourcePublic ? 'true' : 'false'}
+                    aria-label=${t('home.workflowRequest.approveAria', { subject })}
+                    @click=${() => item.request.sourcePublic && this.decideWorkflowRequest(item, 'approve')}
+                >${t('home.invite.approve')}</button>
+                <button
+                    type="button"
+                    class="small-button"
+                    aria-disabled=${busy ? 'true' : 'false'}
+                    aria-label=${t('home.workflowRequest.declineAria', { subject })}
+                    @click=${() => { this.decliningId = item.id; this.declineReason = ''; }}
+                >${t('caseWorkflows.decline')}</button>
+            </span>
+        `;
     }
 
     renderInviteActions(item) {

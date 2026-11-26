@@ -1,4 +1,7 @@
-import { LitElement, html, css } from 'lit-element';
+import { LitElement, html } from 'lit-element';
+import { listPageStyles } from '../styles/listPage.js';
+import { casesPageStyles } from './cases-page.styles.js';
+import { LIST_SORT_OPTIONS, filterByText, sortRows } from '../utils/listSort.js';
 import { t } from '../i18n/index.js';
 import '../components/page-layout-template.js';
 import '../components/page-content-message.js';
@@ -7,7 +10,7 @@ import '../components/comments-panel.js';
 import '../components/app-dialog.js';
 import { friendlyCasesError } from '../services/cases.js';
 import { API_URL } from '../config.js';
-import { parseNodeIdsRepr } from '../services/slicerBridgeUtils.js';
+import { parseNodeIdsRepr, selectModulePython } from '../services/slicerBridgeUtils.js';
 import {
     listCases, getCaseAccess, createCase, updateCase, listAttachments, deleteAttachment,
     uploadCaseAttachment, openPayloadAttachmentFullSlicer, fetchPayloadAttachmentContent,
@@ -18,7 +21,13 @@ import {
 } from '../services/cases.js';
 import '../components/people-dialog.js';
 import '../components/list-filter-tools.js';
-import '../components/attachment-open-menu.js';
+import '../components/overflow-menu.js';
+import '../components/case-settings.js';
+import { VIEWER, SIMPLIFIED_VIEWER_MODULE, workflowsAddingExtensions } from '../utils/openWith.js';
+import { CaseWorkflowsController } from '../controllers/caseWorkflowsController.js';
+import { ICON_TRASH, ICON_DOWNLOAD } from '../utils/icons.js';
+import { iconTile, iconTileStyles } from '../utils/iconTile.js';
+import { resetSlicerWebExtensions } from '../utils/slicerWebStorage.js';
 import { formatBytes } from '../utils/formatBytes.js';
 import { deepActiveElement } from '../utils/focus.js';
 import {
@@ -33,7 +42,6 @@ import {
     viewerDisplayName
 } from '../utils/viewerLaunch.js';
 import { getCachedLocalSlicerViewerOptions, getCachedUserPreferences } from '../utils/userPreferences.js';
-import { resolveSimplifiedViewerChoice } from '../utils/localSlicerViewerOptions.js';
 import { isSlicerWebDevModeEnabled, loadAppFeatures } from '../services/features.js';
 import { listAllGroups } from '../services/groups.js';
 import { sendViewerHeartbeat } from '../utils/viewerHeartbeat.js';
@@ -43,25 +51,7 @@ import {
     markViewerActivity,
     resetViewerActivity
 } from '../utils/viewerActivity.js';
-import { classifySlicerLoadError } from '../services/slicerErrors.js';
-
-const LIST_SORT_OPTIONS = Object.freeze([
-    Object.freeze({
-        value: 'newest',
-        label: t('cases.sortNewest'),
-        ariaLabel: t('cases.sortNewestAria')
-    }),
-    Object.freeze({
-        value: 'oldest',
-        label: t('cases.sortOldest'),
-        ariaLabel: t('cases.sortOldestAria')
-    }),
-    Object.freeze({
-        value: 'title',
-        label: t('cases.sortTitle'),
-        ariaLabel: t('cases.sortTitleAria')
-    })
-]);
+import { classifySlicerLoadError, isUnrecognisedFormat, UnrecognisedFormatError } from '../services/slicerErrors.js';
 
 const attachmentFileName = (attachment) => attachment?.filenameDownload || attachment?.name || 'attachment';
 
@@ -104,978 +94,7 @@ function writeCaseCommentSeenMap(map) {
  */
 export class CasesPage extends LitElement {
     static get styles() {
-        return css`
-            :host {
-                display: block;
-                width: 100%;
-                min-width: 0;
-                box-sizing: border-box;
-            }
-
-            /* â”€â”€â”€ Base â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-            .status-note {
-                color: var(--color-text-secondary);
-                font-size: 0.9rem;
-                padding: 8px 0;
-            }
-
-            /* â”€â”€â”€ Landing: page header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-            .page-header-row {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 16px;
-                margin-bottom: 20px;
-                padding-bottom: 16px;
-                border-bottom: 1px solid var(--color-border);
-            }
-
-            .page-header-actions {
-                display: inline-flex;
-                align-items: center;
-                gap: 10px;
-                flex-shrink: 0;
-            }
-
-            .page-heading {
-                margin: 0;
-                font-size: 1.15rem;
-                font-weight: 650;
-                color: var(--color-text-primary);
-                letter-spacing: -0.01em;
-            }
-
-            .page-header-row .primary-button::before {
-                content: '+';
-                margin-right: 5px;
-                font-weight: 300;
-                font-size: 1.15em;
-                line-height: 1;
-            }
-
-            .page-header-row .primary-button.is-cancel::before {
-                content: none;
-            }
-
-            .cases-empty-filter {
-                margin: 0;
-                color: var(--color-text-secondary);
-                font-size: 0.9rem;
-            }
-
-            /* â”€â”€â”€ Landing: case grid â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-            .case-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-                gap: 10px;
-                width: 100%;
-                min-width: 0;
-            }
-
-            .case-card {
-                position: relative;
-                border: 1px solid var(--color-border);
-                border-left: 3px solid var(--color-primary);
-                border-radius: 8px;
-                background: var(--color-surface, var(--color-background));
-                padding: 14px 16px;
-                display: flex;
-                flex-direction: column;
-                gap: 5px;
-                cursor: pointer;
-                transition: box-shadow 0.14s ease, transform 0.14s ease, border-color 0.14s ease;
-                text-align: left;
-                font: inherit;
-                color: inherit;
-                width: 100%;
-                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-                appearance: none;
-                -webkit-appearance: none;
-            }
-
-            .case-card.is-archived {
-                border-left-color: var(--color-text-secondary);
-                opacity: 0.7;
-            }
-
-            .case-card:hover {
-                transform: translateY(-1px);
-                box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
-                border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
-                border-left-color: var(--color-primary);
-            }
-
-            .case-card.is-archived:hover {
-                border-left-color: var(--color-text-secondary);
-                border-color: var(--color-border);
-            }
-
-            .case-card:focus-visible {
-                outline: 2px solid var(--color-primary);
-                outline-offset: 2px;
-                box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary) 18%, transparent);
-            }
-
-            .case-card-title-row {
-                display: flex;
-                align-items: flex-start;
-                justify-content: space-between;
-                gap: 10px;
-            }
-
-            .case-card-title {
-                font-size: 0.925rem;
-                font-weight: 600;
-                color: var(--color-text-primary);
-                line-height: 1.3;
-                min-width: 0;
-            }
-
-            .case-card-new-badge {
-                flex-shrink: 0;
-                display: inline-flex;
-                align-items: center;
-                font-size: 0.68rem;
-                font-weight: 700;
-                letter-spacing: 0.04em;
-                text-transform: uppercase;
-                padding: 2px 7px;
-                border-radius: 4px;
-                border: 1px solid color-mix(in srgb, var(--color-secondary) 45%, var(--color-border));
-                background: color-mix(in srgb, var(--color-secondary) 16%, transparent);
-                color: var(--color-primary);
-                line-height: 1.3;
-            }
-
-            :host-context([data-theme='dark']) .case-card-new-badge {
-                border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
-                background: color-mix(in srgb, var(--color-accent) 18%, transparent);
-                color: var(--color-text-primary);
-            }
-
-            .case-card-desc {
-                font-size: 0.85rem;
-                color: var(--color-text-secondary);
-                line-height: 1.45;
-                display: -webkit-box;
-                -webkit-line-clamp: 2;
-                -webkit-box-orient: vertical;
-                overflow: hidden;
-                margin: 0;
-            }
-
-            .case-card-meta-row {
-                display: flex;
-                align-items: center;
-                gap: 0;
-                margin-top: 6px;
-                flex-wrap: wrap;
-            }
-
-            .case-card-meta-item {
-                font-size: 0.78rem;
-                color: var(--color-text-secondary);
-            }
-
-            .case-card-meta-item + .case-card-meta-item::before {
-                content: 'Â·';
-                margin: 0 5px;
-                opacity: 0.45;
-            }
-
-            /* â”€â”€â”€ Status chip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-            .status-chip {
-                display: inline-flex;
-                align-items: center;
-                font-size: 0.7rem;
-                font-weight: 650;
-                letter-spacing: 0.05em;
-                text-transform: uppercase;
-                padding: 2px 7px;
-                border-radius: 4px;
-                border: 1px solid var(--color-border);
-                background: color-mix(in srgb, var(--color-border) 18%, transparent);
-                color: var(--color-text-secondary);
-            }
-
-            /* â”€â”€â”€ Detail: layout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-            .case-detail {
-                display: flex;
-                flex-direction: column;
-                gap: 18px;
-                width: 100%;
-                min-width: 0;
-                max-width: 100%;
-                box-sizing: border-box;
-            }
-
-            .case-detail-grid {
-                display: grid;
-                grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
-                gap: 16px;
-                align-items: stretch;
-                width: 100%;
-                min-width: 0;
-                /* Shared pane height: both panels fill and scroll internally. */
-                height: min(560px, 60vh);
-                min-height: 380px;
-            }
-
-            .case-detail-grid .files-panel {
-                order: 1;
-                min-width: 0;
-                min-height: 0;
-                height: 100%;
-                max-height: 100%;
-            }
-
-            .case-detail-grid comments-panel {
-                --comments-panel-height: 100%;
-                --comments-panel-max-height: 100%;
-                min-height: 0;
-                height: 100%;
-                order: 2;
-                min-width: 0;
-            }
-
-            /* Stacked when content column is narrow (tablet / DevTools), set via ResizeObserver */
-            .case-detail[data-stack] .case-detail-grid {
-                grid-template-columns: 1fr;
-                align-items: start;
-                height: auto;
-                min-height: 0;
-            }
-
-            .case-detail[data-stack] .case-detail-grid .files-panel {
-                height: auto;
-                max-height: none;
-                min-height: 0;
-                width: 100%;
-            }
-
-            .case-detail[data-stack] .case-detail-grid comments-panel {
-                --comments-panel-height: auto;
-                --comments-panel-max-height: min(420px, 55vh);
-                height: auto;
-                min-height: 260px;
-                width: 100%;
-            }
-
-            @media (max-width: 1100px) {
-                .case-detail-grid {
-                    grid-template-columns: 1fr;
-                    align-items: start;
-                    height: auto;
-                    min-height: 0;
-                }
-
-                .case-detail-grid .files-panel {
-                    height: auto;
-                    max-height: none;
-                    min-height: 0;
-                    width: 100%;
-                }
-
-                .case-detail-grid comments-panel {
-                    --comments-panel-height: auto;
-                    --comments-panel-max-height: min(420px, 55vh);
-                    height: auto;
-                    min-height: 260px;
-                    width: 100%;
-                }
-            }
-
-            /* â”€â”€â”€ Detail: toolbar + header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-            .detail-toolbar {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 12px;
-                flex-wrap: wrap;
-            }
-
-            .back-link {
-                border: none;
-                background: transparent;
-                padding: 4px 0;
-                margin: 0;
-                font: inherit;
-                font-size: 0.875rem;
-                font-weight: 600;
-                color: var(--color-focus);
-                cursor: pointer;
-                display: inline-flex;
-                align-items: center;
-                gap: 4px;
-            }
-
-            .back-link:hover,
-            .back-link:focus-visible {
-                color: var(--color-text-primary);
-            }
-
-            .back-link:focus-visible {
-                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
-                outline-offset: var(--focus-ring-offset, 2px);
-                border-radius: 4px;
-            }
-
-            .detail-toolbar-actions {
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                flex-wrap: wrap;
-            }
-
-            .detail-header {
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-                padding: 14px 16px 16px;
-                border: 1px solid var(--color-border);
-                border-radius: var(--radius-lg);
-                background: var(--color-panel, #fff);
-                box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
-                border-left: 4px solid var(--color-primary);
-            }
-
-            .detail-title-row {
-                display: flex;
-                align-items: center;
-                gap: 10px;
-                flex-wrap: wrap;
-            }
-
-            .detail-title {
-                margin: 0;
-                font-size: 1.4rem;
-                font-weight: 700;
-                color: var(--color-primary);
-                letter-spacing: -0.02em;
-                line-height: 1.25;
-            }
-
-            .detail-desc {
-                margin: 0;
-                font-size: 0.95rem;
-                color: var(--color-text-secondary);
-                line-height: 1.55;
-                max-width: 46rem;
-            }
-
-            .quiet-button {
-                border: 1px solid var(--color-border);
-                border-radius: 6px;
-                padding: 6px 12px;
-                font: inherit;
-                font-size: 0.8rem;
-                font-weight: 600;
-                background: var(--color-panel, #fff);
-                color: var(--color-text-primary);
-                cursor: pointer;
-            }
-
-            .quiet-button:hover:not(:disabled),
-            .quiet-button:focus-visible {
-                color: var(--color-on-secondary);
-                background: var(--color-secondary);
-                border-color: var(--color-secondary);
-            }
-
-            .quiet-button:focus-visible {
-                outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
-                outline-offset: var(--focus-ring-offset, 2px);
-            }
-
-            .quiet-button:disabled {
-                opacity: 0.55;
-                cursor: not-allowed;
-            }
-
-            .people-pending-badge {
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                min-width: 1.25rem;
-                height: 1.25rem;
-                margin-left: 6px;
-                padding: 0 5px;
-                border-radius: 999px;
-                background: var(--color-primary);
-                color: var(--color-on-primary);
-                font-size: 0.7rem;
-                font-weight: 700;
-                line-height: 1;
-                vertical-align: middle;
-            }
-
-            /* â”€â”€â”€ Detail: files panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-            .files-panel {
-                border: 1px solid var(--color-border);
-                border-left: 4px solid var(--color-primary);
-                border-radius: var(--radius-lg);
-                background: var(--color-panel, #fff);
-                display: flex;
-                flex-direction: column;
-                min-height: 360px;
-                overflow: hidden;
-                box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
-            }
-
-            .panel-header {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 10px;
-                min-height: 44px;
-                padding: 0 16px;
-                border-bottom: 1px solid var(--color-border);
-                background: var(--color-panel, #fff);
-                box-sizing: border-box;
-                flex-shrink: 0;
-            }
-
-            .panel-header-start {
-                display: inline-flex;
-                align-items: center;
-                gap: 8px;
-                min-width: 0;
-            }
-
-            .panel-title {
-                margin: 0;
-                font-size: 0.72rem;
-                font-weight: 700;
-                letter-spacing: 0.07em;
-                text-transform: uppercase;
-                color: var(--color-text-secondary);
-            }
-
-            .panel-count {
-                font-size: 0.72rem;
-                font-weight: 650;
-                color: var(--color-text-secondary);
-                background: color-mix(in srgb, var(--color-border) 16%, transparent);
-                border: 1px solid var(--color-border);
-                border-radius: 999px;
-                padding: 2px 8px;
-                line-height: 1.3;
-            }
-
-            .files-body {
-                position: relative;
-                padding: 12px 16px;
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-                flex: 1;
-                min-height: 0;
-                overflow: hidden;
-                background: color-mix(in srgb, var(--color-background) 55%, var(--color-panel, #fff));
-            }
-
-            .file-list {
-                display: flex;
-                flex-direction: column;
-                gap: 6px;
-                flex: 1;
-                min-height: 0;
-                overflow-y: auto;
-            }
-
-            .files-panel file-list-row {
-                --file-row-accent: var(--color-primary);
-            }
-
-            .empty-note {
-                color: var(--color-text-secondary);
-                font-size: 0.875rem;
-                font-style: italic;
-            }
-
-            /* â”€â”€â”€ File upload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-            .upload-action-row {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 12px;
-                min-height: 56px;
-                margin: 0 -16px -12px;
-                padding: 10px 16px;
-                border-top: 1px solid var(--color-border);
-                background: var(--color-panel, #fff);
-                box-sizing: border-box;
-                flex-shrink: 0;
-            }
-
-            .upload-action-row .secondary-button {
-                min-height: 36px;
-            }
-
-            .upload-action-buttons {
-                display: flex;
-                gap: 8px;
-                flex-shrink: 0;
-            }
-
-            .upload-status {
-                color: var(--color-text-secondary);
-                font-size: 0.85rem;
-                flex: 1;
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-
-            .upload-progress {
-                flex: 1;
-                min-width: 0;
-                display: flex;
-                flex-direction: column;
-                gap: 4px;
-            }
-
-            .upload-progress progress {
-                width: 100%;
-                height: 8px;
-                accent-color: var(--color-focus, var(--color-primary));
-            }
-
-            .upload-error {
-                color: var(--color-status-error-fg, #8a1212);
-                font-size: 0.85rem;
-                flex: 1;
-            }
-
-            /* Download button: a spinner while the access check runs (still, if reduced motion is asked for) */
-            .download-spinner {
-                width: 14px;
-                height: 14px;
-                box-sizing: border-box;
-                border: 2px solid currentColor;
-                border-right-color: transparent;
-                border-radius: 50%;
-                animation: download-spin 0.8s linear infinite;
-            }
-
-            @keyframes download-spin {
-                to { transform: rotate(360deg); }
-            }
-
-            @media (prefers-reduced-motion: reduce) {
-                .download-spinner {
-                    animation: none;
-                    border-right-color: currentColor;
-                }
-            }
-
-            /* Read by screen readers only */
-            .visually-hidden {
-                position: absolute;
-                width: 1px;
-                height: 1px;
-                margin: -1px;
-                padding: 0;
-                overflow: hidden;
-                clip: rect(0 0 0 0);
-                white-space: nowrap;
-                border: 0;
-            }
-
-            /* Drag-and-drop attach */
-            .files-body.drag-over {
-                outline: 2px dashed var(--color-focus, var(--color-primary));
-                outline-offset: -6px;
-            }
-
-            .drop-hint {
-                position: absolute;
-                inset: 0;
-                z-index: 1;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                /* text-primary on a lightly tinted panel keeps AA contrast in both themes */
-                background: color-mix(in srgb, var(--color-focus, var(--color-primary)) 14%, var(--color-panel, #fff));
-                color: var(--color-text-primary);
-                font-weight: 600;
-                pointer-events: none;
-            }
-
-            /* â”€â”€â”€ New Case form â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-            .new-case-form {
-                border: 1px solid var(--color-border);
-                border-radius: 8px;
-                background: var(--color-surface, var(--color-background));
-                padding: 18px 20px 16px;
-                display: flex;
-                flex-direction: column;
-                gap: 14px;
-            }
-
-            .form-group {
-                display: flex;
-                flex-direction: column;
-                gap: 5px;
-            }
-
-            .form-label {
-                font-size: 0.72rem;
-                font-weight: 650;
-                letter-spacing: 0.06em;
-                text-transform: uppercase;
-                color: var(--color-text-secondary);
-            }
-
-            .form-input,
-            .form-textarea {
-                border: 1px solid var(--color-border);
-                border-radius: 6px;
-                padding: 9px 12px;
-                font: inherit;
-                font-size: 0.925rem;
-                background: var(--color-background);
-                color: var(--color-text-primary);
-                width: 100%;
-                box-sizing: border-box;
-                transition: border-color 0.14s, box-shadow 0.14s;
-            }
-
-            .form-input:focus,
-            .form-textarea:focus {
-                outline: none;
-                border-color: var(--color-primary);
-                box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 16%, transparent);
-            }
-
-            .form-textarea {
-                resize: vertical;
-                min-height: 76px;
-            }
-
-            .form-error-msg {
-                color: #c62828;
-                font-size: 0.875rem;
-            }
-
-            .form-actions {
-                display: flex;
-                justify-content: flex-end;
-                align-items: center;
-                gap: 8px;
-                padding-top: 6px;
-                border-top: 1px solid var(--color-border);
-            }
-
-            .form-actions-spacer {
-                margin-right: auto;
-            }
-
-            /* â”€â”€â”€ Buttons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-            .primary-button,
-            .secondary-button {
-                border-radius: 6px;
-                padding: 8px 18px;
-                font: inherit;
-                font-size: 0.875rem;
-                font-weight: 600;
-                cursor: pointer;
-                transition: opacity 0.14s, box-shadow 0.14s, background 0.14s;
-                display: inline-flex;
-                align-items: center;
-                line-height: 1.2;
-                white-space: nowrap;
-            }
-
-            .primary-button {
-                background: var(--color-primary);
-                color: var(--color-on-primary);
-                border: 1px solid transparent;
-            }
-
-            .primary-button:hover:not(:disabled) {
-                opacity: 0.87;
-                box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 32%, transparent);
-            }
-
-            .secondary-button {
-                background: transparent;
-                color: var(--color-text-primary);
-                border: 1px solid var(--color-border);
-            }
-
-            .secondary-button:hover:not(:disabled) {
-                background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface, var(--color-background)));
-                border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
-            }
-
-            .primary-button:focus-visible,
-            .secondary-button:focus-visible {
-                outline: 2px solid var(--color-primary);
-                outline-offset: 2px;
-            }
-
-            .primary-button:disabled,
-            .secondary-button:disabled {
-                opacity: 0.42;
-                cursor: not-allowed;
-            }
-
-            /* â”€â”€â”€ Dark mode overrides â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-
-            /* Cards: lift them above the page background using --color-panel */
-            :host-context([data-theme='dark']) .case-card {
-                background: var(--color-panel);
-                border-left-color: var(--color-accent);
-            }
-
-            :host-context([data-theme='dark']) .case-card.is-archived {
-                border-left-color: var(--color-text-secondary);
-                opacity: 0.55;
-            }
-
-            :host-context([data-theme='dark']) .case-card:hover {
-                background: color-mix(in srgb, var(--color-panel) 80%, var(--color-accent));
-                border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
-                border-left-color: var(--color-accent);
-            }
-
-            /* Panels: lift above page background */
-            :host-context([data-theme='dark']) .files-panel,
-            :host-context([data-theme='dark']) .new-case-form,
-            :host-context([data-theme='dark']) .detail-header {
-                background: var(--color-panel);
-                border-color: var(--color-border);
-                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
-            }
-
-            :host-context([data-theme='dark']) .detail-header {
-                border-left-color: var(--color-accent);
-            }
-
-            :host-context([data-theme='dark']) .detail-title {
-                color: var(--color-text-primary);
-            }
-
-            :host-context([data-theme='dark']) .panel-header {
-                background: var(--color-panel);
-                border-bottom-color: var(--color-border);
-            }
-
-            :host-context([data-theme='dark']) .files-panel {
-                border-left-color: var(--color-accent);
-            }
-
-            :host-context([data-theme='dark']) .panel-title,
-            :host-context([data-theme='dark']) .panel-count {
-                color: var(--color-text-secondary);
-            }
-
-            :host-context([data-theme='dark']) .panel-count {
-                background: color-mix(in srgb, var(--color-border) 40%, transparent);
-                border-color: var(--color-border);
-            }
-
-            :host-context([data-theme='dark']) .files-body {
-                background: var(--color-background);
-            }
-
-            :host-context([data-theme='dark']) .upload-action-row {
-                background: var(--color-panel);
-                border-top-color: var(--color-border);
-            }
-
-            :host-context([data-theme='dark']) .quiet-button {
-                color: var(--color-text-primary);
-                border-color: var(--color-border);
-                background: var(--color-panel);
-            }
-
-            :host-context([data-theme='dark']) .quiet-button:hover:not(:disabled),
-            :host-context([data-theme='dark']) .quiet-button:focus-visible {
-                color: var(--color-on-secondary);
-                background: var(--color-accent);
-                border-color: var(--color-accent);
-            }
-
-            /* Inputs: sunken below the panel surface for legibility */
-            :host-context([data-theme='dark']) .form-input,
-            :host-context([data-theme='dark']) .form-textarea {
-                background: var(--color-background);
-                border-color: color-mix(in srgb, var(--color-border) 140%, transparent);
-                color: var(--color-text-primary);
-            }
-
-            :host-context([data-theme='dark']) .form-input:focus,
-            :host-context([data-theme='dark']) .form-textarea:focus {
-                border-color: var(--color-accent);
-                box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent);
-            }
-
-            /* Primary button: use the brighter accent so it doesn't vanish */
-            :host-context([data-theme='dark']) .primary-button {
-                background: var(--color-secondary);
-                color: var(--color-on-primary);
-            }
-
-            :host-context([data-theme='dark']) .primary-button:hover:not(:disabled) {
-                opacity: 0.85;
-                box-shadow: 0 2px 10px color-mix(in srgb, var(--color-accent) 30%, transparent);
-            }
-
-            /* Secondary button: visible ghost on dark panel */
-            :host-context([data-theme='dark']) .secondary-button {
-                color: var(--color-text-primary);
-                border-color: var(--color-border);
-            }
-
-            :host-context([data-theme='dark']) .secondary-button:hover:not(:disabled) {
-                background: color-mix(in srgb, var(--color-accent) 10%, var(--color-panel));
-                border-color: color-mix(in srgb, var(--color-accent) 50%, var(--color-border));
-            }
-
-            /* Status chip */
-            :host-context([data-theme='dark']) .status-chip {
-                border-color: var(--color-border);
-                background: color-mix(in srgb, var(--color-border) 35%, transparent);
-                color: var(--color-text-secondary);
-            }
-
-            /* Detail header separator */
-            :host-context([data-theme='dark']) .detail-header {
-                border-bottom-color: var(--color-border);
-            }
-
-            /* Page header separator */
-            :host-context([data-theme='dark']) .page-header-row {
-                border-bottom-color: var(--color-border);
-            }
-
-            /* Upload row separator */
-            :host-context([data-theme='dark']) .upload-action-row {
-                border-top-color: var(--color-border);
-            }
-
-            /* Form actions separator */
-            :host-context([data-theme='dark']) .form-actions {
-                border-top-color: var(--color-border);
-            }
-
-            /* â”€â”€â”€ Viewer overlay (edge-to-edge; header is the only chrome) â”€â”€ */
-            .iframe-overlay {
-                position: fixed;
-                inset: 0;
-                z-index: 1000;
-                display: flex;
-                flex-direction: column;
-                gap: 0;
-                padding: 0;
-                box-sizing: border-box;
-                background: #090b14;
-                color: var(--color-text-primary);
-                font-family: var(--font-family-base);
-                font-feature-settings: var(--font-feature-defaults);
-            }
-
-            .iframe-header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                gap: 16px;
-                flex-shrink: 0;
-                padding: 10px 14px;
-                border: none;
-                border-bottom: 1px solid var(--color-border);
-                border-radius: 0;
-                background: var(--color-surface, var(--color-background));
-                color: var(--color-text-primary);
-                box-shadow: none;
-            }
-
-            .iframe-title {
-                min-width: 0;
-                font-size: 0.925rem;
-                font-weight: 600;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-                color: var(--color-text-primary);
-            }
-
-            .iframe-header-actions {
-                display: flex;
-                flex-shrink: 0;
-                gap: 10px;
-                align-items: center;
-            }
-
-            .iframe-container {
-                flex: 1;
-                display: flex;
-                position: relative;
-                min-height: 0;
-                overflow: hidden;
-                border: none;
-                border-radius: 0;
-                background: #090b14;
-            }
-
-            .viewer-iframe {
-                flex: 1;
-                width: 100%;
-                height: 100%;
-                border: 0;
-                background: #090b14;
-            }
-
-            .loading-overlay {
-                position: absolute;
-                inset: 0;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                background: color-mix(in srgb, var(--color-background) 80%, transparent);
-                pointer-events: none;
-            }
-
-            .viewer-loading {
-                text-align: center;
-                padding: 16px;
-                color: var(--color-text-secondary);
-                font-size: 0.9rem;
-            }
-
-            .toast {
-                position: fixed;
-                right: 20px;
-                bottom: 20px;
-                z-index: 1200;
-                background: var(--color-success, #2e7d32);
-                color: #fff;
-                border-radius: var(--radius-md, 6px);
-                padding: 10px 16px;
-                box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
-                max-width: min(380px, calc(100vw - 40px));
-                font-weight: 500;
-                font-size: 0.9rem;
-                line-height: 1.4;
-            }
-
-            .save-indicator {
-                font-size: 0.85rem;
-                color: var(--color-text-secondary);
-                white-space: nowrap;
-            }
-
-            .viewer-error-message {
-                font-size: 0.85rem;
-                color: var(--color-status-error-fg, #8a1212);
-                white-space: nowrap;
-                max-width: 220px;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-        `;
+        return [listPageStyles, iconTileStyles, casesPageStyles];
     }
 
     static get properties() {
@@ -1101,6 +120,8 @@ export class CasesPage extends LitElement {
             toastMessage: { type: String },
             viewerSimplified: { type: Boolean },
             viewerKind: { type: String },
+            /** Case Settings (admins) instead of the case's files and comments */
+            showCaseSettings: { state: true },
             viewerClosing: { type: Boolean },
             currentFileName: { type: String },
             // New Case form
@@ -1143,6 +164,7 @@ export class CasesPage extends LitElement {
             _mcsSaveDefaultName: { type: String },
             errorDialogTitle: { type: String },
             errorDialogMessage: { type: String },
+            errorDialogOffer: { attribute: false },
         };
     }
 
@@ -1169,6 +191,20 @@ export class CasesPage extends LitElement {
         this._viewerSessionToken = null;
         this._viewerSeatId = null;
         this.viewerKind = VIEWER_KINDS.SLICER_GUI;
+        this.workflows = new CaseWorkflowsController(this, {
+            channel: () => this.slicerWebChannel(),
+            accountViewer: () => this.accountDefaultViewer(),
+            fileName: attachmentFileName,
+            fileTitle: (attachment) => this.attachmentTitle(attachment),
+            isBusy: () => Boolean(this.openingAttachmentId) || this.viewerLoading,
+            launch: (caseRow, attachment, open) => this.openWith(caseRow, attachment, open),
+            // The uploader (while they can still edit the case) or an admin, as the server allows.
+            canSetFileDefault: (caseRow, attachment) => this.myCaseRole(caseRow) === 'admin'
+                || (this.isMyAttachment(attachment) && this.canEditCaseContent(caseRow)),
+            fileDefaultChanged: (caseRow, attachment, openWith) => this._patchAttachment(caseRow.id, attachment.id, { openWith }),
+            showError: (err) => { this.errorMessage = this.userFacingError(err, t('common.somethingWentWrong')); },
+        });
+        this.showCaseSettings = false;
         this.viewerClosing = false;
         this._viewerOpenId = 0;
         this._focusBeforeViewer = null;
@@ -1188,6 +224,7 @@ export class CasesPage extends LitElement {
         this._lastSavedAttachmentId = null;
         this.errorDialogTitle = '';
         this.errorDialogMessage = '';
+        this.errorDialogOffer = null;
         this.iframeActivityCleanup = null;
         this.currentAttachmentId = '';
         this.toastMessage = '';
@@ -1383,6 +420,10 @@ export class CasesPage extends LitElement {
 
     updated(changed) {
         if (changed.has('showIframe')) this.syncViewerFocus();
+        if (changed.has('selectedCaseId')) {
+            this.showCaseSettings = false;
+            this.workflows.load(this.selectedCaseId);
+        }
         if (changed.has('selectedCaseId') || this.selectedCaseId) {
             this.syncDetailLayoutObserver();
         }
@@ -1442,9 +483,9 @@ export class CasesPage extends LitElement {
     _startCaseAccessWatch() {
         this._stopCaseAccessWatch();
         this._accessWatchTimer = setInterval(() => {
-            if (!document.hidden) this._verifyCaseAccess();
+            if (!document.hidden) this._refreshOpenCase();
         }, 60 * 1000);
-        this._onAccessWake = () => { if (!document.hidden) this._verifyCaseAccess(); };
+        this._onAccessWake = () => { if (!document.hidden) this._refreshOpenCase(); };
         window.addEventListener('focus', this._onAccessWake);
         document.addEventListener('visibilitychange', this._onAccessWake);
     }
@@ -1457,6 +498,12 @@ export class CasesPage extends LitElement {
             document.removeEventListener('visibilitychange', this._onAccessWake);
             this._onAccessWake = null;
         }
+    }
+
+    /** On the minute and on returning to the tab: is the open case still ours, and what's new in its workflows. */
+    _refreshOpenCase() {
+        this._verifyCaseAccess();
+        this.workflows.refreshIfStale(this.selectedCaseId);
     }
 
     /** Ask the server whether the open case is still ours (throttled unless forced). */
@@ -1545,10 +592,10 @@ export class CasesPage extends LitElement {
     }
 
     /**
-     * Open case People dialog (used by notification deep-links).
+     * Open a case, then `then(caseRow)` once it's in the list (notification deep-links).
      * Retries briefly if the case list has not finished loading.
      */
-    async openPeopleForCaseId(caseId) {
+    async _openCaseThen(caseId, then) {
         const id = String(caseId || '').trim();
         if (!id) return;
         this.openCase(id);
@@ -1556,11 +603,21 @@ export class CasesPage extends LitElement {
             const caseRow = this.cases.find((row) => String(row.id) === id);
             if (caseRow) {
                 await this.updateComplete;
-                await this.openPeopleDialog(caseRow);
+                await then(caseRow);
                 return;
             }
             await new Promise((r) => setTimeout(r, 100));
         }
+    }
+
+    /** Open case People dialog (used by notification deep-links). */
+    openPeopleForCaseId(caseId) {
+        return this._openCaseThen(caseId, (caseRow) => this.openPeopleDialog(caseRow));
+    }
+
+    /** Open the case's Workflows panel on `tab` (PANEL_TAB; Home's workflow request cards). */
+    openWorkflowsForCaseId(caseId, tab) {
+        return this._openCaseThen(caseId, (caseRow) => this.workflows.openPanel(caseRow, tab));
     }
 
     async refreshPendingInviteCount() {
@@ -1674,13 +731,26 @@ export class CasesPage extends LitElement {
         if (!caseRow) return null;
         if (caseRow.myRole) return caseRow.myRole;
         if (this.currentKeycloakSub && caseRow.owner_id === this.currentKeycloakSub) return 'admin';
-        if (this.isOrgAdmin) return 'admin';
-        return null;
+        return null; // the server's myRole covers site admins; org admins get only their membership
     }
 
     canEditCaseContent(caseRow) {
         const role = this.myCaseRole(caseRow);
         return role === 'admin' || role === 'collaborator';
+    }
+
+    /** A loaded attachment of a case, by id. */
+    _attachment(caseId, attachmentId) {
+        const caseRow = this.cases.find((c) => String(c.id) === String(caseId));
+        return (caseRow?.attachments || []).find((a) => String(a.id) === String(attachmentId)) || null;
+    }
+
+    /** Change fields of one loaded attachment, in place in this.cases. */
+    _patchAttachment(caseId, attachmentId, fields) {
+        this.cases = this.cases.map((c) => (String(c.id) !== String(caseId) || !Array.isArray(c.attachments) ? c : {
+            ...c,
+            attachments: c.attachments.map((a) => (String(a.id) === String(attachmentId) ? { ...a, ...fields } : a)),
+        }));
     }
 
     isMyAttachment(attachment) {
@@ -1702,7 +772,8 @@ export class CasesPage extends LitElement {
             mimeType: att.mime_type || 'application/octet-stream',
             modifiedAt: att.updatedAt || att.createdAt || null,
             uploadedBy: att.uploaded_by ?? null,
-            isMrb:              att.isMrb              ?? false,
+            openWith: att.open_with || null, // the file's default (a menu key); null: the case default
+            isMrb:             att.isMrb              ?? false,
             canOpenInSlicer:    att.canOpenInSlicer    ?? false,
             canPreviewInBrowser: att.canPreviewInBrowser ?? false,
             _source: 'payload',
@@ -1797,6 +868,8 @@ export class CasesPage extends LitElement {
                 displayName: entry.displayName || [entry.firstName, entry.lastName].filter(Boolean).join(' ') || entry.email || '',
                 avatarUrl: entry.avatarUrl || null,
                 role: entry.role || 'collaborator',
+                siteAdmin: entry.siteAdmin === true,
+                needsRole: entry.needsRole === true,
                 locked: false,
             });
         }
@@ -2227,26 +1300,30 @@ export class CasesPage extends LitElement {
     }
 
     /**
-     * Upload files to the case one at a time (resumable TUS), with progress shown on the case.
+     * Upload files to the case one at a time (resumable TUS), with progress shown on the case,
+     * after asking what each opens with by default (cancelling that uploads nothing).
      * The server records each attachment when its upload finishes.
      */
-    uploadFiles(caseRow, files) {
+    async uploadFiles(caseRow, files) {
         if (!files.length || !caseRow?.id) return;
         if (!this.canEditCaseContent(caseRow)) return;
+        const openWith = await this.workflows.askOpenWith(caseRow, files);
+        if (!openWith) return;
         this.uploadError = '';
-        this.uploadFilesPayload(caseRow, files);
+        this.uploadFilesPayload(caseRow, files, openWith);
     }
 
-    async uploadFilesPayload(caseRow, files) {
+    async uploadFilesPayload(caseRow, files, openWith = []) {
         // Upload files one at a time, reporting inline progress.
         // The server creates the attachment record in onUploadFinish, so there's no separate attach step.
-        for (const file of files) {
+        for (const [i, file] of files.entries()) {
             if (this.uploadError) break;
             this.uploadingFile = true;
             this.uploadProgress = 0;
             this.uploadStatusText = t('cases.uploadingFile', { name: file.name });
             try {
                 await uploadCaseAttachment(caseRow.id, file, {
+                    openWith: openWith[i] || undefined,
                     onProgress: (sent, total) => {
                         this.uploadProgress = total > 0 ? sent / total : 0;
                     },
@@ -2428,43 +1505,11 @@ export class CasesPage extends LitElement {
     }
 
     filterAttachments(attachments = [], query = this.attachmentSearchQuery) {
-        const needle = String(query || '').trim().toLowerCase();
-        const list = Array.isArray(attachments) ? attachments : [];
-        if (!needle) return [...list];
-        return list.filter((row) => {
-            const title = this.attachmentTitle(row).toLowerCase();
-            const original = String(row?.filenameDownload || '').toLowerCase();
-            return title.includes(needle) || original.includes(needle);
-        });
+        return filterByText(attachments, query, (row) => [this.attachmentTitle(row), row?.filenameDownload]);
     }
 
     sortAttachments(attachments = [], order = this.attachmentSortOrder) {
-        const list = Array.isArray(attachments) ? [...attachments] : [];
-        const titleOf = (row) => this.attachmentTitle(row).toLowerCase();
-        const timeOf = (row) => {
-            const value = Date.parse(row?.modifiedAt || '');
-            return Number.isFinite(value) ? value : null;
-        };
-
-        if (order === 'title') {
-            return list.sort((a, b) => {
-                const byTitle = titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: 'base' });
-                return byTitle || String(a.id || '').localeCompare(String(b.id || ''));
-            });
-        }
-
-        const newestFirst = order !== 'oldest';
-        return list.sort((a, b) => {
-            const timeA = timeOf(a);
-            const timeB = timeOf(b);
-            if (timeA == null && timeB == null) {
-                return titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: 'base' });
-            }
-            if (timeA == null) return 1;
-            if (timeB == null) return -1;
-            const diff = newestFirst ? timeB - timeA : timeA - timeB;
-            return diff || titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: 'base' });
-        });
+        return sortRows(attachments, order, { titleOf: (row) => this.attachmentTitle(row), timeOf: (row) => row?.modifiedAt });
     }
 
     caseTitle(caseRow) {
@@ -2472,43 +1517,11 @@ export class CasesPage extends LitElement {
     }
 
     filterCases(cases = [], query = this.caseSearchQuery) {
-        const needle = String(query || '').trim().toLowerCase();
-        const list = Array.isArray(cases) ? cases : [];
-        if (!needle) return [...list];
-        return list.filter((row) => {
-            const title = this.caseTitle(row).toLowerCase();
-            const description = String(row?.description || '').toLowerCase();
-            return title.includes(needle) || description.includes(needle);
-        });
+        return filterByText(cases, query, (row) => [this.caseTitle(row), row?.description]);
     }
 
     sortCases(cases = [], order = this.caseSortOrder) {
-        const list = Array.isArray(cases) ? [...cases] : [];
-        const titleOf = (row) => this.caseTitle(row).toLowerCase();
-        const timeOf = (row) => {
-            const value = Date.parse(this.caseLastModifiedAt(row) || '');
-            return Number.isFinite(value) ? value : null;
-        };
-
-        if (order === 'title') {
-            return list.sort((a, b) => {
-                const byTitle = titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: 'base' });
-                return byTitle || String(a.id || '').localeCompare(String(b.id || ''));
-            });
-        }
-
-        const newestFirst = order !== 'oldest';
-        return list.sort((a, b) => {
-            const timeA = timeOf(a);
-            const timeB = timeOf(b);
-            if (timeA == null && timeB == null) {
-                return titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: 'base' });
-            }
-            if (timeA == null) return 1;
-            if (timeB == null) return -1;
-            const diff = newestFirst ? timeB - timeA : timeA - timeB;
-            return diff || titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: 'base' });
-        });
+        return sortRows(cases, order, { titleOf: (row) => this.caseTitle(row), timeOf: (row) => this.caseLastModifiedAt(row) });
     }
 
     closeListFilterMenus() {
@@ -2537,14 +1550,8 @@ export class CasesPage extends LitElement {
         this.caseSortOrder = order;
     }
 
-    attachmentOpenTitle(attachment) {
-        if (attachment?.canOpenInSlicer) {
-            const dv = this.accountDefaultViewer();
-            const label = dv === 'web'
-                ? viewerDisplayName(VIEWER_KINDS.SLICERWEB)
-                : viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified: dv === 'simplified' });
-            return t('cases.openInDefault', { viewer: label });
-        }
+    attachmentOpenTitle(attachment, openWith) {
+        if (attachment?.canOpenInSlicer) return t('cases.openWithWorkflow', { name: openWith.name });
         if (attachment?.canPreviewInBrowser) return t('cases.browserPreviewSoon');
         return t('cases.fileTypeUnsupported');
     }
@@ -2582,7 +1589,8 @@ export class CasesPage extends LitElement {
         this._mcsSaveDefaultName = '';
     }
 
-    async handleOpenAttachment(caseRow, attachment, { simplified } = {}) {
+    /** Open a file in Full Slicer, with the chosen workflow's startup configuration ({}: none). */
+    async handleOpenAttachment(caseRow, attachment, { startupConfig = {} } = {}) {
         if (this.openingAttachmentId) return;
 
         if (attachment?.canPreviewInBrowser && !attachment?.canOpenInSlicer) {
@@ -2591,7 +1599,7 @@ export class CasesPage extends LitElement {
         }
         if (!attachment?.canOpenInSlicer) return;
 
-        const useSimplified = resolveSimplifiedViewerChoice(simplified);
+        const useSimplified = startupConfig.module === SIMPLIFIED_VIEWER_MODULE;
         const viewerLabel = viewerDisplayName(VIEWER_KINDS.SLICER_GUI, { simplified: useSimplified });
 
         this._focusBeforeViewer = deepActiveElement();
@@ -2615,7 +1623,7 @@ export class CasesPage extends LitElement {
         try {
             this.stopHeartbeat();
             const data = await openPayloadAttachmentFullSlicer(caseRow.id, attachment.id, {
-                useSimplifiedViewer: useSimplified
+                startupConfig
             });
             if (isSuperseded()) {
                 if (data.sessionToken) {
@@ -2657,13 +1665,53 @@ export class CasesPage extends LitElement {
         }
     }
 
-    /** "Open with" choice: 'full' | 'simplified' (Full Slicer) or 'web' (in-browser SlicerWeb). */
-    handleOpenViewer(caseRow, attachment, viewer) {
-        if (viewer === 'web') return this.handleOpenSlicerWeb(caseRow, attachment);
-        return this.handleOpenAttachment(caseRow, attachment, { simplified: viewer === 'simplified' });
+    /** The SlicerWeb channel this person launches: latest only in developer mode. */
+    slicerWebChannel() {
+        return isSlicerWebDevModeEnabled() && getCachedUserPreferences().slicerWebChannel === 'latest' ? 'latest' : 'stable';
     }
 
-    async handleOpenSlicerWeb(caseRow, attachment) {
+    /**
+     * The case toolbar's ⋯ menu: Workflows (everyone; with the count of requests waiting for
+     * admins), Edit details (editors) and Settings (admins). People keeps its own button.
+     */
+    caseActions(caseRow, { canEdit, canManage }) {
+        return [
+            this.workflows.actionItem(caseRow),
+            ...(canEdit && !this.editingCase && !this.archivingCase ? [{ key: 'edit', label: t('cases.editDetails') }] : []),
+            ...(canManage ? [{ key: 'settings', label: t('caseSettings.open') }] : []),
+        ];
+    }
+
+    onCaseAction(caseRow, key) {
+        if (key === 'workflows') this.workflows.openPanel(caseRow);
+        else if (key === 'edit') this.startEditCase(caseRow);
+        else if (key === 'settings') this.showCaseSettings = true;
+    }
+
+    /** Launch a file (attachment null: the blank viewer) in its viewer, with its workflow on top. */
+    openWith(caseRow, attachment, { viewer, workflow }) {
+        if (viewer === VIEWER.FULL) return this.handleOpenAttachment(caseRow, attachment, { startupConfig: workflow?.startupConfig || {} });
+        const params = workflow ? { extensions: workflow.extensions, module: workflow.startupConfig.module } : {};
+        return attachment ? this.handleOpenSlicerWeb(caseRow, attachment, params) : this.handleOpenBlankSlicerWeb(caseRow, params);
+    }
+
+    /**
+     * SlicerWeb URL for this person's channel, with a workflow's extensions and start module ({}:
+     * SlicerWeb's defaults). The installed build's SHA goes in as ?v= so a new build skips any
+     * stale service-worker cache. Extensions earlier launches left installed are forgotten first,
+     * so only the workflow's load.
+     */
+    async _slicerWebUrl(params = {}) {
+        resetSlicerWebExtensions();
+        const channel = this.slicerWebChannel();
+        const statusData = await fetch('/api/slicerweb/status', { credentials: 'include' })
+            .then((r) => r.ok ? r.json() : null)
+            .catch(() => null);
+        const sha = statusData?.[channel] ?? null;
+        return buildSlicerWebUrl({ channel, sha, ...params });
+    }
+
+    async handleOpenSlicerWeb(caseRow, attachment, slicerWebParams) {
         if (this.openingAttachmentId || !attachment?.canOpenInSlicer) return;
 
         this._viewerOpenId += 1;
@@ -2677,9 +1725,6 @@ export class CasesPage extends LitElement {
         this.currentAttachmentId = attachment.id;
         this.selectedCaseId = caseRow.id;
 
-        const channel = (isSlicerWebDevModeEnabled() && getCachedUserPreferences().slicerWebChannel === 'latest')
-            ? 'latest' : 'stable';
-
         // For the latest channel: open immediately with whatever is installed.
         // A background download may already be in progress (started on page load).
         // When it finishes, a toast notifies the user so they can reopen for the new version.
@@ -2690,15 +1735,12 @@ export class CasesPage extends LitElement {
         // Download while the runtime starts; both are awaited in loadPendingIntoSlicerWeb.
         const download = fetchPayloadAttachmentContent(caseRow.id, attachment.id);
         download.catch(() => {}); // surfaced when awaited
-        this._slicerWebPending = { download, fileName: this.currentFileName };
+        this._slicerWebPending = {
+            download, fileName: this.currentFileName, module: slicerWebParams?.module,
+            caseRow, attachment, extensions: slicerWebParams?.extensions || [], // for a failed load's "Open with …"
+        };
 
-        // Fetch installed SHA to include as ?v= in the iframe URL, which breaks any
-        // stale service-worker cache when a new build lands.
-        const statusData = await fetch('/api/slicerweb/status', { credentials: 'include' })
-            .then((r) => r.ok ? r.json() : null)
-            .catch(() => null);
-        const sha = statusData?.[channel] ?? null;
-        this.iframeUrl = buildSlicerWebUrl({ channel, sha });
+        this.iframeUrl = await this._slicerWebUrl(slicerWebParams);
 
         this._pushViewerHistory(caseRow.id);
 
@@ -2746,6 +1788,7 @@ export class CasesPage extends LitElement {
             // Blank mode: SlicerWeb is ready with no file to load.
             if (pending.blank) {
                 if (cancelled()) return;
+                await this._selectStartModule(slicer, pending.module);
                 this._slicerWebPending = null;
                 this.viewerLoading = false;
                 this.viewerLoadingDetail = '';
@@ -2804,28 +1847,50 @@ export class CasesPage extends LitElement {
             // in WASM). Use evalPython for these; everything else goes through loadFiles.
             const needsPython = /\.(mrb|mcs|mxp)$/i.test(pending.fileName);
             let loadResult;
+            // What Slicer said while loading: its log and stderr (the ITK error behind an
+            // unrecognised format only goes there), SlicerWeb's alert() for reader errors (caught
+            // by handleViewerIframeLoad), and what the Python path collects itself.
+            const loadMessages = [];
+            cw._slicerAlertMessage = null;
+            const stopListening = ['log', 'stderr'].map((name) => slicer.bridge.events?.on?.(name,
+                (entry) => loadMessages.push(typeof entry === 'string' ? entry : entry?.message)));
             try {
                 if (needsPython) {
                     const safePath = filePaths[0].replace(/\\/g, '/').replace(/'/g, "\\'");
+                    // .mcs/.mxp go to SlicerHeart's MimicsProject reader by name (its confidence is
+                    // zero in WASM). Only if that fails (no SlicerHeart) does Slicer pick the reader,
+                    // as desktop Slicer would, so a missing extension shows up in its messages.
                     await slicer.bridge.callYielding('evalPython', [[
                         'import slicer, os, vtk',
                         'slicer.mrmlScene.Clear(False)',
                         '_sw_exc = None',
+                        '_sw_ok = True',
+                        '_sw_msgs = slicer.vtkMRMLMessageCollection()',
+                        '_sw_io = slicer.app.coreIOManager()',
+                        '_sw_fallback = False',
                         `_sw_path = '${safePath}'`,
                         'try:',
                         '    if os.path.splitext(_sw_path)[1].lower() in (".mrb", ".mrml"):',
                         '        slicer.util.loadScene(_sw_path)',
-                        '    else:',
-                        '        _sw_nodes = vtk.vtkCollection()',
+                        '    elif not _sw_io.loadNodes("MimicsProject", {"fileName": _sw_path}, vtk.vtkCollection(), _sw_msgs):',
+                        '        _sw_fallback = True',
                         '        _sw_msgs = slicer.vtkMRMLMessageCollection()',
-                        '        slicer.app.coreIOManager().loadNodes("MimicsProject", {"fileName": _sw_path}, _sw_nodes, _sw_msgs)',
+                        '        _sw_ok = bool(_sw_io.loadFiles([_sw_path], {}, _sw_msgs))',
                         'except Exception as _e:',
                         '    _sw_exc = str(_e)',
-                        '_sw_ids = [n.GetID() for i in range(slicer.mrmlScene.GetNumberOfNodes()) for n in [slicer.mrmlScene.GetNthNode(i)] if n]',
+                        '_sw_ids = [n.GetID() for i in range(slicer.mrmlScene.GetNumberOfNodes()) for n in [slicer.mrmlScene.GetNthNode(i)] if n] if _sw_ok else []',
+                        '_sw_messages = _sw_msgs.GetAllMessagesAsString()',
                     ].join('\n'), 'exec']);
                     const idsRepr = await slicer.bridge.call('evalPython', ['_sw_ids', 'eval']);
                     const excRepr = await slicer.bridge.call('evalPython', ['_sw_exc', 'eval']);
-                    if (excRepr !== 'None') console.warn('[SW-load] warning (non-fatal):', excRepr);
+                    if (excRepr !== 'None') {
+                        console.warn('[SW-load] warning (non-fatal):', excRepr);
+                        loadMessages.push(excRepr);
+                    }
+                    loadMessages.push(await slicer.bridge.call('evalPython', ['_sw_messages', 'eval']));
+                    if (await slicer.bridge.call('evalPython', ['_sw_fallback', 'eval']) === 'True') {
+                        console.warn('[SW-load] MimicsProject reader failed or missing; let Slicer pick a reader. Said:', loadMessages.join('\n'));
+                    }
                     loadResult = parseNodeIdsRepr(idsRepr);
                 } else {
                     await slicer.bridge.callYielding('closeScene', []);
@@ -2835,14 +1900,19 @@ export class CasesPage extends LitElement {
             } catch (loadErr) {
                 console.error('[SW-load] load threw:', loadErr);
                 throw loadErr;
+            } finally {
+                stopListening.forEach((stop) => stop?.());
             }
             if (cancelled()) return;
 
+            loadMessages.push(cw._slicerAlertMessage);
             cw._slicerAlertMessage = null;
             if (!Array.isArray(loadResult) || loadResult.length === 0) {
+                const said = loadMessages.filter(Boolean).join('\n');
+                console.warn('[SW-load] nothing loaded. Slicer said:', said);
+                if (isUnrecognisedFormat(said)) throw new UnrecognisedFormatError(said);
                 throw new Error(t('errors.slicerLoadFailed'));
             }
-
 
             await new Promise((r) => setTimeout(r, 500));
             if (!cancelled()) {
@@ -2854,6 +1924,7 @@ export class CasesPage extends LitElement {
                         console.warn('[SlicerWeb] fitSlicesToBackground failed:', e2);
                     }
                 }
+                await this._selectStartModule(slicer, pending.module);
             }
 
             this._slicerWebPending = null;
@@ -2865,8 +1936,8 @@ export class CasesPage extends LitElement {
             console.error('[SW] caught error:', err);
             if (cancelled()) return;
             const rawErr = err?.message || String(err || '');
-            const errorInfo = rawErr
-                ? this.viewerLoadError(rawErr)
+            const errorInfo = err instanceof UnrecognisedFormatError ? this._unrecognisedFormatError(pending)
+                : rawErr ? this.viewerLoadError(rawErr)
                 : { title: t('errors.slicerLoadFailedTransientTitle'), message: t('errors.openViewerFailed') };
             this._viewerPushedState = false;
             await this._doCloseViewer();
@@ -2875,13 +1946,49 @@ export class CasesPage extends LitElement {
         }
     }
 
+    /** The workflow's start module, shown once the file has loaded (see selectModulePython). Never fails the open. */
+    async _selectStartModule(slicer, module) {
+        const code = selectModulePython(module);
+        if (!code) return;
+        try {
+            await slicer.bridge.call('evalPython', [code, 'exec']);
+        } catch (err) {
+            console.warn(`[SlicerWeb] could not open the start module ${module}:`, err);
+        }
+    }
+
     viewerLoadError(rawError) {
         return classifySlicerLoadError(rawError);
     }
 
-    showErrorDialog({ title, message }) {
+    /**
+     * A file whose format wasn't recognised may need an extension: offer this case's workflows
+     * that add one the launch didn't have, as "Open with …" (docs/workflows-design.md › When a
+     * file needs an extension).
+     */
+    _unrecognisedFormatError({ caseRow, attachment, extensions }) {
+        const { usable } = this.workflows.openWithFor(caseRow, attachment);
+        const offered = workflowsAddingExtensions(usable.caseWorkflows, extensions);
+        if (!offered.length) return { title: t('errors.unrecognisedFormatTitle'), message: t('errors.unrecognisedFormatAskAdmin') };
+        const offer = {
+            fileName: this.attachmentTitle(attachment),
+            usable: { caseWorkflows: offered, mine: [] },
+            selectedKey: offered[0].key,
+            open: (key) => this.workflows.openChoice(caseRow, attachment, key),
+            more: () => this.workflows.openMore(caseRow, attachment, offer, offer.fileName),
+        };
+        return { title: t('errors.unrecognisedFormatTitle'), message: t('errors.unrecognisedFormatTryWorkflows'), offer };
+    }
+
+    /**
+     * The viewer error dialog. `offer` ({ fileName, usable, selectedKey, open(key), more() }) turns
+     * Close into "Open with <first>": a button, or with more than one, a menu of them with the
+     * first checked, and "More workflows…" (which replaces this dialog, rather than open on top) past MENU_LIMIT.
+     */
+    showErrorDialog({ title, message, offer = null }) {
         this.errorDialogTitle = title || '';
         this.errorDialogMessage = message || '';
+        this.errorDialogOffer = offer;
         const dialog = this.renderRoot?.querySelector('#viewer-error-dialog');
         if (dialog) {
             queueMicrotask(() => dialog.openDialog?.());
@@ -2975,7 +2082,8 @@ export class CasesPage extends LitElement {
         const abortCtrl = new AbortController();
         this._backgroundSave = { file, caseId, attachmentId, saveMode, name, onNewAttachment, error: null, abortCtrl };
         this.hasUnsavedChanges = false;
-        savePayloadSlicerWebScene(caseId, attachmentId, file, { saveMode, name, signal: abortCtrl.signal })
+        const openWith = this._attachment(caseId, attachmentId)?.openWith || undefined;
+        savePayloadSlicerWebScene(caseId, attachmentId, file, { saveMode, name, openWith, signal: abortCtrl.signal })
             .then((result) => {
                 if (abortCtrl.signal.aborted) return;
                 this._backgroundSave = null;
@@ -3190,7 +2298,7 @@ export class CasesPage extends LitElement {
         } catch (_) {}
     }
 
-    async handleOpenBlankSlicerWeb(caseRow) {
+    async handleOpenBlankSlicerWeb(caseRow, slicerWebParams) {
         if (this.viewerLoading || this.openingAttachmentId) return;
 
         this._viewerOpenId += 1;
@@ -3204,18 +2312,11 @@ export class CasesPage extends LitElement {
         this.showIframe = true;
         this.selectedCaseId = caseRow.id;
 
-        const channel = (isSlicerWebDevModeEnabled() && getCachedUserPreferences().slicerWebChannel === 'latest')
-            ? 'latest' : 'stable';
-
         this.viewerLoadingDetail = t('cases.openingSlicerWeb');
         this._slicerWebRun += 1;
-        this._slicerWebPending = { blank: true };
+        this._slicerWebPending = { blank: true, module: slicerWebParams?.module };
 
-        const statusData = await fetch('/api/slicerweb/status', { credentials: 'include' })
-            .then((r) => r.ok ? r.json() : null)
-            .catch(() => null);
-        const sha = statusData?.[channel] ?? null;
-        this.iframeUrl = buildSlicerWebUrl({ channel, sha });
+        this.iframeUrl = await this._slicerWebUrl(slicerWebParams);
 
         this._pushViewerHistory(caseRow.id);
     }
@@ -3291,7 +2392,7 @@ export class CasesPage extends LitElement {
                 ` : ''}
 
                 ${this.showNewCaseForm ? html`
-                    <form slot="content" class="new-case-form" @submit=${(e) => this.handleNewCaseSubmit(e)} novalidate>
+                    <form slot="content" class="form-panel" @submit=${(e) => this.handleNewCaseSubmit(e)} novalidate>
                         <h3>${t('cases.newCase')}</h3>
 
                         <div class="form-group">
@@ -3325,7 +2426,7 @@ export class CasesPage extends LitElement {
                             <div class="form-error-msg">${this.newCaseError}</div>
                         ` : ''}
 
-                        <div class="form-actions">
+                        <div class="form-actions is-sticky">
                             <button
                                 class="primary-button"
                                 type="submit"
@@ -3346,26 +2447,26 @@ export class CasesPage extends LitElement {
                 ` : ''}
 
                 ${!this.loading && this.cases.length > 0 && filteredCases.length === 0 && !this.showNewCaseForm ? html`
-                    <p slot="content" class="cases-empty-filter">No cases match â€œ${this.caseSearchQuery.trim()}â€.</p>
+                    <p slot="content" class="empty-filter">No cases match “${this.caseSearchQuery.trim()}”.</p>
                 ` : ''}
 
                 ${!this.loading && filteredCases.length > 0 ? html`
-                    <div slot="content" class="case-grid">
+                    <div slot="content" class="card-grid">
                         ${filteredCases.map((row) => {
                             const isArchived = row.status === 'archived';
                             const modifiedLabel = this.caseLastModifiedLabel(row);
                             const newCommentCount = this.countNewCaseComments(row);
                             return html`
                                 <button
-                                    class=${isArchived ? 'case-card is-archived' : 'case-card'}
+                                    class=${isArchived ? 'card is-archived' : 'card'}
                                     type="button"
                                     @click=${() => this.openCase(row.id)}
                                 >
-                                    <div class="case-card-title-row">
-                                        <span class="case-card-title">${row.title || t('cases.untitled')}</span>
+                                    <div class="card-title-row">
+                                        <span class="card-title">${row.title || t('cases.untitled')}</span>
                                         ${newCommentCount > 0 ? html`
                                             <span
-                                                class="case-card-new-badge"
+                                                class="card-badge"
                                                 title=${newCommentCount === 1
                                                     ? t('cases.oneNewComment')
                                                     : t('cases.nNewComments', { n: newCommentCount })}
@@ -3373,11 +2474,11 @@ export class CasesPage extends LitElement {
                                         ` : ''}
                                     </div>
                                     ${row.description ? html`
-                                        <p class="case-card-desc">${row.description}</p>
+                                        <p class="card-desc">${row.description}</p>
                                     ` : ''}
                                     ${modifiedLabel ? html`
-                                        <div class="case-card-meta-row">
-                                            <span class="case-card-meta-item">${modifiedLabel}</span>
+                                        <div class="card-meta-row">
+                                            <span class="card-meta-item">${modifiedLabel}</span>
                                         </div>
                                     ` : ''}
                                     ${isArchived ? html`
@@ -3406,18 +2507,7 @@ export class CasesPage extends LitElement {
         const peopleLabel = peopleCount
             ? t('cases.people', { n: peopleCount })
             : t('cases.peopleLabel');
-        return html`
-            <page-layout-template
-                ?inert=${this.showIframe}
-                .username=${this.username}
-                .avatarUrl=${this.avatarUrl}
-                .isOrgAdmin=${this.isOrgAdmin || false}
-                .isRegistrationReviewer=${this.isRegistrationReviewer || false}
-                selectedMenuKey="cases"
-                homeHref="/file-manager"
-                homeLabel="Home"
-                @menu-selection-change=${this.handleMenuSelectionChange}
-            >
+        return this.renderCaseShell(html`
                 <div slot="content" class="case-detail">
                     <div class="detail-toolbar">
                         <button class="back-link" type="button" @click=${() => this.backToCaseList()}>
@@ -3434,19 +2524,16 @@ export class CasesPage extends LitElement {
                                     ? html` <span class="people-pending-badge" title=${t('people.pendingInvites')}>${pendingInvites}</span>`
                                     : ''}
                             </button>
-                            ${canEdit && !this.editingCase ? html`
-                                <button
-                                    class="quiet-button"
-                                    type="button"
-                                    ?disabled=${this.archivingCase}
-                                    @click=${() => this.startEditCase(caseRow)}
-                                >${t('cases.editDetails')}</button>
-                            ` : ''}
+                            <overflow-menu
+                                label=${t('cases.moreActions')}
+                                .items=${this.caseActions(caseRow, { canEdit, canManage })}
+                                @menu-select=${(e) => this.onCaseAction(caseRow, e.detail.key)}
+                            ></overflow-menu>
                         </div>
                     </div>
 
                     ${this.editingCase ? html`
-                        <form class="new-case-form" @submit=${(e) => { e.preventDefault(); this.saveEditCase(caseRow); }} novalidate>
+                        <form class="form-panel" @submit=${(e) => { e.preventDefault(); this.saveEditCase(caseRow); }} novalidate>
                             <div class="form-group">
                                 <label class="form-label" for="edit-case-title">${t('cases.createTitle').replace(' *', '')}</label>
                                 <input
@@ -3471,7 +2558,7 @@ export class CasesPage extends LitElement {
                                 ></textarea>
                             </div>
                             ${this.caseEditError ? html`<div class="form-error-msg">${this.caseEditError}</div>` : ''}
-                            <div class="form-actions">
+                            <div class="form-actions is-sticky">
                                 ${canManage && caseRow.status !== 'archived' ? html`
                                     <button
                                         class="quiet-button form-actions-spacer"
@@ -3507,8 +2594,9 @@ export class CasesPage extends LitElement {
                         ></page-content-message>
                     ` : ''}
 
+
                     <div class="case-detail-grid">
-                        <div class="files-panel">
+                        <div class="list-panel">
                             <div class="panel-header">
                                 <div class="panel-header-start">
                                     <h3 class="panel-title">${t('cases.attachments')}</h3>
@@ -3535,7 +2623,7 @@ export class CasesPage extends LitElement {
                                 ` : ''}
                             </div>
                             <div
-                                class="files-body ${this.attachmentDragOver ? 'drag-over' : ''}"
+                                class="list-panel-body ${this.attachmentDragOver ? 'drag-over' : ''}"
                                 @dragenter=${(e) => this.handleAttachmentDragEnter(e, caseRow)}
                                 @dragover=${(e) => this.handleAttachmentDragOver(e, caseRow)}
                                 @dragleave=${(e) => this.handleAttachmentDragLeave(e)}
@@ -3548,27 +2636,33 @@ export class CasesPage extends LitElement {
                                 ${allAttachments.length === 0 ? html`
                                     <div class="empty-note">${t('cases.noFiles')}</div>
                                 ` : attachments.length === 0 ? html`
-                                    <div class="empty-note">No attachments match â€œ${this.attachmentSearchQuery.trim()}â€.</div>
+                                    <div class="empty-note">No attachments match “${this.attachmentSearchQuery.trim()}”.</div>
                                 ` : html`
-                                    <div class="file-list">
-                                        ${attachments.map((attachment) => html`
+                                    <div class="list-panel-items">
+                                        ${attachments.map((attachment) => {
+                                            const openWith = this.workflows.openWithFor(caseRow, attachment);
+                                            return html`
                                             <file-list-row
                                                 .fileName=${this.attachmentTitle(attachment)}
                                                 .metaLine=${this.attachmentMetaLine(attachment)}
                                                 .nameButtonDisabled=${!this.attachmentCanActivate(attachment)
                                                     || !!this.openingAttachmentId
                                                     || this.viewerLoading}
-                                                .nameButtonTitle=${this.attachmentOpenTitle(attachment)}
-                                                @name-click=${() => this.handleOpenViewer(caseRow, attachment, this.accountDefaultViewer())}
+                                                .nameButtonTitle=${this.attachmentOpenTitle(attachment, openWith)}
+                                                @name-click=${() => this.openWith(caseRow, attachment, openWith)}
                                             >
                                                 ${attachment?.canOpenInSlicer ? html`
-                                                    <attachment-open-menu
-                                                        slot="title-trailing"
-                                                        .fileName=${this.attachmentTitle(attachment)}
-                                                        .defaultViewer=${this.accountDefaultViewer()}
-                                                        ?disabled=${!!this.openingAttachmentId || this.viewerLoading}
-                                                        @open-viewer=${(e) => this.handleOpenViewer(caseRow, attachment, e.detail?.viewer)}
-                                                    ></attachment-open-menu>
+                                                    <span slot="actions" class="open-with-split">
+                                                        <button
+                                                            class="open-with-icon"
+                                                            type="button"
+                                                            title=${openWith.name}
+                                                            aria-label=${t('cases.openFileWith', { file: this.attachmentTitle(attachment), name: openWith.name })}
+                                                            ?disabled=${!!this.openingAttachmentId || this.viewerLoading}
+                                                            @click=${() => this.openWith(caseRow, attachment, openWith)}
+                                                        >${iconTile(openWith.icon.name, openWith.icon.src)}</button>
+                                                        ${this.workflows.renderMenu(caseRow, attachment, openWith)}
+                                                    </span>
                                                 ` : ''}
                                                 ${canEdit ? html`
                                                     <button
@@ -3583,11 +2677,7 @@ export class CasesPage extends LitElement {
                                                     >
                                                         ${this.downloadingAttachmentIds.has(attachment.id) ? html`
                                                             <span class="download-spinner" aria-hidden="true"></span>
-                                                        ` : html`
-                                                            <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
-                                                                <path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
-                                                            </svg>
-                                                        `}
+                                                        ` : ICON_DOWNLOAD}
                                                     </button>
                                                 ` : ''}
                                                 ${(this.isMyAttachment(attachment) || this.myCaseRole(caseRow) === 'admin') ? html`
@@ -3600,13 +2690,12 @@ export class CasesPage extends LitElement {
                                                         ?disabled=${!!this.deletingAttachmentId}
                                                         @click=${() => this.handleDeleteAttachment(caseRow, attachment)}
                                                     >
-                                                        <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
-                                                            <path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
-                                                        </svg>
+                                                        ${ICON_TRASH}
                                                     </button>
                                                 ` : ''}
                                             </file-list-row>
-                                        `)}
+                                        `;
+                                        })}
                                     </div>
                                 `}
 
@@ -3645,14 +2734,7 @@ export class CasesPage extends LitElement {
                                             >
                                                 ${t('cases.addFile')}
                                             </button>
-                                            <button
-                                                class="secondary-button"
-                                                type="button"
-                                                ?disabled=${this.viewerLoading || !!this.openingAttachmentId}
-                                                @click=${() => this.handleOpenBlankSlicerWeb(caseRow)}
-                                            >
-                                                ${t('cases.openBlankSlicerWeb')}
-                                            </button>
+                                            ${this.workflows.renderBlankViewerButton(caseRow)}
                                         </div>
                                     </div>
                                 ` : ''}
@@ -3681,8 +2763,40 @@ export class CasesPage extends LitElement {
                         ></comments-panel>
                     </div>
                 </div>
-            </page-layout-template>
+        `);
+    }
+
+    /** The signed-in page around a case or its settings. */
+    renderCaseShell(content) {
+        return html`
+            <page-layout-template
+                ?inert=${this.showIframe}
+                .username=${this.username}
+                .avatarUrl=${this.avatarUrl}
+                .isOrgAdmin=${this.isOrgAdmin || false}
+                .isRegistrationReviewer=${this.isRegistrationReviewer || false}
+                selectedMenuKey="cases"
+                homeHref="/file-manager"
+                homeLabel="Home"
+                @menu-selection-change=${this.handleMenuSelectionChange}
+            >${content}</page-layout-template>
         `;
+    }
+
+    renderCaseSettings(caseRow) {
+        return this.renderCaseShell(html`
+            <div slot="content" class="case-detail">
+                <case-settings
+                    .caseId=${String(caseRow.id)}
+                    .caseTitle=${caseRow.title || ''}
+                    .data=${this.workflows.dataFor(caseRow.id)}
+                    ?loadFailed=${this.workflows.loadFailed(caseRow.id)}
+                    @back=${() => { this.showCaseSettings = false; }}
+                    @workflows-changed=${() => this.workflows.load(caseRow.id, { refresh: true })}
+                    @open-workflows=${() => this.workflows.openPanel(caseRow)}
+                ></case-settings>
+            </div>
+        `);
     }
 
     renderViewerOverlay() {
@@ -3765,7 +2879,7 @@ export class CasesPage extends LitElement {
             </div>
             <app-dialog
                 id="save-mcs-dialog"
-                title=${t('files.saveMcsTitle')}
+                .title=${t('files.saveMcsTitle')}
                 .lightDismiss=${false}
             >
                 <p style="margin:0 0 0.75rem">${t('files.saveMcsBody')}</p>
@@ -3785,7 +2899,7 @@ export class CasesPage extends LitElement {
             </app-dialog>
             <app-dialog
                 id="save-as-new-dialog"
-                title=${t('files.saveAsNewTitle')}
+                .title=${t('files.saveAsNewTitle')}
                 .lightDismiss=${false}
             >
                 <div class="form-group">
@@ -3813,11 +2927,40 @@ export class CasesPage extends LitElement {
         `;
     }
 
+    renderViewerErrorDialog() {
+        const close = () => this.renderRoot?.querySelector('#viewer-error-dialog')?.closeDialog();
+        const offer = this.errorDialogOffer;
+        const then = (next) => { close(); next(); };
+        const workflows = offer?.usable.caseWorkflows || [];
+        const openFirst = workflows.length ? t('cases.openWithWorkflow', { name: workflows[0].name }) : '';
+        return html`
+            <app-dialog id="viewer-error-dialog" .title=${this.errorDialogTitle} .message=${this.errorDialogMessage}>
+                ${workflows.length > 1 ? html`
+                    <open-with-menu
+                        slot="actions"
+                        .buttonLabel=${openFirst}
+                        .fileName=${offer.fileName}
+                        .usable=${offer.usable}
+                        .selectedKey=${offer.selectedKey}
+                        @open-workflow=${(e) => then(() => offer.open(e.detail.key))}
+                        @more-workflows=${() => then(offer.more)}
+                    ></open-with-menu>
+                ` : workflows.length ? html`
+                    <button slot="actions" class="primary-button" type="button" @click=${() => then(() => offer.open(offer.selectedKey))}>${openFirst}</button>
+                ` : html`
+                    <button slot="actions" class="secondary-button" type="button" @click=${close}>${t('common.close')}</button>
+                `}
+            </app-dialog>
+        `;
+    }
+
     render() {
         const detail = this.selectedCase;
         return html`
-            ${detail ? this.renderCaseDetail(detail) : this.renderLanding()}
+            ${!detail ? this.renderLanding() : this.showCaseSettings ? this.renderCaseSettings(detail) : this.renderCaseDetail(detail)}
             ${this.renderViewerOverlay()}
+            ${this.workflows.renderDialogs(detail)}
+            ${this.renderViewerErrorDialog()}
             ${this.toastMessage ? html`<div class="toast" role="status">${this.toastMessage}</div>` : ''}
             <people-dialog
                 id="case-people-dialog"

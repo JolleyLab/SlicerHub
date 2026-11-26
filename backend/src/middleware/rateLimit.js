@@ -27,12 +27,15 @@ function pruneExpired() {
     }
 }
 
-setInterval(pruneExpired, 60 * 1000);
+// unref: pruning never keeps the process alive on its own (shutdown, tests).
+setInterval(pruneExpired, 60 * 1000).unref();
 
+/** `messageKey` (optional): the catalog key of `message`, sent to the browser with it. */
 export function createRateLimiter({
     windowMs,
     max,
-    message = msg('rate_limit.generic'),
+    messageKey = null,
+    message = msg(messageKey || 'rate_limit.generic'),
     getKey
 }) {
     if (!Number.isInteger(windowMs) || windowMs <= 0) {
@@ -59,7 +62,7 @@ export function createRateLimiter({
         if (existing.count > max) {
             const retryAfterSeconds = Math.max(1, Math.ceil((existing.resetAt - now) / 1000));
             res.set('Retry-After', String(retryAfterSeconds));
-            return next(new TooManyRequestsError(message));
+            return next(new TooManyRequestsError(message, null, messageKey));
         }
 
         return next();

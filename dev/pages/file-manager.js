@@ -1581,7 +1581,7 @@ export class FileManager extends LitElement {
                 ></file-storage-summary>
             </page-layout-template>
 
-            <app-dialog id="file-upload-dialog" title=${t('files.addFile')}>
+            <app-dialog id="file-upload-dialog" .title=${t('files.addFile')}>
                 <div
                     class="upload-area ${this.dragOver ? 'drag-over' : ''}"
                     @dragover=${this.handleUploadDialogDragOver}
@@ -1633,7 +1633,7 @@ export class FileManager extends LitElement {
             ${this.closePromptMode ? html`
                 <app-dialog
                     id="close-prompt-dialog"
-                    title=${this.closePromptTitle}
+                    .title=${this.closePromptTitle}
                     .showDefaultCloseButton=${false}
                 >
                     <p class="close-prompt-message">${this.closePromptMessage}</p>

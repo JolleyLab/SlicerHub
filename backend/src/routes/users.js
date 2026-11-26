@@ -7,10 +7,8 @@ import { ValidationError, NotFoundError, ForbiddenError } from '../utils/errors.
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { stopSlicerGuiSession } from '../slicerGui/sessionManager.js';
 import { msg } from '../i18n/index.js';
-import storage from '../storage/index.js';
 import { findAvatarKey } from '../services/avatars.js';
-
-const AVATAR_MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
+import { sendStoredImage } from '../utils/storedImage.js';
 
 const LOADTEST_EMAIL_SUFFIX = '@loadtest.local';
 
@@ -55,12 +53,7 @@ export default function userRoutes(app) {
         if (!sub || sub.length > 128) return res.status(404).end();
         const key = await findAvatarKey(sub);
         if (!key) return res.status(404).end();
-        const presigned = await storage.getPresignedReadUrl(key, 300);
-        if (presigned) return res.redirect(302, presigned);
-        const ext = key.split('.').pop().toLowerCase();
-        res.setHeader('Content-Type', AVATAR_MIME[ext] || 'application/octet-stream');
-        res.setHeader('Cache-Control', 'public, max-age=300');
-        return (await storage.openReadStream(key)).pipe(res);
+        return sendStoredImage(res, key);
     }));
 
     /**

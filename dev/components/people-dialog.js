@@ -1,5 +1,6 @@
 import { LitElement, html } from 'lit-element';
 import { peopleDialogStyles } from './people-dialog.styles.js';
+import { ICON_TRASH } from '../utils/icons.js';
 import './person-chip.js';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
@@ -12,6 +13,7 @@ import './app-button.js';
 import './badge-pill.js';
 import './icon-button.js';
 import './dropdown-select.js';
+import './info-tip.js';
 
 const DEFAULT_ROLE_OPTIONS = Object.freeze([
     Object.freeze({ value: '', label: t('roles.selectRole'), disabled: true }),
@@ -254,8 +256,9 @@ export class PeopleDialog extends LitElement {
     handleRoleChange(memberId, event) {
         const role = event.target?.value || event.detail?.value;
         if (!role) return;
+        // Choosing a role answers a row's "assign a new role" note, so the note goes
         this.members = this.sortMembers(this.members.map((m) => (
-            m.id === memberId ? { ...m, role } : m
+            m.id === memberId ? { ...m, role, needsRole: false } : m
         )));
     }
 
@@ -436,8 +439,21 @@ export class PeopleDialog extends LitElement {
         const secondary = memberSecondaryLine(member, ctx);
         const editable = this.memberIsEditable(member);
         const isGroup = member?.type === 'group';
+        // A site admin is admin here whatever is stored, so there's no role to choose. One who no
+        // longer is has read only until given a role (backend utils/caseRoles.js): case admins are
+        // asked to assign one, without being told why; everyone else just sees "Read only".
+        const roleChoice = editable && !member.siteAdmin;
+        const askForRole = roleChoice && member.needsRole;
+        const remove = editable ? html`
+            <icon-button
+                label=${t('people.removePerson', { name })}
+                title=${t('common.remove')}
+                ?disabled=${this.saving}
+                @click=${() => this.handleRemove(member.id)}
+            >${ICON_TRASH}</icon-button>
+        ` : '';
         return html`
-            <div class="row">
+            <div class="row ${askForRole ? 'needs-role' : ''}">
                 <person-chip
                     .avatarUrl=${member.avatarUrl || ''}
                     .name=${name}
@@ -445,26 +461,25 @@ export class PeopleDialog extends LitElement {
                     title=${isGroup ? groupMembersTitle(member.groupMembers, member.hiddenMemberCount) : ''}
                 ></person-chip>
                 <div class="meta">
-                    ${editable ? html`
+                    ${askForRole ? html`<span class="role-note">${t('people.assignNewRole')}</span>` : ''}
+                    ${member.siteAdmin ? html`<badge-pill>${t('people.siteAdmin')}</badge-pill>` : ''}
+                    ${roleChoice ? html`
                         <dropdown-select
-                            .value=${member.role || 'collaborator'}
-                            .options=${this.effectiveRoleOptions.filter((o) => o.value)}
-                            aria-label=${t('people.roleForPerson', { name })}
+                            .value=${askForRole ? '' : member.role || 'collaborator'}
+                            .options=${[
+                                ...(askForRole ? [{ value: '', label: t('people.chooseRole'), disabled: true }] : []),
+                                ...this.effectiveRoleOptions.filter((o) => o.value)
+                            ]}
+                            aria-label=${askForRole
+                                // The note is outside the picker's shadow DOM, so aria-describedby can't reach it.
+                                ? `${t('people.roleForPerson', { name })}. ${t('people.assignNewRole')}`
+                                : t('people.roleForPerson', { name })}
                             @change=${(e) => this.handleRoleChange(member.id, e)}
                         ></dropdown-select>
-                        <icon-button
-                            label=${t('people.removePerson', { name })}
-                            title=${t('common.remove')}
-                            ?disabled=${this.saving}
-                            @click=${() => this.handleRemove(member.id)}
-                        >
-                            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
-                                <path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
-                            </svg>
-                        </icon-button>
-                    ` : html`
-                        <badge-pill>${roleLabel(member.role)}</badge-pill>
+                    ` : member.siteAdmin ? '' : html`
+                        <badge-pill>${roleLabel(member.needsRole ? 'read_only' : member.role)}</badge-pill>
                     `}
+                    ${remove}
                 </div>
             </div>
         `;
@@ -634,6 +649,10 @@ export class PeopleDialog extends LitElement {
                 <div class="body">
                     ${this.error ? html`<p class="error">${this.error}</p>` : ''}
 
+                    <div class="list-heading">
+                        ${t('people.withAccess')}
+                        <info-tip .text=${t('people.siteAdminsHint')} .label=${t('people.siteAdminsInfo')}></info-tip>
+                    </div>
                     <div class="list">
                         <div class="list-scroll">
                             ${this.members.length === 0 ? html`

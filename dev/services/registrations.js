@@ -1,6 +1,7 @@
 // Registration review (approval gate): reviewers' queue of accounts waiting for access.
 import { API_URL } from '../config.js';
 import { readJson, apiError } from './apiResponse.js';
+import { NO_TODOS, toBellCount } from '../utils/bellCount.js';
 
 export async function listPendingRegistrations() {
     const response = await fetch(`${API_URL}/api/admin/registration-requests`, { credentials: 'include' });
@@ -9,11 +10,11 @@ export async function listPendingRegistrations() {
     return data.data || [];
 }
 
+/** Accounts waiting for access: { count, latestAt } (utils/bellCount.js). */
 export async function getPendingRegistrationsCount() {
     const response = await fetch(`${API_URL}/api/admin/registration-requests/count`, { credentials: 'include', cache: 'no-store' });
     const data = await readJson(response);
-    if (!response.ok) return 0;
-    return Number(data.count) || 0;
+    return response.ok ? toBellCount(data) : NO_TODOS;
 }
 
 export async function approveRegistration(id, { asAdmin = false } = {}) {

@@ -398,7 +398,7 @@ export class CreateProjectForm extends LitElement {
                 </div>
                 ${this.formError ? html`<div slot="content" class="form-error">${this.formError}</div>` : ''}
             </page-layout-template>
-            <app-dialog id="collaborator-dialog" title=${t('projects.addCollaboratorsTitle')}>
+            <app-dialog id="collaborator-dialog" .title=${t('projects.addCollaboratorsTitle')}>
                 <collaborator-search
                     @collaborators-cancel=${() => this.closeCollaboratorDialog()}
                     @collaborators-done=${(event) => this.handleCollaboratorsDone(event)}

@@ -31,6 +31,7 @@ import { forgetAccount } from '../auth/accountRefresh.js';
 import { ValidationError, NotFoundError } from '../utils/errors.js';
 import { msg } from '../i18n/index.js';
 import { sendAccessApprovedEmail } from '../services/mail.js';
+import { bellCount } from '../utils/bellCount.js';
 
 const requireRegistrationAccess = [requireKcGroupCapability(CAPABILITIES.APPROVE_REGISTRATIONS)];
 
@@ -42,7 +43,7 @@ export default function registrationRequestRoutes(app) {
         ...requireRegistrationAccess,
         asyncHandler(async (_req, res) => {
             const requests = await listPending();
-            res.json({ count: requests.length });
+            res.json(bellCount(requests.map((r) => r.createdAt)));
         })
     );
 
