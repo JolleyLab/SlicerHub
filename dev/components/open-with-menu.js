@@ -3,6 +3,7 @@ import { t } from '../i18n/index.js';
 import { PopupMenu } from './popup-menu.js';
 import { VIEWER_NAME_KEY, viewerKey, shortList } from '../utils/openWith.js';
 import { iconTile, iconTileStyles } from '../utils/iconTile.js';
+import { ICON_MORE } from '../utils/icons.js';
 
 /** What the open panel shows. */
 const VIEW = Object.freeze({ GRID: 'grid', LIST: 'list' });
@@ -17,7 +18,9 @@ const ICON_CHEVRON = html`
  * from utils/openWith.js), and "More workflows…" when they don't all fit.
  * `grid` (file rows): a bare chevron opening an icon grid; "All options…" shows the list instead.
  * `canSetDefault`: also offer "Default for this file…". The button and its ▾ are exposed as ::part(trigger) and ::part(chevron).
- * Emits `open-workflow` { key }, `more-workflows` and `set-default`.
+ * `more` (phones): a ⋯ button instead, the file row's only one; `extraItems` [{ key, label, disabled? }] are the row's
+ * other actions, listed last. `busy` (a file is opening): the open choices do nothing; the other actions still work.
+ * Emits `open-workflow` { key }, `more-workflows`, `set-default` and `menu-select` { key } (an extra item).
  */
 export class OpenWithMenu extends PopupMenu {
     static get styles() {
@@ -38,6 +41,10 @@ export class OpenWithMenu extends PopupMenu {
                 line-height: 1.2;
                 white-space: nowrap;
             }
+
+            /* With more: a ⋯ button the size of overflow-menu's. */
+            .trigger.as-more { width: 32px; height: 32px; padding: 0; }
+            .trigger.as-more svg { width: 20px; height: 20px; }
 
             .trigger.as-button:hover:not(:disabled),
             .trigger.as-button[aria-expanded='true'] {
@@ -101,6 +108,7 @@ export class OpenWithMenu extends PopupMenu {
   outline: none;
 }
 .popup-menu-panel.open-with .tile[aria-checked='true'] { border-color: var(--color-focus, #0057c2); }
+.popup-menu-panel.open-with .tile[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
 .popup-menu-panel.open-with .tile:focus-visible { border-color: var(--color-text-primary, #1a1a1a); }
 .popup-menu-panel.open-with .tile .icon-tile { --icon-tile-size: 32px; }
 /* Touch has no hover: name each tile under its icon instead of in a tooltip. */
@@ -133,7 +141,7 @@ ${iconTileStyles.cssText}
 `;
     }
 
-    static get contentProperties() { return ['usable', 'selectedKey', '_view']; }
+    static get contentProperties() { return ['usable', 'selectedKey', 'extraItems', 'busy', '_view']; }
 
     static get properties() {
         return {
@@ -152,6 +160,12 @@ ${iconTileStyles.cssText}
             canSetDefault: { type: Boolean },
             /** Icon grid behind a bare chevron (file rows). */
             grid: { type: Boolean },
+            /** A ⋯ button instead of the ▾, for a file row on a phone. */
+            more: { type: Boolean },
+            /** The row's other actions, listed last: [{ key, label, disabled? }]; picking one emits `menu-select`. */
+            extraItems: { attribute: false },
+            /** A file is opening: the open choices (viewers, toolkits, More…) show disabled. */
+            busy: { type: Boolean },
             /** VIEW; resets to the grid on close. */
             _view: { attribute: false },
         };
@@ -165,6 +179,9 @@ ${iconTileStyles.cssText}
         this.selectedKey = '';
         this.label = '';
         this.grid = false;
+        this.more = false;
+        this.extraItems = [];
+        this.busy = false;
         this.canSetDefault = false;
         this._view = VIEW.GRID;
     }
@@ -203,11 +220,16 @@ ${iconTileStyles.cssText}
         return { viewers: usable.viewers || [], ...shortList(usable, this.selectedKey) };
     }
 
+    /** Open with a choice (or the More… list), unless a file is already opening. */
+    choose(type, detail = {}) {
+        if (!this.busy) this.closeAndEmit(type, detail);
+    }
+
     itemTemplate(key, name, hint) {
         const selected = key === this.selectedKey;
         return html`
             <button class="item" type="button" role="menuitemradio" data-choice aria-checked=${selected ? 'true' : 'false'} tabindex="-1"
-                @click=${() => this.closeAndEmit('open-workflow', { key })}>
+                aria-disabled=${this.busy ? 'true' : 'false'} @click=${() => this.choose('open-workflow', { key })}>
                 <span class="check ${selected ? '' : 'is-empty'}" aria-hidden="true">✓</span>
                 <span class="item-label">
                     ${name}
@@ -222,7 +244,8 @@ ${iconTileStyles.cssText}
         const selected = key === this.selectedKey;
         return html`
             <button class="tile" type="button" role="menuitemradio" data-choice aria-checked=${selected ? 'true' : 'false'} tabindex="-1"
-                aria-label=${name} data-name=${name} @click=${() => this.closeAndEmit('open-workflow', { key })}>
+                aria-disabled=${this.busy ? 'true' : 'false'} aria-label=${name} data-name=${name}
+                @click=${() => this.choose('open-workflow', { key })}>
                 ${iconTile(iconName, iconSrc)}
                 <span class="tile-name" aria-hidden="true">${iconName}</span>
             </button>
@@ -236,9 +259,9 @@ ${iconTileStyles.cssText}
                 ${list.viewers.map((v) => this.tileTemplate(viewerKey(v), t(VIEWER_NAME_KEY[v]), t(VIEWER_NAME_KEY[v]), null))}
                 ${[...list.caseWorkflows, ...list.mine].map((e) => this.tileTemplate(e.key, `${e.name} · ${t(VIEWER_NAME_KEY[e.viewer])}`, e.name, e.iconUrl))}
                 ${list.hidden ? html`
-                    <button class="tile" type="button" role="menuitem" tabindex="-1"
+                    <button class="tile" type="button" role="menuitem" tabindex="-1" aria-disabled=${this.busy ? 'true' : 'false'}
                         aria-label=${t('viewers.moreWorkflows', { count: list.hidden })} data-name=${t('viewers.moreWorkflows', { count: list.hidden })}
-                        @click=${() => this.closeAndEmit('more-workflows')}>
+                        @click=${() => this.choose('more-workflows')}>
                         <span class="icon-tile" aria-hidden="true">⋯</span>
                         <span class="tile-name" aria-hidden="true">${t('viewers.moreWorkflowsShort', { count: list.hidden })}</span>
                     </button>
@@ -249,6 +272,16 @@ ${iconTileStyles.cssText}
                 <span class="item-label">${t('viewers.allOptions')}</span>
             </button>
             ${this.setDefaultItem()}
+            ${this.extraItemsContent()}
+        `;
+    }
+
+    /** The row's other actions (e.g. Download, Remove), below a divider; `inList` lines them up with the ✓ column. */
+    extraItemsContent({ inList = false } = {}) {
+        if (!this.extraItems?.length) return '';
+        return html`
+            <div class="divider" role="separator"></div>
+            ${this.actionItemsTemplate(this.extraItems, { checkColumn: inList })}
         `;
     }
 
@@ -277,16 +310,19 @@ ${iconTileStyles.cssText}
             ${section('viewers.thisCase', list.caseWorkflows)}
             ${section('viewers.mine', list.mine)}
             ${list.hidden ? html`
-                <button class="item more" type="button" role="menuitem" tabindex="-1" @click=${() => this.closeAndEmit('more-workflows')}>
+                <button class="item more" type="button" role="menuitem" tabindex="-1" aria-disabled=${this.busy ? 'true' : 'false'}
+                    @click=${() => this.choose('more-workflows')}>
                     <span class="check is-empty" aria-hidden="true">✓</span>
                     <span class="item-label">${t('viewers.moreWorkflows', { count: list.hidden })}</span>
                 </button>
             ` : ''}
             ${this.setDefaultItem({ inList: true })}
+            ${this.extraItemsContent({ inList: true })}
         `;
     }
 
     triggerLabel() {
+        if (this.more) return t('common.moreActionsFor', { name: this.fileName });
         return this.fileName
             ? t('viewers.openWithNamed', { name: this.fileName })
             : t('viewers.openWith');
@@ -295,10 +331,10 @@ ${iconTileStyles.cssText}
     render() {
         return html`
             <button
-                class="trigger ${this.buttonLabel ? 'as-button' : ''}"
+                class="trigger ${this.buttonLabel ? 'as-button' : ''} ${this.more ? 'as-more' : ''}"
                 part="trigger"
                 type="button"
-                title=${this.label ? `${this.triggerLabel()} (${this.label})` : this.triggerLabel()}
+                title=${this.label && !this.more ? `${this.triggerLabel()} (${this.label})` : this.triggerLabel()}
                 aria-label=${this.buttonLabel || this.triggerLabel()}
                 aria-expanded=${this.open ? 'true' : 'false'}
                 aria-haspopup="menu"
@@ -306,8 +342,7 @@ ${iconTileStyles.cssText}
                 @click=${(e) => this.toggleMenu(e)}
                 @keydown=${(e) => this.onTriggerKeydown(e)}
             >
-                ${this.buttonLabel}
-                ${ICON_CHEVRON}
+                ${this.more ? ICON_MORE : html`${this.buttonLabel}${ICON_CHEVRON}`}
             </button>
         `;
     }

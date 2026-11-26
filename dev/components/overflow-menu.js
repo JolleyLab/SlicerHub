@@ -1,10 +1,6 @@
 import { html, css } from 'lit-element';
 import { PopupMenu } from './popup-menu.js';
-
-const ICON_MORE = html`
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path fill="currentColor" d="M6 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
-    </svg>`;
+import { ICON_MORE } from '../utils/icons.js';
 
 /**
  * A "⋯" button for actions that don't need their own button, e.g. on a toolbar.

@@ -161,13 +161,19 @@ export class CaseWorkflowsController {
 
     // ── Rendering ──────────────────────────────────────────────────────────
 
-    /** The Open ▾ menu for a file (attachment null: the blank viewer), from openWithFor(). */
-    renderMenu(caseRow, attachment, openWith, { slot = '', buttonLabel = '' } = {}) {
+    /**
+     * The Open ▾ menu for a file (attachment null: the blank viewer), from openWithFor().
+     * `more` and `extraItems`: the ⋯ form a file row uses on phones (see open-with-menu).
+     */
+    renderMenu(caseRow, attachment, openWith, { slot = '', buttonLabel = '', more = false, extraItems = null, className = '' } = {}) {
         const title = attachment ? this.options.fileTitle(attachment) : t('cases.openBlankViewer');
         return html`
             <open-with-menu
                 slot=${slot}
+                class=${className}
                 .buttonLabel=${buttonLabel}
+                ?more=${more}
+                .extraItems=${extraItems || []}
                 .fileName=${title}
                 ?grid=${Boolean(attachment)}
                 ?alignEnd=${Boolean(attachment)}
@@ -175,7 +181,8 @@ export class CaseWorkflowsController {
                 .usable=${openWith.usable}
                 .selectedKey=${openWith.selectedKey}
                 .label=${openWith.name}
-                ?disabled=${this.options.isBusy()}
+                ?disabled=${this.options.isBusy() && !more}
+                ?busy=${this.options.isBusy()}
                 @open-workflow=${(e) => this.openChoice(caseRow, attachment, e.detail.key)}
                 @more-workflows=${() => this.openMore(caseRow, attachment, openWith, title)}
                 @set-default=${() => this.setFileDefault(caseRow, attachment)}

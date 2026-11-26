@@ -9,7 +9,7 @@ export const casesPageStyles = css`
         box-sizing: border-box;
     }
 
-    /* â”€â”€â”€ Detail: layout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* Detail: layout */
     .case-detail {
         display: flex;
         flex-direction: column;
@@ -96,7 +96,7 @@ export const casesPageStyles = css`
         }
     }
 
-    /* â”€â”€â”€ Detail: toolbar + header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* Detail: toolbar + header */
     .quiet-button {
         border: 1px solid var(--color-border);
         border-radius: 6px;
@@ -144,7 +144,7 @@ export const casesPageStyles = css`
         vertical-align: middle;
     }
 
-    /* â”€â”€â”€ File upload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* File upload */
     .upload-action-row {
         display: flex;
         align-items: center;
@@ -254,7 +254,7 @@ export const casesPageStyles = css`
         pointer-events: none;
     }
 
-    /* â”€â”€â”€ Buttons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* Buttons */
     .primary-button,
     .secondary-button {
         border-radius: 6px;
@@ -305,7 +305,7 @@ export const casesPageStyles = css`
         cursor: not-allowed;
     }
 
-    /* â”€â”€â”€ Dark mode overrides â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+    /* Dark mode overrides */
 
     :host-context([data-theme='dark']) .upload-action-row {
         background: var(--color-panel);
@@ -357,7 +357,7 @@ export const casesPageStyles = css`
         border-top-color: var(--color-border);
     }
 
-    /* â”€â”€â”€ Viewer overlay (edge-to-edge; header is the only chrome) â”€â”€ */
+    /* Viewer overlay (edge-to-edge; header is the only chrome) */
     .iframe-overlay {
         position: fixed;
         inset: 0;
@@ -403,32 +403,6 @@ export const casesPageStyles = css`
         flex-shrink: 0;
         gap: 10px;
         align-items: center;
-    }
-
-    /* Phone width: the title takes its own line and the actions wrap below it. */
-    @media (max-width: 600px) {
-        .iframe-header {
-            flex-wrap: wrap;
-            gap: 6px 10px;
-            padding: 8px 10px;
-        }
-
-        .iframe-title {
-            flex: 1 1 100%;
-        }
-
-        .iframe-header-actions {
-            flex-shrink: 1;
-            flex-wrap: wrap;
-            justify-content: flex-end;
-            gap: 6px;
-            margin-left: auto;
-        }
-
-        .iframe-header-actions .primary-button,
-        .iframe-header-actions .secondary-button {
-            padding: 6px 12px;
-        }
     }
 
     .iframe-container {

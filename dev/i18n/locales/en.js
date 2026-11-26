@@ -38,6 +38,7 @@ export default {
         next: 'Next',
         menu: 'Menu',
         moreOptions: 'More options',
+        moreActionsFor: 'More actions for {name}',
         default: 'Default',
         remove: 'Remove',
         back: 'Back',
