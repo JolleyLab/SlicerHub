@@ -397,6 +397,43 @@ export const homePageStyles = css`
         color: var(--color-text-primary);
     }
 
+    /* A card whose title opens it, with its own actions beside (workflow requests) */
+    .card-title-link {
+        padding: 0;
+        border: 0;
+        background: none;
+        font: inherit;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .card-title-link:hover {
+        text-decoration: underline;
+    }
+
+    .card-title-link:focus-visible {
+        outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
+        outline-offset: var(--focus-ring-offset, 2px);
+    }
+
+    .decline-form {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
+    .decline-form input {
+        flex: 1 1 200px;
+        min-width: 0;
+        padding: 5px 8px;
+        border: 1px solid var(--color-border);
+        border-radius: 6px;
+        background: var(--color-surface);
+        color: var(--color-text-primary);
+        font: inherit;
+        font-size: 0.85rem;
+    }
+
     .card-detail {
         margin: 2px 0 0;
         font-size: 0.85rem;

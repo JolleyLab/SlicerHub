@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit-element';
 import { initializeTheme } from './theme.js';
 import { t } from '../i18n/index.js';
+import { ICON_PENCIL } from '../utils/icons.js';
 
 const NAME_CLICK_DELAY_MS = 280;
 const LONG_PRESS_MS = 550;
@@ -8,6 +9,8 @@ const LONG_PRESS_MOVE_PX = 10;
 
 /**
  * One row in a file list: clickable name + meta line + icon actions via <slot name="actions">.
+ * `plain`: the name is text, not a button (rows with nothing to open, e.g. workflow extensions).
+ * <slot name="leading">: something before the name, e.g. an icon or thumbnail; clicking it opens the file, as the name does.
  */
 export class FileListRow extends LitElement {
     static get styles() {
@@ -54,6 +57,15 @@ export class FileListRow extends LitElement {
                 flex: 1;
             }
 
+            /* No box of its own (an empty slot adds no gap); clicks still reach it, and the cursor is inherited. */
+            .leading {
+                display: contents;
+            }
+
+            .leading.opens {
+                cursor: pointer;
+            }
+
             .file-title-row {
                 display: flex;
                 align-items: center;
@@ -87,6 +99,12 @@ export class FileListRow extends LitElement {
                 color: var(--color-accent);
             }
 
+            .file-name {
+                color: var(--color-text-primary);
+                font-weight: 600;
+                word-break: break-word;
+            }
+
             .file-name-button:disabled {
                 opacity: 0.55;
                 cursor: not-allowed;
@@ -108,7 +126,7 @@ export class FileListRow extends LitElement {
                 transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
             }
 
-            .edit-title-button .edit-title-icon {
+            .edit-title-button svg {
                 width: 14px;
                 height: 14px;
                 display: block;
@@ -161,7 +179,7 @@ export class FileListRow extends LitElement {
             .file-action-group {
                 display: inline-flex;
                 align-items: center;
-                gap: 10px;
+                gap: 4px; /* the buttons' own padding already spaces their icons; each stays ≥ 24px to hit */
                 padding: 2px;
             }
 
@@ -171,8 +189,10 @@ export class FileListRow extends LitElement {
                 outline-offset: var(--focus-ring-offset, 2px);
             }
 
+            /* Row actions: plain at rest; an outline and a tint on hover or focus. */
             ::slotted(.file-icon-button) {
-                border: none;
+                box-sizing: border-box;
+                border: 1px solid transparent;
                 border-radius: var(--radius-lg);
                 background: transparent;
                 color: var(--color-text-primary);
@@ -185,11 +205,13 @@ export class FileListRow extends LitElement {
                 cursor: pointer;
             }
 
-            ::slotted(.file-icon-button:hover) {
+            ::slotted(.file-icon-button:hover:not(:disabled)) {
+                border-color: var(--color-border);
                 background: color-mix(in srgb, var(--color-primary) 12%, transparent);
             }
 
             ::slotted(.file-icon-button:focus-visible) {
+                border-color: var(--color-border);
                 background: color-mix(in srgb, var(--color-primary) 12%, transparent);
                 outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
                 outline-offset: var(--focus-ring-offset, 2px);
@@ -205,6 +227,7 @@ export class FileListRow extends LitElement {
     static get properties() {
         return {
             fileName: { type: String },
+            plain: { type: Boolean },
             metaLine: { type: String },
             nameButtonTitle: { type: String },
             nameButtonDisabled: { type: Boolean },
@@ -332,6 +355,19 @@ export class FileListRow extends LitElement {
         this._pointerStart = null;
     }
 
+    /** Whether clicking the leading slot opens the file, as the name does. */
+    get leadingOpens() {
+        return !this.plain && !this.nameButtonDisabled;
+    }
+
+    // Pointer only: keyboard and screen reader users open with the name button, so the icon
+    // isn't a second tab stop that does the same thing.
+    handleLeadingClick() {
+        if (!this.leadingOpens) return;
+        this.clearNameClickTimer();
+        this.emitNameClick();
+    }
+
     handleEditTitleClick(event) {
         event.stopPropagation();
         this.clearNameClickTimer();
@@ -342,9 +378,10 @@ export class FileListRow extends LitElement {
     render() {
         return html`
             <div class="file-row">
+                <span class="leading ${this.leadingOpens ? 'opens' : ''}" @click=${this.handleLeadingClick}><slot name="leading"></slot></span>
                 <div class="file-main">
                     <div class="file-title-row">
-                        <button
+                        ${this.plain ? html`<span class="file-name">${this.fileName}</span>` : html`<button
                             class="file-name-button"
                             type="button"
                             title=${this.nameButtonTitle || undefined}
@@ -358,8 +395,7 @@ export class FileListRow extends LitElement {
                             @pointerleave=${this.handleNamePointerEnd}
                         >
                             ${this.fileName}
-                        </button>
-                        <slot name="title-trailing"></slot>
+                        </button>`}
                         ${this.showEditTitle ? html`
                             <button
                                 class="edit-title-button"
@@ -368,9 +404,7 @@ export class FileListRow extends LitElement {
                                 ?disabled=${this.editTitleDisabled}
                                 @click=${this.handleEditTitleClick}
                             >
-                                <svg class="edit-title-icon" viewBox="0 0 24 24" aria-hidden="true">
-                                    <path fill="currentColor" d="M3 17.25V21h3.75l11-11.03-3.75-3.75L3 17.25zm14.81-9.06 1.83-1.83a1 1 0 0 0 0-1.41l-1.41-1.41a1 1 0 0 0-1.41 0l-1.83 1.83 2.82 2.82z"></path>
-                                </svg>
+                                ${ICON_PENCIL}
                             </button>
                         ` : ''}
                     </div>

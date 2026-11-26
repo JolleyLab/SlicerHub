@@ -48,6 +48,19 @@ export async function markAllNotificationsRead() {
     return data;
 }
 
+/** The bell was opened: clears its dot. The notifications stay unread. */
+export async function markNotificationsSeen() {
+    const response = await fetch(`${API_URL}/api/notifications/seen`, {
+        method: 'POST',
+        credentials: 'include'
+    });
+    const data = await parseJson(response);
+    if (!response.ok) {
+        throwError(response, data, t('notifications.updateFailed'));
+    }
+    return data;
+}
+
 /** Remove from inbox; does not cancel pending invites. */
 export async function dismissNotification(id) {
     const response = await fetch(`${API_URL}/api/notifications/${encodeURIComponent(id)}`, {

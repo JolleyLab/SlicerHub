@@ -8,7 +8,8 @@ export default {
         route_not_found: 'Route {method} {path} not found'
     },
     avatar: {
-        required: 'No file received.'
+        required: 'No file received.',
+        invalid_type: 'The picture must be a PNG, JPEG, GIF, WebP or HEIC image.'
     },
     rate_limit: {
         generic: 'Too many requests'
@@ -245,6 +246,58 @@ export default {
         cannotRemoveOwnManage: 'You cannot remove your own manage permission',
         lastMember: 'Cannot remove the last member of a capability group.',
         cannotDeleteCapabilityGroup: 'Cannot delete a capability group that still has members. Remove all members first.',
+    },
+    workflow: {
+        startup_config_object: 'Startup configuration must be an object',
+        startup_config_key: 'Startup configuration can’t include "{key}"',
+        startup_config_value: 'Startup configuration has an invalid {key}',
+        default_not_in_case: 'The default toolkit must be one of this case’s toolkits',
+        allow_personal_boolean: 'allowPersonal must be true or false',
+        icon_too_large: 'The icon can be at most {max} KB',
+        icon_type: 'The icon must be a PNG, JPEG, GIF or WebP image',
+        icon_not_found: 'This toolkit has no icon',
+        request_not_public: 'Only public toolkits can be requested',
+        already_in_case: 'This toolkit is already available in this case',
+        declined_recently: 'This toolkit was declined less than a day ago. It can be requested again after that, or sooner if its owner updates it.',
+        too_many_pending: 'You can have at most {max} requests waiting in this case. Cancel one to ask for another.',
+        too_many_requests: 'Too many requests in a short time. Please wait a few minutes and try again.',
+        request_not_found: 'This request no longer exists',
+        open_with_invalid: 'That isn’t one of this case’s toolkits or viewers',
+        open_with_file_not_found: 'File not found',
+        open_with_not_allowed: 'Only the person who uploaded this file, or a case admin, can change what it opens with',
+        decline_not_pending: 'Only a pending request can be declined',
+        remove_pending: 'Decline a pending request instead of removing it',
+        // Field names, for validation messages (`field` in utils/validation.js)
+        fields: {
+            name: 'Name',
+            description: 'Description',
+            visibility: 'Visibility',
+            extensions: 'Extensions',
+            file_types: 'File types',
+            viewer: 'Viewer',
+            decline_reason: 'Reason',
+        },
+        // The workflows every SlicerHub starts with (setup/workflowSeed.js)
+        seed_slicerheart_name: 'SlicerHeart',
+        seed_slicerheart_description: 'Cardiac tools: valves, chambers, devices and imaging formats such as Mimics projects.',
+        seed_simplified_name: 'SlicerHeart – Simplified',
+        seed_simplified_description: 'SlicerHeart, opening in its simplified viewer for reviewing.',
+    },
+    // utils/validation.js; {field} is a field's name, e.g. workflow.fields.name
+    validation: {
+        value: 'Value',
+        required: '{field} is required',
+        too_long: '{field} can be at most {max} characters',
+        not_a_list: '{field} must be a list',
+        invalid_name: '{field} has an invalid name: {name}',
+        too_many: '{field} can have at most {max} entries',
+        not_one_of: '{field} must be one of: {allowed}',
+    },
+    // utils/ownedDocs.js: documents a person owns and may make public
+    owned_doc: {
+        identity_required: 'A Keycloak identity is required',
+        not_found: 'Not found',
+        owner_only: 'Only the owner can change this',
     },
     registration: {
         not_found: 'Registration request not found',

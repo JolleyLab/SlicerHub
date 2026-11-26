@@ -81,6 +81,8 @@ services:
       - ./backend/data:/app/data-seed:ro
       - ./data/slicer-gui:/app/data/slicer-gui
       - ./data/slicer-addons:/app/data/slicer-addons
+      # What Full Slicer seats load before the first add-ons sync (services/viewerCapabilities.js).
+      - ./slicer-gui-gpu/slicer-addons.json:/etc/slicer-addons.json:ro
       - ${SLICERWEB_STABLE_DIR:-./data/slicerweb-stable}:/app/data/slicerweb-stable
       - ${SLICERWEB_LATEST_DIR:-./data/slicerweb-latest}:/app/data/slicerweb-latest
       # Deploy key for SlicerWeb auto-updater (read-only). Place private key at .secrets/slicerweb-deploy-key.

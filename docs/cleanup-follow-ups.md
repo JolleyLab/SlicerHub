@@ -10,8 +10,6 @@ All direct npm dependencies of `backend`, `dev` and `payload-admin` are MIT, ISC
 |---|---|---|
 | `sharp` prebuilt binaries (libvips), in `backend` and via Next.js in `payload-admin` | LGPL-3.0-or-later (dynamically linked) | Fine for an open-source project. In `backend` the package is unused, so removing it also removes the LGPL binaries (see below). |
 | `libheif-js` (via `heic-convert`, HEIC avatar upload) | LGPL-3.0 | Used as a library, unmodified: fine. Keep its license notice if the backend is redistributed as an image. |
-| `axe-core`, `lightningcss` (frontend dev tools only) | MPL-2.0 | File-level copyleft, not shipped. Fine. |
-| Old frontend dev-tool packages with no `license` field (`hamljs`, `trim`, `only`, …) | MIT (README/LICENSE) | Pulled in by the unused starter-kit tooling below; they go away with it. |
 | `nvidia/cuda:*-cudnn8-devel` (Full Slicer GPU base image) | NVIDIA CUDA/cuDNN EULA (proprietary, redistributable under its terms) | Fine to build from. Before publishing the images, check the EULA's redistribution terms; the smaller `-runtime` image is probably enough. |
 | TurboVNC (in the GPU image) | GPL-2.0 | Runs as a separate program (not linked), so it doesn't affect the project's license. |
 | Infisical and its Redis 7.4 (RSALv2/SSPLv1) | — | Removed in November 2026 (see secrets-management.md). |
@@ -19,8 +17,7 @@ All direct npm dependencies of `backend`, `dev` and `payload-admin` are MIT, ISC
 
 ## Dependencies to remove
 
-- **Frontend (`dev/package.json`):** 25 of the 28 entries are unused leftovers from the Lit starter kit. The `lint`, `docs`, `format`, `checksize` and Karma scripts point at files that don't exist (`my-element.js`, `karma.conf.cjs`, `.eleventy.cjs`). Only `lit-element`, `lit-html`, `sortablejs`, `es-dev-server` (`npm run serve`) and `license-checker` are used. Removing the rest cuts about 1,300 installed packages. Run `npm uninstall`, then recreate the frontend container's `node_modules` volume.
-- **`es-dev-server` is deprecated.** Its successor is `@web/dev-server` (MIT, same team). Swap when convenient.
+- **`es-dev-server` is deprecated.** Its successor is `@web/dev-server` (MIT, same team). Swap when convenient. It also pulls in `intersection-observer` (W3C-20150513, a permissive license), which `npm run licenses:check` in `dev/` rejects; add it to the allow-list or drop it with the swap.
 - **Backend:** `sharp` and `pg` aren't imported (Payload's Postgres adapter brings its own `pg`). `bcrypt` and `sql.js` go with the SQLite retirement.
 
 ## Code

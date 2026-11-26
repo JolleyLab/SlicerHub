@@ -12,11 +12,13 @@ node_modules/
 .venv/
 **/.venv/
 
-# Database and uploads (user data)
+# App data: databases, uploads and other files people create (storage roots in
+# backend/src/storage/contract.js). None of it belongs in git.
 backend/data/
-backend/userFiles/
 userFiles/
 caseFiles/
+avatars/
+workflowIcons/
 data/
 !data/slicer-gui/
 !data/slicer-gui/.gitkeep
@@ -86,6 +88,8 @@ docs/network-gated-enrichment.md
 docs/user-provisioning-patterns.md
 docs/sqlite-to-directus.md
 docs/directus-role-migration.md
+# Local clickable UX prototypes (e.g. workflows-ux-poc.html for docs/workflows-design.md)
+docs/prototypes/
 backend/collab-roles-backup.json
 users-live.db
 users-remote.db

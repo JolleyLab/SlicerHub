@@ -78,7 +78,8 @@ def request_key(payload: dict) -> str:
     requested_at = (payload.get("requestedAt") or "").strip()
     path = (payload.get("containerPath") or "").strip()
     simplified = "1" if payload.get("useSimplifiedViewer") is True else "0"
-    return f"{file_id}:{requested_at}:{path}:{simplified}"
+    start_module = (payload.get("startModule") or "").strip()
+    return f"{file_id}:{requested_at}:{path}:{simplified}:{start_module}"
 
 
 def should_process_request(payload: dict) -> bool:
@@ -1135,6 +1136,21 @@ def restore_full_slicer_ui() -> None:
     slicer.app.processEvents()
 
 
+def select_start_module(name: str) -> None:
+    """A workflow's start module (open request `startModule`), selected once the file has loaded."""
+    name = (name or "").strip()
+    if not name:
+        return
+    try:
+        if not hasattr(slicer.modules, name.lower()):
+            log(f"[slicer_session] Start module not available: {name}")
+            return
+        slicer.util.selectModule(name)
+        log(f"[slicer_session] Started in module {name}")
+    except Exception as exc:
+        log(f"[slicer_session] Could not select start module {name}: {exc}")
+
+
 def maybe_apply_simplified_viewer(use_simplified_viewer: bool, *, force: bool = False) -> None:
     global _viewer_mode_simplified
     try:
@@ -1613,6 +1629,8 @@ def poll_open_requests() -> None:
                 ensure_slicerheart_layouts()
                 if use_simplified_viewer:
                     maybe_apply_simplified_viewer(True, force=True)
+                else:
+                    select_start_module(payload.get("startModule"))
                 ensure_scene_layout_ready()
                 schedule_view_refresh()
                 schedule_hide_load_overlay(_OVERLAY_HOLD_MS)

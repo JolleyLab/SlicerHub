@@ -40,6 +40,7 @@ export function errorHandler(err, req, res, next) {
 
     if (isOperationalError && err.messageKey) {
         errorResponse.error.key = err.messageKey;
+        if (err.vars) errorResponse.error.vars = err.vars;
     }
 
     // In development, add more details to help debugging

@@ -5,11 +5,14 @@
  */
 
 import { getPayloadClient } from '../payload/index.js';
+import { findByKcSub, upsertByKcSub } from '../payload/upsertByKcSub.js';
 import {
     mergeUserPreferences,
     normalizeUserPreferences,
     DEFAULT_USER_PREFERENCES,
 } from '../gpu/userPreferences.js';
+
+const COLLECTION = 'user-preferences';
 
 function docToPrefs(doc) {
     if (!doc) return null;
@@ -38,21 +41,14 @@ function prefsToDoc(prefs) {
     };
 }
 
-async function findDoc(payload, kcSub) {
-    const result = await payload.find({
-        collection: 'user-preferences',
-        where: { keycloak_sub: { equals: kcSub } },
-        limit: 1,
-    });
-    return result.docs[0] ?? null;
-}
+const findDoc = (kcSub) => findByKcSub(COLLECTION, kcSub);
 
 export async function getPreferencesByKcSub(kcSub) {
     const payload = getPayloadClient();
     if (!payload || !kcSub) return { ...DEFAULT_USER_PREFERENCES };
 
     try {
-        const doc = await findDoc(payload, kcSub);
+        const doc = await findDoc(kcSub);
         return docToPrefs(doc) ?? { ...DEFAULT_USER_PREFERENCES };
     } catch (err) {
         console.warn('[payloadPreferences] getPreferencesByKcSub failed:', err.message);
@@ -65,7 +61,7 @@ export async function hasCustomPreferences(kcSub) {
     const payload = getPayloadClient();
     if (!payload || !kcSub) return false;
     try {
-        const doc = await findDoc(payload, kcSub);
+        const doc = await findDoc(kcSub);
         return doc !== null;
     } catch {
         return false;
@@ -77,17 +73,9 @@ export async function updatePreferencesByKcSub(kcSub, patch) {
     if (!payload || !kcSub) return { ...DEFAULT_USER_PREFERENCES };
 
     try {
-        const existing = await findDoc(payload, kcSub);
-        const current = docToPrefs(existing) ?? {};
+        const current = docToPrefs(await findDoc(kcSub)) ?? {};
         const merged = mergeUserPreferences(current, patch);
-        const data = { keycloak_sub: kcSub, ...prefsToDoc(merged) };
-
-        if (existing) {
-            await payload.update({ collection: 'user-preferences', id: existing.id, data });
-        } else {
-            await payload.create({ collection: 'user-preferences', data });
-        }
-
+        await upsertByKcSub(COLLECTION, kcSub, prefsToDoc(merged));
         return merged;
     } catch (err) {
         console.error('[payloadPreferences] updatePreferencesByKcSub failed:', err.message, err.stack);

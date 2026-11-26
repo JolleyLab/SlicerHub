@@ -28,6 +28,7 @@ import './MyProjects/myProjectsEmptyState.js';
 import './MyProjects/projectReviewPage.js';
 import './pages/user-settings-page.js';
 import './pages/cases-page.js';
+import './pages/workflows-page.js';
 import './pages/home-page.js';
 import { buildSlicerGuiLoaderUrl, VIEWER_KINDS } from './utils/viewerLaunch.js';
 import {
@@ -37,6 +38,7 @@ import {
   hydrateUserPreferencesFromUser,
   clearCachedUserPreferences
 } from './utils/userPreferences.js';
+import { claimSlicerWebStorage, clearSlicerWebStorage } from './utils/slicerWebStorage.js';
 import { watchSystemColorScheme } from './components/theme.js';
 import './components/app-dialog.js';
 import { hasActiveUploads } from './services/cases.js';
@@ -58,6 +60,20 @@ function userDisplayName(user) {
   if (user.username) return String(user.username).trim();
   return t('common.guest');
 }
+
+/** Views whose page may hold unsaved work, and its element (which has confirmLeave()). */
+const GUARDED_VIEW_PAGES = Object.freeze({
+  [APP_VIEWS.SETTINGS]: 'user-settings-page',
+  [APP_VIEWS.PROJECT_REVIEW]: 'project-review-page',
+  [APP_VIEWS.WORKFLOWS]: 'workflows-page',
+});
+
+/** Side-menu keys that simply open a page (no case, project or other state to carry). */
+const PLAIN_MENU_VIEWS = Object.freeze({
+  'admin-registrations': APP_VIEWS.ADMIN_REGISTRATIONS,
+  'my-groups': APP_VIEWS.MY_GROUPS,
+  workflows: APP_VIEWS.WORKFLOWS,
+});
 
 export class SlicerApp extends LitElement {
   static get styles() {
@@ -198,50 +214,20 @@ export class SlicerApp extends LitElement {
   }
 
 
-  _settingsPage() {
-    return this.renderRoot?.querySelector('user-settings-page')
-      || this.shadowRoot?.querySelector('user-settings-page')
-      || null;
-  }
-
-  _projectReviewPage() {
-    return this.renderRoot?.querySelector('project-review-page')
-      || this.shadowRoot?.querySelector('project-review-page')
-      || null;
-  }
-
-  /** @returns {boolean} true if leave is allowed */
-  confirmLeaveSettings() {
-    const page = this._settingsPage();
-    if (page && typeof page.confirmLeave === 'function') {
-      return page.confirmLeave();
-    }
-    return true;
-  }
-
-  /** CUTOVER (project-case-migrate): block nav while migrate is running. */
-  confirmLeaveProjectMigrate() {
-    if (this.currentView !== APP_VIEWS.PROJECT_REVIEW) return true;
-    const page = this._projectReviewPage();
-    if (page && typeof page.confirmLeave === 'function') {
-      return page.confirmLeave();
-    }
-    return true;
-  }
-
-  /** @returns {boolean} true if leave is allowed */
+  /**
+   * True if leaving the current view is allowed: asks its page (confirmLeave) when it is one that
+   * can hold unsaved work — Settings, a workflow form, or a project review with a migrate running.
+   */
   confirmLeaveCurrentView() {
-    if (this.currentView === APP_VIEWS.SETTINGS && !this.confirmLeaveSettings()) {
-      return false;
-    }
-    if (!this.confirmLeaveProjectMigrate()) {
-      return false;
-    }
-    return true;
+    const tag = GUARDED_VIEW_PAGES[this.currentView];
+    const page = tag ? this.renderRoot?.querySelector(tag) : null;
+    return typeof page?.confirmLeave === 'function' ? page.confirmLeave() : true;
   }
 
   handlePopState() {
-    if (!this.confirmLeaveCurrentView()) {
+    // Back/Forward within a view (e.g. a workflow's form → its page) is the page's own business.
+    const nextView = readAppViewFromUrl().currentView || DEFAULT_APP_VIEW;
+    if (nextView !== this.currentView && !this.confirmLeaveCurrentView()) {
       // Browser already moved the URL — put the guarded view back.
       this.syncViewToUrl({ replace: true });
       return;
@@ -268,13 +254,13 @@ export class SlicerApp extends LitElement {
     }
   }
 
-  syncViewToUrl({ replace = true, clearCaseDeepLink = false } = {}) {
+  syncViewToUrl({ replace = true, clearDeepLink = false } = {}) {
     if (this.shareToken) return;
     writeAppViewToUrl({
       currentView: this.currentView,
       selectedProjectId: this.selectedProjectId,
       replace,
-      clearCaseDeepLink
+      clearDeepLink
     });
   }
 
@@ -301,6 +287,7 @@ export class SlicerApp extends LitElement {
       if (res.ok) {
         const data = await res.json();
         this.user = data.user;
+        await claimSlicerWebStorage(this.user?.id);
         this.isAuthenticated = true;
         this.accessPending = data.accessPending === true;
         this._applySessionInfo(data.session);
@@ -376,6 +363,7 @@ export class SlicerApp extends LitElement {
     const openPeople = Boolean(inviteId)
       || type === 'case_invite_pending'
       || type === 'case_invite_accepted';
+    const workflowsTab = e.detail?.workflowsTab || null; // a workflow request: the Workflows panel
     this.selectedProjectId = null;
     this.currentView = APP_VIEWS.CASES;
     const url = new URL(window.location.href);
@@ -390,6 +378,8 @@ export class SlicerApp extends LitElement {
       }
       if (openPeople && typeof page.openPeopleForCaseId === 'function') {
         page.openPeopleForCaseId(String(caseId));
+      } else if (workflowsTab && typeof page.openWorkflowsForCaseId === 'function') {
+        page.openWorkflowsForCaseId(String(caseId), workflowsTab);
       }
     });
   }
@@ -401,7 +391,7 @@ export class SlicerApp extends LitElement {
   }
 
   openSettingsFlow() {
-    if (!this.confirmLeaveProjectMigrate()) return;
+    if (this.currentView !== APP_VIEWS.SETTINGS && !this.confirmLeaveCurrentView()) return;
     this.selectedProjectId = null;
     this.currentView = APP_VIEWS.SETTINGS;
     this.syncViewToUrl();
@@ -439,15 +429,10 @@ export class SlicerApp extends LitElement {
       this.syncViewToUrl();
       return;
     }
-    if (selectedKey === 'admin-registrations') {
+    const plainView = PLAIN_MENU_VIEWS[selectedKey];
+    if (plainView) {
       this.selectedProjectId = null;
-      this.currentView = APP_VIEWS.ADMIN_REGISTRATIONS;
-      this.syncViewToUrl();
-      return;
-    }
-    if (selectedKey === 'my-groups') {
-      this.selectedProjectId = null;
-      this.currentView = APP_VIEWS.MY_GROUPS;
+      this.currentView = plainView;
       this.syncViewToUrl();
       return;
     }
@@ -469,7 +454,7 @@ export class SlicerApp extends LitElement {
         return;
       }
       // Menu → Cases always means the list, not a stale ?case= deep link
-      this.syncViewToUrl({ clearCaseDeepLink: true });
+      this.syncViewToUrl({ clearDeepLink: true });
     }
   }
 
@@ -905,6 +890,9 @@ export class SlicerApp extends LitElement {
     // Cleanup any running containers
     await this.cleanupContainer();
 
+    // SlicerWeb's extensions and autosaved scenes live in this browser, not the account
+    await clearSlicerWebStorage();
+
     // End the Keycloak sign-in too (shared workstations); Keycloak sends the browser
     // back to the app's start page afterwards.
     if (keycloakLogoutUrl) {
@@ -1157,6 +1145,17 @@ export class SlicerApp extends LitElement {
           @logout-request=${this.handleLogout}
         ></admin-groups-page>
       ` : ''}
+      ${this.currentView === APP_VIEWS.WORKFLOWS ? html`
+        <workflows-page
+          .username=${userDisplayName(this.user)}
+          .avatarUrl=${this.user?.avatarUrl || ''}
+          .isOrgAdmin=${this.isOrgAdmin}
+          .isRegistrationReviewer=${this.isRegistrationReviewer}
+          @menu-selection-change=${this.handleProjectsMenuSelection}
+          @settings-request=${this.openSettingsFlow}
+          @logout-request=${this.handleLogout}
+        ></workflows-page>
+      ` : ''}
       ${this.currentView === APP_VIEWS.CASES ? html`
         <cases-page
           .username=${userDisplayName(this.user)}
@@ -1174,7 +1173,7 @@ export class SlicerApp extends LitElement {
 
       <app-dialog
         id="logout-billing-dialog"
-        title=${this.logoutBillingMode === 'transfer'
+        .title=${this.logoutBillingMode === 'transfer'
         ? t('gpu.billingStillActive')
         : t('gpu.stopBeforeLogout')}
         .lightDismiss=${false}

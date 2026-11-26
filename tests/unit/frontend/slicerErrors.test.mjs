@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifySlicerLoadError } from '../../../dev/services/slicerErrors.js';
+import { classifySlicerLoadError, isUnrecognisedFormat } from '../../../dev/services/slicerErrors.js';
 import { t } from '../../../dev/i18n/index.js';
 
 // ── i18n catalog ──────────────────────────────────────────────────────────────
@@ -103,4 +103,20 @@ test('format keyword wins when message contains both format and transient keywor
     // "load failed" (format) + "timeout" (transient) in the same string
     const result = classifySlicerLoadError('load failed after connection timeout');
     assert.equal(result.title, formatTitle);
+});
+
+// ── unrecognised format: the file may need an extension ───────────────────────
+
+test('ITK failing to find an IO object, or no reader at all, means the format was not recognised', () => {
+    // As SlicerWeb reported it for an .mcs file without SlicerHeart (Nov 2026)
+    const itk = 'Loading failed\n\nvtkITKArchetypeImageSeriesReader::ExecuteInformation: Cannot open /data/uploads/heart.mcs. '
+        + 'ITK exception info: error in unknown:  Could not create IO object for reading file /data/uploads/heart.mcs';
+    assert.ok(isUnrecognisedFormat(itk));
+    assert.ok(isUnrecognisedFormat('No reader is available for heart.mxp.'));
+});
+
+test('other failures are not taken for an unrecognised format', () => {
+    for (const raw of ['', null, undefined, 'Loading failed', 'out of memory', 'Failed to read node from file heart.nrrd']) {
+        assert.ok(!isUnrecognisedFormat(raw), `matched: "${raw}"`);
+    }
 });

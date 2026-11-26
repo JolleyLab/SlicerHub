@@ -2,6 +2,7 @@ import { API_URL } from '../config.js';
 import { tusUpload } from './tusUpload.js';
 import { t } from '../i18n/index.js';
 import { parseApiResponse, apiError, readJson } from './apiResponse.js';
+import { NO_TODOS, toBellCount } from '../utils/bellCount.js';
 
 // Kept here too: callers have always imported the error wording from the cases service.
 export { friendlyCasesError } from './apiResponse.js';
@@ -85,9 +86,9 @@ export async function fetchPayloadAttachmentContent(caseId, attachmentId) {
     return res.blob();
 }
 
-export async function openPayloadAttachmentFullSlicer(caseId, attachmentId, { useSimplifiedViewer, seatId } = {}) {
-    const body = {};
-    if (useSimplifiedViewer !== undefined) body.useSimplifiedViewer = useSimplifiedViewer === true;
+/** Open a case file in Full Slicer; `startupConfig` is the chosen workflow's ({}: no workflow). */
+export async function openPayloadAttachmentFullSlicer(caseId, attachmentId, { startupConfig = {}, seatId } = {}) {
+    const body = { startupConfig };
     if (seatId != null && seatId !== '') body.seatId = Number(seatId);
 
     const res = await fetch(
@@ -190,11 +191,10 @@ export async function getPendingCaseInvitesCount() {
             `${API_URL}/api/cases/invites/pending-count`,
             { credentials: 'include', cache: 'no-store' }
         );
-        if (!res.ok) return 0;
-        const data = await res.json();
-        return Number(data.count) || 0;
+        if (!res.ok) return NO_TODOS;
+        return toBellCount(await res.json());
     } catch {
-        return 0;
+        return NO_TODOS;
     }
 }
 
@@ -276,7 +276,8 @@ export function hasActiveUploads() {
     return activeUploads > 0;
 }
 
-export async function uploadCaseAttachment(caseId, file, { signal, onProgress } = {}) {
+/** `openWith`: the file's default for everyone (a menu key, utils/openWith.js); omit for the case default. */
+export async function uploadCaseAttachment(caseId, file, { signal, onProgress, openWith } = {}) {
     const endpoint = `${API_URL}/api/cases/${encodeURIComponent(caseId)}/files/tus`;
     activeUploads += 1;
     try {
@@ -286,6 +287,7 @@ export async function uploadCaseAttachment(caseId, file, { signal, onProgress } 
             metadata: {
                 filename: file.name,
                 filetype: file.type || 'application/octet-stream',
+                ...(openWith ? { openWith } : {}),
             },
             signal,
             onProgress,
@@ -300,10 +302,11 @@ export async function uploadCaseAttachment(caseId, file, { signal, onProgress } 
  * Uploads the file, finds the new attachment record, and deletes the old one for overwrite mode.
  * Returns { attachment } with the raw Payload attachment object.
  */
-export async function savePayloadSlicerWebScene(caseId, attachmentId, file, { saveMode = 'overwrite', name, signal, onProgress } = {}) {
+export async function savePayloadSlicerWebScene(caseId, attachmentId, file, { saveMode = 'overwrite', name, signal, onProgress, openWith } = {}) {
     const uploadFile = name ? new File([file], name, { type: file.type }) : file;
     const startedAt = Date.now();
-    await uploadCaseAttachment(caseId, uploadFile, { signal, onProgress });
+    // The saved file keeps the source's default (`openWith`), overwritten or saved as new.
+    await uploadCaseAttachment(caseId, uploadFile, { signal, onProgress, openWith });
 
     // Find the attachment this upload created: same name, created since the save began.
     // (Not just "the newest one": if the server failed to record the upload, the newest

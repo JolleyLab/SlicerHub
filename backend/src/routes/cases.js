@@ -5,7 +5,7 @@ import { getPayloadClient, requirePayload } from '../payload/index.js';
 import { ValidationError, NotFoundError, ForbiddenError } from '../utils/errors.js';
 import storage from '../storage/index.js';
 import { attachmentOpenFlags } from '../utils/attachmentFlags.js';
-import { assertCaseAccess, buildCaseRoleMap, getCaseRoleForSub } from '../utils/caseAccess.js';
+import { assertCaseAccess, buildCaseRoleMap, getCaseRoleForSub, isSiteAdmin } from '../utils/caseAccess.js';
 import { removeAllGroupAccessForCase } from '../services/caseGroupAccess.js';
 import { getKeycloakUser, kcDisplayName } from '../services/keycloakAdmin.js';
 import { avatarUrlFor } from '../services/avatars.js';
@@ -24,7 +24,7 @@ import { normalizeViewerReleaseMode } from '../sessions/config.js';
 import { SESSION_KINDS } from '../sessions/kinds.js';
 import { msg } from '../i18n/index.js';
 import { buildViewerFrontendUrl } from '../utils/viewerUrl.js';
-import { resolveUseSimplifiedViewer } from '../slicerGui/viewerPreferences.js';
+import { sanitizeStartupConfig, SIMPLIFIED_VIEWER_MODULE } from '../services/workflows.js';
 import { enforceCaseAccessOnAllSeats, enforceCaseAccessOnHeartbeat } from '../slicerGui/caseAccessGuard.js';
 
 const MENTION_RE = /(?:^|[^/\w])@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi;
@@ -149,11 +149,12 @@ export default function casesRoutes(app) {
 
         // Build Keycloak case role map once — efficient single Admin API call
         const keycloakSub = req.user.keycloakSub;
-        const roleMap = req.user.role === 'admin' ? {} : await buildCaseRoleMap(req);
+        const siteAdmin = isSiteAdmin(req.user); // sees every case, as admin
+        const roleMap = siteAdmin ? {} : await buildCaseRoleMap(req);
         const collaboratorCaseIds = Object.keys(roleMap).map(Number);
 
         let where;
-        if (req.user.role === 'admin') {
+        if (siteAdmin) {
             where = {};
         } else if (!keycloakSub) {
             where = { id: { equals: -1 } }; // no Keycloak identity → no owned cases visible
@@ -179,7 +180,7 @@ export default function casesRoutes(app) {
         // Annotate each case with the current user's effective role
         const cases = result.docs.map(doc => ({
             ...doc,
-            myRole: req.user.role === 'admin'
+            myRole: siteAdmin
                 ? 'admin'
                 : doc.owner_id === keycloakSub
                     ? 'admin'
@@ -245,6 +246,8 @@ export default function casesRoutes(app) {
                 description: String(req.body?.description || '').trim() || undefined,
                 status:      req.body?.status || 'active',
                 owner_id:    ownerSub,
+                // New cases start with no workflows; only cases from before workflows get SlicerHeart.
+                workflows_seeded: true,
             },
         });
 
@@ -296,7 +299,7 @@ export default function casesRoutes(app) {
 
         // These `case` columns are NOT NULL with ON DELETE SET NULL, so leftover rows block the delete.
         const caseWhere = { case: { equals: Number(req.params.id) } };
-        for (const collection of ['attachments', 'case-comments', 'case-invites']) {
+        for (const collection of ['attachments', 'case-comments', 'case-invites', 'case-workflows', 'case-workflow-requesters']) {
             await payload.delete({ collection, where: caseWhere });
         }
         await removeAllGroupAccessForCase(req.params.id);
@@ -534,7 +537,11 @@ export default function casesRoutes(app) {
         const sourcePath = path.resolve(att.storage_key);
         const fileName = att.original_filename;
 
-        const useSimplifiedViewer = resolveUseSimplifiedViewer({ body: req.body, userId: req.user.id });
+        // The workflow's startup configuration, checked like a saved workflow's. SimplifiedViewer
+        // starts through the seat's own simplified mode; any other module is selected after loading.
+        const startupConfig = sanitizeStartupConfig(req.body?.startupConfig);
+        const useSimplifiedViewer = startupConfig.module === SIMPLIFIED_VIEWER_MODULE;
+        const startModule = useSimplifiedViewer ? null : startupConfig.module || null;
         const launcherUserId = String(req.user.id);
         const seatId = parseOptionalSeatId(req.body?.seatId);
         // Never reuse a seat (or its folder) holding copies from a case they've lost.
@@ -560,6 +567,7 @@ export default function casesRoutes(app) {
             fileName,
             launcherUserId,
             useSimplifiedViewer,
+            startModule,
             seatId: session.seatId,
         });
         patchSessionMetadata(SESSION_KINDS.SLICER_GUI, session.sessionKey, {
