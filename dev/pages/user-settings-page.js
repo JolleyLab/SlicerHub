@@ -490,10 +490,8 @@ export class UserSettingsPage extends LitElement {
                             <section class="settings-section">
                                 <div class="section-title-row">
                                     <h2 class="section-title">${t('settings.profile')}</h2>
-                                    <button type="button" class="section-hint" aria-label=${t('settings.profileHint')}>
-                                        ?
-                                        <span class="hint-bubble" role="tooltip">${t('settings.profileHint')}</span>
-                                    </button>
+                                    <info-tip .text=${t('settings.profileHint')}
+                                        .label=${t('settings.profileInfo')}></info-tip>
                                 </div>
                                 <div class="profile-form">
                                     <div class="avatar-row">

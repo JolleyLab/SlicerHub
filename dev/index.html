@@ -31,6 +31,15 @@
       }
     }
 
+    /* Touch screens only (components fall back to their desktop sizes when unset):
+       tap targets of at least 44px, and text fields of at least 16px, below which iOS zooms in on focus. */
+    @media (pointer: coarse) {
+      :root {
+        --tap-target-min: 44px;
+        --field-font-min: 16px;
+      }
+    }
+
     body {
       margin: 0;
       padding: 0;

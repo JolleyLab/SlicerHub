@@ -44,8 +44,9 @@ export class NotificationBell extends LitElement {
                 background: color-mix(in srgb, var(--color-on-primary) 22%, transparent);
             }
 
+            /* On the coloured top bar: the bar's text colour (the usual focus blue is 1.6:1 on the light theme's navy). */
             .bell-button:focus-visible {
-                outline: 3px solid var(--color-focus, #0057c2);
+                outline: 3px solid var(--color-on-primary);
                 outline-offset: 2px;
             }
 

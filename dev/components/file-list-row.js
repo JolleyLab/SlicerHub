@@ -117,6 +117,8 @@ export class FileListRow extends LitElement {
                 color: var(--color-text-secondary);
                 width: 28px;
                 height: 28px;
+                min-width: var(--tap-target-min, 0px);
+                min-height: var(--tap-target-min, 0px);
                 padding: 0;
                 display: inline-flex;
                 align-items: center;
@@ -198,6 +200,8 @@ export class FileListRow extends LitElement {
                 color: var(--color-text-primary);
                 width: 34px;
                 height: 34px;
+                min-width: var(--tap-target-min, 0px);
+                min-height: var(--tap-target-min, 0px);
                 padding: 0;
                 display: inline-flex;
                 align-items: center;

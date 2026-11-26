@@ -1,4 +1,5 @@
 import { css } from 'lit-element';
+import { phoneMedia } from '../styles/breakpoints.js';
 
 export const appDialogStyles = css`
     :host {
@@ -8,9 +9,11 @@ export const appDialogStyles = css`
     /* No transform, filter or contain on .dialog: menus opened in a dialog draw their panel inside
        it with position: fixed (popup-menu.js › menuContainer), and those would make it relative
        to the dialog instead of the window. Animate the ::backdrop, or opacity, instead. */
+    /* Sizes include the padding, so the 16px margins hold on a phone (604px: 560px of content plus padding). */
     .dialog {
         position: relative;
-        width: var(--app-dialog-width, min(560px, calc(100vw - 32px)));
+        box-sizing: border-box;
+        width: var(--app-dialog-width, min(604px, calc(100vw - 32px)));
         max-width: calc(100vw - 32px);
         border: 1px solid var(--color-border);
         border-radius: calc(var(--radius-lg, 12px) + 2px);
@@ -88,5 +91,11 @@ export const appDialogStyles = css`
     .close-button:focus-visible {
         outline: var(--focus-ring-width, 3px) solid var(--color-focus, var(--color-secondary));
         outline-offset: var(--focus-ring-offset, 2px);
+    }
+
+    @media ${phoneMedia} {
+        .dialog {
+            padding: 16px 16px 14px;
+        }
     }
 `;

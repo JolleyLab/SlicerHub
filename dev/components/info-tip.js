@@ -52,7 +52,7 @@ export class InfoTip extends LitElement {
                 font-size: 0.82rem; line-height: 1.45;
                 color: var(--color-text-primary);
                 background: var(--color-panel, #fff);
-                border: 1px solid var(--color-border);
+                border: 1px solid var(--color-control-border);
                 box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14);
             }
             /* An invisible bridge over the gap, so moving the pointer onto the pop-up keeps it open. */
