@@ -874,10 +874,11 @@ export class ProjectReviewPage extends LitElement {
 
             .gpu-field input,
             .gpu-field textarea {
-                border: 1px solid var(--color-border);
+                border: 1px solid var(--color-control-border);
                 border-radius: var(--radius-sm);
                 padding: 8px 10px;
                 font: inherit;
+                font-size: max(1em, var(--field-font-min, 0px));
                 background: var(--color-panel, var(--color-surface, var(--color-background)));
                 color: var(--color-text-primary);
                 box-sizing: border-box;
@@ -1121,11 +1122,12 @@ export class ProjectReviewPage extends LitElement {
                 box-sizing: border-box;
                 min-height: 40px;
                 padding: 8px 10px;
-                border: 1px solid var(--color-border);
+                border: 1px solid var(--color-control-border);
                 border-radius: var(--radius-md);
                 background: var(--color-surface, var(--color-background));
                 color: var(--color-text-primary);
                 font: inherit;
+                font-size: max(1em, var(--field-font-min, 0px));
             }
 
             .share-help {

@@ -1470,11 +1470,14 @@ export class CasesPage extends LitElement {
         this._replaceUrlWithCase();
     }
 
+    /** Name, size and date; for a file that can't be opened, also why (else only a hover tooltip, out of reach by touch or keyboard). */
     attachmentMetaLine(attachment) {
         const originalName = attachment.filenameDownload || '';
         const size = formatBytes(attachment.filesize);
         const modified = formatDateTime(attachment.modifiedAt);
-        return [originalName, size, modified].filter(Boolean).join(' - ');
+        const details = [originalName, size, modified].filter(Boolean).join(' - ');
+        if (this.attachmentCanActivate(attachment)) return details;
+        return [details, this.attachmentOpenTitle(attachment)].filter(Boolean).join(' · ');
     }
 
     attachmentTitle(attachment) {

@@ -79,69 +79,6 @@ export const userSettingsStyles = css`
         gap: 8px;
     }
 
-    .section-hint {
-        position: relative;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 1.15rem;
-        height: 1.15rem;
-        padding: 0;
-        border: 1px solid var(--color-border);
-        border-radius: 50%;
-        background: transparent;
-        color: var(--color-text-secondary);
-        font: inherit;
-        font-size: 0.7rem;
-        font-weight: 600;
-        line-height: 1;
-        cursor: help;
-    }
-
-    .section-hint:hover,
-    .section-hint:focus-visible {
-        color: var(--color-text-primary);
-        border-color: var(--color-text-secondary);
-        outline: none;
-    }
-
-    .section-hint .hint-bubble {
-        position: absolute;
-        left: 50%;
-        bottom: calc(100% + 8px);
-        transform: translateX(-50%);
-        width: max-content;
-        max-width: min(280px, 70vw);
-        padding: 8px 10px;
-        border-radius: 8px;
-        background: var(--color-text-primary);
-        color: var(--color-background, #fff);
-        font-size: 0.8rem;
-        font-weight: 400;
-        line-height: 1.35;
-        text-align: left;
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity 0.12s ease;
-        z-index: 2;
-    }
-
-    .section-hint .hint-bubble::after {
-        content: '';
-        position: absolute;
-        top: 100%;
-        left: 50%;
-        margin-left: -5px;
-        border: 5px solid transparent;
-        border-top-color: var(--color-text-primary);
-    }
-
-    .section-hint:hover .hint-bubble,
-    .section-hint:focus-visible .hint-bubble {
-        opacity: 1;
-    }
-
     .section-description {
         margin: 0;
         font-size: 0.9rem;
@@ -244,8 +181,9 @@ export const userSettingsStyles = css`
 
     .form-group input {
         font: inherit;
+        font-size: max(1em, var(--field-font-min, 0px));
         padding: 8px 10px;
-        border: 1px solid var(--color-border);
+        border: 1px solid var(--color-control-border);
         border-radius: var(--radius-md, 8px);
         background: var(--color-background);
         color: var(--color-text-primary);

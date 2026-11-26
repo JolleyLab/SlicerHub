@@ -63,6 +63,10 @@ export class IconButton extends LitElement {
                 width: 34px;
                 height: 34px;
             }
+            :host button {
+                min-width: var(--tap-target-min, 0px);
+                min-height: var(--tap-target-min, 0px);
+            }
 
             ::slotted(svg) {
                 display: block;

@@ -68,6 +68,7 @@ export class WorkflowsPage extends LitElement {
             .tabs { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--color-border); border-radius: 8px; margin-bottom: 16px; }
             .tabs button {
                 font: inherit; font-size: 0.875rem; font-weight: 600; padding: 7px 16px; border: 0; cursor: pointer;
+                min-height: var(--tap-target-min, 0px);
                 border-radius: 6px; background: transparent; color: var(--color-text-secondary);
             }
             .tabs button[aria-selected='true'] { background: var(--color-primary); color: var(--color-on-primary); }

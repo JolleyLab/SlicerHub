@@ -38,7 +38,7 @@ export class DropdownSelect extends LitElement {
                 box-sizing: border-box;
                 min-height: 38px;
                 margin: 0;
-                border: 1px solid var(--dropdown-border, var(--color-border));
+                border: 1px solid var(--dropdown-border, var(--color-control-border));
                 border-radius: var(--radius-sm, 4px);
                 padding: 8px 36px 8px 10px;
                 font: inherit;

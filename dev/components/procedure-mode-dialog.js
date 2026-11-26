@@ -43,7 +43,7 @@ export class ProcedureModeDialog extends LitElement {
             .choice { display: flex; align-items: center; gap: 8px; margin: 6px 0; color: var(--color-text-primary); }
             .choice input[type="radio"], .ack input { width: auto; margin: 0; }
             .choice select {
-                padding: 6px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+                padding: 6px 8px; border: 1px solid var(--color-control-border); border-radius: var(--radius-sm);
                 background: var(--color-panel); color: var(--color-text-primary); font: inherit;
             }
             .ack { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 16px 0; color: var(--color-text-primary); line-height: 1.4; }

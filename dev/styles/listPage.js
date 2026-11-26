@@ -211,6 +211,7 @@ export const listPageStyles = css`
         border: none;
         background: transparent;
         padding: 4px 0;
+        min-height: var(--tap-target-min, 0px);
         margin: 0;
         font: inherit;
         font-size: 0.875rem;
@@ -387,11 +388,11 @@ export const listPageStyles = css`
 
     .form-input,
     .form-textarea {
-        border: 1px solid var(--color-border);
+        border: 1px solid var(--color-control-border);
         border-radius: 6px;
         padding: 9px 12px;
         font: inherit;
-        font-size: 0.925rem;
+        font-size: max(0.925rem, var(--field-font-min, 0px));
         /* White in light mode: the page background tint made editable fields look disabled. */
         background: var(--color-panel, #fff);
         color: var(--color-text-primary);

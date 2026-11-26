@@ -14,6 +14,7 @@ export const buttonStyles = css`
         align-items: center;
         line-height: 1.2;
         white-space: nowrap;
+        min-height: var(--tap-target-min, 0px);
     }
 
     .primary-button {
@@ -54,6 +55,7 @@ export const buttonStyles = css`
         border: 1px solid var(--color-border);
         border-radius: 6px;
         padding: 6px 12px;
+        min-height: var(--tap-target-min, 0px);
         font: inherit;
         font-size: 0.8rem;
         font-weight: 600;

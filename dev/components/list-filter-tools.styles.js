@@ -22,6 +22,8 @@ export const listFilterToolsStyles = css`
         color: var(--color-text-secondary);
         width: 32px;
         height: 30px;
+        min-width: var(--tap-target-min, 0px);
+        min-height: var(--tap-target-min, 0px);
         padding: 0;
         display: inline-flex;
         align-items: center;
@@ -59,7 +61,7 @@ export const listFilterToolsStyles = css`
         z-index: 20;
         min-width: 220px;
         padding: 6px;
-        border: 1px solid var(--color-border);
+        border: 1px solid var(--color-control-border);
         border-radius: var(--radius-md, 6px);
         background: var(--color-panel, #fff);
         box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
@@ -91,6 +93,7 @@ export const listFilterToolsStyles = css`
         font-weight: 500;
         text-align: left;
         padding: 8px 10px;
+        min-height: var(--tap-target-min, 0px);
         cursor: pointer;
         box-sizing: border-box;
     }
@@ -130,11 +133,11 @@ export const listFilterToolsStyles = css`
         width: 100%;
         min-width: 0;
         box-sizing: border-box;
-        border: 1px solid var(--color-border);
+        border: 1px solid var(--color-control-border);
         border-radius: var(--radius-sm, 4px);
         padding: 8px 10px;
         font: inherit;
-        font-size: 0.875rem;
+        font-size: max(0.875rem, var(--field-font-min, 0px));
         color: var(--color-text-primary);
         background: var(--color-background);
     }
@@ -150,7 +153,7 @@ export const listFilterToolsStyles = css`
         border-radius: var(--radius-sm, 4px);
         background: transparent;
         color: var(--color-text-secondary);
-        min-height: 34px;
+        min-height: max(34px, var(--tap-target-min, 0px));
         padding: 0 10px;
         font: inherit;
         font-size: 0.8rem;
@@ -193,7 +196,36 @@ export const listFilterToolsStyles = css`
 
     :host-context([data-theme='dark']) .search-input {
         background: var(--color-background);
-        border-color: var(--color-border);
+        border-color: var(--color-control-border);
         color: var(--color-text-primary);
+    }
+
+    /* Touch: the buttons grow to the full height of a 44px panel header, where their borders would sit on the
+       header's own lines. Borderless instead, like the other icon buttons; open or active still shows by its tint. */
+    @media (pointer: coarse) {
+        .tool-trigger,
+        .tool-trigger:hover,
+        .tool-trigger[aria-expanded='true'],
+        .tool-trigger.is-active,
+        :host-context([data-theme='dark']) .tool-trigger[aria-expanded='true'],
+        :host-context([data-theme='dark']) .tool-trigger.is-active {
+            border-color: transparent;
+        }
+
+        /* Without the border, a tint alone (1.2:1) can't show that a search or filter is on: add a dot. */
+        .tool-trigger {
+            position: relative;
+        }
+
+        .tool-trigger.is-active::after {
+            content: '';
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--color-focus, #0057c2);
+        }
     }
 `;
