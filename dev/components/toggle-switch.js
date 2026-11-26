@@ -58,7 +58,7 @@ export class ToggleSwitch extends LitElement {
             }
 
             :host-context([data-theme='dark']) .slider {
-                box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-text-secondary) 55%, var(--color-panel));
+                box-shadow: inset 0 0 0 1px var(--color-control-border);
             }
 
             .switch input:checked + .slider {

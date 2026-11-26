@@ -12,6 +12,12 @@ export const UI_COLOR_SCHEMES = {
         onPrimary: '#ecf4f9',
         onSecondary: '#ecf4f9',
         border: '#224f6b',
+        // Outline of inputs, dropdowns, checkboxes, switches: ≥ 3:1 on panel and page (WCAG 1.4.11).
+        // 8.8:1 on #ffffff, 7.9:1 on #ecf4f9.
+        controlBorder: '#224f6b',
+        // Checked checkbox/radio fill (accent-color, set on the root): ≥ 3:1 on panel and page, and its tick ≥ 3:1.
+        // 10.4:1 on #ffffff, 9.4:1 on #ecf4f9; white tick 10.4:1.
+        controlAccent: '#074174',
         focus: '#0057c2',
         // Status banners: fg/bg pairs ≥ 4.5:1 (WCAG 2.0 AA normal text)
         statusErrorBg: '#fde8e6',
@@ -19,13 +25,16 @@ export const UI_COLOR_SCHEMES = {
         statusErrorBorder: '#c43c32',
         statusSuccessBg: '#e6f6ed',
         statusSuccessFg: '#0b5c38',
-        statusSuccessBorder: '#2f8f63'
+        statusSuccessBorder: '#2f8f63',
+        // Warning text on panels/page: 7.1:1 on #ffffff, 6.4:1 on #ecf4f9
+        statusWarningFg: '#92400e'
     },
     dark: {
         // Same hierarchy as light (shared page base + lifted panels), cooler slate-indigo.
         background: '#090b14',
         surface: '#090b14',
-        panel: '#161b2c',
+        // Near-neutral, not saturated blue: #161b2c showed blotchy backlight patches (mura) on MacBook Air LCDs.
+        panel: '#161b22',
         textPrimary: '#f0f2f8',
         textSecondary: '#c2c8d8',
         textContrast: '#090b14',
@@ -35,13 +44,19 @@ export const UI_COLOR_SCHEMES = {
         onPrimary: '#f2f4fa',
         onSecondary: '#f2f4fa',
         border: '#343e58',
+        // Control outline (see light): #343e58 is only 1.6:1, so a lighter grey. 4.0:1 on #161b22, 4.6:1 on #090b14.
+        controlBorder: '#757a86',
+        // Checked fill (see light): primary #2c3878 is only 1.6:1 here. 3.5:1 on #161b22, 4.0:1 on #090b14; white tick 4.9:1.
+        controlAccent: '#5c6bb8',
         focus: '#8fa3d4',
         statusErrorBg: '#3a1418',
         statusErrorFg: '#ffc9c2',
         statusErrorBorder: '#e06b5f',
         statusSuccessBg: '#0f2a1c',
         statusSuccessFg: '#b6f0cf',
-        statusSuccessBorder: '#3d9a6a'
+        statusSuccessBorder: '#3d9a6a',
+        // Warning text on panels/page: 12.0:1 on #161b22, 13.6:1 on #090b14
+        statusWarningFg: '#fcd34d'
     }
 };
 
@@ -62,6 +77,8 @@ export function applyTheme(theme = 'light') {
     Object.entries(palette).forEach(([key, value]) => {
         root.style.setProperty(`--color-${toKebabCase(key)}`, value);
     });
+    // Inherited (also into components), so every native checkbox and radio uses it.
+    root.style.setProperty('accent-color', 'var(--color-control-accent)');
 
     // Squared-off clinical radii (soft corners, not pills).
     root.style.setProperty('--radius-sm', '4px');

@@ -46,6 +46,9 @@ function resolveJwtSecret(dbPath) {
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/users.db');
 
+/** Private repo of prebuilt SlicerWeb sites, one branch per channel (deploy/stable, deploy/latest). */
+const DEFAULT_SLICERWEB_REPO_URL = 'https://github.com/JolleyLab/SlicerHeartWebViewer-app.git';
+
 /**
  * Central configuration for the application
  * All environment-dependent values should be defined here
@@ -183,12 +186,12 @@ const config = {
     caseInviteTtlDays: Math.max(1, Math.min(30, Number(process.env.CASE_INVITE_TTL_DAYS || 7) || 7)),
 
     /**
-     * SlicerWeb channel update service.
-     * Requires SLICERWEB_GITHUB_TOKEN (fine-grained PAT, read-only Contents on the deploy repo).
-     * ENABLE_SLICERWEB_DEV_MODE=true exposes the latest-channel opt-in in user settings.
+     * SlicerWeb channel update service. Reads the deploy repo (SLICERWEB_REPO_URL, default the
+     * SlicerHeart viewer builds) with a deploy key, GitHub App or token; the repo is private.
+     * Both channels are always offered; latest falls back to stable until it can be served.
      */
     slicerWeb: (() => {
-        const repoUrl = (process.env.SLICERWEB_REPO_URL || '').trim();
+        const repoUrl = (process.env.SLICERWEB_REPO_URL || DEFAULT_SLICERWEB_REPO_URL).trim();
         // Parse "https://github.com/Owner/Repo.git" or "Owner/Repo"
         const match = repoUrl.match(/github\.com[/:]([\w-]+)\/([\w.-]+?)(?:\.git)?$/)
             || repoUrl.match(/^([\w-]+)\/([\w.-]+)$/);
@@ -203,11 +206,9 @@ const config = {
         const hasPatCreds = Boolean((process.env.SLICERWEB_GITHUB_TOKEN || '').trim());
         const deployKeyPath = (process.env.SLICERWEB_DEPLOY_KEY_PATH || '').trim();
         const hasDeployKey = Boolean(deployKeyPath);
-        const devModeEnabled = process.env.ENABLE_SLICERWEB_DEV_MODE === 'true';
         const stableDir = (process.env.SLICERWEB_STABLE_DIR || '/app/data/slicerweb-stable').trim();
         const latestDir = (process.env.SLICERWEB_LATEST_DIR || '/app/data/slicerweb-latest').trim();
-        // In dev mode, treat pre-fetched local dirs as sufficient — no GitHub credentials needed.
-        const hasLocalDirs = devModeEnabled && fs.existsSync(latestDir);
+        const canUpdate = hasAppCreds || hasPatCreds || hasDeployKey;
         return {
             // GitHub App credentials (preferred — org-owned, short-lived tokens)
             app: {
@@ -219,8 +220,14 @@ const config = {
             githubToken: (process.env.SLICERWEB_GITHUB_TOKEN || '').trim(),
             /** Path to the SSH deploy key (inside container). Set SLICERWEB_DEPLOY_KEY_PATH in .env. */
             deployKeyPath,
-            /** True if any GitHub credentials are configured (or local dirs pre-fetched in dev mode). */
-            hasCredentials: hasAppCreds || hasPatCreds || hasDeployKey || hasLocalDirs,
+            /** True if this server can download builds itself (pollers, webhook, Check for updates). */
+            canUpdate,
+            /**
+             * The latest channel can be opened: a build is installed (every install path, updater or
+             * scripts/fetch-slicerweb.*, writes .version). Credentials alone aren't enough: the first
+             * download may still be running, or the key may lack access. Checked per call, so no restart.
+             */
+            isLatestAvailable: () => fs.existsSync(path.join(latestDir, '.version')),
             owner: match?.[1] || '',
             repo: match?.[2] || '',
             stableDir,
@@ -230,13 +237,17 @@ const config = {
                 const h = Number(process.env.SLICERWEB_STABLE_CHECK_HOURS ?? 4);
                 return Number.isFinite(h) && h > 0 ? h * 60 * 60 * 1000 : 0;
             })(),
-            /** How often to check the latest channel for updates when dev mode is on (default 5 min). 0 = disabled. */
+            /** How often to check the latest channel for updates (default 5 min). 0 = disabled. */
             latestCheckIntervalMs: (() => {
                 const m = Number(process.env.SLICERWEB_LATEST_CHECK_MINUTES ?? 5);
                 return Number.isFinite(m) && m > 0 ? m * 60 * 1000 : 0;
             })(),
-            /** Allow users to opt into the latest channel from Settings. */
-            devModeEnabled,
+            /**
+             * Channel for people whose Settings choice is "Default". Latest while the app is in
+             * development; switch to 'stable' once researchers should get the vetted release.
+             * Falls back to stable when the latest channel isn't available (isLatestAvailable).
+             */
+            defaultChannel: 'latest',
             /** Shared secret for GitHub push webhook signature verification. */
             webhookSecret: (process.env.SLICERWEB_WEBHOOK_SECRET || '').trim()
         };

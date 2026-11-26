@@ -38,7 +38,7 @@ export class DropdownSelect extends LitElement {
                 box-sizing: border-box;
                 min-height: 38px;
                 margin: 0;
-                border: 1px solid var(--color-border);
+                border: 1px solid var(--dropdown-border, var(--color-border));
                 border-radius: var(--radius-sm, 4px);
                 padding: 8px 36px 8px 10px;
                 font: inherit;
@@ -65,7 +65,7 @@ export class DropdownSelect extends LitElement {
             }
 
             .select:hover:not(:disabled) {
-                border-color: color-mix(in srgb, var(--color-secondary) 55%, var(--color-border));
+                border-color: var(--dropdown-border-hover, color-mix(in srgb, var(--color-secondary) 55%, var(--color-border)));
             }
 
             .select:focus-visible {
@@ -78,6 +78,11 @@ export class DropdownSelect extends LitElement {
             .select:disabled {
                 opacity: 0.6;
                 cursor: not-allowed;
+            }
+
+            :host-context([data-theme='dark']) {
+                --dropdown-border: var(--color-control-border);
+                --dropdown-border-hover: var(--color-text-secondary);
             }
 
             :host-context([data-theme='dark']) .wrap::after {

@@ -37,11 +37,6 @@ export const adminGroupsStyles = css`
         background: color-mix(in srgb, var(--color-accent) 22%, var(--color-panel, var(--color-surface, transparent)));
     }
 
-    /* Checkbox accent → accent so the tick is visible against the dark-navy fill */
-    :host-context([data-theme='dark']) .perm-row input[type="checkbox"] {
-        accent-color: var(--color-accent);
-    }
-
     .sidebar-header {
         display: flex;
         justify-content: space-between;
@@ -233,7 +228,6 @@ export const adminGroupsStyles = css`
     }
     .perm-row input[type="checkbox"] {
         cursor: pointer;
-        accent-color: var(--color-primary);
     }
     .add-member-row { display: flex; gap: 8px; margin-top: 4px; }
     .add-member-row input { flex: 1; }

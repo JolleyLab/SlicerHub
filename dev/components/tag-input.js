@@ -35,7 +35,7 @@ export class TagInput extends LitElement {
                 border: 1px solid var(--color-border); border-radius: 6px; padding: 6px 8px;
                 background: var(--color-panel, #fff); cursor: text;
             }
-            :host-context([data-theme='dark']) .box { background: var(--color-background); border-color: color-mix(in srgb, var(--color-text-secondary) 55%, var(--color-panel)); }
+            :host-context([data-theme='dark']) .box { background: var(--color-background); border-color: var(--color-control-border); }
             .box:focus-within {
                 border-color: var(--color-primary);
                 box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 16%, transparent);

@@ -22,22 +22,28 @@ export const DEFAULT_USER_PREFERENCES = Object.freeze({
     theme: 'light',
     ...DEFAULT_LOCAL_SLICER_VIEWER_OPTIONS,
     homeLayout: normalizeHomeLayout(null),
-    slicerWebChannel: 'stable',
+    slicerWebChannel: 'default',
     notifyRegistrationApproval: true,
     shareNameInGroups: false,
     activityFilters: ['comment'],
 });
 
+/** SlicerWeb channel choices in Settings; 'default' defers to config.slicerWeb.defaultChannel. */
+export const SLICERWEB_CHANNEL_CHOICES = Object.freeze(['default', 'latest', 'stable']);
+
+export function normalizeSlicerWebChannel(value) {
+    return SLICERWEB_CHANNEL_CHOICES.includes(value) ? value : 'default';
+}
+
 export function normalizeUserPreferences(input = {}) {
     const theme = input?.theme === 'dark' ? 'dark' : 'light';
     const viewer = normalizeLocalSlicerViewerOptions(input);
-    const slicerWebChannel = input?.slicerWebChannel === 'latest' ? 'latest' : 'stable';
     return {
         theme,
         useFullSlicer: viewer.useFullSlicer,
         useSimplifiedViewer: viewer.useSimplifiedViewer,
         homeLayout: normalizeHomeLayout(input?.homeLayout),
-        slicerWebChannel,
+        slicerWebChannel: normalizeSlicerWebChannel(input?.slicerWebChannel),
         notifyRegistrationApproval: input?.notifyRegistrationApproval !== false,
         shareNameInGroups: input?.shareNameInGroups === true,
         activityFilters: normalizeActivityFilters(input?.activityFilters),

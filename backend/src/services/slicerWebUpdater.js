@@ -1,10 +1,12 @@
 /**
  * SlicerWeb channel updater.
  *
- * Two channels: 'stable' and 'latest'.
- * - stable: background poller checks every N hours and updates automatically.
- * - latest: peek fires on page load; if a new build is found the clone runs in the background.
- *   Webhook (POST /api/slicerweb/webhook) triggers the same path immediately on push.
+ * Two channels: 'stable' and 'latest', each a branch of the deploy repo (deploy/<channel>).
+ * - Background pollers check stable every N hours and latest every M minutes.
+ * - POST /api/slicerweb/check-update (Settings → Check for updates) and the push webhook run
+ *   the same check on demand.
+ *
+ * The deploy repo is private: it's read with the SSH deploy key (git), or a GitHub App or token (API).
  *
  * shouldApplyUpdate is the future OrgAdmin approval gate — today it always returns true.
  */
@@ -284,16 +286,30 @@ export async function checkAndUpdate(channel) {
 
 export { getInstalledSha };
 
+/**
+ * A disabled interval is a choice; missing credentials usually aren't (the setup scripts don't
+ * add them), so that case is a warning: nothing will update until an admin adds them.
+ */
+function pollerCanStart(label, intervalMs) {
+    if (!intervalMs) {
+        console.log(`[SlicerWebUpdater] ${label} poller not started (interval disabled)`);
+        return false;
+    }
+    if (!config.slicerWeb.canUpdate) {
+        console.warn(`[SlicerWebUpdater] ${label} poller not started: no deploy key, GitHub App or token `
+            + 'configured, so SlicerWeb will not update. See .env.example (SlicerWeb auto-updater).');
+        return false;
+    }
+    return true;
+}
+
 let _pollerStarted = false;
 export function startStablePoller() {
     if (_pollerStarted) return;
     _pollerStarted = true;
 
     const intervalMs = config.slicerWeb.stableCheckIntervalMs;
-    if (!intervalMs || !config.slicerWeb.hasCredentials) {
-        console.log('[SlicerWebUpdater] Stable poller not started (no credentials or interval disabled)');
-        return;
-    }
+    if (!pollerCanStart('Stable', intervalMs)) return;
 
     const run = () => checkAndUpdate('stable').catch(err =>
         console.warn('[SlicerWebUpdater] Stable update check failed:', err.message)
@@ -310,11 +326,7 @@ export function startLatestPoller() {
     _latestPollerStarted = true;
 
     const intervalMs = config.slicerWeb.latestCheckIntervalMs;
-    if (!config.slicerWeb.devModeEnabled) return;
-    if (!intervalMs || !config.slicerWeb.hasCredentials) {
-        console.log('[SlicerWebUpdater] Latest poller not started (no credentials or interval disabled)');
-        return;
-    }
+    if (!pollerCanStart('Latest', intervalMs)) return;
 
     const run = () => checkAndUpdate('latest').catch(err =>
         console.warn('[SlicerWebUpdater] Latest update check failed:', err.message)

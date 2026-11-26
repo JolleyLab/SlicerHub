@@ -35,6 +35,7 @@ import crypto from 'crypto';
 import { execSync, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { readEnvFile, upsertEnvVar } from './lib/env.mjs';
+import { PRE_SYNC_DATA_MIGRATIONS } from '../backend/src/payload/dataMigrations.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT     = path.resolve(__dirname, '..');
@@ -178,6 +179,9 @@ const RETIRED_SCHEMA = [
     // When the bell was last opened moved to its own collection (bell-state); it isn't a preference.
     'ALTER TABLE IF EXISTS user_preferences DROP COLUMN IF EXISTS bell_opened_at',
     'ALTER TABLE IF EXISTS user_preferences DROP COLUMN IF EXISTS preferences_saved',
+    // Data the schema sync below would make ambiguous (e.g. SlicerWeb version 'stable' → Default).
+    // Shared with the backend, which runs them itself before its own dev schema push.
+    ...PRE_SYNC_DATA_MIGRATIONS,
 ];
 
 /**
@@ -262,10 +266,6 @@ async function main() {
   Payload's tables (cases and attachments, case invites, groups, registration
   requests, notifications, user preferences, workflows and case workflow
   approvals, the site announcement) are in place.
-
-  To enable the SlicerWeb developer channel (latest build) in the UI,
-  add to .env (after credentials are configured):
-    ENABLE_SLICERWEB_DEV_MODE=true
   ─────────────────────────────────────────────
 `);
 }

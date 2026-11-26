@@ -1,5 +1,6 @@
 import { getPayload } from 'payload'
 import config from './payload.config.js'
+import { payloadWillPushSchema, runPreSyncDataMigrations } from './dataMigrations.js'
 
 let _payload = null
 
@@ -14,6 +15,16 @@ export async function initPayload() {
     if (!uri) {
         console.log('Payload: PAYLOAD_DATABASE_URI not set — Cases unavailable (start with --profile payload to enable)')
         return null
+    }
+
+    // Payload's dev schema push rewrites columns on connect; fix data that the old schema
+    // explains first (dataMigrations.js). In production, scripts/setup-payload.mjs does it.
+    if (payloadWillPushSchema()) {
+        try {
+            await runPreSyncDataMigrations(uri)
+        } catch (err) {
+            console.warn('Payload: pre-sync data migrations failed —', err.message)
+        }
     }
 
     try {

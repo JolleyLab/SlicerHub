@@ -456,7 +456,7 @@ export default function authRoutes(app) {
         if (req.body?.useFullSlicer !== undefined) patch.useFullSlicer = req.body.useFullSlicer === true;
         if (req.body?.useSimplifiedViewer !== undefined) patch.useSimplifiedViewer = req.body.useSimplifiedViewer === true;
         if (req.body?.homeLayout !== undefined) patch.homeLayout = req.body.homeLayout;
-        if (req.body?.slicerWebChannel !== undefined) patch.slicerWebChannel = req.body.slicerWebChannel === 'latest' ? 'latest' : 'stable';
+        if (req.body?.slicerWebChannel !== undefined) patch.slicerWebChannel = req.body.slicerWebChannel;
         if (req.body?.notifyRegistrationApproval !== undefined) patch.notifyRegistrationApproval = req.body.notifyRegistrationApproval === true;
         if (req.body?.shareNameInGroups !== undefined) patch.shareNameInGroups = req.body.shareNameInGroups === true;
         if (req.body?.activityFilters !== undefined) patch.activityFilters = req.body.activityFilters;

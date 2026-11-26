@@ -9,13 +9,16 @@ import { openKeycloakPopup } from '../services/keycloakPopup.js';
 import '../components/local-slicer-viewer-options.js';
 import '../components/home-layout-settings.js';
 import '../components/page-content-message.js';
+import '../components/dropdown-select.js';
+import '../components/info-tip.js';
 import {
     getCachedUserPreferences,
     saveUserPreferences,
     ALL_ACTIVITY_CATEGORIES,
     normalizeActivityFilters,
+    SLICERWEB_CHANNEL_CHOICES,
 } from '../utils/userPreferences.js';
-import { isSlicerWebDevModeEnabled } from '../services/features.js';
+import { requestedSlicerWebChannel, resolveSlicerWebChannel } from '../services/features.js';
 
 export class UserSettingsPage extends LitElement {
     static get styles() {
@@ -51,7 +54,8 @@ export class UserSettingsPage extends LitElement {
             avatarUploading: { type: Boolean },
             avatarError: { type: String },
             _activeTab: { type: String },
-            _prefsDirty: { type: Boolean }
+            _prefsDirty: { type: Boolean },
+            _updateCheck: { state: true }
         };
     }
 
@@ -85,7 +89,7 @@ export class UserSettingsPage extends LitElement {
         this.useFullSlicer = prefs.useFullSlicer;
         this.homeLayout = prefs.homeLayout;
         this.useSimplifiedViewer = prefs.useSimplifiedViewer;
-        this.slicerWebChannel = prefs.slicerWebChannel ?? 'stable';
+        this.slicerWebChannel = prefs.slicerWebChannel ?? 'default';
         this.notifyRegistrationApproval = prefs.notifyRegistrationApproval !== false;
         this.shareNameInGroups = prefs.shareNameInGroups === true;
         this.activityFilters = prefs.activityFilters ?? null;
@@ -206,7 +210,7 @@ export class UserSettingsPage extends LitElement {
             this.useFullSlicer = next.useFullSlicer;
             this.homeLayout = next.homeLayout;
             this.useSimplifiedViewer = next.useSimplifiedViewer;
-            this.slicerWebChannel = next.slicerWebChannel ?? 'stable';
+            this.slicerWebChannel = next.slicerWebChannel ?? 'default';
             this.notifyRegistrationApproval = next.notifyRegistrationApproval !== false;
             this.shareNameInGroups = next.shareNameInGroups === true;
             this.activityFilters = next.activityFilters ?? null;
@@ -286,9 +290,22 @@ export class UserSettingsPage extends LitElement {
         this._prefsDirty = true;
     }
 
-    handleSlicerWebChannelChange(wantsLatest) {
-        this.slicerWebChannel = wantsLatest ? 'latest' : 'stable';
+    handleSlicerWebChannelChange(choice) {
+        this.slicerWebChannel = choice;
         this._prefsDirty = true;
+    }
+
+    /** Ask the server to fetch a new build of the version this choice opens (anyone may). */
+    async handleCheckForUpdates() {
+        const channel = resolveSlicerWebChannel(this.slicerWebChannel);
+        this._updateCheck = { busy: true, message: t('settings.slicerWebChecking') };
+        const res = await fetch(`/api/slicerweb/check-update?channel=${channel}`, { method: 'POST', credentials: 'include' })
+            .catch(() => null);
+        const data = res?.ok ? await res.json().catch(() => null) : null;
+        const message = !data ? t('settings.slicerWebCheckFailed')
+            : data.updated ? t('settings.slicerWebUpdated')
+            : t('settings.slicerWebUpToDate');
+        this._updateCheck = { busy: false, message };
     }
 
     async handleProfileSave(e) {
@@ -628,23 +645,39 @@ export class UserSettingsPage extends LitElement {
                             ></local-slicer-viewer-options>
                         </section>
 
-                        ${isSlicerWebDevModeEnabled() ? html`
-                            <section class="settings-section">
-                                <h2 class="section-title">${t('settings.slicerWebChannel')}</h2>
-                                <p class="section-description">${t('settings.slicerWebChannelHint')}</p>
-                                <label class="checkbox-row">
-                                    <input type="checkbox"
-                                        .checked=${this.slicerWebChannel === 'latest'}
-                                        @change=${(e) => this.handleSlicerWebChannelChange(e.target.checked)} />
-                                    ${t('settings.slicerWebLatestLabel')}
-                                </label>
-                                ${this.slicerWebChannel === 'latest' ? html`
-                                    <p class="section-description" style="color:var(--color-warning,#b45309)">
-                                        ${t('settings.slicerWebLatestWarning')}
-                                    </p>
+                        <section class="settings-section">
+                            <h2 class="section-title">${t('settings.slicerWebChannel')}</h2>
+                            <p class="section-description">${t('settings.slicerWebChannelHint')}</p>
+                            <div class="select-row">
+                                <dropdown-select
+                                    .value=${this.slicerWebChannel}
+                                    .options=${SLICERWEB_CHANNEL_CHOICES.map((value) => ({
+                                        value,
+                                        label: value === 'default'
+                                            ? t('settings.slicerWebChannelOption.defaultCurrently', {
+                                                channel: t(`settings.slicerWebChannelOption.${requestedSlicerWebChannel('default')}`)
+                                            })
+                                            : t(`settings.slicerWebChannelOption.${value}`)
+                                    }))}
+                                    aria-label=${t('settings.slicerWebChannel')}
+                                    @change=${(e) => this.handleSlicerWebChannelChange(e.target.value)}
+                                ></dropdown-select>
+                                ${resolveSlicerWebChannel(this.slicerWebChannel) === 'latest' ? html`
+                                    <info-tip .text=${t('settings.slicerWebLatestWarning')}
+                                        .label=${t('settings.slicerWebLatestInfo')}></info-tip>
                                 ` : ''}
-                            </section>
-                        ` : ''}
+                            </div>
+                            ${requestedSlicerWebChannel(this.slicerWebChannel) !== resolveSlicerWebChannel(this.slicerWebChannel) ? html`
+                                <p class="section-description warning-text">${t('settings.slicerWebLatestUnavailable')}</p>
+                            ` : ''}
+                            <div class="select-row">
+                                <button type="button" class="small-button" ?disabled=${this._updateCheck?.busy}
+                                    @click=${() => this.handleCheckForUpdates()}>
+                                    ${t('settings.slicerWebCheckUpdates')}
+                                </button>
+                                <span class="section-description" role="status">${this._updateCheck?.message ?? ''}</span>
+                            </div>
+                        </section>
                     ` : ''}
 
                     <!-- Unified save bar -->

@@ -484,7 +484,7 @@ export const listPageStyles = css`
     :host-context([data-theme='dark']) .form-input,
     :host-context([data-theme='dark']) .form-textarea {
         background: var(--color-background);
-        border-color: color-mix(in srgb, var(--color-text-secondary) 55%, var(--color-panel)); /* ≥3:1 against panel and page (WCAG 1.4.11) */
+        border-color: var(--color-control-border);
         color: var(--color-text-primary);
     }
 

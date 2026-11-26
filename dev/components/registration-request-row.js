@@ -69,7 +69,7 @@ export class RegistrationRequestRow extends LitElement {
                 cursor: pointer;
                 width: fit-content;
             }
-            .admin-option input[type='checkbox'] { cursor: pointer; accent-color: var(--color-primary); }
+            .admin-option input[type='checkbox'] { cursor: pointer; }
             .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
             /* Approve button */

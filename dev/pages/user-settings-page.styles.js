@@ -148,6 +148,16 @@ export const userSettingsStyles = css`
         color: var(--color-text-secondary);
     }
 
+    .warning-text {
+        color: var(--color-status-warning-fg);
+    }
+
+    .select-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
     .profile-form {
         display: flex;
         flex-direction: column;
@@ -313,7 +323,6 @@ export const userSettingsStyles = css`
         width: 16px;
         height: 16px;
         cursor: pointer;
-        accent-color: var(--color-primary);
     }
 
     .field-hint-icon {

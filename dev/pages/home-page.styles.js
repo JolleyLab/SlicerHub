@@ -282,7 +282,6 @@ export const homePageStyles = css`
         width: 15px;
         height: 15px;
         flex-shrink: 0;
-        accent-color: var(--color-primary);
         cursor: pointer;
     }
 
