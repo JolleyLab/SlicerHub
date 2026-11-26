@@ -8,6 +8,9 @@ import {
 } from '../services/notifications.js';
 import { notificationStore } from '../services/notificationStore.js';
 
+/** Least gap between the open panel and the screen's edge. */
+const PANEL_SCREEN_MARGIN_PX = 8;
+
 /**
  * Global notification bell for the product inbox (any notification type).
  * Placed next to the user avatar in navigation-header.
@@ -394,23 +397,39 @@ export class NotificationBell extends LitElement {
         this._pendingWorkflowRequestCount = 0;
         this._unsub = null;
         this._onDocPointer = (e) => this.handleDocPointer(e);
+        this._onResize = () => this._keepPanelOnScreen();
     }
 
     connectedCallback() {
         super.connectedCallback();
         this._unsub = notificationStore.subscribe((state) => this._onStoreUpdate(state));
         document.addEventListener('pointerdown', this._onDocPointer, true);
+        window.addEventListener('resize', this._onResize);
     }
 
     updated(changedProps) {
         if (changedProps.has('isRegistrationReviewer')) {
             notificationStore.setRegistrationReviewer(this.isRegistrationReviewer);
         }
+        if (changedProps.has('open')) this._keepPanelOnScreen();
+    }
+
+    /**
+     * The panel lines up with the bell's right edge; on a narrow screen (a phone: the avatar is to the
+     * bell's right) that can push its left edge off the screen. Shift it right just enough to stay on it.
+     */
+    _keepPanelOnScreen() {
+        const panel = this.open && this.renderRoot?.querySelector('.panel');
+        if (!panel) return;
+        panel.style.right = '';
+        const { left } = panel.getBoundingClientRect();
+        if (left < PANEL_SCREEN_MARGIN_PX) panel.style.right = `${left - PANEL_SCREEN_MARGIN_PX}px`;
     }
 
     disconnectedCallback() {
         if (this._unsub) this._unsub();
         document.removeEventListener('pointerdown', this._onDocPointer, true);
+        window.removeEventListener('resize', this._onResize);
         super.disconnectedCallback();
     }
 

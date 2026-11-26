@@ -202,18 +202,11 @@ export const userSettingsStyles = css`
         border-top: 1px solid var(--color-border);
     }
 
-    /* Pinned (stickyActions.js): reach the content box's edges (page-layout-template padding). */
+    /* Pinned (stickyActions.js): reach the content box's edges, whatever page-layout-template's padding is. */
     .settings-save-bar.is-sticky {
-        margin: 0 -20px -20px;
-        padding: 12px 20px;
+        margin: 0 calc(-1 * var(--content-pad-x, 20px)) calc(-1 * var(--content-pad-bottom, 20px));
+        padding: 12px var(--content-pad-x, 20px);
         border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-    }
-
-    @media (max-width: 1024px) {
-        .settings-save-bar.is-sticky {
-            margin: 0 -16px -16px;
-            padding: 12px 16px;
-        }
     }
 
     .save-status {

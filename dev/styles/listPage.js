@@ -1,4 +1,5 @@
 import { css } from 'lit-element';
+import { phoneMedia } from './breakpoints.js';
 import { stickyActionsStyles } from './stickyActions.js';
 
 /**
@@ -41,6 +42,20 @@ export const listPageStyles = css`
         align-items: center;
         gap: 10px;
         flex-shrink: 0;
+    }
+
+    /* Phones (and 320px reflow): the actions drop below the heading, right-aligned, when the row is full. */
+    @media ${phoneMedia} {
+        .page-header-row {
+            flex-wrap: wrap;
+            row-gap: 10px;
+        }
+
+        .page-header-actions {
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            margin-left: auto;
+        }
     }
 
     .page-heading {
