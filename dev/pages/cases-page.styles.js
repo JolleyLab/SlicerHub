@@ -403,6 +403,32 @@ export const casesPageStyles = css`
         align-items: center;
     }
 
+    /* Phone width: the title takes its own line and the actions wrap below it. */
+    @media (max-width: 600px) {
+        .iframe-header {
+            flex-wrap: wrap;
+            gap: 6px 10px;
+            padding: 8px 10px;
+        }
+
+        .iframe-title {
+            flex: 1 1 100%;
+        }
+
+        .iframe-header-actions {
+            flex-shrink: 1;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 6px;
+            margin-left: auto;
+        }
+
+        .iframe-header-actions .primary-button,
+        .iframe-header-actions .secondary-button {
+            padding: 6px 12px;
+        }
+    }
+
     .iframe-container {
         flex: 1;
         display: flex;
